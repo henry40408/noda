@@ -922,6 +922,105 @@ fn commit_working_tree(paths: &Paths, notebook: &str, message: &str) {
         .expect("commit");
 }
 
+/// The value beside a label in `noda status` output.
+fn status_row<'a>(status: &'a str, key: &str) -> Option<&'a str> {
+    status
+        .lines()
+        .find(|line| line.starts_with(key))
+        .map(|line| line[key.len()..].trim())
+}
+
+#[test]
+fn status_reports_a_notebook_with_nowhere_to_sync() {
+    let (_root, paths) = initialized();
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&out, "notebook").unwrap().split("  ").next(),
+        Some("default")
+    );
+    assert_eq!(status_row(&out, "notes"), Some("0"));
+    assert_eq!(status_row(&out, "changes"), Some("clean"));
+    assert!(
+        status_row(&out, "remote").unwrap().contains("none"),
+        "{out}"
+    );
+    assert!(
+        status_row(&out, "sync").is_none(),
+        "with no remote there is nothing to be in sync with: {out}"
+    );
+
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(status_row(&out, "notes"), Some("2"));
+}
+
+#[test]
+fn status_counts_the_distance_from_the_remote_without_touching_it() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(status_row(&out, "sync"), Some("never synced"), "{out}");
+
+    cmd::sync(&paths).unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(
+        status_row(&out, "sync").unwrap().starts_with("in sync"),
+        "{out}"
+    );
+
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(
+        status_row(&out, "sync").unwrap().starts_with("1 to push"),
+        "{out}"
+    );
+
+    // The other side of the drift: a second notebook pushes, and this one is
+    // behind it — but only once it has fetched, because status never does.
+    mirror(&paths, &url, "mirror");
+    cmd::sync(&paths).unwrap();
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(
+        status_row(&out, "sync").unwrap().starts_with("in sync"),
+        "stale until it fetches, which is the point: {out}"
+    );
+    cmd::pull(&paths).unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(
+        status_row(&out, "sync").unwrap().starts_with("in sync"),
+        "{out}"
+    );
+}
+
+#[test]
+fn status_reports_what_it_cannot_read_instead_of_dying_on_it() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    std::fs::write(
+        paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("stray.md"),
+        "not a note at all\n",
+    )
+    .unwrap();
+
+    // Every other command chokes on this file. `status` is how you find out it
+    // is there, so it is the one that must not.
+    assert!(cmd::ls(&paths, None, None).is_err(), "ls still refuses it");
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(status_row(&out, "notes").unwrap().starts_with('1'), "{out}");
+    assert!(
+        status_row(&out, "notes").unwrap().contains("stray.md"),
+        "{out}"
+    );
+    assert_eq!(status_row(&out, "changes"), Some("1 file uncommitted"));
+}
+
 #[test]
 fn search_matches_the_body_the_title_and_the_tags() {
     let (_root, paths) = initialized();

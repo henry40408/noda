@@ -679,6 +679,82 @@ fn first_chars(text: &str, max: usize) -> String {
     format!("{}…", head.trim_end())
 }
 
+/// Where the active notebook stands, in one screen.
+///
+/// Nothing here touches the network: the drift is measured against what the
+/// last fetch left behind. A command for orienting yourself has to work on a
+/// train, and has to be instant.
+pub fn status(paths: &Paths) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let status = notebook.status()?;
+
+    let changes = match status.uncommitted {
+        0 => "clean".to_string(),
+        1 => "1 file uncommitted".to_string(),
+        n => format!("{n} files uncommitted"),
+    };
+    // The row is already labelled "notes"; saying it twice helps nobody.
+    let mut notes = status.notes.to_string();
+    if !status.unreadable.is_empty() {
+        let names = status.unreadable.join(", ");
+        let count = status.unreadable.len();
+        let noun = if count == 1 { "file is" } else { "files are" };
+        notes.push_str(&style::paint(
+            style::MUTED,
+            &format!("  ({count} {noun} not a note: {names})"),
+        ));
+    }
+
+    let mut rows = vec![
+        (
+            "notebook",
+            format!(
+                "{}  {}",
+                notebook.name,
+                style::paint(style::MUTED, &format!("({})", status.branch))
+            ),
+        ),
+        ("notes", notes),
+        ("changes", changes),
+    ];
+
+    match status.remote {
+        None => rows.push((
+            "remote",
+            style::paint(style::MUTED, "none — set one with `noda remote set <url>`"),
+        )),
+        Some(url) => {
+            rows.push(("remote", url));
+            rows.push(("sync", describe_drift(status.drift)));
+        }
+    }
+
+    let width = rows
+        .iter()
+        .map(|(key, _)| display_width(key))
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for (key, value) in rows {
+        let _ = writeln!(out, "{}  {value}", pad(key, width));
+    }
+    Ok(out)
+}
+
+/// How far the notebook has drifted, phrased as what there is left to do.
+fn describe_drift(drift: Option<(usize, usize)>) -> String {
+    let Some((ahead, behind)) = drift else {
+        return style::paint(style::MUTED, "never synced");
+    };
+    let as_of = style::paint(style::MUTED, "(as of the last sync)");
+    match (ahead, behind) {
+        (0, 0) => format!("in sync {as_of}"),
+        (ahead, 0) => format!("{ahead} to push {as_of}"),
+        (0, behind) => format!("{behind} to pull {as_of}"),
+        (ahead, behind) => format!("{ahead} to push, {behind} to pull {as_of}"),
+    }
+}
+
 /// The notebook's history, or one note's.
 pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;

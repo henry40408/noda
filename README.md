@@ -3,13 +3,10 @@
 > A git-native notebook for your terminal. Your notes are plain Markdown in an ordinary
 > git repository — versioned, syncable, and yours.
 
-> **Status: in progress (spec-first).** This README is the v1 contract, written *before*
-> implementation, AWS "working-backwards" style. The note commands (`add`, `ls`, `show`,
-> `edit`, `mv`, `tag`, `rm`) and the notebook commands (`init`, `notebook add/ls/rm/rename`,
-> `use`, `notebook current`) work today. Search, history, `config`, and everything that
-> touches the network — `clone`, `remote`, `sync`, `push`, `pull` — are still the target
-> contract, not shipped features.
-> See [docs/PRFAQ.md](docs/PRFAQ.md).
+> **Written spec-first.** This README was the v1 contract before there was any code, AWS
+> "working-backwards" style. Every command described below is now implemented and covered by
+> tests; where the contract turned out to be wrong, the contract was corrected rather than
+> quietly left behind. See [docs/PRFAQ.md](docs/PRFAQ.md).
 
 ---
 
@@ -111,6 +108,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda notebook rename <old> <new>` | Rename a notebook. |
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
+| `noda status` | Where the active notebook stands: notes, changes, drift from the remote. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
@@ -118,6 +116,19 @@ repository and its whole history from disk. The active notebook is refused outri
 with `noda use` first. Everything else is confirmed at the terminal, and `--force` skips the
 question. With no terminal to ask at — piped, or in a script — the deletion is refused
 rather than assumed, so `--force` is how a script says it meant it.
+
+`noda status` answers "where do I stand" without going to the network — the push/pull
+counts are measured against what the last sync left behind, so it works offline and
+returns instantly. It is also the one command that reports a `.md` file it cannot read as a
+note instead of failing on it, because finding that out is why you ran it.
+
+```
+notebook  work  (main)
+notes     42
+changes   1 file uncommitted
+remote    git@github.com:me/work-notes.git
+sync      2 to push (as of the last sync)
+```
 
 ### Notes
 
