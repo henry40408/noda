@@ -22,17 +22,45 @@
 - **Sync anywhere.** HTTPS and SSH are compiled into the binary, so `noda sync` talks to
   GitHub, GitLab, or any git host with nothing else to install.
 - **Fast to reach.** Address a note by a short id *or* a readable slug.
-- **One static binary.** Ships self-contained for macOS and Linux (incl. arm64/musl).
+- **One static binary.** Builds self-contained for macOS and Linux (incl. arm64/musl), and
+  ships as a container image.
 
 ## Install
 
+noda is distributed as a container image on GitHub's registry, for `linux/amd64` and
+`linux/arm64`:
+
 ```sh
-cargo install noda            # from crates.io
-brew install noda             # macOS / Linux (Homebrew)
+docker pull ghcr.io/henry40408/noda:main
 ```
 
-Or download a prebuilt static binary for your platform from the releases page
-(`x86_64`/`aarch64`, macOS & Linux-musl).
+Your notebooks live in a volume, and the image runs `noda` directly, so anything the CLI
+does works through it:
+
+```sh
+docker run --rm -v noda:/data ghcr.io/henry40408/noda:main init
+docker run --rm -v noda:/data ghcr.io/henry40408/noda:main add "Meeting notes" -c "agenda"
+docker run --rm -v noda:/data ghcr.io/henry40408/noda:main ls
+```
+
+That is a mouthful to type, so it is worth an alias:
+
+```sh
+alias noda='docker run --rm -it -v noda:/data ghcr.io/henry40408/noda:main'
+```
+
+Two things to know. `noda add` and `noda edit` open an editor, which the image does not
+carry — write notes with `-c`, or mount one in. And `noda sync` over SSH needs a key: pass
+your agent through with `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent`, or use
+an HTTPS remote with a token.
+
+Otherwise, build it:
+
+```sh
+cargo build --release        # target/release/noda
+```
+
+There is no crates.io package and no Homebrew formula.
 
 ## Quickstart
 
