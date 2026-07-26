@@ -101,6 +101,20 @@ distribution story (one file, musl, arm64). Shelling out would reintroduce a run
 dependency and fragile output parsing. Trade-off accepted; if we ever need a transport
 libgit2 lacks, we can selectively shell out for that one operation.
 
+**Q: Why is the committed `id ↔ slug` index a TSV?**
+Because of where this particular file sits: it is written by noda, read by noda, never
+edited by hand, and fully rebuildable from the notes' frontmatter. Both of its fields are
+constrained by construction — an id is Crockford base32, and a slug keeps only alphanumeric
+characters — so a tab cannot appear inside a value. That buys a parser that is one
+`split_once('\t')` with no escaping rules to get wrong, and a file that `cut -f2` reads
+straight out of a pipe. CSV earns its ubiquity on a different problem: its quoting rules let
+a value carry the delimiter itself, which is what you want when fields are arbitrary user
+text — a spreadsheet export, say. noda's index isn't that, so it pays TSV's price instead:
+the writer must keep tabs and newlines out of the fields, which stays cheap as the index
+grows to carry titles because the index is derived data, and a rebuild is always available.
+Interchange is a separate concern from storage; if noda ever needs to hand this data to
+another tool, that is an output format on `ls`, not a change to what sits in the repo.
+
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:
 multiple git-backed notebooks, add/ls/show/edit/rm, id+slug addressing, full-text search,
