@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::note::{self, Note};
 use crate::notebook::{self, Notebook};
 use crate::paths::Paths;
+use crate::remote;
 use crate::{Error, Result};
 
 /// Name of the notebook `noda init` creates.
@@ -352,6 +353,69 @@ pub fn notebook_rename(paths: &Paths, old: &str, new: &str) -> Result<String> {
         paths.set_active_notebook(new)?;
     }
     Ok(format!("renamed notebook `{old}` to `{new}`"))
+}
+
+/// Points the active notebook at `url`, replacing any remote already set.
+pub fn remote_set(paths: &Paths, url: &str) -> Result<String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(Error::msg("a remote needs a URL"));
+    }
+    let notebook = Notebook::open_active(paths)?;
+    notebook.set_remote(url)?;
+    Ok(format!("{}  {url}", notebook.name))
+}
+
+/// Prints the active notebook's remote.
+pub fn remote_show(paths: &Paths) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    notebook.remote_url().ok_or_else(|| {
+        Error::msg(format!(
+            "notebook `{}` has no remote — set one with `noda remote set <url>`",
+            notebook.name
+        ))
+    })
+}
+
+/// Fetches and integrates the remote branch.
+pub fn pull(paths: &Paths) -> Result<String> {
+    Notebook::open_active(paths)?.pull()
+}
+
+/// Sends the current branch to the remote.
+pub fn push(paths: &Paths) -> Result<String> {
+    Notebook::open_active(paths)?.push()
+}
+
+/// Commit, pull, push — in that order, so local work is never left behind by a
+/// merge and the push always carries it.
+pub fn sync(paths: &Paths) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let mut lines = Vec::new();
+    if notebook.commit_all("sync: local changes")? {
+        lines.push("commit: local changes".to_string());
+    }
+    lines.push(notebook.pull()?);
+    lines.push(notebook.push()?);
+    Ok(lines.join("\n"))
+}
+
+/// Clones a remote notebook. The name defaults to the repository's own.
+pub fn clone(paths: &Paths, url: &str, name: Option<&str>) -> Result<String> {
+    let name = match name {
+        Some(name) => name.to_string(),
+        None => remote::name_from_url(url).ok_or_else(|| {
+            Error::msg(format!(
+                "cannot tell what to call the notebook from `{url}` — pass a name"
+            ))
+        })?,
+    };
+    let notebook = Notebook::clone(paths, url, &name)?;
+    let count = notebook.notes()?.len();
+    Ok(format!(
+        "cloned `{name}` ({count} notes) to {}\nswitch to it with `noda use {name}`",
+        notebook.path.display()
+    ))
 }
 
 /// Sets the active notebook.

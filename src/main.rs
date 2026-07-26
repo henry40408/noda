@@ -66,6 +66,24 @@ enum Command {
         #[command(subcommand)]
         command: NotebookCommand,
     },
+    /// Clone an existing remote notebook.
+    Clone {
+        /// Remote URL, over HTTPS or SSH.
+        url: String,
+        /// Local notebook name. Defaults to the repository's own name.
+        name: Option<String>,
+    },
+    /// Show or set the active notebook's remote.
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommand,
+    },
+    /// Pull, then push. Commits pending changes first.
+    Sync,
+    /// Send the active notebook's commits to its remote.
+    Push,
+    /// Bring in the remote's commits.
+    Pull,
     /// Set the active notebook.
     Use {
         /// Notebook name.
@@ -117,6 +135,17 @@ enum NotebookCommand {
     Current,
 }
 
+#[derive(Subcommand)]
+enum RemoteCommand {
+    /// Set the active notebook's remote.
+    Set {
+        /// Remote URL, e.g. `git@github.com:me/notes.git`.
+        url: String,
+    },
+    /// Print the configured remote.
+    Show,
+}
+
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -153,6 +182,14 @@ fn run() -> noda::Result<()> {
             NotebookCommand::Rename { old, new } => cmd::notebook_rename(&paths, old, new)?,
             NotebookCommand::Current => cmd::notebook_current(&paths)?,
         },
+        Command::Clone { url, name } => cmd::clone(&paths, url, name.as_deref())?,
+        Command::Remote { command } => match command {
+            RemoteCommand::Set { url } => cmd::remote_set(&paths, url)?,
+            RemoteCommand::Show => cmd::remote_show(&paths)?,
+        },
+        Command::Sync => cmd::sync(&paths)?,
+        Command::Push => cmd::push(&paths)?,
+        Command::Pull => cmd::pull(&paths)?,
     };
     cmd::print(&output)
 }

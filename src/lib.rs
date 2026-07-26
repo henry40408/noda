@@ -9,6 +9,7 @@ pub mod error;
 pub mod note;
 pub mod notebook;
 pub mod paths;
+pub mod remote;
 
 pub use error::{Error, Result};
 pub use paths::Paths;

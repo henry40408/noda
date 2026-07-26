@@ -548,6 +548,314 @@ fn notebook_rename_carries_the_active_pointer() {
     assert!(cmd::notebook_rename(&paths, "archive", "personal").is_err());
 }
 
+/// A bare repository standing in for GitHub. libgit2's local transport is the
+/// same push/fetch machinery HTTPS and SSH use, so these tests exercise the real
+/// sync code without a network or credentials.
+fn bare_remote(root: &TempRoot, name: &str, branch: &str) -> String {
+    let path = root.0.join(name);
+    let repo = git2::Repository::init_bare(&path).expect("init bare remote");
+    repo.set_head(&format!("refs/heads/{branch}"))
+        .expect("point the remote at the branch under test");
+    path.to_str().expect("utf-8 path").to_string()
+}
+
+/// The branch a notebook is on — `main` or `master`, depending on the machine's
+/// `init.defaultBranch`, so no test may assume either.
+fn branch_of(paths: &Paths, name: &str) -> String {
+    noda::notebook::Notebook::open(paths, name)
+        .expect("open notebook")
+        .branch()
+        .expect("branch")
+}
+
+/// A notebook wired to `url`, cloned so it has its own history to diverge.
+fn mirror(paths: &Paths, url: &str, name: &str) {
+    cmd::clone(paths, url, Some(name)).expect("clone mirror");
+}
+
+fn merge_commits(notebook: &Path) -> usize {
+    let repo = git2::Repository::open(notebook).expect("open repo");
+    let mut walk = repo.revwalk().expect("revwalk");
+    walk.push_head().expect("push head");
+    walk.filter_map(|oid| repo.find_commit(oid.ok()?).ok())
+        .filter(|commit| commit.parent_count() > 1)
+        .count()
+}
+
+#[test]
+fn push_and_clone_round_trip_a_notebook() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+
+    cmd::remote_set(&paths, &url).unwrap();
+    assert_eq!(cmd::remote_show(&paths).unwrap(), url);
+    cmd::add(&paths, Some("Meeting Notes"), Some("agenda\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+
+    // No name given: it comes from the URL, `origin.git` -> `origin`.
+    cmd::clone(&paths, &url, None).unwrap();
+    cmd::use_notebook(&paths, "origin").unwrap();
+    assert!(
+        cmd::ls(&paths, None, None)
+            .unwrap()
+            .contains("meeting-notes")
+    );
+    assert!(
+        cmd::show(&paths, "meeting-notes")
+            .unwrap()
+            .contains("agenda")
+    );
+
+    // Cloning over an existing notebook is refused rather than merged into it.
+    assert!(cmd::clone(&paths, &url, Some("origin")).is_err());
+}
+
+#[test]
+fn clone_adopts_the_only_branch_when_the_remote_head_points_elsewhere() {
+    let (root, paths) = initialized();
+    // The remote's HEAD names a branch nothing was ever pushed to — what two
+    // machines that disagree about `init.defaultBranch` produce between them.
+    let url = bare_remote(&root, "origin.git", "trunk");
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+
+    cmd::clone(&paths, &url, Some("mirror")).unwrap();
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    assert!(
+        cmd::ls(&paths, None, None).unwrap().contains("alpha"),
+        "a clone that checks out nothing reads as an empty notebook, not a broken one"
+    );
+    assert_eq!(
+        branch_of(&paths, "mirror"),
+        branch_of(&paths, cmd::DEFAULT_NOTEBOOK)
+    );
+}
+
+#[test]
+fn cloning_an_empty_remote_leaves_nothing_behind() {
+    let (root, paths) = initialized();
+    let url = bare_remote(&root, "empty.git", "main");
+
+    let err = cmd::clone(&paths, &url, Some("mirror"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no commits"), "{err}");
+    assert!(
+        !paths.notebook_dir("mirror").exists(),
+        "no half-clone for the next attempt to trip over"
+    );
+}
+
+#[test]
+fn sync_commits_pending_changes_before_pushing() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    // Edited outside noda — a `$EDITOR` left open, a file synced by another tool.
+    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    let text = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(&note, format!("{text}edited elsewhere\n")).unwrap();
+
+    let out = cmd::sync(&paths).unwrap();
+    assert!(out.contains("commit: local changes"), "{out}");
+    assert!(out.contains("push:"), "{out}");
+    assert_eq!(commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)), 3);
+
+    mirror(&paths, &url, "mirror");
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    assert!(
+        cmd::show(&paths, "alpha")
+            .unwrap()
+            .contains("edited elsewhere"),
+        "the out-of-band edit reached the remote"
+    );
+
+    // A second sync has nothing to commit and nothing to send.
+    let out = cmd::sync(&paths).unwrap();
+    assert!(!out.contains("commit:"), "{out}");
+    assert!(out.contains("already up to date"), "{out}");
+}
+
+#[test]
+fn sync_fast_forwards_a_notebook_that_only_received() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    mirror(&paths, &url, "mirror");
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    let out = cmd::sync(&paths).unwrap();
+    assert!(out.contains("fast-forwarded"), "{out}");
+    assert!(cmd::ls(&paths, None, None).unwrap().contains("beta"));
+    assert_eq!(
+        merge_commits(&paths.notebook_dir("mirror")),
+        0,
+        "a one-sided sync needs no merge commit"
+    );
+}
+
+#[test]
+fn sync_merges_notebooks_that_both_moved() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+    mirror(&paths, &url, "mirror");
+
+    // Two machines, each writing a different note before either syncs.
+    cmd::add(&paths, Some("Laptop"), Some("l\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    cmd::add(&paths, Some("Desktop"), Some("d\n"), &[]).unwrap();
+    let out = cmd::sync(&paths).unwrap();
+    assert!(out.contains("merged"), "{out}");
+    assert_eq!(merge_commits(&paths.notebook_dir("mirror")), 1);
+
+    let listed = cmd::ls(&paths, None, None).unwrap();
+    assert!(listed.contains("laptop"), "{listed}");
+    assert!(listed.contains("desktop"), "{listed}");
+
+    // Both sides appended to the id ↔ slug index, so it conflicted and was
+    // rebuilt: it has to come out complete, committed, and free of markers.
+    let index =
+        std::fs::read_to_string(paths.notebook_dir("mirror").join(".noda/index.tsv")).unwrap();
+    assert_eq!(index.lines().count(), 3, "{index}");
+    assert!(!index.contains("<<<"), "{index}");
+    let repo = git2::Repository::open(paths.notebook_dir("mirror")).unwrap();
+    assert!(repo.statuses(None).unwrap().is_empty(), "nothing left over");
+    assert_eq!(repo.state(), git2::RepositoryState::Clean);
+
+    // And the merge comes back to the notebook that pushed first.
+    cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
+    cmd::sync(&paths).unwrap();
+    assert!(cmd::ls(&paths, None, None).unwrap().contains("desktop"));
+}
+
+#[test]
+fn a_conflicting_pull_is_rolled_back() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Shared"), Some("original\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+    mirror(&paths, &url, "mirror");
+
+    let rewrite = |notebook: &str, body: &str| {
+        let path = paths.notebook_dir(notebook).join("shared.md");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let head = text
+            .split("---\n")
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("---\n");
+        std::fs::write(&path, format!("{head}{body}")).unwrap();
+    };
+
+    rewrite(cmd::DEFAULT_NOTEBOOK, "from the laptop\n");
+    cmd::sync(&paths).unwrap();
+
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    rewrite("mirror", "from the desktop\n");
+    let err = cmd::sync(&paths).unwrap_err().to_string();
+    assert!(err.contains("shared.md"), "{err}");
+    assert!(err.contains("rolled back"), "{err}");
+
+    // The rollback has to leave a notebook that still works: no conflict
+    // markers on disk, no half-finished merge, the local commit still there.
+    let repo = git2::Repository::open(paths.notebook_dir("mirror")).unwrap();
+    assert!(repo.statuses(None).unwrap().is_empty(), "worktree is clean");
+    assert_eq!(repo.state(), git2::RepositoryState::Clean);
+    assert!(
+        cmd::show(&paths, "shared")
+            .unwrap()
+            .contains("from the desktop"),
+        "the local edit survived"
+    );
+}
+
+#[test]
+fn push_is_rejected_when_the_remote_moved_ahead() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+    mirror(&paths, &url, "mirror");
+
+    cmd::add(&paths, Some("Laptop"), Some("l\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    cmd::add(&paths, Some("Desktop"), Some("d\n"), &[]).unwrap();
+    let err = cmd::push(&paths).unwrap_err().to_string();
+    assert!(err.contains("noda pull"), "{err}");
+
+    // Which is exactly what unblocks it.
+    cmd::pull(&paths).unwrap();
+    cmd::push(&paths).unwrap();
+}
+
+#[test]
+fn pull_refuses_to_run_over_uncommitted_changes() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    std::fs::write(&note, "half-finished\n").unwrap();
+
+    let err = cmd::pull(&paths).unwrap_err().to_string();
+    assert!(err.contains("noda sync"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&note).unwrap(),
+        "half-finished\n",
+        "the refusal touches nothing"
+    );
+}
+
+#[test]
+fn pulling_an_empty_remote_is_not_an_error() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+
+    let out = cmd::pull(&paths).unwrap();
+    assert!(out.contains("no `"), "{out}");
+    assert!(out.contains(&branch), "{out}");
+}
+
+#[test]
+fn the_network_commands_say_when_no_remote_is_set() {
+    let (_root, paths) = initialized();
+    for err in [
+        cmd::remote_show(&paths).unwrap_err(),
+        cmd::push(&paths).unwrap_err(),
+        cmd::pull(&paths).unwrap_err(),
+        cmd::sync(&paths).unwrap_err(),
+    ] {
+        assert!(err.to_string().contains("noda remote set"), "{err}");
+    }
+    assert!(cmd::remote_set(&paths, "  ").is_err(), "a URL is required");
+}
+
 #[test]
 fn commands_refuse_to_run_before_init() {
     let root = TempRoot::new();

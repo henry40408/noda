@@ -129,7 +129,15 @@ fix it or throw it away with `git checkout`.
 | `noda sync` | Pull, then push (auto-commits pending changes first). |
 | `noda push` / `noda pull` | One-directional sync. |
 
-HTTPS and SSH are built in; no system git or OpenSSL is required at runtime.
+HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. Credentials
+are not noda's to keep: SSH keys come from `ssh-agent`, HTTPS from git's credential helper.
+
+A pull fast-forwards when only the remote moved, and makes a merge commit when both sides
+did. Two notebooks that each added a note both appended to `.noda/index.tsv`, so it
+conflicts almost every time — noda settles that one itself by rebuilding the index from the
+notes, because the index is derived data. A conflict inside a note is yours: the merge is
+rolled back, the notebook is left exactly as it was, and you can resolve it with git in the
+notebook directory.
 
 ### Config
 
