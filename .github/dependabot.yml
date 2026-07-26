@@ -1,0 +1,45 @@
+# Every ecosystem here waits seven days before proposing a release. A freshly
+# published version is the usual shape of a supply-chain attack — a compromised
+# maintainer account, a typosquat, a malicious build script — and a week is long
+# enough for most of those to be caught and yanked before they reach this repo.
+version: 2
+updates:
+  # The workflows pin actions by commit SHA with the release as a trailing
+  # comment (`@3d3c42e… # v7.0.1`). Dependabot understands that form and updates
+  # both halves, so pinning to a SHA does not mean never moving.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    # One PR for all of them: reviewing five separate action bumps teaches
+    # nobody anything.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Cargo.toml and Cargo.lock. A bump that drags in a new licence or a crate
+  # from outside crates.io fails `cargo deny` in CI rather than being noticed
+  # later, which is the point of keeping that allow-list narrow.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns:
+          - "*"
+
+  # rust-toolchain.toml. Without this the pinned compiler quietly rots: the
+  # whole point of pinning is that nothing moves it by accident, which also
+  # means nothing moves it at all. No group — there is only ever one entry.
+  - package-ecosystem: "rust-toolchain"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
