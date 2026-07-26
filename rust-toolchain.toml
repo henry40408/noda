@@ -1,0 +1,12 @@
+# Pinned so that a local build, a CI run and a release build are the same
+# compiler. The trade is deliberate: an upstream clippy release can no longer
+# turn CI red on its own, and in exchange a breaking compiler change only
+# surfaces when this line is bumped.
+#
+# The musl targets are declared here rather than installed in CI, so the
+# cross-compile that guards the PR/FAQ's distribution claim can be reproduced
+# locally with the same one command.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
