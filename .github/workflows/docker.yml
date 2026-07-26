@@ -28,6 +28,17 @@ on:
       - .dockerignore
       - .github/workflows/docker.yml
 
+# One build per ref at a time. Three merges in quick succession started three
+# nine-minute builds racing to push the same `:main` tag, where the winner is
+# whichever finished last rather than whichever commit is newer.
+#
+# Superseding is right for a branch, where the tag always means "latest", and
+# wrong for a release: a `v*` build is publishing one specific version and
+# nothing should quietly cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
