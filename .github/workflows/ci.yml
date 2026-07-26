@@ -3,8 +3,11 @@
 # vendored libgit2 and OpenSSL are compiled from source for every target, which
 # is exactly the part that breaks silently.
 #
-# Actions are pinned to exact tags rather than floating majors, so a release
-# upstream cannot change what runs here without a commit that says so.
+# Actions are pinned to commit SHAs, not tags. A tag is a movable pointer: whoever
+# controls the repository can repoint it at different code, and every workflow
+# that trusts the tag runs that code on its next build. A SHA cannot be repointed,
+# so what runs here only changes when a commit here says so. The trailing comment
+# records which release each SHA is, for humans and for update tooling.
 name: CI
 
 on:
@@ -28,9 +31,9 @@ jobs:
     name: fmt, clippy, tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: Swatinem/rust-cache@v2.9.1
-      - uses: taiki-e/install-action@v2.83.4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
         with:
           tool: cargo-nextest
       - run: cargo fmt --check
@@ -47,12 +50,12 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: mlugg/setup-zig@v2.2.1
-      - uses: Swatinem/rust-cache@v2.9.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: ${{ matrix.target }}
-      - uses: taiki-e/install-action@v2.83.4
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
         with:
           tool: cargo-zigbuild
       - run: rustup target add ${{ matrix.target }}
