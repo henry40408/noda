@@ -7,6 +7,6 @@
 # cross-compile that guards the PR/FAQ's distribution claim can be reproduced
 # locally with the same one command.
 [toolchain]
-channel = "1.96.0"
+channel = "1.97.1"
 components = ["clippy", "rustfmt"]
 targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
