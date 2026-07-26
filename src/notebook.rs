@@ -28,6 +28,22 @@ pub struct Notebook {
     author: Option<(String, String)>,
 }
 
+/// Where a notebook stands, as `noda status` reports it.
+pub struct Status {
+    pub branch: String,
+    pub notes: usize,
+    /// `*.md` files that are not readable as notes. `status` is the command you
+    /// run to find out what is going on, so it reports these instead of dying
+    /// on them the way the note commands do.
+    pub unreadable: Vec<String>,
+    /// Files differing from `HEAD`, untracked ones included.
+    pub uncommitted: usize,
+    pub remote: Option<String>,
+    /// `(ahead, behind)` against the remote-tracking ref, or `None` when there
+    /// is nothing to compare against because the notebook has never fetched.
+    pub drift: Option<(usize, usize)>,
+}
+
 /// One commit, as `noda log` reports it.
 pub struct Entry {
     pub id: git2::Oid,
@@ -84,6 +100,60 @@ impl Notebook {
 
     pub fn open_active(paths: &Paths) -> Result<Self> {
         Notebook::open(paths, &active_name(paths)?)
+    }
+
+    /// Where the notebook stands: what is uncommitted, and how far it has
+    /// drifted from the remote.
+    ///
+    /// The drift is measured against the remote-tracking ref, so it is only as
+    /// current as the last fetch. That is deliberate — a command you run to
+    /// orient yourself should not go to the network and should not fail because
+    /// you are on a train.
+    pub fn status(&self) -> Result<Status> {
+        let branch = self.branch()?;
+        let (notes, unreadable) = self.count_notes()?;
+
+        let mut options = git2::StatusOptions::new();
+        options.include_untracked(true).include_ignored(false);
+        let uncommitted = self.repo.statuses(Some(&mut options))?.len();
+
+        let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
+        let drift = match (
+            self.repo.head()?.target(),
+            self.repo.refname_to_id(&tracking).ok(),
+        ) {
+            (Some(local), Some(upstream)) => Some(self.repo.graph_ahead_behind(local, upstream)?),
+            _ => None,
+        };
+
+        Ok(Status {
+            branch,
+            notes,
+            unreadable,
+            uncommitted,
+            remote: self.remote_url(),
+            drift,
+        })
+    }
+
+    /// How many `*.md` files read as notes, and the names of the ones that do
+    /// not. Unlike `notes`, a single malformed file does not sink the count.
+    fn count_notes(&self) -> Result<(usize, Vec<String>)> {
+        let mut notes = 0;
+        let mut unreadable = Vec::new();
+        for entry in std::fs::read_dir(&self.path)? {
+            let path = entry?.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
+                continue;
+            }
+            if Note::parse(&std::fs::read_to_string(&path)?).is_ok() {
+                notes += 1;
+            } else if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                unreadable.push(name.to_string());
+            }
+        }
+        unreadable.sort();
+        Ok((notes, unreadable))
     }
 
     /// The identity git itself would use here — the repo's config, then the
