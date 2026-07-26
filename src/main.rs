@@ -56,6 +56,21 @@ enum Command {
         /// The new title.
         new_title: String,
     },
+    /// Delete a note. The removal is a commit, so `git revert` undoes it.
+    Rm {
+        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        note: String,
+    },
+    /// Manage notebooks.
+    Notebook {
+        #[command(subcommand)]
+        command: NotebookCommand,
+    },
+    /// Set the active notebook.
+    Use {
+        /// Notebook name.
+        name: String,
+    },
     /// Add and remove tags: `noda tag meeting-notes +work -q3`.
     Tag {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
@@ -72,6 +87,34 @@ enum Command {
         )]
         changes: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum NotebookCommand {
+    /// Create a notebook (a new git repo).
+    Add {
+        /// Notebook name; it becomes the directory name.
+        name: String,
+        /// Remote to sync with, e.g. `git@github.com:me/notes.git`.
+        #[arg(long)]
+        remote: Option<String>,
+    },
+    /// List notebooks; marks the active one.
+    Ls,
+    /// Remove a notebook's local repository. This is not a commit and cannot be undone.
+    Rm {
+        /// Notebook name.
+        name: String,
+    },
+    /// Rename a notebook.
+    Rename {
+        /// Current name.
+        old: String,
+        /// New name.
+        new: String,
+    },
+    /// Print the active notebook.
+    Current,
 }
 
 fn main() -> std::process::ExitCode {
@@ -99,6 +142,17 @@ fn run() -> noda::Result<()> {
         Command::Edit { note } => cmd::edit(&paths, note)?,
         Command::Mv { note, new_title } => cmd::mv(&paths, note, new_title)?,
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
+        Command::Rm { note } => cmd::rm(&paths, note)?,
+        Command::Use { name } => cmd::use_notebook(&paths, name)?,
+        Command::Notebook { command } => match command {
+            NotebookCommand::Add { name, remote } => {
+                cmd::notebook_add(&paths, name, remote.as_deref())?
+            }
+            NotebookCommand::Ls => cmd::notebook_ls(&paths)?,
+            NotebookCommand::Rm { name } => cmd::notebook_rm(&paths, name)?,
+            NotebookCommand::Rename { old, new } => cmd::notebook_rename(&paths, old, new)?,
+            NotebookCommand::Current => cmd::notebook_current(&paths)?,
+        },
     };
     cmd::print(&output)
 }

@@ -13,6 +13,8 @@ use crate::{Error, Result};
 const META_DIR: &str = ".noda";
 /// Committed `id\tslug` lookup. Rebuildable from the notes' frontmatter.
 const INDEX_FILE: &str = ".noda/index.tsv";
+/// noda configures exactly one remote per notebook.
+const REMOTE_NAME: &str = "origin";
 
 pub struct Notebook {
     pub name: String,
@@ -61,7 +63,46 @@ impl Notebook {
     }
 
     pub fn exists(paths: &Paths, name: &str) -> bool {
-        paths.notebook_dir(name).join(".git").exists()
+        validate_name(name).is_ok() && paths.notebook_dir(name).join(".git").exists()
+    }
+
+    /// Every notebook under the data dir, sorted. A directory that is not a git
+    /// repo is not a notebook and is skipped rather than reported.
+    pub fn list(paths: &Paths) -> Result<Vec<String>> {
+        let dir = paths.notebooks_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            if !path.join(".git").exists() {
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                names.push(name.to_string());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Points the notebook at `url`, replacing any remote already configured.
+    pub fn set_remote(&self, url: &str) -> Result<()> {
+        if self.repo.find_remote(REMOTE_NAME).is_ok() {
+            self.repo.remote_set_url(REMOTE_NAME, url)?;
+        } else {
+            self.repo.remote(REMOTE_NAME, url)?;
+        }
+        Ok(())
+    }
+
+    /// The configured remote, if there is one whose URL is valid UTF-8.
+    pub fn remote_url(&self) -> Option<String> {
+        let remote = self.repo.find_remote(REMOTE_NAME).ok()?;
+        remote.url().ok().map(str::to_string)
     }
 
     pub fn note_path(&self, slug: &str) -> PathBuf {
@@ -182,7 +223,8 @@ impl Notebook {
     }
 }
 
-fn validate_name(name: &str) -> Result<()> {
+/// Notebook names become directory names, so they must not escape the data dir.
+pub fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(Error::msg(format!("invalid notebook name: {name}")));
     }

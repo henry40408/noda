@@ -396,6 +396,159 @@ fn edit_reports_an_aborted_editor() {
 }
 
 #[test]
+fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    let out = cmd::rm(&paths, "alpha").unwrap();
+    assert!(out.contains(&id) && out.contains("alpha"), "{out}");
+
+    assert!(!notebook.join("alpha.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv"))
+            .unwrap()
+            .lines()
+            .filter(|l| l.contains(&id))
+            .count(),
+        0,
+        "the index entry goes with the note"
+    );
+    assert!(cmd::show(&paths, "alpha").is_err());
+    assert!(cmd::show(&paths, &id).is_err());
+    assert!(
+        cmd::show(&paths, "beta").is_ok(),
+        "other notes are untouched"
+    );
+
+    assert_eq!(commit_count(&notebook), before + 1);
+    let repo = git2::Repository::open(&notebook).unwrap();
+    assert!(repo.statuses(None).unwrap().is_empty());
+
+    // The note is still in history: the commit before HEAD still carries the file.
+    let parent = repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .parent(0)
+        .unwrap();
+    assert!(
+        parent.tree().unwrap().get_name("alpha.md").is_some(),
+        "the removal is revertible"
+    );
+}
+
+#[test]
+fn rm_resolves_by_id_and_reports_an_unknown_note() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+
+    assert!(cmd::rm(&paths, "nope").is_err());
+    cmd::rm(&paths, &id).unwrap();
+    assert!(cmd::ls(&paths, None, None).unwrap().is_empty());
+}
+
+#[test]
+fn notebook_add_creates_a_repo_and_records_its_remote() {
+    let (_root, paths) = initialized();
+
+    cmd::notebook_add(&paths, "work", Some("git@github.com:me/work-notes.git")).unwrap();
+    assert!(paths.notebook_dir("work").join(".git").is_dir());
+
+    let listed = cmd::notebook_ls(&paths).unwrap();
+    assert!(
+        listed.contains("git@github.com:me/work-notes.git"),
+        "{listed}"
+    );
+
+    // A second notebook of the same name, and a name that escapes the data dir.
+    assert!(cmd::notebook_add(&paths, "work", None).is_err());
+    assert!(cmd::notebook_add(&paths, "../escape", None).is_err());
+}
+
+#[test]
+fn notebook_ls_marks_the_active_notebook() {
+    let (_root, paths) = initialized();
+    cmd::notebook_add(&paths, "work", None).unwrap();
+
+    let listed = cmd::notebook_ls(&paths).unwrap();
+    let lines: Vec<&str> = listed.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].starts_with("* default"), "{listed}");
+    assert!(lines[1].starts_with("  work"), "{listed}");
+
+    cmd::use_notebook(&paths, "work").unwrap();
+    let listed = cmd::notebook_ls(&paths).unwrap();
+    assert!(
+        listed.lines().nth(1).unwrap().starts_with("* work"),
+        "{listed}"
+    );
+}
+
+#[test]
+fn use_switches_which_notebook_the_note_commands_see() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::notebook_add(&paths, "work", None).unwrap();
+
+    cmd::use_notebook(&paths, "work").unwrap();
+    assert_eq!(cmd::notebook_current(&paths).unwrap(), "work");
+    assert!(cmd::ls(&paths, None, None).unwrap().is_empty());
+    assert!(
+        cmd::show(&paths, "alpha").is_err(),
+        "notebooks are separate"
+    );
+
+    cmd::add(&paths, Some("Work Item"), Some("w\n"), &[]).unwrap();
+    assert!(cmd::ls(&paths, None, None).unwrap().contains("work-item"));
+    assert!(
+        cmd::ls(&paths, Some("default"), None)
+            .unwrap()
+            .contains("alpha")
+    );
+
+    assert!(cmd::use_notebook(&paths, "missing").is_err());
+}
+
+#[test]
+fn notebook_rm_refuses_the_active_one() {
+    let (_root, paths) = initialized();
+    cmd::notebook_add(&paths, "work", None).unwrap();
+
+    let err = cmd::notebook_rm(&paths, cmd::DEFAULT_NOTEBOOK).unwrap_err();
+    assert!(err.to_string().contains("noda use"), "{err}");
+    assert!(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).exists());
+
+    cmd::notebook_rm(&paths, "work").unwrap();
+    assert!(!paths.notebook_dir("work").exists());
+    assert!(cmd::notebook_rm(&paths, "work").is_err(), "already gone");
+}
+
+#[test]
+fn notebook_rename_carries_the_active_pointer() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::notebook_add(&paths, "work", None).unwrap();
+
+    cmd::notebook_rename(&paths, cmd::DEFAULT_NOTEBOOK, "personal").unwrap();
+    assert_eq!(cmd::notebook_current(&paths).unwrap(), "personal");
+    assert!(cmd::show(&paths, "alpha").is_ok(), "the notes came along");
+    assert!(!paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).exists());
+
+    // Renaming a notebook that is not active leaves the pointer where it is.
+    cmd::notebook_rename(&paths, "work", "archive").unwrap();
+    assert_eq!(cmd::notebook_current(&paths).unwrap(), "personal");
+
+    assert!(cmd::notebook_rename(&paths, "missing", "x").is_err());
+    assert!(cmd::notebook_rename(&paths, "archive", "personal").is_err());
+}
+
+#[test]
 fn commands_refuse_to_run_before_init() {
     let root = TempRoot::new();
     let paths = root.paths();

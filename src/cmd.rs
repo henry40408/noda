@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::note::{self, Note};
-use crate::notebook::Notebook;
+use crate::notebook::{self, Notebook};
 use crate::paths::Paths;
 use crate::{Error, Result};
 
@@ -251,6 +251,123 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
     let files: Vec<&Path> = changed.iter().map(Path::new).collect();
     notebook.commit(&files, &format!("mv: {} -> {slug}", located.slug))?;
     Ok(summary(&note.id, &slug, &note.tags))
+}
+
+/// Deletes a note. The file goes, but the commit that removed it does not, so
+/// `git revert` brings the note back with its id intact.
+pub fn rm(paths: &Paths, key: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let located = locate(&notebook, key)?;
+
+    std::fs::remove_file(&located.path)?;
+    let mut index = notebook.index()?;
+    index.retain(|(id, _)| *id != located.note.id);
+    notebook.write_index(&index)?;
+    notebook.commit(
+        &[
+            Path::new(&format!("{}.md", located.slug)),
+            Path::new(INDEX_PATH),
+        ],
+        &format!("rm: {}", located.slug),
+    )?;
+
+    Ok(format!(
+        "removed  {}",
+        summary(&located.note.id, &located.slug, &located.note.tags)
+    ))
+}
+
+/// Creates a notebook — a new git repo — optionally pointed at a remote.
+pub fn notebook_add(paths: &Paths, name: &str, remote: Option<&str>) -> Result<String> {
+    std::fs::create_dir_all(paths.notebooks_dir())?;
+    let notebook = Notebook::create(paths, name)?;
+    if let Some(url) = remote {
+        notebook.set_remote(url)?;
+    }
+    Ok(format!(
+        "created notebook `{name}` at {}",
+        notebook.path.display()
+    ))
+}
+
+/// Lists notebooks, marking the active one with `*` and showing any remote.
+pub fn notebook_ls(paths: &Paths) -> Result<String> {
+    let names = Notebook::list(paths)?;
+    if names.is_empty() {
+        return Ok(String::new());
+    }
+    let active = paths.active_notebook().ok();
+    let width = names.iter().map(|n| display_width(n)).max().unwrap_or(0);
+
+    let mut out = String::new();
+    for name in names {
+        let marker = if active.as_deref() == Some(&name) {
+            '*'
+        } else {
+            ' '
+        };
+        let remote = Notebook::open(paths, &name)
+            .ok()
+            .and_then(|notebook| notebook.remote_url())
+            .unwrap_or_default();
+        let line = format!("{marker} {}  {remote}", pad(&name, width));
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Deletes a notebook's local repository. Unlike removing a note this is not a
+/// commit and cannot be undone, so the active notebook is refused outright.
+pub fn notebook_rm(paths: &Paths, name: &str) -> Result<String> {
+    notebook::validate_name(name)?;
+    if !Notebook::exists(paths, name) {
+        return Err(Error::msg(format!("notebook not found: {name}")));
+    }
+    if paths.active_notebook().ok().as_deref() == Some(name) {
+        return Err(Error::msg(format!(
+            "`{name}` is the active notebook — switch with `noda use <name>` first"
+        )));
+    }
+    let dir = paths.notebook_dir(name);
+    std::fs::remove_dir_all(&dir)?;
+    Ok(format!(
+        "removed notebook `{name}` and its history at {}",
+        dir.display()
+    ))
+}
+
+/// Renames a notebook, carrying the active pointer with it.
+pub fn notebook_rename(paths: &Paths, old: &str, new: &str) -> Result<String> {
+    notebook::validate_name(old)?;
+    notebook::validate_name(new)?;
+    if !Notebook::exists(paths, old) {
+        return Err(Error::msg(format!("notebook not found: {old}")));
+    }
+    if paths.notebook_dir(new).exists() {
+        return Err(Error::msg(format!("notebook already exists: {new}")));
+    }
+    std::fs::rename(paths.notebook_dir(old), paths.notebook_dir(new))?;
+    if paths.active_notebook().ok().as_deref() == Some(old) {
+        paths.set_active_notebook(new)?;
+    }
+    Ok(format!("renamed notebook `{old}` to `{new}`"))
+}
+
+/// Sets the active notebook.
+pub fn use_notebook(paths: &Paths, name: &str) -> Result<String> {
+    notebook::validate_name(name)?;
+    if !Notebook::exists(paths, name) {
+        return Err(Error::msg(format!(
+            "notebook not found: {name} — create it with `noda notebook add {name}`"
+        )));
+    }
+    paths.set_active_notebook(name)?;
+    Ok(format!("active notebook: {name}"))
+}
+
+pub fn notebook_current(paths: &Paths) -> Result<String> {
+    paths.active_notebook()
 }
 
 /// A note reference resolved to everything the mutating commands need.

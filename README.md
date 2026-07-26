@@ -4,9 +4,11 @@
 > git repository — versioned, syncable, and yours.
 
 > **Status: in progress (spec-first).** This README is the v1 contract, written *before*
-> implementation, AWS "working-backwards" style. `init`, `add`, `ls`, `show`, `edit`,
-> `mv` and `tag` work today; every other command below is still the target contract,
-> not a shipped feature.
+> implementation, AWS "working-backwards" style. The note commands (`add`, `ls`, `show`,
+> `edit`, `mv`, `tag`, `rm`) and the notebook commands (`init`, `notebook add/ls/rm/rename`,
+> `use`, `notebook current`) work today. Search, history, `config`, and everything that
+> touches the network — `clone`, `remote`, `sync`, `push`, `pull` — are still the target
+> contract, not shipped features.
 > See [docs/PRFAQ.md](docs/PRFAQ.md).
 
 ---
@@ -82,6 +84,10 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
+
+`noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
+repository and its whole history from disk. The active notebook is refused outright; switch
+with `noda use` first.
 
 ### Notes
 
