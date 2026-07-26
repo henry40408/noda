@@ -44,6 +44,34 @@ enum Command {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
         note: String,
     },
+    /// Open a note in $EDITOR; auto-commits on save.
+    Edit {
+        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        note: String,
+    },
+    /// Retitle a note. The slug follows the title; the id is preserved.
+    Mv {
+        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        note: String,
+        /// The new title.
+        new_title: String,
+    },
+    /// Add and remove tags: `noda tag meeting-notes +work -q3`.
+    Tag {
+        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        note: String,
+        /// `+tag` to add, `-tag` to remove; repeat as needed.
+        ///
+        /// Hyphen values are allowed through so `-q3` reaches the command as a
+        /// tag rather than being read as an option.
+        #[arg(
+            required = true,
+            num_args = 1..,
+            allow_hyphen_values = true,
+            value_name = "+TAG|-TAG"
+        )]
+        changes: Vec<String>,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -68,6 +96,9 @@ fn run() -> noda::Result<()> {
         } => cmd::add(&paths, title.as_deref(), content.as_deref(), tags)?,
         Command::Ls { tag, notebook } => cmd::ls(&paths, notebook.as_deref(), tag.as_deref())?,
         Command::Show { note } => cmd::show(&paths, note)?,
+        Command::Edit { note } => cmd::edit(&paths, note)?,
+        Command::Mv { note, new_title } => cmd::mv(&paths, note, new_title)?,
+        Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
     };
     cmd::print(&output)
 }

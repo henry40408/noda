@@ -143,10 +143,16 @@ impl Notebook {
     }
 
     /// Stages `files` (paths relative to the notebook root) and commits them.
+    /// A path that no longer exists is staged as a deletion, so a rename is one
+    /// commit rather than an add followed by a stray leftover.
     pub fn commit(&self, files: &[&Path], message: &str) -> Result<()> {
         let mut index = self.repo.index()?;
         for file in files {
-            index.add_path(file)?;
+            if self.path.join(file).exists() {
+                index.add_path(file)?;
+            } else {
+                index.remove_path(file)?;
+            }
         }
         index.write()?;
         let tree = self.repo.find_tree(index.write_tree()?)?;

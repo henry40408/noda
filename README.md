@@ -4,8 +4,9 @@
 > git repository — versioned, syncable, and yours.
 
 > **Status: in progress (spec-first).** This README is the v1 contract, written *before*
-> implementation, AWS "working-backwards" style. `init`, `add`, `ls` and `show` work
-> today; every other command below is still the target contract, not a shipped feature.
+> implementation, AWS "working-backwards" style. `init`, `add`, `ls`, `show`, `edit`,
+> `mv` and `tag` work today; every other command below is still the target contract,
+> not a shipped feature.
 > See [docs/PRFAQ.md](docs/PRFAQ.md).
 
 ---
@@ -96,6 +97,14 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda search <query>` | Full-text search across the active notebook. |
 
 `<note>` accepts an id (`k3f9`) or a slug (`meeting-notes`), matched exactly.
+
+`noda tag` takes signed tags — `noda tag meeting-notes +q3 -work` adds `q3` and removes
+`work`. Adding a tag a note already has is not an error; it just leaves nothing to commit.
+
+`noda add` and `noda edit` open `$VISUAL`, falling back to `$EDITOR` and then to `vi`.
+`edit` opens the real file, frontmatter included, but refuses to commit an edit that
+breaks the frontmatter or rewrites the id — the file is left as you saved it so you can
+fix it or throw it away with `git checkout`.
 
 ### History (git-backed)
 

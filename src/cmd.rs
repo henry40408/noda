@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::note::{self, Note};
 use crate::notebook::Notebook;
@@ -15,6 +15,9 @@ pub const DEFAULT_NOTEBOOK: &str = "default";
 
 /// Scratch file used when composing a note in `$EDITOR`.
 const EDIT_FILE: &str = "NOTE_EDITMSG.md";
+
+/// Committed `id ↔ slug` lookup, relative to the notebook root.
+const INDEX_PATH: &str = ".noda/index.tsv";
 
 /// Creates the XDG directories, a default notebook, and points `active` at it.
 /// Safe to run more than once.
@@ -70,14 +73,11 @@ pub fn add(
     index.push((note.id.clone(), slug.clone()));
     notebook.write_index(&index)?;
     notebook.commit(
-        &[
-            Path::new(&format!("{slug}.md")),
-            Path::new(".noda/index.tsv"),
-        ],
+        &[Path::new(&format!("{slug}.md")), Path::new(INDEX_PATH)],
         &format!("add: {slug}"),
     )?;
 
-    Ok(format!("{}  {}", note.id, slug))
+    Ok(summary(&note.id, &slug, &note.tags))
 }
 
 /// Lists notes as `id  slug  title  tags`, aligned.
@@ -121,6 +121,164 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
 pub fn show(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     Ok(std::fs::read_to_string(notebook.resolve(key)?)?)
+}
+
+/// Applies `+tag` / `-tag` changes to a note and commits the result.
+/// Adding a tag a note already carries, or removing one it lacks, is not an
+/// error — it just leaves nothing to commit.
+pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let located = locate(&notebook, key)?;
+    let mut note = located.note;
+    let before = note.tags.clone();
+
+    for change in changes {
+        if let Some(name) = change.strip_prefix('+') {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(Error::msg("`+` needs a tag name after it"));
+            }
+            if !note.tags.iter().any(|t| t == name) {
+                note.tags.push(name.to_string());
+            }
+        } else if let Some(name) = change.strip_prefix('-') {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(Error::msg("`-` needs a tag name after it"));
+            }
+            note.tags.retain(|t| t != name);
+        } else {
+            return Err(Error::msg(format!(
+                "tags must be given as `+{change}` to add or `-{change}` to remove"
+            )));
+        }
+    }
+
+    if note.tags == before {
+        return Ok(format!(
+            "{}  (no change)",
+            summary(&note.id, &located.slug, &note.tags)
+        ));
+    }
+
+    std::fs::write(&located.path, note.render())?;
+    notebook.commit(
+        &[Path::new(&format!("{}.md", located.slug))],
+        &format!("tag: {}", located.slug),
+    )?;
+    Ok(summary(&note.id, &located.slug, &note.tags))
+}
+
+/// Opens a note in `$EDITOR` and commits whatever was saved.
+pub fn edit(paths: &Paths, key: &str) -> Result<String> {
+    edit_with(paths, key, &configured_editor())
+}
+
+/// `edit`, with the editor given explicitly. Exists so tests can drive the
+/// command without mutating process-wide environment variables.
+pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let located = locate(&notebook, key)?;
+    let before = std::fs::read_to_string(&located.path)?;
+
+    run_editor(editor, &located.path)?;
+
+    let after = std::fs::read_to_string(&located.path)?;
+    if after == before {
+        return Ok(format!("{}  (unchanged)", located.slug));
+    }
+
+    // The file is left exactly as it was saved: a rejected edit stays on disk to
+    // be fixed or thrown away with `git checkout`, never silently discarded.
+    let edited = Note::parse(&after).map_err(|e| {
+        Error::msg(format!(
+            "{}: {e}\nthe file was left as you saved it and was not committed",
+            located.path.display()
+        ))
+    })?;
+    if edited.id != located.note.id {
+        return Err(Error::msg(format!(
+            "{}: the id changed from {} to {} — ids are permanent; \
+             the file was left as you saved it and was not committed",
+            located.path.display(),
+            located.note.id,
+            edited.id
+        )));
+    }
+
+    notebook.commit(
+        &[Path::new(&format!("{}.md", located.slug))],
+        &format!("edit: {}", located.slug),
+    )?;
+    Ok(summary(&edited.id, &located.slug, &edited.tags))
+}
+
+/// Retitles a note. The slug follows the new title; the id never moves.
+pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let located = locate(&notebook, key)?;
+    let mut note = located.note;
+
+    let title = new_title.trim();
+    if title.is_empty() {
+        return Err(Error::msg("a note needs a title"));
+    }
+
+    let base = note::slugify(title);
+    let slug = if base == located.slug {
+        located.slug.clone()
+    } else {
+        unique_slug(&notebook, &base)
+    };
+    note.title = title.to_string();
+
+    std::fs::write(notebook.note_path(&slug), note.render())?;
+    let mut changed = vec![format!("{slug}.md")];
+    if slug != located.slug {
+        std::fs::remove_file(&located.path)?;
+        changed.push(format!("{}.md", located.slug));
+
+        let mut index = notebook.index()?;
+        for (id, entry) in index.iter_mut() {
+            if *id == note.id {
+                *entry = slug.clone();
+            }
+        }
+        notebook.write_index(&index)?;
+        changed.push(INDEX_PATH.to_string());
+    }
+
+    let files: Vec<&Path> = changed.iter().map(Path::new).collect();
+    notebook.commit(&files, &format!("mv: {} -> {slug}", located.slug))?;
+    Ok(summary(&note.id, &slug, &note.tags))
+}
+
+/// A note reference resolved to everything the mutating commands need.
+struct Located {
+    slug: String,
+    path: PathBuf,
+    note: Note,
+}
+
+fn locate(notebook: &Notebook, key: &str) -> Result<Located> {
+    let path = notebook.resolve(key)?;
+    let slug = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| Error::msg(format!("unreadable note filename: {}", path.display())))?
+        .to_string();
+    let note = Note::parse(&std::fs::read_to_string(&path)?)
+        .map_err(|e| Error::msg(format!("{}: {e}", path.display())))?;
+    Ok(Located { slug, path, note })
+}
+
+/// The one-line acknowledgement every mutating command prints.
+fn summary(id: &str, slug: &str, tags: &[String]) -> String {
+    if tags.is_empty() {
+        format!("{id}  {slug}")
+    } else {
+        format!("{id}  {slug}  [{}]", tags.join(", "))
+    }
 }
 
 /// Terminal columns a string occupies. East Asian Wide and Fullwidth characters
@@ -176,18 +334,35 @@ fn unique_slug(notebook: &Notebook, base: &str) -> String {
     unreachable!("the range is unbounded")
 }
 
-/// Opens `$VISUAL`/`$EDITOR` on a scratch file and returns what was written.
-/// The buffer lives in the cache dir, never in the notebook, so an abandoned
-/// edit can't leave a stray file in the repo.
-fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
-    let editor = std::env::var("VISUAL")
+fn configured_editor() -> String {
+    std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_string());
+        .unwrap_or_else(|_| "vi".to_string())
+}
+
+/// Runs `editor` on `path`, treating a non-zero exit as an aborted edit.
+fn run_editor(editor: &str, path: &Path) -> Result<()> {
     let mut parts = editor.split_whitespace();
     let program = parts
         .next()
         .ok_or_else(|| Error::msg("$EDITOR is set but empty"))?;
+    let status = std::process::Command::new(program)
+        .args(parts)
+        .arg(path)
+        .status()
+        .map_err(|e| Error::msg(format!("could not start editor `{program}`: {e}")))?;
+    if !status.success() {
+        return Err(Error::msg(format!(
+            "editor `{program}` exited with {status}"
+        )));
+    }
+    Ok(())
+}
 
+/// Opens `$EDITOR` on a scratch file and returns what was written. The buffer
+/// lives in the cache dir, never in the notebook, so an abandoned edit can't
+/// leave a stray file in the repo.
+fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
     std::fs::create_dir_all(paths.cache_dir())?;
     let scratch = paths.cache_dir().join(EDIT_FILE);
     let template = match title {
@@ -196,16 +371,7 @@ fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
     };
     std::fs::write(&scratch, &template)?;
 
-    let status = std::process::Command::new(program)
-        .args(parts)
-        .arg(&scratch)
-        .status()
-        .map_err(|e| Error::msg(format!("could not start editor `{program}`: {e}")))?;
-    if !status.success() {
-        return Err(Error::msg(format!(
-            "editor `{program}` exited with {status}"
-        )));
-    }
+    run_editor(&configured_editor(), &scratch)?;
 
     let body = std::fs::read_to_string(&scratch)?;
     let _ = std::fs::remove_file(&scratch);
@@ -251,5 +417,14 @@ mod tests {
             Some("Deep Work".into())
         );
         assert_eq!(derive_title("   \n\n"), None);
+    }
+
+    #[test]
+    fn summary_omits_empty_tags() {
+        assert_eq!(summary("k3f9", "notes", &[]), "k3f9  notes");
+        assert_eq!(
+            summary("k3f9", "notes", &["work".into(), "q3".into()]),
+            "k3f9  notes  [work, q3]"
+        );
     }
 }
