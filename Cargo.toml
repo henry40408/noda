@@ -4,7 +4,22 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+# Cold start dominates every quick `noda ls`, and it scales with how much of the
+# binary has to be paged in. Vendoring libgit2/OpenSSL makes that binary large, so
+# the release profile is tuned for size: measured with scripts/bench-coldstart.sh.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
 [dependencies]
+# 兩者已經因為 clap 在依賴樹裡，直接用不增加供應鏈面積。
+# anstream 負責偵測終端機、遵守 NO_COLOR，並在輸出被導向管線或檔案時剝掉跳脫碼，
+# 所以 `noda show` 送出去的位元組永遠等於檔案本身。
+anstream = "1.0.0"
+anstyle = "1.0.14"
+clap = { version = "4.6.2", features = ["derive"] }
 # 傳輸永遠內建：GitHub/GitLab 必走 HTTPS/SSH，不做成 feature 開關。
 # vendored-*：libgit2 / openssl 全部從源碼編入，換來單一靜態執行檔 + 乾淨跨編（musl/arm64）。
 git2 = { version = "0.21.0", default-features = false, features = [
@@ -13,3 +28,57 @@ git2 = { version = "0.21.0", default-features = false, features = [
     "ssh",
     "vendored-openssl",
 ] }
+toml_edit = "0.25.13"
+
+# Lints encoded in-manifest so `cargo build`/`cargo clippy` and IDEs apply them
+# without extra flags (CI additionally runs `clippy --all-targets -- -D warnings`,
+# which promotes every one of these warnings to a hard error). Kept 1:1 with the
+# sibling `pingward` project's curated set so both repos enforce the same rules.
+# Self-maintained lint set (originally seeded from Embark Studios' rust-ecosystem
+# list). The bulk of the old itemised pedantic lints are now covered by the
+# `pedantic` group; only the noisy/low-signal ones are opted back out, plus the
+# restriction and nursery lints that have no safe umbrella group.
+[lints.rust]
+unexpected_cfgs = "deny"
+unsafe_code = "deny"
+
+[lints.clippy]
+# Groups (priority -1 so the individual entries below win).
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Opt out of the noisy / low-signal pedantic lints.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+duration_suboptimal_units = "allow"
+items_after_statements = "allow"
+many_single_char_names = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
+too_many_lines = "allow"
+
+# Restriction lints (no safe umbrella group — kept itemised).
+dbg_macro = "warn"
+exit = "warn"
+float_cmp_const = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+mem_forget = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+string_add = "warn"
+todo = "warn"
+unimplemented = "warn"
+verbose_file_reads = "warn"
+
+# Nursery picks (the nursery group as a whole is too unstable to enable).
+debug_assert_with_mut_call = "warn"
+fallible_impl_from = "warn"
+trait_duplication_in_bounds = "warn"
