@@ -167,7 +167,25 @@ notebook directory.
 
 | Command | Description |
 | --- | --- |
-| `noda config` | Show/edit config (editor, author, default notebook). |
+| `noda config` | Show every setting, its value, and where that value came from. |
+| `noda config <key>` | Print one setting's effective value. |
+| `noda config <key> <value>` | Set it. |
+| `noda config <key> --unset` | Remove it, going back to the default. |
+| `noda config --edit` | Open `config.toml` in the editor. |
+
+There are three settings, and `noda init` leaves a `config.toml` with all of them commented
+out so you can see what there is to change.
+
+| Setting | What it does | Where it looks first |
+| --- | --- | --- |
+| `editor` | Editor for `add` and `edit`. | `config.toml`, `$VISUAL`, `$EDITOR`, `vi` |
+| `author` | Who commits, as `Name <email>`. | `config.toml`, your git config, `noda <noda@localhost>` |
+| `notebook` | Which notebook `init` creates, and which one stands in when none is active. | `config.toml`, `default` |
+
+The config file beats `$VISUAL` and `$EDITOR`, the way git's `core.editor` does: the
+environment is a blanket default for every program you use, while `config.toml` is a
+decision about this one. `noda config <key> <value>` writes through a real TOML editor, so
+the comments and layout you put in the file survive it.
 
 ### Output
 
@@ -203,6 +221,7 @@ $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 
 $XDG_STATE_HOME/noda/           (default ~/.local/state/noda/)
 └── active                      # name of the currently active notebook
+                                # (losing it falls back to config's `notebook`)
 
 $XDG_CACHE_HOME/noda/           (default ~/.cache/noda/)
 └── NOTE_EDITMSG.md             # scratch buffer while a note is open in $EDITOR

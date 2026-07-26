@@ -28,3 +28,4 @@ git2 = { version = "0.21.0", default-features = false, features = [
     "ssh",
     "vendored-openssl",
 ] }
+toml_edit = "0.25.13"

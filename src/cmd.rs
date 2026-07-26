@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::config::{self, Config};
 use crate::note::{self, Note};
 use crate::notebook::{self, Notebook};
 use crate::paths::Paths;
@@ -12,8 +13,8 @@ use crate::remote;
 use crate::style;
 use crate::{Error, Result};
 
-/// Name of the notebook `noda init` creates.
-pub const DEFAULT_NOTEBOOK: &str = "default";
+/// Name of the notebook `noda init` creates when config does not say otherwise.
+pub const DEFAULT_NOTEBOOK: &str = config::DEFAULT_NOTEBOOK;
 
 /// Scratch file used when composing a note in `$EDITOR`.
 const EDIT_FILE: &str = "NOTE_EDITMSG.md";
@@ -26,20 +27,139 @@ const INDEX_PATH: &str = ".noda/index.tsv";
 pub fn init(paths: &Paths) -> Result<String> {
     paths.create_dirs()?;
     let mut lines = Vec::new();
-    if Notebook::exists(paths, DEFAULT_NOTEBOOK) {
-        lines.push(format!("notebook `{DEFAULT_NOTEBOOK}` already exists"));
-    } else {
-        let notebook = Notebook::create(paths, DEFAULT_NOTEBOOK)?;
+
+    // A config full of commented-out defaults changes nothing, but it is the
+    // only way anyone finds out what can be set.
+    if Config::write_template(paths)? {
         lines.push(format!(
-            "created notebook `{DEFAULT_NOTEBOOK}` at {}",
+            "wrote {}",
+            paths.config_dir().join("config.toml").display()
+        ));
+    }
+
+    let name = Config::load(paths)?
+        .get("notebook")
+        .unwrap_or(DEFAULT_NOTEBOOK)
+        .to_string();
+    if Notebook::exists(paths, &name) {
+        lines.push(format!("notebook `{name}` already exists"));
+    } else {
+        let notebook = Notebook::create(paths, &name)?;
+        lines.push(format!(
+            "created notebook `{name}` at {}",
             notebook.path.display()
         ));
     }
     if paths.active_notebook().is_err() {
-        paths.set_active_notebook(DEFAULT_NOTEBOOK)?;
-        lines.push(format!("active notebook: {DEFAULT_NOTEBOOK}"));
+        paths.set_active_notebook(&name)?;
+        lines.push(format!("active notebook: {name}"));
     }
     Ok(lines.join("\n"))
+}
+
+/// Shows every setting, its effective value, and where that value came from —
+/// which is the question people actually have when an editor is not the one
+/// they expected.
+pub fn config_show(paths: &Paths) -> Result<String> {
+    let config = Config::load(paths)?;
+    let rows = effective(paths, &config)?;
+
+    let key_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
+    let value_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
+    let mut out = String::new();
+    for (key, value, source) in rows {
+        out.push_str(&format!(
+            "{}  {}  {}\n",
+            pad(&key, key_width),
+            pad(&value, value_width),
+            style::paint(style::MUTED, &format!("({})", source.label()))
+        ));
+    }
+    Ok(out)
+}
+
+/// One setting's effective value, unadorned so it can be read by a script.
+pub fn config_get(paths: &Paths, key: &str) -> Result<String> {
+    config::validate_key(key)?;
+    let config = Config::load(paths)?;
+    Ok(effective(paths, &config)?
+        .into_iter()
+        .find(|(name, _, _)| name == key)
+        .map(|(_, value, _)| value)
+        .unwrap_or_default())
+}
+
+pub fn config_set(paths: &Paths, key: &str, value: &str) -> Result<String> {
+    let mut config = Config::load(paths)?;
+    config.set(key, value)?;
+    Ok(format!("{key}  {value}"))
+}
+
+pub fn config_unset(paths: &Paths, key: &str) -> Result<String> {
+    let mut config = Config::load(paths)?;
+    if !config.unset(key)? {
+        return Ok(format!("{key}  (was not set)"));
+    }
+    let now = effective(paths, &config)?
+        .into_iter()
+        .find(|(name, _, _)| name == key);
+    match now {
+        Some((_, value, source)) => Ok(format!("{key}  {value}  (now from {})", source.label())),
+        None => Ok(format!("{key}  unset")),
+    }
+}
+
+/// Opens `config.toml` in the editor, writing the starter template first if the
+/// file is not there — nobody wants to be dropped into an empty buffer.
+pub fn config_edit(paths: &Paths) -> Result<String> {
+    Config::write_template(paths)?;
+    let path = paths.config_dir().join("config.toml");
+    run_editor(&configured_editor(paths), &path)?;
+    // Reading it back turns a typo into an error now rather than at the next
+    // command, when the connection to this edit would be lost.
+    Config::load(paths)?;
+    Ok(format!("{}", path.display()))
+}
+
+/// Every setting as it currently resolves.
+fn effective(paths: &Paths, config: &Config) -> Result<Vec<(String, String, config::Source)>> {
+    let (editor, editor_source) = config::editor(
+        config.get("editor"),
+        std::env::var("VISUAL").ok(),
+        std::env::var("EDITOR").ok(),
+    );
+    let (author, author_source) = author(paths, config);
+    let (notebook, notebook_source) = match config.get("notebook") {
+        Some(name) => (name.to_string(), config::Source::File),
+        None => (DEFAULT_NOTEBOOK.to_string(), config::Source::Default),
+    };
+    Ok(vec![
+        ("editor".to_string(), editor, editor_source),
+        ("author".to_string(), author, author_source),
+        ("notebook".to_string(), notebook, notebook_source),
+    ])
+}
+
+/// The identity commits are made under, and where it came from.
+fn author(paths: &Paths, config: &Config) -> (String, config::Source) {
+    if let Some(author) = config.get("author") {
+        return (author.to_string(), config::Source::File);
+    }
+    // The notebook's own repo config, then the user's global one — whatever git
+    // itself would use, asked in the same order.
+    let from_git = Notebook::open_active(paths)
+        .ok()
+        .and_then(|notebook| notebook.git_author())
+        .or_else(|| {
+            let git = git2::Config::open_default().ok()?;
+            let name = git.get_string("user.name").ok()?;
+            let email = git.get_string("user.email").ok()?;
+            Some(format!("{name} <{email}>"))
+        });
+    match from_git {
+        Some(author) => (author, config::Source::Git),
+        None => ("noda <noda@localhost>".to_string(), config::Source::Default),
+    }
 }
 
 /// Creates a note and commits it. `content` of `None` opens `$EDITOR`.
@@ -86,7 +206,7 @@ pub fn add(
 pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<String> {
     let name = match notebook {
         Some(name) => name.to_string(),
-        None => paths.active_notebook()?,
+        None => notebook::active_name(paths)?,
     };
     let notebook = Notebook::open(paths, &name)?;
 
@@ -192,7 +312,7 @@ pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
 
 /// Opens a note in `$EDITOR` and commits whatever was saved.
 pub fn edit(paths: &Paths, key: &str) -> Result<String> {
-    edit_with(paths, key, &configured_editor())
+    edit_with(paths, key, &configured_editor(paths))
 }
 
 /// `edit`, with the editor given explicitly. Exists so tests can drive the
@@ -317,7 +437,7 @@ pub fn notebook_ls(paths: &Paths) -> Result<String> {
     if names.is_empty() {
         return Ok(String::new());
     }
-    let active = paths.active_notebook().ok();
+    let active = notebook::active_name(paths).ok();
     let width = names.iter().map(|n| display_width(n)).max().unwrap_or(0);
 
     let mut out = String::new();
@@ -357,7 +477,7 @@ pub fn notebook_rm_confirmed(
     if !Notebook::exists(paths, name) {
         return Err(Error::msg(format!("notebook not found: {name}")));
     }
-    if paths.active_notebook().ok().as_deref() == Some(name) {
+    if notebook::active_name(paths).ok().as_deref() == Some(name) {
         return Err(Error::msg(format!(
             "`{name}` is the active notebook — switch with `noda use <name>` first"
         )));
@@ -421,7 +541,7 @@ pub fn notebook_rename(paths: &Paths, old: &str, new: &str) -> Result<String> {
         return Err(Error::msg(format!("notebook already exists: {new}")));
     }
     std::fs::rename(paths.notebook_dir(old), paths.notebook_dir(new))?;
-    if paths.active_notebook().ok().as_deref() == Some(old) {
+    if notebook::active_name(paths).ok().as_deref() == Some(old) {
         paths.set_active_notebook(new)?;
     }
     Ok(format!("renamed notebook `{old}` to `{new}`"))
@@ -762,7 +882,7 @@ pub fn use_notebook(paths: &Paths, name: &str) -> Result<String> {
 }
 
 pub fn notebook_current(paths: &Paths) -> Result<String> {
-    paths.active_notebook()
+    notebook::active_name(paths)
 }
 
 /// A note reference resolved to everything the mutating commands need.
@@ -882,10 +1002,16 @@ fn unique_slug(notebook: &Notebook, base: &str) -> String {
     unreachable!("the range is unbounded")
 }
 
-fn configured_editor() -> String {
-    std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_string())
+fn configured_editor(paths: &Paths) -> String {
+    let configured = Config::load(paths)
+        .ok()
+        .and_then(|config| config.get("editor").map(str::to_string));
+    config::editor(
+        configured.as_deref(),
+        std::env::var("VISUAL").ok(),
+        std::env::var("EDITOR").ok(),
+    )
+    .0
 }
 
 /// Runs `editor` on `path`, treating a non-zero exit as an aborted edit.
@@ -919,7 +1045,7 @@ fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
     };
     std::fs::write(&scratch, &template)?;
 
-    run_editor(&configured_editor(), &scratch)?;
+    run_editor(&configured_editor(paths), &scratch)?;
 
     let body = std::fs::read_to_string(&scratch)?;
     let _ = std::fs::remove_file(&scratch);

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use git2::{Repository, Signature};
 
+use crate::config::{self, Config};
 use crate::note::{self, Note};
 use crate::paths::Paths;
 use crate::remote;
@@ -21,6 +22,9 @@ pub struct Notebook {
     pub name: String,
     pub path: PathBuf,
     repo: Repository,
+    /// Who to commit as, when `config.toml` says. Resolved on open, because a
+    /// notebook is opened once per command and read many times.
+    author: Option<(String, String)>,
 }
 
 /// One commit, as `noda log` reports it.
@@ -53,6 +57,7 @@ impl Notebook {
             name: name.to_string(),
             path,
             repo,
+            author: configured_author(paths),
         };
         notebook.write_index(&[])?;
         notebook.commit(&[Path::new(INDEX_FILE)], "chore: initialize notebook")?;
@@ -72,11 +77,23 @@ impl Notebook {
             name: name.to_string(),
             path,
             repo,
+            author: configured_author(paths),
         })
     }
 
     pub fn open_active(paths: &Paths) -> Result<Self> {
-        Notebook::open(paths, &paths.active_notebook()?)
+        Notebook::open(paths, &active_name(paths)?)
+    }
+
+    /// The identity git itself would use here — the repo's config, then the
+    /// user's global one, exactly as git resolves it.
+    pub fn git_author(&self) -> Option<String> {
+        let signature = self.repo.signature().ok()?;
+        Some(format!(
+            "{} <{}>",
+            signature.name().ok()?,
+            signature.email().ok()?
+        ))
     }
 
     pub fn exists(paths: &Paths, name: &str) -> bool {
@@ -276,6 +293,7 @@ impl Notebook {
             name: name.to_string(),
             path,
             repo,
+            author: configured_author(paths),
         };
         if let Err(e) = notebook.adopt_remote_branch() {
             let path = notebook.path.clone();
@@ -667,13 +685,45 @@ impl Notebook {
         Ok(())
     }
 
-    /// The user's git identity, or a neutral one when git is unconfigured.
+    /// Who the commit is by: `config.toml` first, then whatever git would use,
+    /// and a neutral identity when git is unconfigured.
     fn signature(&self) -> Result<Signature<'static>> {
+        if let Some((name, email)) = &self.author {
+            return Ok(Signature::now(name, email)?);
+        }
         match self.repo.signature() {
             Ok(sig) => Ok(sig),
             Err(_) => Ok(Signature::now("noda", "noda@localhost")?),
         }
     }
+}
+
+/// The notebook every command acts on by default. When the state pointer is
+/// missing — a wiped state directory, a fresh machine, a notebook restored from
+/// backup — the configured default stands in for it: state records where you
+/// are, config records where you belong. Resolved in one place because `ls`,
+/// `notebook rm` and the note commands must all agree on the answer.
+pub fn active_name(paths: &Paths) -> Result<String> {
+    match paths.active_notebook() {
+        Ok(name) => Ok(name),
+        Err(missing) => {
+            let fallback = Config::load(paths)
+                .ok()
+                .and_then(|config| config.get("notebook").map(str::to_string))
+                .unwrap_or_else(|| config::DEFAULT_NOTEBOOK.to_string());
+            if !Notebook::exists(paths, &fallback) {
+                return Err(missing);
+            }
+            Ok(fallback)
+        }
+    }
+}
+
+/// The author `config.toml` asks for, if it holds a usable one. A malformed
+/// value is left to `noda config` to complain about — a commit is not the place
+/// to discover it.
+fn configured_author(paths: &Paths) -> Option<(String, String)> {
+    config::author_parts(Config::load(paths).ok()?.get("author")?)
 }
 
 /// A refused push, phrased as the next thing to do about it.

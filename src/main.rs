@@ -87,6 +87,19 @@ enum Command {
         /// Anything git accepts: an id, an abbreviated id, `HEAD~3`, a tag.
         commit: String,
     },
+    /// Show or change settings: editor, author, notebook.
+    Config {
+        /// Setting to read or write. Omit to show every setting.
+        key: Option<String>,
+        /// New value. Omit to read the setting instead of writing it.
+        value: Option<String>,
+        /// Remove the setting, going back to the default.
+        #[arg(long, requires = "key", conflicts_with = "value")]
+        unset: bool,
+        /// Open config.toml in the editor.
+        #[arg(long, conflicts_with_all = ["key", "unset"])]
+        edit: bool,
+    },
     /// Manage notebooks.
     Notebook {
         #[command(subcommand)]
@@ -209,6 +222,18 @@ fn run() -> noda::Result<()> {
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
         Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,
+        Command::Config {
+            key,
+            value,
+            unset,
+            edit,
+        } => match (edit, key.as_deref(), value.as_deref(), unset) {
+            (true, ..) => cmd::config_edit(&paths)?,
+            (_, Some(key), _, true) => cmd::config_unset(&paths, key)?,
+            (_, Some(key), Some(value), _) => cmd::config_set(&paths, key, value)?,
+            (_, Some(key), None, _) => cmd::config_get(&paths, key)?,
+            (_, None, ..) => cmd::config_show(&paths)?,
+        },
         Command::Use { name } => cmd::use_notebook(&paths, name)?,
         Command::Notebook { command } => match command {
             NotebookCommand::Add { name, remote } => {

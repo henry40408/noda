@@ -5,6 +5,7 @@
 //! and the commands can be tested without spawning a process.
 
 pub mod cmd;
+pub mod config;
 pub mod error;
 pub mod note;
 pub mod notebook;

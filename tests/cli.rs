@@ -1182,6 +1182,161 @@ fn restore_reports_what_it_cannot_find() {
     assert!(cmd::restore(&paths, "missing", "HEAD").is_err());
 }
 
+fn config_file(paths: &Paths) -> PathBuf {
+    paths.config_dir().join("config.toml")
+}
+
+#[test]
+fn init_leaves_a_starter_config_that_changes_nothing() {
+    let (_root, paths) = initialized();
+
+    let text = std::fs::read_to_string(config_file(&paths)).expect("config written");
+    assert!(text.contains("# editor ="), "{text}");
+    assert!(text.contains("# author ="), "{text}");
+    assert!(text.contains("# notebook ="), "{text}");
+    assert!(
+        text.lines()
+            .all(|line| line.trim().is_empty() || line.trim_start().starts_with('#')),
+        "everything is commented out, so the defaults still apply: {text}"
+    );
+
+    // Which means every setting still reports itself as a default.
+    let shown = plain(&cmd::config_show(&paths).unwrap());
+    assert_eq!(shown.lines().count(), 3, "{shown}");
+    assert!(shown.contains("notebook  default"), "{shown}");
+
+    // And a second init does not overwrite what the user has since written.
+    std::fs::write(config_file(&paths), "editor = \"nvim\"\n").unwrap();
+    cmd::init(&paths).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(config_file(&paths)).unwrap(),
+        "editor = \"nvim\"\n"
+    );
+}
+
+#[test]
+fn config_set_and_get_round_trip_and_report_their_source() {
+    let (_root, paths) = initialized();
+
+    cmd::config_set(&paths, "editor", "nvim").unwrap();
+    assert_eq!(cmd::config_get(&paths, "editor").unwrap(), "nvim");
+
+    let shown = plain(&cmd::config_show(&paths).unwrap());
+    assert!(shown.contains("editor    nvim"), "{shown}");
+    assert!(shown.contains("(config.toml)"), "{shown}");
+
+    // Unsetting drops back to the environment or the built-in. What that value
+    // is depends on the machine running the tests, so the check is on where the
+    // value now comes from, not on what it is.
+    let out = cmd::config_unset(&paths, "editor").unwrap();
+    assert!(out.contains("now from"), "{out}");
+    let shown = plain(&cmd::config_show(&paths).unwrap());
+    let row = shown
+        .lines()
+        .find(|line| line.starts_with("editor"))
+        .unwrap();
+    assert!(!row.contains("(config.toml)"), "{shown}");
+    assert!(
+        cmd::config_unset(&paths, "editor")
+            .unwrap()
+            .contains("was not set")
+    );
+}
+
+#[test]
+fn the_first_setting_written_lands_under_the_header_not_above_it() {
+    let (_root, paths) = initialized();
+    cmd::config_set(&paths, "editor", "helix").unwrap();
+
+    let text = std::fs::read_to_string(config_file(&paths)).unwrap();
+    let header = text.find("# noda configuration").expect("header kept");
+    let setting = text.find("editor = \"helix\"").expect("setting written");
+    assert!(
+        header < setting,
+        "a config that reads back to front is worse than no comments: {text}"
+    );
+}
+
+#[test]
+fn config_set_keeps_the_comments_around_it() {
+    let (_root, paths) = initialized();
+    std::fs::write(
+        config_file(&paths),
+        "# my notes identity, not my work one\nauthor = \"Someone <s@example.com>\"\n\n# the editor I like\neditor = \"helix\"\n",
+    )
+    .unwrap();
+
+    cmd::config_set(&paths, "editor", "nvim").unwrap();
+
+    let text = std::fs::read_to_string(config_file(&paths)).unwrap();
+    assert!(
+        text.contains("# my notes identity, not my work one"),
+        "{text}"
+    );
+    assert!(text.contains("# the editor I like"), "{text}");
+    assert!(text.contains("editor = \"nvim\""), "{text}");
+    assert!(
+        text.contains("author = \"Someone <s@example.com>\""),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_configured_author_is_who_commits() {
+    let (_root, paths) = initialized();
+    cmd::config_set(&paths, "author", "Note Taker <notes@example.com>").unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let repo = git2::Repository::open(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head.author().name(), Ok("Note Taker"));
+    assert_eq!(head.author().email(), Ok("notes@example.com"));
+
+    assert!(plain(&cmd::config_show(&paths).unwrap()).contains("Note Taker <notes@example.com>"));
+}
+
+#[test]
+fn config_refuses_what_it_cannot_act_on() {
+    let (_root, paths) = initialized();
+
+    let err = cmd::config_set(&paths, "editr", "nvim")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("editor, author, notebook"), "{err}");
+    assert!(cmd::config_get(&paths, "editr").is_err());
+
+    // Half an identity is not an identity: it would end up in every commit.
+    let err = cmd::config_set(&paths, "author", "just-a-name")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Name <email>"), "{err}");
+
+    // A file that is not TOML is reported against its path, not swallowed.
+    std::fs::write(config_file(&paths), "editor = = nvim\n").unwrap();
+    let err = cmd::config_show(&paths).unwrap_err().to_string();
+    assert!(err.contains("config.toml"), "{err}");
+}
+
+#[test]
+fn the_configured_notebook_is_what_init_creates_and_what_stands_in() {
+    let root = TempRoot::new();
+    let paths = root.paths();
+    std::fs::create_dir_all(paths.config_dir()).unwrap();
+    std::fs::write(config_file(&paths), "notebook = \"work\"\n").unwrap();
+
+    cmd::init(&paths).unwrap();
+    assert!(paths.notebook_dir("work").join(".git").is_dir());
+    assert!(!paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).exists());
+    assert_eq!(cmd::notebook_current(&paths).unwrap(), "work");
+
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    // State is "where am I now" and can be thrown away; config is "where I
+    // belong", so losing the pointer must not lose the notebook.
+    std::fs::remove_file(paths.active_file()).unwrap();
+    assert!(cmd::ls(&paths, None, None).unwrap().contains("alpha"));
+}
+
 #[test]
 fn commands_refuse_to_run_before_init() {
     let root = TempRoot::new();
