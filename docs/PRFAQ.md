@@ -38,9 +38,10 @@ remotes.
 "Git already solved durable, syncable, versioned text. noda is just the smallest possible
 layer that makes git feel like a notebook."
 
-noda ships as a single self-contained binary for macOS (Apple Silicon & Intel) and Linux
-(x86_64 & arm64, statically linked musl). Install with `cargo install noda`,
-`brew install noda`, or download a prebuilt binary. It is open source.
+noda builds to a single self-contained binary — statically linked musl on Linux, native on
+macOS — and is distributed as a container image on `ghcr.io` for `linux/amd64` and
+`linux/arm64`. Anywhere else, `cargo build --release` produces the same one file. It is
+open source.
 
 ---
 
@@ -114,6 +115,15 @@ the writer must keep tabs and newlines out of the fields, which stays cheap as t
 grows to carry titles because the index is derived data, and a rebuild is always available.
 Interchange is a separate concern from storage; if noda ever needs to hand this data to
 another tool, that is an output format on `ls`, not a change to what sits in the repo.
+
+**Q: Why is the container image the only distribution channel?**
+Because it is the only one that can be kept honest. crates.io and Homebrew are promises to
+keep publishing — a formula to maintain, a version to bump, a name to defend — and the
+earlier draft of this document made all three before any of them existed. The image is
+built by the same workflow that already cross-compiles the binary, so distribution costs
+nothing beyond the push, and there is no channel that can quietly go stale. Anyone who
+wants the binary itself still gets it from `cargo build --release`; running a CLI through
+a container is a real inconvenience, and one an alias absorbs.
 
 **Q: Why does `search` have no index?**
 Measured on 5000 notes totalling 12.4 MiB: `noda search` takes 68 ms for a term almost
