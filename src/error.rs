@@ -17,6 +17,14 @@ impl Error {
     pub fn msg(text: impl Into<String>) -> Self {
         Error::Msg(text.into())
     }
+
+    /// Whether this is just the reader going away — `noda log | head`, or
+    /// quitting a pager before the end. Rust leaves `SIGPIPE` ignored, so the
+    /// write comes back as an error instead of ending the process; nothing is
+    /// wrong and there is nobody left to tell.
+    pub fn is_broken_pipe(&self) -> bool {
+        matches!(self, Error::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe)
+    }
 }
 
 impl fmt::Display for Error {
@@ -48,5 +56,20 @@ impl From<std::io::Error> for Error {
 impl From<git2::Error> for Error {
     fn from(e: git2::Error) -> Self {
         Error::Git(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_closed_reader_is_not_a_failure_worth_reporting() {
+        let closed = Error::Io(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        assert!(closed.is_broken_pipe());
+
+        let denied = Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(!denied.is_broken_pipe());
+        assert!(!Error::msg("no").is_broken_pipe());
     }
 }

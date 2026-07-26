@@ -152,6 +152,10 @@ enum RemoteCommand {
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        // `noda log | head` closes the pipe on us. That is the pipeline working,
+        // not a failure: leave quietly rather than shouting at a reader that has
+        // already gone.
+        Err(e) if e.is_broken_pipe() => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("noda: {e}");
             std::process::ExitCode::FAILURE
