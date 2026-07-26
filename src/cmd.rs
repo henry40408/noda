@@ -9,6 +9,7 @@ use crate::note::{self, Note};
 use crate::notebook::{self, Notebook};
 use crate::paths::Paths;
 use crate::remote;
+use crate::style;
 use crate::{Error, Result};
 
 /// Name of the notebook `noda init` creates.
@@ -121,7 +122,26 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
 /// Prints a note verbatim — frontmatter included, because that is the file.
 pub fn show(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    Ok(std::fs::read_to_string(notebook.resolve(key)?)?)
+    Ok(dim_frontmatter(&std::fs::read_to_string(
+        notebook.resolve(key)?,
+    )?))
+}
+
+/// Pushes the frontmatter into the background so the note itself reads first.
+/// Only the block between the opening `---` lines is touched: the body is the
+/// user's prose, and noda has no business colouring that.
+fn dim_frontmatter(text: &str) -> String {
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return text.to_string();
+    };
+    let Some(end) = rest.find("\n---\n") else {
+        return text.to_string();
+    };
+    format!(
+        "{}\n{}",
+        style::paint(style::MUTED, &format!("---\n{}\n---", &rest[..end])),
+        &rest[end + "\n---\n".len()..]
+    )
 }
 
 /// Applies `+tag` / `-tag` changes to a note and commits the result.
@@ -407,6 +427,138 @@ pub fn notebook_rename(paths: &Paths, old: &str, new: &str) -> Result<String> {
     Ok(format!("renamed notebook `{old}` to `{new}`"))
 }
 
+/// The notebook's history, or one note's.
+pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let id = match key {
+        Some(key) => Some(locate(&notebook, key)?.note.id),
+        None => None,
+    };
+
+    let mut out = String::new();
+    for entry in notebook.log(id.as_deref(), max)? {
+        let line = format!(
+            "{}  {}  {}",
+            style::paint(style::COMMIT, &entry.short_id()),
+            style::paint(
+                style::MUTED,
+                &format_time(entry.seconds, entry.offset_minutes)
+            ),
+            entry.summary
+        );
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Uncommitted changes, or what the last commit changed. The output is a plain
+/// unified diff — no header, nothing wrapped around it — so it stays something
+/// `git apply` will take.
+pub fn diff(paths: &Paths, key: Option<&str>) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let file = match key {
+        Some(key) => Some(format!("{}.md", locate(&notebook, key)?.slug)),
+        None => None,
+    };
+
+    let mut out = String::new();
+    notebook
+        .diff(file.as_deref())?
+        .print(git2::DiffFormat::Patch, |delta, _hunk, line| {
+            // The id ↔ slug index changes on nearly every commit and is derived
+            // from the notes themselves; showing it would bury the note.
+            let generated = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .is_some_and(|path| path.starts_with(notebook::META_DIR));
+            if generated {
+                return true;
+            }
+
+            let text = String::from_utf8_lossy(line.content());
+            let painted = match line.origin() {
+                '+' => style::paint(style::ADDED, &format!("+{text}")),
+                '-' => style::paint(style::REMOVED, &format!("-{text}")),
+                ' ' => format!(" {text}"),
+                'F' => style::paint(style::HEADING, &text),
+                'H' => style::paint(style::HUNK, &text),
+                _ => text.into_owned(),
+            };
+            out.push_str(&painted);
+            true
+        })?;
+    Ok(out)
+}
+
+/// Puts a note back the way it was at `rev`, as a new commit. Nothing is
+/// rewritten: the restore moves history forward like every other change.
+pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let commit = notebook.revision(rev)?;
+
+    // A note that still exists is found the usual way; one that was removed is
+    // looked up in the index as it stood at that commit, so `restore` doubles as
+    // the way back from `noda rm`.
+    let current = match notebook.resolve(key) {
+        Ok(_) => Some(locate(&notebook, key)?),
+        Err(_) => None,
+    };
+    let id = match &current {
+        Some(located) => located.note.id.clone(),
+        None => notebook
+            .id_at(&commit, key)?
+            .ok_or_else(|| Error::msg(format!("note not found at {rev}: {key}")))?,
+    };
+
+    let Some((slug_then, text)) = notebook.note_at(&commit, &id)? else {
+        return Err(Error::msg(format!(
+            "`{key}` did not exist at {rev} — `noda log {key}` shows where it did"
+        )));
+    };
+
+    // The id is the note's identity, so a restored note keeps the name it has
+    // now; only its contents travel back. A note that is gone comes back under
+    // the name it had then.
+    let (slug, path) = match &current {
+        Some(located) => (located.slug.clone(), located.path.clone()),
+        None => {
+            let slug = unique_slug(&notebook, &slug_then);
+            let path = notebook.note_path(&slug);
+            (slug, path)
+        }
+    };
+
+    let restored = Note::parse(&text)
+        .map_err(|e| Error::msg(format!("the copy of `{key}` at {rev} cannot be read: {e}")))?;
+    if current
+        .as_ref()
+        .is_some_and(|located| std::fs::read_to_string(&located.path).ok() == Some(text.clone()))
+    {
+        return Ok(format!(
+            "{}  (no change)",
+            summary(&id, &slug, &restored.tags)
+        ));
+    }
+
+    std::fs::write(&path, &text)?;
+    let mut changed = vec![format!("{slug}.md")];
+    if current.is_none() {
+        let mut index = notebook.index()?;
+        index.push((id.clone(), slug.clone()));
+        notebook.write_index(&index)?;
+        changed.push(INDEX_PATH.to_string());
+    }
+    let files: Vec<&Path> = changed.iter().map(Path::new).collect();
+    notebook.commit(
+        &files,
+        &format!("restore: {slug} to {}", &commit.id().to_string()[..7]),
+    )?;
+
+    Ok(summary(&id, &slug, &restored.tags))
+}
+
 /// Points the active notebook at `url`, replacing any remote already set.
 pub fn remote_set(paths: &Paths, url: &str) -> Result<String> {
     let url = url.trim();
@@ -514,6 +666,42 @@ fn summary(id: &str, slug: &str, tags: &[String]) -> String {
     }
 }
 
+/// `YYYY-MM-DD HH:MM`, in the timezone the commit was made in — the same choice
+/// git makes by default. Absolute rather than "3 days ago": it is testable
+/// without freezing the clock, and it sorts.
+fn format_time(seconds: i64, offset_minutes: i32) -> String {
+    let local = seconds + i64::from(offset_minutes) * 60;
+    let (year, month, day) = civil_from_days(local.div_euclid(86_400));
+    let time = local.rem_euclid(86_400);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        time / 3600,
+        (time % 3600) / 60
+    )
+}
+
+/// Days since the Unix epoch to a calendar date, by Howard Hinnant's
+/// `civil_from_days`. Fifteen lines beats a date dependency for one format.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    // Shift the epoch to 0000-03-01, which puts the leap day at the end of the
+    // year and makes every era exactly 146,097 days.
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_position = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * month_position + 2) / 5 + 1) as u32;
+    let month = if month_position < 10 {
+        month_position + 3
+    } else {
+        month_position - 9
+    } as u32;
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// Terminal columns a string occupies. East Asian Wide and Fullwidth characters
 /// take two cells, so counting `chars()` would leave a CJK slug misaligned in `ls`.
 /// This covers the wide blocks in common use rather than the whole of UAX #11.
@@ -612,11 +800,13 @@ fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
 }
 
 /// Writes command output to stdout, adding a trailing newline only when needed.
+/// Goes through `anstream`, which keeps colour on a terminal and strips it
+/// everywhere else — so a redirected `noda show` writes the file byte for byte.
 pub fn print(output: &str) -> Result<()> {
     if output.is_empty() {
         return Ok(());
     }
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = anstream::stdout().lock();
     stdout.write_all(output.as_bytes())?;
     if !output.ends_with('\n') {
         stdout.write_all(b"\n")?;
@@ -650,6 +840,56 @@ mod tests {
             Some("Deep Work".into())
         );
         assert_eq!(derive_title("   \n\n"), None);
+    }
+
+    #[test]
+    fn dimming_the_frontmatter_changes_nothing_but_the_escapes() {
+        let note = "---\nid: k3f9\ntitle: Alpha\n---\n\nbody, with --- in it\n";
+        let shown = dim_frontmatter(note);
+        assert_ne!(shown, note, "the frontmatter is styled");
+        assert_eq!(strip(&shown), note, "and nothing else moves");
+
+        // A file that is not a note is passed through rather than mangled.
+        assert_eq!(dim_frontmatter("no frontmatter\n"), "no frontmatter\n");
+        assert_eq!(
+            dim_frontmatter("---\nunterminated\n"),
+            "---\nunterminated\n"
+        );
+    }
+
+    /// The text under the escape sequences.
+    fn strip(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' {
+                for escaped in chars.by_ref() {
+                    if escaped == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn timestamps_print_in_the_timezone_the_commit_was_made_in() {
+        // The same instant, written in London and in Taipei.
+        assert_eq!(format_time(1_785_073_605, 0), "2026-07-26 13:46");
+        assert_eq!(format_time(1_785_073_605, 480), "2026-07-26 21:46");
+    }
+
+    #[test]
+    fn the_calendar_holds_at_the_awkward_dates() {
+        assert_eq!(format_time(0, 0), "1970-01-01 00:00");
+        // A leap day in a year divisible by 400, and the second before the epoch.
+        assert_eq!(format_time(951_782_400, 0), "2000-02-29 00:00");
+        assert_eq!(format_time(-1, 0), "1969-12-31 23:59");
+        // A negative offset can push a commit back across midnight.
+        assert_eq!(format_time(1_785_073_605, -840), "2026-07-25 23:46");
     }
 
     #[test]

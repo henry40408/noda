@@ -118,9 +118,25 @@ fix it or throw it away with `git checkout`.
 
 | Command | Description |
 | --- | --- |
-| `noda log [<note>]` | Show commit history for the notebook, or one note. |
+| `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note. |
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
 | `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
+
+`noda log <note>` follows a note across renames, because the committed index records which
+file the note lived in at every commit — no rename guessing involved. Nothing is capped:
+`-n` is there when you want less.
+
+`noda diff` shows uncommitted changes when there are any, and otherwise what the last
+commit changed — noda commits as it goes, so a clean notebook is the normal state and
+"what just happened" is the useful answer. `.noda/index.tsv` is left out of the output;
+it changes on nearly every commit and is rebuildable from the notes. The output is a plain
+unified diff with nothing wrapped around it, so `git apply` will take it.
+
+`<commit>` is anything git accepts: a full or abbreviated id, `HEAD~3`, a tag, a branch.
+A restore is a new commit, never a rewrite, and a note keeps the name it has now — only its
+contents travel back. It also works on a note you removed: `noda restore <slug> HEAD~1`
+brings it back with its id intact, which is the friendly face of "`noda rm` is a commit you
+can revert".
 
 ### Remote sync (HTTPS / SSH)
 
@@ -146,6 +162,17 @@ notebook directory.
 | Command | Description |
 | --- | --- |
 | `noda config` | Show/edit config (editor, author, default notebook). |
+
+### Output
+
+Colour appears on a terminal and nowhere else: redirect or pipe any command and the escape
+sequences are gone, so `noda show meeting-notes > backup.md` writes the file byte for byte.
+`NO_COLOR=1` turns it off everywhere, `CLICOLOR_FORCE=1` keeps it through a pipe. Colour
+marks structure — commit ids, timestamps, diff signs, a note's frontmatter — and never the
+text of a note itself.
+
+There is no built-in pager. `noda log | less -R` is a pager, and quitting it early is
+handled quietly rather than reported as a broken pipe.
 
 ## Storage layout
 

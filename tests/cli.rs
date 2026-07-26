@@ -895,6 +895,196 @@ fn the_network_commands_say_when_no_remote_is_set() {
     assert!(cmd::remote_set(&paths, "  ").is_err(), "a URL is required");
 }
 
+/// Command output carries colour unconditionally — `anstream` strips it on the
+/// way out when nobody is looking. Tests look at the text underneath.
+fn plain(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            for escaped in chars.by_ref() {
+                if escaped == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Commits the working tree the way an edit made outside noda would arrive.
+fn commit_working_tree(paths: &Paths, notebook: &str, message: &str) {
+    noda::notebook::Notebook::open(paths, notebook)
+        .expect("open notebook")
+        .commit_all(message)
+        .expect("commit");
+}
+
+#[test]
+fn log_reports_the_notebook_history_newest_first() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+
+    let out = plain(&cmd::log(&paths, None, None).unwrap());
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(lines[0].ends_with("add: beta"), "{out}");
+    assert!(lines[2].ends_with("chore: initialize notebook"), "{out}");
+
+    let fields: Vec<&str> = lines[0].split("  ").collect();
+    assert_eq!(fields[0].len(), 7, "abbreviated commit id: {out}");
+    assert_eq!(fields[1].len(), 16, "YYYY-MM-DD HH:MM: {out}");
+
+    let limited = cmd::log(&paths, None, Some(1)).unwrap();
+    assert_eq!(limited.lines().count(), 1);
+}
+
+#[test]
+fn log_for_a_note_follows_it_across_a_rename() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
+    cmd::mv(&paths, "alpha", "Renamed").unwrap();
+    // A second note's history must not leak into the first note's.
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+
+    let out = plain(&cmd::log(&paths, Some("renamed"), None).unwrap());
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(lines[0].ends_with("mv: alpha -> renamed"), "{out}");
+    assert!(lines[1].ends_with("tag: alpha"), "{out}");
+    assert!(lines[2].ends_with("add: alpha"), "{out}");
+    assert!(!out.contains("beta"), "{out}");
+
+    // The id addresses the same history as the current slug does.
+    let id = cmd::ls(&paths, None, None)
+        .unwrap()
+        .lines()
+        .find(|line| line.contains("renamed"))
+        .and_then(|line| line.split_whitespace().next())
+        .expect("id")
+        .to_string();
+    assert_eq!(
+        cmd::log(&paths, Some(&id), None).unwrap().lines().count(),
+        3
+    );
+}
+
+#[test]
+fn diff_shows_the_last_commit_when_nothing_is_pending() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let out = plain(&cmd::diff(&paths, None).unwrap());
+    assert!(out.contains("+++ b/alpha.md"), "{out}");
+    assert!(out.contains("+a"), "{out}");
+    assert!(
+        !out.contains("index.tsv"),
+        "the derived index would bury the note: {out}"
+    );
+}
+
+#[test]
+fn diff_shows_uncommitted_changes_when_there_are_some() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+
+    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    let text = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(&note, text.replace("a\n", "changed by hand\n")).unwrap();
+
+    let out = plain(&cmd::diff(&paths, None).unwrap());
+    assert!(out.contains("+changed by hand"), "{out}");
+    assert!(out.contains("-a"), "{out}");
+    assert!(!out.contains("beta"), "only what changed: {out}");
+
+    // And it can be narrowed to one note.
+    let scoped = plain(&cmd::diff(&paths, Some("beta")).unwrap());
+    assert!(scoped.is_empty(), "beta is untouched: {scoped}");
+}
+
+#[test]
+fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+
+    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    let original = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(&note, original.replace("first\n", "second\n")).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
+    let before = commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK));
+
+    cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
+    assert_eq!(std::fs::read_to_string(&note).unwrap(), original);
+    assert_eq!(
+        commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)),
+        before + 1,
+        "a restore moves history forward, it does not rewrite it"
+    );
+    assert!(
+        cmd::log(&paths, Some("alpha"), None)
+            .unwrap()
+            .contains("restore: alpha")
+    );
+
+    // Restoring what is already there is not a commit.
+    let out = cmd::restore(&paths, "alpha", "HEAD").unwrap();
+    assert!(out.contains("(no change)"), "{out}");
+    assert_eq!(
+        commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)),
+        before + 1
+    );
+}
+
+#[test]
+fn restore_brings_back_a_deleted_note_with_its_id() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    cmd::rm(&paths, "alpha").unwrap();
+    assert!(cmd::show(&paths, "alpha").is_err(), "gone");
+
+    let out = cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
+    assert!(out.starts_with(&id), "the id comes back unchanged: {out}");
+    assert!(cmd::show(&paths, &id).unwrap().contains("a\n"));
+    assert!(
+        cmd::ls(&paths, None, Some("work"))
+            .unwrap()
+            .contains("alpha")
+    );
+
+    let index = std::fs::read_to_string(
+        paths
+            .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+            .join(".noda/index.tsv"),
+    )
+    .unwrap();
+    assert_eq!(index, format!("{id}\talpha\n"));
+}
+
+#[test]
+fn restore_reports_what_it_cannot_find() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let err = cmd::restore(&paths, "alpha", "nonsense")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unknown revision"), "{err}");
+
+    // The note exists now, but not that far back.
+    let err = cmd::restore(&paths, "alpha", "HEAD~1")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("did not exist"), "{err}");
+
+    assert!(cmd::restore(&paths, "missing", "HEAD").is_err());
+}
+
 #[test]
 fn commands_refuse_to_run_before_init() {
     let root = TempRoot::new();

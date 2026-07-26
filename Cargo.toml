@@ -14,6 +14,11 @@ panic = "abort"
 strip = true
 
 [dependencies]
+# 兩者已經因為 clap 在依賴樹裡，直接用不增加供應鏈面積。
+# anstream 負責偵測終端機、遵守 NO_COLOR，並在輸出被導向管線或檔案時剝掉跳脫碼，
+# 所以 `noda show` 送出去的位元組永遠等於檔案本身。
+anstream = "1.0.0"
+anstyle = "1.0.14"
 clap = { version = "4.6.2", features = ["derive"] }
 # 傳輸永遠內建：GitHub/GitLab 必走 HTTPS/SSH，不做成 feature 開關。
 # vendored-*：libgit2 / openssl 全部從源碼編入，換來單一靜態執行檔 + 乾淨跨編（musl/arm64）。

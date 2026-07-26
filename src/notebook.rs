@@ -11,7 +11,7 @@ use crate::remote;
 use crate::{Error, Result};
 
 /// Directory holding noda's own bookkeeping inside a notebook.
-const META_DIR: &str = ".noda";
+pub const META_DIR: &str = ".noda";
 /// Committed `id\tslug` lookup. Rebuildable from the notes' frontmatter.
 const INDEX_FILE: &str = ".noda/index.tsv";
 /// noda configures exactly one remote per notebook.
@@ -21,6 +21,22 @@ pub struct Notebook {
     pub name: String,
     pub path: PathBuf,
     repo: Repository,
+}
+
+/// One commit, as `noda log` reports it.
+pub struct Entry {
+    pub id: git2::Oid,
+    /// Commit time, and the offset it was made at, so a commit prints in the
+    /// timezone it was written in — the way git shows it.
+    pub seconds: i64,
+    pub offset_minutes: i32,
+    pub summary: String,
+}
+
+impl Entry {
+    pub fn short_id(&self) -> String {
+        short(self.id)
+    }
 }
 
 impl Notebook {
@@ -487,6 +503,159 @@ impl Notebook {
             return Err(rejected(&rejections));
         }
         Ok(format!("push: {branch} -> {url}"))
+    }
+
+    /// Commits, newest first. With `note_id`, only the commits that changed that
+    /// note. The path a note occupied is read from the index committed alongside
+    /// each commit, so a rename is followed without any rename detection —
+    /// that committed `id ↔ slug` map is exactly the record of where it lived.
+    pub fn log(&self, note_id: Option<&str>, max: Option<usize>) -> Result<Vec<Entry>> {
+        let mut walk = self.repo.revwalk()?;
+        walk.push_head()?;
+        // Time alone is not enough: noda commits several times a second, and
+        // commits sharing a timestamp would come back in an arbitrary order.
+        // The topological constraint keeps a child ahead of its parent.
+        walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+
+        let mut entries = Vec::new();
+        for oid in walk {
+            let commit = self.repo.find_commit(oid?)?;
+            if let Some(id) = note_id
+                && !self.touches(&commit, id)?
+            {
+                continue;
+            }
+            entries.push(Entry {
+                id: commit.id(),
+                seconds: commit.time().seconds(),
+                offset_minutes: commit.time().offset_minutes(),
+                summary: commit.summary().ok().flatten().unwrap_or("").to_string(),
+            });
+            if max.is_some_and(|max| entries.len() >= max) {
+                break;
+            }
+        }
+        Ok(entries)
+    }
+
+    /// The uncommitted changes when there are any, and what the last commit
+    /// changed when there are not — because noda commits as it goes, a clean
+    /// notebook is the normal state and "what just happened" is the useful
+    /// answer. `file` narrows it to one note.
+    pub fn diff(&self, file: Option<&str>) -> Result<git2::Diff<'_>> {
+        let mut options = git2::DiffOptions::new();
+        options.include_untracked(true).recurse_untracked_dirs(true);
+        if let Some(file) = file {
+            options.pathspec(file);
+        }
+
+        let head = self.repo.head()?.peel_to_tree()?;
+        let mut diff = if self.is_dirty()? {
+            self.repo
+                .diff_tree_to_workdir_with_index(Some(&head), Some(&mut options))?
+        } else {
+            let commit = self.repo.head()?.peel_to_commit()?;
+            let parent = commit
+                .parent(0)
+                .ok()
+                .map(|parent| parent.tree())
+                .transpose()?;
+            self.repo
+                .diff_tree_to_tree(parent.as_ref(), Some(&head), Some(&mut options))?
+        };
+
+        // `noda mv` writes the note under its new slug and removes the old file.
+        // Without rename detection that reads as a note deleted and an unrelated
+        // one invented, which is not what happened to it.
+        diff.find_similar(None)?;
+        Ok(diff)
+    }
+
+    /// Resolves a revision the way git does: a full or abbreviated id, `HEAD~3`,
+    /// a tag, a branch. Anything git accepts, and nothing invented on top.
+    pub fn revision(&self, rev: &str) -> Result<git2::Commit<'_>> {
+        let object = self
+            .repo
+            .revparse_single(rev)
+            .map_err(|_| Error::msg(format!("unknown revision: {rev}")))?;
+        object
+            .peel_to_commit()
+            .map_err(|_| Error::msg(format!("`{rev}` is not a commit")))
+    }
+
+    /// The slug and text of a note as it stood at `commit`.
+    pub fn note_at(&self, commit: &git2::Commit<'_>, id: &str) -> Result<Option<(String, String)>> {
+        let Some((file, blob)) = self.note_blob(commit, id)? else {
+            return Ok(None);
+        };
+        let blob = self.repo.find_blob(blob)?;
+        let text = String::from_utf8_lossy(blob.content()).into_owned();
+        Ok(Some((file.trim_end_matches(".md").to_string(), text)))
+    }
+
+    /// The id a key referred to at `commit`, by slug or by id. Lets a note that
+    /// has since been deleted still be named.
+    pub fn id_at(&self, commit: &git2::Commit<'_>, key: &str) -> Result<Option<String>> {
+        let wanted = note::normalize_id(key);
+        Ok(self
+            .index_at(&commit.tree()?)?
+            .into_iter()
+            .find(|(id, slug)| slug == key || note::normalize_id(id) == wanted)
+            .map(|(id, _)| id))
+    }
+
+    /// Whether `commit` changed the note with this id, against its first parent —
+    /// the same simplification `git log` makes for merges.
+    fn touches(&self, commit: &git2::Commit<'_>, id: &str) -> Result<bool> {
+        let now = self.note_blob(commit, id)?;
+        let before = match commit.parent(0) {
+            Ok(parent) => self.note_blob(&parent, id)?,
+            Err(_) => None,
+        };
+        // Comparing path as well as content catches a rename, which changes
+        // where the note lives without touching a byte of it.
+        Ok(now != before)
+    }
+
+    /// The file a note occupied at `commit` and the blob it held, or `None` when
+    /// the note was not in that commit.
+    fn note_blob(
+        &self,
+        commit: &git2::Commit<'_>,
+        id: &str,
+    ) -> Result<Option<(String, git2::Oid)>> {
+        let tree = commit.tree()?;
+        let wanted = note::normalize_id(id);
+        let Some(slug) = self
+            .index_at(&tree)?
+            .into_iter()
+            .find(|(entry, _)| note::normalize_id(entry) == wanted)
+            .map(|(_, slug)| slug)
+        else {
+            return Ok(None);
+        };
+
+        let file = format!("{slug}.md");
+        match tree.get_path(Path::new(&file)) {
+            Ok(entry) => Ok(Some((file, entry.id()))),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The committed index as it stood in `tree`.
+    fn index_at(&self, tree: &git2::Tree<'_>) -> Result<Vec<(String, String)>> {
+        let entry = match tree.get_path(Path::new(INDEX_FILE)) {
+            Ok(entry) => entry,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let blob = self.repo.find_blob(entry.id())?;
+        Ok(String::from_utf8_lossy(blob.content())
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(id, slug)| (id.to_string(), slug.to_string()))
+            .collect())
     }
 
     /// Undoes a conflicted merge, leaving the notebook exactly as it was.

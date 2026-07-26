@@ -61,6 +61,26 @@ enum Command {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
         note: String,
     },
+    /// Show commit history for the notebook, or for one note.
+    Log {
+        /// Note id (`k3f9`) or slug (`meeting-notes`). Omit for the notebook.
+        note: Option<String>,
+        /// Show at most this many commits.
+        #[arg(short = 'n', long = "max-count", value_name = "COUNT")]
+        max: Option<usize>,
+    },
+    /// Show uncommitted changes, or what the last commit changed.
+    Diff {
+        /// Note id (`k3f9`) or slug (`meeting-notes`). Omit for the notebook.
+        note: Option<String>,
+    },
+    /// Restore a note to an earlier version, as a new commit.
+    Restore {
+        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        note: String,
+        /// Anything git accepts: an id, an abbreviated id, `HEAD~3`, a tag.
+        commit: String,
+    },
     /// Manage notebooks.
     Notebook {
         #[command(subcommand)]
@@ -179,6 +199,9 @@ fn run() -> noda::Result<()> {
         Command::Mv { note, new_title } => cmd::mv(&paths, note, new_title)?,
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
+        Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
+        Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
+        Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,
         Command::Use { name } => cmd::use_notebook(&paths, name)?,
         Command::Notebook { command } => match command {
             NotebookCommand::Add { name, remote } => {
