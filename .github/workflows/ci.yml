@@ -40,6 +40,19 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run
 
+  deny:
+    name: supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
+        with:
+          tool: cargo-deny
+      # Advisories, licences, banned crates and sources in one pass. This one
+      # can fail without anything here changing — an advisory is published
+      # against a dependency and the graph is suddenly not what it was.
+      - run: cargo deny check
+
   cross:
     name: cross-compile ${{ matrix.target }}
     runs-on: ubuntu-latest
@@ -58,7 +71,6 @@ jobs:
       - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
         with:
           tool: cargo-zigbuild
-      - run: rustup target add ${{ matrix.target }}
       - run: cargo zigbuild --release --target ${{ matrix.target }}
       # The whole point of vendoring is one file that needs nothing installed.
       # A dynamically linked binary here would be a regression nobody notices
