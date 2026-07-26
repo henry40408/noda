@@ -75,8 +75,16 @@ impl Paths {
 
     pub fn active_notebook(&self) -> Result<String> {
         let file = self.active_file();
-        let name = std::fs::read_to_string(&file)
-            .map_err(|_| Error::msg("no active notebook — run `noda init` first"))?;
+        // A missing pointer is the ordinary case and gets the ordinary advice.
+        // Anything else — an unreadable file, a permission problem — must say so
+        // instead, because `noda init` will not fix it.
+        let name = match std::fs::read_to_string(&file) {
+            Ok(name) => name,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::msg("no active notebook — run `noda init` first"));
+            }
+            Err(e) => return Err(Error::msg(format!("{}: {e}", file.display()))),
+        };
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(Error::msg("no active notebook — run `noda init` first"));

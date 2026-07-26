@@ -1,6 +1,7 @@
 //! A note: its stable id, its slug, and the Markdown file that carries both.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 use crate::{Error, Result};
 
@@ -25,10 +26,10 @@ impl Note {
     /// The full file contents: frontmatter, a blank line, then the body.
     pub fn render(&self) -> String {
         let mut out = String::from("---\n");
-        out.push_str(&format!("id: {}\n", self.id));
-        out.push_str(&format!("title: {}\n", self.title));
+        let _ = writeln!(out, "id: {}", self.id);
+        let _ = writeln!(out, "title: {}", self.title);
         if !self.tags.is_empty() {
-            out.push_str(&format!("tags: [{}]\n", self.tags.join(", ")));
+            let _ = writeln!(out, "tags: [{}]", self.tags.join(", "));
         }
         out.push_str("---\n\n");
         out.push_str(&self.body);
@@ -119,7 +120,7 @@ pub fn slugify(title: &str) -> String {
 pub fn normalize_id(input: &str) -> String {
     input
         .chars()
-        .flat_map(|c| c.to_lowercase())
+        .flat_map(char::to_lowercase)
         .map(|c| match c {
             'i' | 'l' => '1',
             'o' => '0',
@@ -129,7 +130,7 @@ pub fn normalize_id(input: &str) -> String {
 }
 
 /// Mints an id that is not already `taken`, widening the id space if it fills up.
-pub fn mint_id(taken: &HashSet<String>) -> String {
+pub fn mint_id<S: std::hash::BuildHasher>(taken: &HashSet<String, S>) -> String {
     let mut len = ID_LEN;
     loop {
         for _ in 0..64 {

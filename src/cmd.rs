@@ -2,6 +2,7 @@
 //! against a throwaway root without touching the real environment.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -62,18 +63,19 @@ pub fn init(paths: &Paths) -> Result<String> {
 /// they expected.
 pub fn config_show(paths: &Paths) -> Result<String> {
     let config = Config::load(paths)?;
-    let rows = effective(paths, &config)?;
+    let rows = effective(paths, &config);
 
     let key_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
     let value_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
     let mut out = String::new();
     for (key, value, source) in rows {
-        out.push_str(&format!(
-            "{}  {}  {}\n",
+        let _ = writeln!(
+            out,
+            "{}  {}  {}",
             pad(&key, key_width),
             pad(&value, value_width),
             style::paint(style::MUTED, &format!("({})", source.label()))
-        ));
+        );
     }
     Ok(out)
 }
@@ -82,7 +84,7 @@ pub fn config_show(paths: &Paths) -> Result<String> {
 pub fn config_get(paths: &Paths, key: &str) -> Result<String> {
     config::validate_key(key)?;
     let config = Config::load(paths)?;
-    Ok(effective(paths, &config)?
+    Ok(effective(paths, &config)
         .into_iter()
         .find(|(name, _, _)| name == key)
         .map(|(_, value, _)| value)
@@ -100,7 +102,7 @@ pub fn config_unset(paths: &Paths, key: &str) -> Result<String> {
     if !config.unset(key)? {
         return Ok(format!("{key}  (was not set)"));
     }
-    let now = effective(paths, &config)?
+    let now = effective(paths, &config)
         .into_iter()
         .find(|(name, _, _)| name == key);
     match now {
@@ -122,7 +124,7 @@ pub fn config_edit(paths: &Paths) -> Result<String> {
 }
 
 /// Every setting as it currently resolves.
-fn effective(paths: &Paths, config: &Config) -> Result<Vec<(String, String, config::Source)>> {
+fn effective(paths: &Paths, config: &Config) -> Vec<(String, String, config::Source)> {
     let (editor, editor_source) = config::editor(
         config.get("editor"),
         std::env::var("VISUAL").ok(),
@@ -133,11 +135,11 @@ fn effective(paths: &Paths, config: &Config) -> Result<Vec<(String, String, conf
         Some(name) => (name.to_string(), config::Source::File),
         None => (DEFAULT_NOTEBOOK.to_string(), config::Source::Default),
     };
-    Ok(vec![
+    vec![
         ("editor".to_string(), editor, editor_source),
         ("author".to_string(), author, author_source),
         ("notebook".to_string(), notebook, notebook_source),
-    ])
+    ]
 }
 
 /// The identity commits are made under, and where it came from.
@@ -231,7 +233,9 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
             pad(&slug, slug_width)
         );
         if !tags.is_empty() {
-            line.push_str(&format!("  [{tags}]"));
+            line.push_str("  [");
+            line.push_str(&tags);
+            line.push(']');
         }
         out.push_str(line.trim_end());
         out.push('\n');
@@ -380,9 +384,9 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
         changed.push(format!("{}.md", located.slug));
 
         let mut index = notebook.index()?;
-        for (id, entry) in index.iter_mut() {
+        for (id, entry) in &mut index {
             if *id == note.id {
-                *entry = slug.clone();
+                entry.clone_from(&slug);
             }
         }
         notebook.write_index(&index)?;
@@ -486,8 +490,7 @@ pub fn notebook_rm_confirmed(
     if !force {
         let notes = Notebook::open(paths, name)
             .and_then(|notebook| notebook.notes())
-            .map(|notes| notes.len())
-            .unwrap_or(0);
+            .map_or(0, |notes| notes.len());
         let plural = if notes == 1 { "" } else { "s" };
         let question = format!(
             "delete notebook `{name}` — {notes} note{plural} and their whole history? \
@@ -601,7 +604,9 @@ pub fn search(paths: &Paths, query: &str) -> Result<String> {
             pad(&slug, slug_width)
         );
         if !tags.is_empty() {
-            line.push_str(&format!("  [{tags}]"));
+            line.push_str("  [");
+            line.push_str(&tags);
+            line.push(']');
         }
         out.push_str(line.trim_end());
         out.push('\n');
@@ -768,13 +773,12 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // The id is the note's identity, so a restored note keeps the name it has
     // now; only its contents travel back. A note that is gone comes back under
     // the name it had then.
-    let (slug, path) = match &current {
-        Some(located) => (located.slug.clone(), located.path.clone()),
-        None => {
-            let slug = unique_slug(&notebook, &slug_then);
-            let path = notebook.note_path(&slug);
-            (slug, path)
-        }
+    let (slug, path) = if let Some(located) = &current {
+        (located.slug.clone(), located.path.clone())
+    } else {
+        let slug = unique_slug(&notebook, &slug_then);
+        let path = notebook.note_path(&slug);
+        (slug, path)
     };
 
     let restored = Note::parse(&text)
@@ -929,6 +933,12 @@ fn format_time(seconds: i64, offset_minutes: i32) -> String {
 
 /// Days since the Unix epoch to a calendar date, by Howard Hinnant's
 /// `civil_from_days`. Fifteen lines beats a date dependency for one format.
+///
+/// The two casts drop a sign that cannot be there: for every `i64` input the
+/// algorithm yields a month in `1..=12` and a day in `1..=31`, which
+/// `every_day_lands_on_a_real_calendar_date` checks across four centuries
+/// rather than leaving as a claim in a comment.
+#[allow(clippy::cast_sign_loss)]
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     // Shift the epoch to 0000-03-01, which puts the leap day at the end of the
     // year and makes every era exactly 146,097 days.
@@ -1164,6 +1174,25 @@ mod tests {
         // The same instant, written in London and in Taipei.
         assert_eq!(format_time(1_785_073_605, 0), "2026-07-26 13:46");
         assert_eq!(format_time(1_785_073_605, 480), "2026-07-26 21:46");
+    }
+
+    #[test]
+    fn every_day_lands_on_a_real_calendar_date() {
+        // The unsigned casts in `civil_from_days` are safe only because the
+        // algorithm cannot produce a negative month or day. Four centuries of
+        // days, either side of the epoch, say so out loud.
+        let mut previous = None;
+        for days in -73_000..=73_000 {
+            let (year, month, day) = civil_from_days(days);
+            assert!((1..=12).contains(&month), "day {days} gave month {month}");
+            assert!((1..=31).contains(&day), "day {days} gave day {day}");
+            // And the calendar only ever moves forwards.
+            let now = (year, month, day);
+            if let Some(previous) = previous {
+                assert!(previous < now, "{previous:?} then {now:?}");
+            }
+            previous = Some(now);
+        }
     }
 
     #[test]

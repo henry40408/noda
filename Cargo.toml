@@ -29,3 +29,56 @@ git2 = { version = "0.21.0", default-features = false, features = [
     "vendored-openssl",
 ] }
 toml_edit = "0.25.13"
+
+# Lints encoded in-manifest so `cargo build`/`cargo clippy` and IDEs apply them
+# without extra flags (CI additionally runs `clippy --all-targets -- -D warnings`,
+# which promotes every one of these warnings to a hard error). Kept 1:1 with the
+# sibling `pingward` project's curated set so both repos enforce the same rules.
+# Self-maintained lint set (originally seeded from Embark Studios' rust-ecosystem
+# list). The bulk of the old itemised pedantic lints are now covered by the
+# `pedantic` group; only the noisy/low-signal ones are opted back out, plus the
+# restriction and nursery lints that have no safe umbrella group.
+[lints.rust]
+unexpected_cfgs = "deny"
+unsafe_code = "deny"
+
+[lints.clippy]
+# Groups (priority -1 so the individual entries below win).
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Opt out of the noisy / low-signal pedantic lints.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+duration_suboptimal_units = "allow"
+items_after_statements = "allow"
+many_single_char_names = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
+too_many_lines = "allow"
+
+# Restriction lints (no safe umbrella group — kept itemised).
+dbg_macro = "warn"
+exit = "warn"
+float_cmp_const = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+mem_forget = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+string_add = "warn"
+todo = "warn"
+unimplemented = "warn"
+verbose_file_reads = "warn"
+
+# Nursery picks (the nursery group as a whole is too unstable to enable).
+debug_assert_with_mut_call = "warn"
+fallible_impl_from = "warn"
+trait_duplication_in_bounds = "warn"

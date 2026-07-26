@@ -1,6 +1,7 @@
 //! A notebook is a git repository of Markdown files. Every mutation is a commit.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, Signature};
@@ -161,10 +162,10 @@ impl Notebook {
     pub fn write_index(&self, entries: &[(String, String)]) -> Result<()> {
         let mut sorted = entries.to_vec();
         sorted.sort();
-        let body: String = sorted
-            .iter()
-            .map(|(id, slug)| format!("{id}\t{slug}\n"))
-            .collect();
+        let mut body = String::new();
+        for (id, slug) in &sorted {
+            let _ = writeln!(body, "{id}\t{slug}");
+        }
         std::fs::create_dir_all(self.path.join(META_DIR))?;
         std::fs::write(self.path.join(INDEX_FILE), body)?;
         Ok(())
@@ -320,9 +321,10 @@ impl Notebook {
             let (Ok(name), Some(oid)) = (reference.name(), reference.target()) else {
                 continue;
             };
-            match name.strip_prefix(&prefix) {
-                Some("HEAD") | None => continue,
-                Some(branch) => branches.push((branch.to_string(), oid)),
+            if let Some(branch) = name.strip_prefix(&prefix)
+                && branch != "HEAD"
+            {
+                branches.push((branch.to_string(), oid));
             }
         }
 
@@ -357,6 +359,9 @@ impl Notebook {
         Ok(head.shorthand()?.to_string())
     }
 
+    /// libgit2's own error here reads "remote 'origin' does not exist" — the
+    /// same fact without the way out of it, so it is replaced rather than kept.
+    #[allow(clippy::map_err_ignore)]
     fn remote(&self) -> Result<git2::Remote<'_>> {
         self.repo.find_remote(REMOTE_NAME).map_err(|_| {
             Error::msg(format!(
@@ -428,7 +433,7 @@ impl Notebook {
         if index.has_conflicts() {
             let conflicted: Vec<String> = index
                 .conflicts()?
-                .filter_map(|c| c.ok())
+                .filter_map(std::result::Result::ok)
                 .filter_map(|c| c.our.or(c.their).or(c.ancestor))
                 .map(|entry| String::from_utf8_lossy(&entry.path).into_owned())
                 .collect();
@@ -595,7 +600,10 @@ impl Notebook {
         let object = self
             .repo
             .revparse_single(rev)
-            .map_err(|_| Error::msg(format!("unknown revision: {rev}")))?;
+            .map_err(|e| Error::msg(format!("unknown revision: {rev} — {}", e.message())))?;
+        // Unlike the above, there is only one way to fail here — the revision
+        // names a blob or a tree — and the message already says it.
+        #[allow(clippy::map_err_ignore)]
         object
             .peel_to_commit()
             .map_err(|_| Error::msg(format!("`{rev}` is not a commit")))
