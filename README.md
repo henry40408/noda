@@ -79,7 +79,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda init` | Create the XDG directories and a `default` notebook. |
 | `noda notebook add <name> [--remote <url>]` | Create a notebook (a new git repo). |
 | `noda notebook ls` | List notebooks; marks the active one. |
-| `noda notebook rm <name>` | Remove a notebook (local repo). |
+| `noda notebook rm <name> [--force]` | Remove a notebook (local repo). Asks first. |
 | `noda notebook rename <old> <new>` | Rename a notebook. |
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
@@ -87,7 +87,9 @@ destructive surprise — `noda rm` is a commit you can revert.
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
 repository and its whole history from disk. The active notebook is refused outright; switch
-with `noda use` first.
+with `noda use` first. Everything else is confirmed at the terminal, and `--force` skips the
+question. With no terminal to ask at — piped, or in a script — the deletion is refused
+rather than assumed, so `--force` is how a script says it meant it.
 
 ### Notes
 

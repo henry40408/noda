@@ -319,8 +319,20 @@ pub fn notebook_ls(paths: &Paths) -> Result<String> {
 }
 
 /// Deletes a notebook's local repository. Unlike removing a note this is not a
-/// commit and cannot be undone, so the active notebook is refused outright.
-pub fn notebook_rm(paths: &Paths, name: &str) -> Result<String> {
+/// commit and cannot be undone, so the active notebook is refused outright and
+/// everything else is confirmed first.
+pub fn notebook_rm(paths: &Paths, name: &str, force: bool) -> Result<String> {
+    notebook_rm_confirmed(paths, name, force, ask_at_the_terminal)
+}
+
+/// `notebook_rm`, with the answer supplied. Exists so tests can decide without a
+/// terminal to type at.
+pub fn notebook_rm_confirmed(
+    paths: &Paths,
+    name: &str,
+    force: bool,
+    confirm: impl FnOnce(&str) -> Result<bool>,
+) -> Result<String> {
     notebook::validate_name(name)?;
     if !Notebook::exists(paths, name) {
         return Err(Error::msg(format!("notebook not found: {name}")));
@@ -330,11 +342,51 @@ pub fn notebook_rm(paths: &Paths, name: &str) -> Result<String> {
             "`{name}` is the active notebook — switch with `noda use <name>` first"
         )));
     }
+
+    if !force {
+        let notes = Notebook::open(paths, name)
+            .and_then(|notebook| notebook.notes())
+            .map(|notes| notes.len())
+            .unwrap_or(0);
+        let plural = if notes == 1 { "" } else { "s" };
+        let question = format!(
+            "delete notebook `{name}` — {notes} note{plural} and their whole history? \
+             this is not a commit and cannot be undone [y/N] "
+        );
+        if !confirm(&question)? {
+            return Ok(format!("kept notebook `{name}`"));
+        }
+    }
+
     let dir = paths.notebook_dir(name);
     std::fs::remove_dir_all(&dir)?;
     Ok(format!(
         "removed notebook `{name}` and its history at {}",
         dir.display()
+    ))
+}
+
+/// Asks on the terminal, and takes silence for no. Piped or scripted there is
+/// nobody to ask, so the deletion is refused rather than assumed — `--force` is
+/// how a script says it meant it.
+fn ask_at_the_terminal(question: &str) -> Result<bool> {
+    use std::io::IsTerminal;
+
+    if !std::io::stdin().is_terminal() {
+        return Err(Error::msg(
+            "there is no terminal to confirm at — pass `--force` if you mean it",
+        ));
+    }
+    // The question goes to stderr so that stdout carries only the outcome.
+    let mut stderr = std::io::stderr();
+    stderr.write_all(question.as_bytes())?;
+    stderr.flush()?;
+
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
     ))
 }
 

@@ -123,6 +123,9 @@ enum NotebookCommand {
     Rm {
         /// Notebook name.
         name: String,
+        /// Delete without asking.
+        #[arg(short, long)]
+        force: bool,
     },
     /// Rename a notebook.
     Rename {
@@ -178,7 +181,7 @@ fn run() -> noda::Result<()> {
                 cmd::notebook_add(&paths, name, remote.as_deref())?
             }
             NotebookCommand::Ls => cmd::notebook_ls(&paths)?,
-            NotebookCommand::Rm { name } => cmd::notebook_rm(&paths, name)?,
+            NotebookCommand::Rm { name, force } => cmd::notebook_rm(&paths, name, *force)?,
             NotebookCommand::Rename { old, new } => cmd::notebook_rename(&paths, old, new)?,
             NotebookCommand::Current => cmd::notebook_current(&paths)?,
         },

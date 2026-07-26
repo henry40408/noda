@@ -520,13 +520,52 @@ fn notebook_rm_refuses_the_active_one() {
     let (_root, paths) = initialized();
     cmd::notebook_add(&paths, "work", None).unwrap();
 
-    let err = cmd::notebook_rm(&paths, cmd::DEFAULT_NOTEBOOK).unwrap_err();
+    let err = cmd::notebook_rm(&paths, cmd::DEFAULT_NOTEBOOK, true).unwrap_err();
     assert!(err.to_string().contains("noda use"), "{err}");
     assert!(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).exists());
 
-    cmd::notebook_rm(&paths, "work").unwrap();
+    cmd::notebook_rm(&paths, "work", true).unwrap();
     assert!(!paths.notebook_dir("work").exists());
-    assert!(cmd::notebook_rm(&paths, "work").is_err(), "already gone");
+    assert!(
+        cmd::notebook_rm(&paths, "work", true).is_err(),
+        "already gone"
+    );
+}
+
+#[test]
+fn notebook_rm_asks_before_deleting_and_takes_no_for_an_answer() {
+    let (_root, paths) = initialized();
+    cmd::notebook_add(&paths, "work", None).unwrap();
+    cmd::use_notebook(&paths, "work").unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
+
+    let out = cmd::notebook_rm_confirmed(&paths, "work", false, |question| {
+        assert!(question.contains("cannot be undone"), "{question}");
+        assert!(question.contains("1 note "), "{question}");
+        Ok(false)
+    })
+    .unwrap();
+    assert!(out.contains("kept"), "{out}");
+    assert!(paths.notebook_dir("work").exists(), "no still means no");
+
+    // `--force` is the answer, so nothing is asked.
+    cmd::notebook_rm_confirmed(&paths, "work", true, |_| panic!("--force must not ask")).unwrap();
+    assert!(!paths.notebook_dir("work").exists());
+}
+
+#[test]
+fn notebook_rm_refuses_when_there_is_nobody_to_ask() {
+    let (_root, paths) = initialized();
+    cmd::notebook_add(&paths, "work", None).unwrap();
+
+    // The test harness has no terminal, which is exactly the case being checked:
+    // piped or scripted, an irreversible delete must not be assumed.
+    let err = cmd::notebook_rm(&paths, "work", false)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("--force"), "{err}");
+    assert!(paths.notebook_dir("work").exists());
 }
 
 #[test]
