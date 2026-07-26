@@ -3,9 +3,10 @@
 > A git-native notebook for your terminal. Your notes are plain Markdown in an ordinary
 > git repository — versioned, syncable, and yours.
 
-> **Status: design draft (spec-first).** This README describes the intended v1 behavior
-> and is being written *before* implementation, AWS "working-backwards" style. Commands
-> below are the target contract, not yet a shipped tool. See [docs/PRFAQ.md](docs/PRFAQ.md).
+> **Status: in progress (spec-first).** This README is the v1 contract, written *before*
+> implementation, AWS "working-backwards" style. `init`, `add`, `ls` and `show` work
+> today; every other command below is still the target contract, not a shipped feature.
+> See [docs/PRFAQ.md](docs/PRFAQ.md).
 
 ---
 
@@ -17,7 +18,7 @@
   history; `noda restore` rewinds it.
 - **Sync anywhere.** HTTPS and SSH are compiled into the binary, so `noda sync` talks to
   GitHub, GitLab, or any git host with nothing else to install.
-- **Fast to reach.** Address a note by a short numeric id *or* a readable slug.
+- **Fast to reach.** Address a note by a short id *or* a readable slug.
 - **One static binary.** Ships self-contained for macOS and Linux (incl. arm64/musl).
 
 ## Install
@@ -72,7 +73,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 
 | Command | Description |
 | --- | --- |
-| `noda init` | Create `~/.noda` and a default notebook. |
+| `noda init` | Create the XDG directories and a `default` notebook. |
 | `noda notebook add <name> [--remote <url>]` | Create a notebook (a new git repo). |
 | `noda notebook ls` | List notebooks; marks the active one. |
 | `noda notebook rm <name>` | Remove a notebook (local repo). |
@@ -174,6 +175,14 @@ cargo zigbuild --release --target aarch64-unknown-linux-musl
 
 libgit2, OpenSSL, and libssh2 are vendored and compiled from source, producing a single
 static binary with HTTPS/SSH sync built in.
+
+Startup time is a feature — a quick `noda ls` costs more in process startup than in work
+— so the release profile is tuned for size and cold start is measured, not assumed:
+
+```sh
+cargo nextest run
+scripts/bench-coldstart.sh                # times whole processes, not in-process code
+```
 
 ## License
 
