@@ -61,6 +61,12 @@ enum Command {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
         note: String,
     },
+    /// Full-text search across the active notebook.
+    Search {
+        /// What to look for. Several words mean all of them, in any order.
+        #[arg(required = true, num_args = 1.., value_name = "QUERY")]
+        query: Vec<String>,
+    },
     /// Show commit history for the notebook, or for one note.
     Log {
         /// Note id (`k3f9`) or slug (`meeting-notes`). Omit for the notebook.
@@ -199,6 +205,7 @@ fn run() -> noda::Result<()> {
         Command::Mv { note, new_title } => cmd::mv(&paths, note, new_title)?,
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
+        Command::Search { query } => cmd::search(&paths, &query.join(" "))?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
         Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,

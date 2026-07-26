@@ -923,6 +923,103 @@ fn commit_working_tree(paths: &Paths, notebook: &str, message: &str) {
 }
 
 #[test]
+fn search_matches_the_body_the_title_and_the_tags() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Meeting Notes"),
+        Some("discuss the Q3 budget\nand the hiring plan\n"),
+        &["work".to_string()],
+    )
+    .unwrap();
+    cmd::add(
+        &paths,
+        Some("Reading Log"),
+        Some("a book about budgets\n"),
+        &[],
+    )
+    .unwrap();
+
+    // A body hit quotes the line it was found on.
+    let out = plain(&cmd::search(&paths, "Q3 BUDGET").unwrap());
+    assert_eq!(out.lines().count(), 2, "one result and its excerpt: {out}");
+    assert!(
+        out.lines().next().unwrap().contains("meeting-notes"),
+        "{out}"
+    );
+    assert!(
+        out.lines()
+            .nth(1)
+            .unwrap()
+            .contains("discuss the Q3 budget"),
+        "{out}"
+    );
+
+    // A title or tag hit needs no excerpt — it is already on the first line.
+    let out = plain(&cmd::search(&paths, "work").unwrap());
+    assert_eq!(out.lines().count(), 1, "{out}");
+    assert!(out.contains("[work]"), "{out}");
+    assert_eq!(
+        plain(&cmd::search(&paths, "reading").unwrap())
+            .lines()
+            .count(),
+        1
+    );
+
+    // Substring, not whole word: "budget" finds "budgets" too. Both notes match
+    // in the body, so both bring an excerpt with them.
+    let out = plain(&cmd::search(&paths, "budget").unwrap());
+    assert_eq!(out.lines().count(), 4, "{out}");
+    assert!(out.contains("a book about budgets"), "{out}");
+    assert!(cmd::search(&paths, "absent").unwrap().is_empty());
+}
+
+#[test]
+fn search_requires_every_term_but_not_their_order() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("budget for the offsite\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("budget only\n"), &[]).unwrap();
+
+    let out = plain(&cmd::search(&paths, "offsite budget").unwrap());
+    assert!(out.contains("alpha"), "{out}");
+    assert!(!out.contains("beta"), "both terms are required: {out}");
+
+    assert!(cmd::search(&paths, "   ").is_err(), "a query is required");
+}
+
+#[test]
+fn search_works_on_a_language_without_spaces() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("會議記錄"),
+        Some("討論第三季預算與人力計畫\n"),
+        &[],
+    )
+    .unwrap();
+    cmd::add(&paths, Some("Reading Log"), Some("unrelated\n"), &[]).unwrap();
+
+    // No word boundaries to tokenise on: substring matching is the whole point.
+    let out = plain(&cmd::search(&paths, "第三季預算").unwrap());
+    assert_eq!(out.lines().count(), 2, "{out}");
+    assert!(out.contains("討論第三季預算與人力計畫"), "{out}");
+    assert!(plain(&cmd::search(&paths, "會議").unwrap()).contains("會議記錄"));
+}
+
+#[test]
+fn search_only_looks_at_the_note_not_the_file_around_it() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0;
+
+    // The frontmatter is the container, not searchable text.
+    assert!(cmd::search(&paths, "---").unwrap().is_empty());
+    assert!(cmd::search(&paths, "id:").unwrap().is_empty());
+    // The id is how you address a note, not something to find it by.
+    assert!(cmd::search(&paths, id).unwrap().is_empty());
+}
+
+#[test]
 fn log_reports_the_notebook_history_newest_first() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();

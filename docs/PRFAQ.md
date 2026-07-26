@@ -115,6 +115,20 @@ grows to carry titles because the index is derived data, and a rebuild is always
 Interchange is a separate concern from storage; if noda ever needs to hand this data to
 another tool, that is an output format on `ls`, not a change to what sits in the repo.
 
+**Q: Why does `search` have no index?**
+Measured on 5000 notes totalling 12.4 MiB: `noda search` takes 68 ms for a term almost
+nothing matches and 82 ms when nearly everything does, against 67 ms for `noda ls`, which
+already opens and parses every note. Ripgrep over the same tree takes 56 ms and `git grep`
+55 ms, so a plain scan is already within a whisker of tools built for this. The cost is
+dominated by opening five thousand files, not by matching bytes — which is why searching
+costs about what listing costs, and why both are imperceptible at the hundreds-of-notes
+sizes that are actually common. An index would buy
+maybe 50 ms at 5000 notes and cost a staleness story, a `reindex` command, invalidation
+after every `pull`, and a corruption path. v1 declines that trade. If notebooks in the tens
+of thousands turn up, a cache is a cache: it can be added later without changing anything
+the user's repository holds. Note that the committed `id ↔ slug` index cannot serve search
+either way — it carries metadata, and search reads bodies.
+
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:
 multiple git-backed notebooks, add/ls/show/edit/rm, id+slug addressing, full-text search,

@@ -19,6 +19,8 @@ pub const REMOVED: Style = AnsiColor::Red.on_default();
 pub const HUNK: Style = AnsiColor::Cyan.on_default();
 /// File headers in a diff.
 pub const HEADING: Style = Style::new().bold();
+/// The part of a search result that matched.
+pub const MATCH: Style = AnsiColor::Yellow.on_default().bold();
 
 /// Wraps `text` in `style`. The `:#` form writes the reset sequence.
 pub fn paint(style: Style, text: &str) -> String {

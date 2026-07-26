@@ -427,6 +427,133 @@ pub fn notebook_rename(paths: &Paths, old: &str, new: &str) -> Result<String> {
     Ok(format!("renamed notebook `{old}` to `{new}`"))
 }
 
+/// How much of a matching line to show around the match.
+const EXCERPT_WIDTH: usize = 72;
+/// How much of it may sit before the match, so the match itself stays visible.
+const EXCERPT_LEAD: usize = 28;
+
+/// Full-text search across the active notebook.
+///
+/// Matching is case-insensitive and by substring, not by word: a notebook of
+/// Chinese or Japanese notes has no spaces to tokenise on, and a tokeniser would
+/// simply fail to find anything in it. Several terms mean all of them, anywhere
+/// in the note.
+pub fn search(paths: &Paths, query: &str) -> Result<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .filter(|term| !term.is_empty())
+        .collect();
+    if terms.is_empty() {
+        return Err(Error::msg("search needs something to look for"));
+    }
+
+    let notebook = Notebook::open_active(paths)?;
+    let mut rows = Vec::new();
+    for (slug, note) in notebook.notes()? {
+        // The note's own fields, not the raw file — otherwise `---` and `id:`
+        // would be searchable text, and they are the container, not the note.
+        let haystack =
+            format!("{}\n{}\n{}", note.title, note.tags.join(" "), note.body).to_lowercase();
+        if !terms.iter().all(|term| haystack.contains(term.as_str())) {
+            continue;
+        }
+        rows.push((
+            note.id,
+            slug,
+            note.title,
+            note.tags.join(", "),
+            excerpt(&note.body, &terms),
+        ));
+    }
+
+    if rows.is_empty() {
+        return Ok(String::new());
+    }
+
+    let id_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
+    let slug_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
+    let mut out = String::new();
+    for (id, slug, title, tags, excerpt) in rows {
+        let mut line = format!(
+            "{}  {}  {title}",
+            pad(&id, id_width),
+            pad(&slug, slug_width)
+        );
+        if !tags.is_empty() {
+            line.push_str(&format!("  [{tags}]"));
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+        // A hit in the title or the tags is already visible above; only a hit in
+        // the body needs to be quoted back.
+        if let Some(excerpt) = excerpt {
+            out.push_str(&" ".repeat(id_width + 2));
+            out.push_str(&excerpt);
+            out.push('\n');
+        }
+    }
+    Ok(out)
+}
+
+/// The first body line holding a term, cut down to something that fits a
+/// terminal, with the match itself picked out.
+fn excerpt(body: &str, terms: &[String]) -> Option<String> {
+    let (line, start, end) = body.lines().find_map(|line| {
+        terms
+            .iter()
+            .find_map(|term| find_ignoring_case(line, term).map(|(start, end)| (line, start, end)))
+    })?;
+
+    let before = last_chars(&line[..start], EXCERPT_LEAD);
+    let room =
+        EXCERPT_WIDTH.saturating_sub(before.chars().count() + line[start..end].chars().count());
+    Some(format!(
+        "{before}{}{}",
+        style::paint(style::MATCH, &line[start..end]),
+        first_chars(&line[end..], room)
+    ))
+}
+
+/// Case-insensitive `find`, as byte offsets into `haystack`. Lowercasing can
+/// change how many bytes a character takes, so the way back to the original is
+/// recorded rather than assumed — every offset returned is a char boundary.
+fn find_ignoring_case(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let mut lowered = String::with_capacity(haystack.len());
+    let mut origin = Vec::with_capacity(haystack.len());
+    for (index, ch) in haystack.char_indices() {
+        for lower in ch.to_lowercase() {
+            let mut buffer = [0u8; 4];
+            let encoded = lower.encode_utf8(&mut buffer);
+            origin.resize(origin.len() + encoded.len(), index);
+            lowered.push_str(encoded);
+        }
+    }
+    origin.push(haystack.len());
+
+    let start = lowered.find(needle)?;
+    Some((origin[start], origin[start + needle.len()]))
+}
+
+/// The last `max` characters, with a leading `…` when something was cut.
+fn last_chars(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(count - max).collect();
+    format!("…{}", tail.trim_start())
+}
+
+/// The first `max` characters, with a trailing `…` when something was cut.
+fn first_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max).collect();
+    format!("{}…", head.trim_end())
+}
+
 /// The notebook's history, or one note's.
 pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
@@ -840,6 +967,37 @@ mod tests {
             Some("Deep Work".into())
         );
         assert_eq!(derive_title("   \n\n"), None);
+    }
+
+    #[test]
+    fn case_insensitive_find_returns_offsets_into_the_original() {
+        let line = "Discuss the Q3 Budget";
+        let (start, end) = find_ignoring_case(line, "q3 budget").unwrap();
+        assert_eq!(&line[start..end], "Q3 Budget");
+
+        // Lowercasing changes the byte length here — İ is one char, two lowered.
+        // The offsets must still land on the original's char boundaries.
+        let turkish = "aİb";
+        let (start, end) = find_ignoring_case(turkish, "b").unwrap();
+        assert_eq!(&turkish[start..end], "b");
+
+        assert_eq!(find_ignoring_case("會議紀錄", "紀錄"), Some((6, 12)));
+        assert_eq!(find_ignoring_case("nothing", "here"), None);
+    }
+
+    #[test]
+    fn excerpts_are_cut_around_the_match() {
+        let long = format!("{} needle {}", "before ".repeat(20), "after ".repeat(20));
+        let shown = strip(&excerpt(&long, &["needle".to_string()]).unwrap());
+        assert!(shown.contains("needle"), "{shown}");
+        assert!(shown.starts_with('…'), "the lead is cut: {shown}");
+        assert!(shown.ends_with('…'), "the tail is cut: {shown}");
+        assert!(shown.chars().count() <= EXCERPT_WIDTH + 2, "{shown}");
+
+        // A short line is quoted whole, with nothing to elide.
+        let shown = strip(&excerpt("just the needle here", &["needle".to_string()]).unwrap());
+        assert_eq!(shown, "just the needle here");
+        assert_eq!(excerpt("no hit", &["needle".to_string()]), None);
     }
 
     #[test]

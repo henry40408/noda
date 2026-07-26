@@ -102,12 +102,18 @@ rather than assumed, so `--force` is how a script says it meant it.
 | `noda rm <note>` | Delete a note (as a revertible commit). |
 | `noda mv <note> <new-title>` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
-| `noda search <query>` | Full-text search across the active notebook. |
+| `noda search <query>...` | Full-text search across the active notebook. |
 
 `<note>` accepts an id (`k3f9`) or a slug (`meeting-notes`), matched exactly.
 
 `noda tag` takes signed tags — `noda tag meeting-notes +q3 -work` adds `q3` and removes
 `work`. Adding a tag a note already has is not an error; it just leaves nothing to commit.
+
+`noda search` looks through every note's title, tags and body in the active notebook. It
+matches case-insensitively and by substring rather than by word — Chinese and Japanese have
+no spaces to split on, and a word-based search would simply find nothing in them. Several
+terms mean all of them, in any order. Results are listed the way `ls` lists them, and a hit
+in the body quotes the line it was found on.
 
 `noda add` and `noda edit` open `$VISUAL`, falling back to `$EDITOR` and then to `vi`.
 `edit` opens the real file, frontmatter included, but refuses to commit an edit that
@@ -199,12 +205,13 @@ $XDG_STATE_HOME/noda/           (default ~/.local/state/noda/)
 └── active                      # name of the currently active notebook
 
 $XDG_CACHE_HOME/noda/           (default ~/.cache/noda/)
-└── search-index/               # rebuildable full-text search index
+└── NOTE_EDITMSG.md             # scratch buffer while a note is open in $EDITOR
 ```
 
 Each notebook is a normal git repo; `cd "$XDG_DATA_HOME/noda/notebooks/work" && git log`
 works exactly as you'd expect. Only your notes live in `XDG_DATA_HOME` — config, the
-active-notebook pointer, and the search cache are kept out of your synced data on purpose.
+active-notebook pointer, and the editor's scratch buffer are kept out of your synced data
+on purpose.
 
 **Platform note.** noda honors the XDG variables on **every** platform, including macOS
 (it does not use `~/Library/Application Support`). If a variable is unset, the standard
