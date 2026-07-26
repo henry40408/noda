@@ -10,10 +10,23 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  # Build on pull requests too, without publishing. The image is not exercised
-  # by ci.yml, so without this a Dockerfile that no longer builds would only be
-  # discovered after it had already landed on main.
+  # Build on pull requests that touch the packaging, without publishing, so a
+  # Dockerfile that no longer builds is caught before it lands rather than after.
+  #
+  # Only those, though. This job takes 9m24s against 1m27s for the whole of
+  # ci.yml's cross-compile, and it does not get faster with a warm cache: the
+  # cargo work happens inside a `RUN --mount=type=cache`, which the GHA cache
+  # backend does not carry, so any source change rebuilds the vendored OpenSSL
+  # and libgit2 from scratch for both architectures. On a source-only pull
+  # request that buys nothing either — ci.yml already compiles the same code for
+  # both musl targets and asserts the result is statically linked. What is left
+  # that only this can catch is the packaging itself, which is what it now
+  # watches.
   pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker.yml
 
 jobs:
   build:
