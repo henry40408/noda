@@ -55,13 +55,24 @@ pub fn push_options<'a>() -> PushOptions<'a> {
     options
 }
 
+/// Whether an error is really about credentials. Only the SSH transport gets its
+/// own error class; a credential lookup that comes back empty — the commonest
+/// HTTPS failure, and the one the hint is written for — surfaces as an untyped
+/// generic error, so its wording is the only thing left to go on.
+fn is_authentication(error: &git2::Error) -> bool {
+    if error.class() == git2::ErrorClass::Ssh || error.code() == git2::ErrorCode::Auth {
+        return true;
+    }
+    let message = error.message().to_ascii_lowercase();
+    ["authentication", "username/password", "credential"]
+        .iter()
+        .any(|needle| message.contains(needle))
+}
+
 /// Turns libgit2's authentication failures into advice. Everything else is
 /// passed through untouched — libgit2's own message is usually the better one.
 pub fn explain(error: git2::Error, url: &str) -> Error {
-    let authentication = error.class() == git2::ErrorClass::Ssh
-        || error.code() == git2::ErrorCode::Auth
-        || error.message().contains("authentication");
-    if !authentication {
+    if !is_authentication(&error) {
         return Error::Git(error);
     }
     let hint = if url.starts_with("http") {
@@ -105,5 +116,54 @@ mod tests {
             Some("notes")
         );
         assert_eq!(name_from_url("/"), None);
+    }
+
+    /// The message libgit2 actually produces when no credential helper answers.
+    /// It carries no error class and no `Auth` code, so matching on the class
+    /// alone left the commonest HTTPS failure without its hint.
+    #[test]
+    fn an_empty_credential_lookup_counts_as_authentication() {
+        let error =
+            git2::Error::from_str("failed to acquire username/password from local configuration");
+        assert_eq!(error.class(), git2::ErrorClass::None);
+        assert_eq!(error.code(), git2::ErrorCode::GenericError);
+        assert!(is_authentication(&error));
+
+        let explained = explain(error, "https://example.com/notes.git").to_string();
+        assert!(explained.contains("credential helper"), "{explained}");
+    }
+
+    #[test]
+    fn the_hint_follows_the_transport() {
+        let ssh = explain(
+            git2::Error::new(
+                git2::ErrorCode::Auth,
+                git2::ErrorClass::Ssh,
+                "no auth sock variable",
+            ),
+            "git@github.com:me/notes.git",
+        )
+        .to_string();
+        assert!(ssh.contains("ssh-agent"), "{ssh}");
+
+        // noda's own callback error, when every method has been offered once.
+        let https = explain(
+            git2::Error::from_str("no usable credentials"),
+            "https://example.com/notes.git",
+        )
+        .to_string();
+        assert!(https.contains("credential helper"), "{https}");
+    }
+
+    /// A hint about credentials on an error that has nothing to do with them
+    /// sends the reader looking in the wrong place.
+    #[test]
+    fn unrelated_failures_keep_libgit2s_own_message() {
+        let error = git2::Error::from_str("the remote hung up unexpectedly");
+        assert!(!is_authentication(&error));
+
+        let explained = explain(error, "https://example.com/notes.git").to_string();
+        assert!(!explained.contains("credential helper"), "{explained}");
+        assert!(explained.contains("hung up"), "{explained}");
     }
 }

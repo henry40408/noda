@@ -77,7 +77,8 @@ noda sync                       # pull + push over SSH/HTTPS
 
 **Notebook.** A git repository under `$XDG_DATA_HOME/noda/notebooks/<name>/`. You can have many; one is
 "active" at a time. Each notebook has its own remote, so `work` and `personal` can live
-in different places.
+in different places. A new notebook starts on the branch your `init.defaultBranch` names,
+the same one `git init` would have picked, so it agrees with the remote you push it to.
 
 **Note.** A Markdown file inside a notebook. It has:
 - a **slug** — a human-readable name derived from the title; it's also the filename

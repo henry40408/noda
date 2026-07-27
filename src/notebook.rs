@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use git2::{Repository, Signature};
+use git2::{Repository, RepositoryInitOptions, Signature};
 
 use crate::config::{self, Config};
 use crate::note::{self, Note};
@@ -69,7 +69,11 @@ impl Notebook {
             return Err(Error::msg(format!("notebook already exists: {name}")));
         }
         std::fs::create_dir_all(&path)?;
-        let repo = Repository::init(&path)?;
+        let mut options = RepositoryInitOptions::new();
+        if let Ok(config) = git2::Config::open_default() {
+            options.initial_head(&initial_branch(&config));
+        }
+        let repo = Repository::init_opts(&path, &options)?;
         let notebook = Notebook {
             name: name.to_string(),
             path,
@@ -804,6 +808,20 @@ fn configured_author(paths: &Paths) -> Option<(String, String)> {
     config::author_parts(Config::load(paths).ok()?.get("author")?)
 }
 
+/// The branch a fresh notebook starts on. libgit2 hardcodes `master`, so without
+/// this a notebook disagrees with every other repository on a machine that sets
+/// `init.defaultBranch` — and pushing it to a remote that expects `main` leaves
+/// two branches where the user asked for one. `git init`'s own fallback is
+/// `master`, and matching it keeps the two tools telling the same story.
+fn initial_branch(config: &git2::Config) -> String {
+    config
+        .get_string("init.defaultBranch")
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "master".to_string())
+}
+
 /// A refused push, phrased as the next thing to do about it.
 fn rejected(reasons: &[String]) -> Error {
     Error::msg(format!(
@@ -823,4 +841,61 @@ pub fn validate_name(name: &str) -> Result<()> {
         return Err(Error::msg(format!("invalid notebook name: {name}")));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// A file-backed config: an in-memory one has no backend to write to.
+    struct TempConfig(PathBuf, git2::Config);
+
+    impl TempConfig {
+        fn new() -> Self {
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("noda-config-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_file(&path);
+            let config = git2::Config::open(&path).expect("open config");
+            TempConfig(path, config)
+        }
+
+        fn set(&mut self, value: &str) {
+            self.1
+                .set_str("init.defaultBranch", value)
+                .expect("set init.defaultBranch");
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_notebook_starts_on_the_branch_git_would_have_used() {
+        let mut config = TempConfig::new();
+        assert_eq!(
+            initial_branch(&config.1),
+            "master",
+            "unset, so `git init`'s own fallback"
+        );
+
+        config.set("main");
+        assert_eq!(initial_branch(&config.1), "main");
+
+        config.set("trunk");
+        assert_eq!(initial_branch(&config.1), "trunk");
+    }
+
+    /// `initial_head("")` would leave the repository naming no branch at all.
+    #[test]
+    fn a_blank_default_branch_falls_back_rather_than_naming_nothing() {
+        let mut config = TempConfig::new();
+        config.set("   ");
+        assert_eq!(initial_branch(&config.1), "master");
+    }
 }
