@@ -1,7 +1,6 @@
 //! Command implementations. Each one takes `Paths` explicitly so tests can run
 //! against a throwaway root without touching the real environment.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -191,10 +190,11 @@ pub fn add(
     };
 
     let mut index = notebook.index()?;
-    let taken: HashSet<String> = index.iter().map(|(id, _)| id.clone()).collect();
     let slug = unique_slug(&notebook, &note::slugify(&title));
     let note = Note {
-        id: note::mint_id(&taken),
+        // Against the notes as well as the index: an id can be in the notebook
+        // without the index knowing, and handing it out twice is not undoable.
+        id: note::mint_id(&notebook.taken_ids()?),
         title,
         tags,
         body: body.trim_start_matches('\n').to_string(),
@@ -731,6 +731,12 @@ pub fn status(paths: &Paths) -> Result<String> {
         ("changes", changes),
     ];
 
+    // Only when there is something to say: a row that reads "0 problems" on
+    // every healthy notebook teaches people to skip the line that matters.
+    if !status.disagreements.is_empty() {
+        rows.push(("index", describe_disagreements(&status.disagreements)));
+    }
+
     match status.remote {
         None => rows.push((
             "remote",
@@ -749,9 +755,54 @@ pub fn status(paths: &Paths) -> Result<String> {
         .unwrap_or(0);
     let mut out = String::new();
     for (key, value) in rows {
-        let _ = writeln!(out, "{}  {value}", pad(key, width));
+        // A value may run to several lines; they line up under the first rather
+        // than under the label, so the table still reads as two columns.
+        let mut lines = value.lines();
+        let _ = writeln!(out, "{}  {}", pad(key, width), lines.next().unwrap_or(""));
+        for line in lines {
+            let _ = writeln!(out, "{}  {line}", pad("", width));
+        }
     }
     Ok(out)
+}
+
+/// How many notes and index entries disagree, and in what way.
+///
+/// One kind gets one line, which already says how many — a headline above it
+/// would only repeat the number. Several kinds get a total first, so the size
+/// of the problem is legible before its breakdown.
+fn describe_disagreements(disagreements: &[(notebook::Disagreement, Vec<String>)]) -> String {
+    let mut out = String::new();
+    if disagreements.len() > 1 {
+        let total: usize = disagreements
+            .iter()
+            .map(|(_, subjects)| subjects.len())
+            .sum();
+        let noun = if total == 1 { "problem" } else { "problems" };
+        let _ = writeln!(out, "{total} {noun}");
+    }
+    for (kind, subjects) in disagreements {
+        let _ = writeln!(
+            out,
+            "{}{}",
+            kind.describe(subjects.len()),
+            style::paint(style::MUTED, &format!("  ({})", elide(subjects)))
+        );
+    }
+    out.trim_end().to_string()
+}
+
+/// The first few subjects, with `…` standing in for the rest. Naming every one
+/// is what would let a lost index put a line per note on the screen.
+fn elide(subjects: &[String]) -> String {
+    /// Enough to recognise what is going on, few enough to stay on one line.
+    const SHOWN: usize = 3;
+
+    let mut shown: Vec<&str> = subjects.iter().take(SHOWN).map(String::as_str).collect();
+    if subjects.len() > SHOWN {
+        shown.push("…");
+    }
+    shown.join("; ")
 }
 
 /// How far the notebook has drifted, phrased as what there is left to do.

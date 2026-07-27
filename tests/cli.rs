@@ -1118,6 +1118,136 @@ fn status_reports_what_it_cannot_read_instead_of_dying_on_it() {
 }
 
 #[test]
+fn status_reports_an_index_that_no_longer_matches_the_notes() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&out, "index"),
+        None,
+        "a notebook that agrees with itself says nothing about it: {out}"
+    );
+
+    // noda's own commands keep the two in step, so the divergence has to come
+    // from outside — an editor, a merge, a `git checkout`.
+    let path = notebook.join("alpha.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(&format!("id: {id}"), "id: zzzz");
+    std::fs::write(&path, text).unwrap();
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    let row = status_row(&out, "index").unwrap_or_else(|| panic!("no index row: {out}"));
+    assert_eq!(
+        row,
+        format!("1 note carries an id the index recorded differently  (alpha.md: zzzz, not {id})"),
+        // One kind needs no headline above it; the line already says how many.
+        "{out}"
+    );
+
+    // A file that is not a note at all belongs on the notes row, not this one.
+    std::fs::write(notebook.join("stray.md"), "not a note\n").unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(
+        !status_row(&out, "index").unwrap().contains("stray"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_new_note_avoids_an_id_the_index_has_never_heard_of() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // A note the way a merge delivers one: a file carrying an id, with nothing
+    // in the index to say so. Minting against the index alone would be free to
+    // hand that id out a second time, and there is no undoing that.
+    std::fs::write(
+        notebook.join("merged.md"),
+        "---\nid: zzzz\ntitle: Merged\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let taken = noda::notebook::Notebook::open_active(&paths)
+        .unwrap()
+        .taken_ids()
+        .unwrap();
+    assert!(taken.contains("zzzz"), "{taken:?}");
+
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&out, "index"),
+        Some("1 note the index does not name  (merged.md)"),
+        "and status says the file is there unrecorded: {out}"
+    );
+}
+
+#[test]
+fn a_wholesale_disagreement_is_counted_rather_than_listed() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    for n in 0..12 {
+        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+    }
+
+    // The commonest way this goes wrong — a lost index, a restore that missed
+    // `.noda/` — makes every note in the notebook a problem at once. `status`
+    // has to stay one screen through that.
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    let row = status_row(&out, "index").unwrap();
+    assert!(row.starts_with("12 notes the index does not name"), "{row}");
+    assert_eq!(
+        row.matches(".md").count(),
+        3,
+        "three named, not twelve: {row}"
+    );
+    assert!(row.ends_with("…)"), "and the rest elided: {row}");
+    assert_eq!(out.lines().count(), 5, "still one line per row: {out}");
+}
+
+#[test]
+fn several_kinds_are_totalled_before_they_are_broken_down() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    // Two notes the index has never heard of, and one entry naming a note that
+    // is not there.
+    for (slug, id) in [("merged", "zzzz"), ("dropped-in", "yyyy")] {
+        std::fs::write(
+            notebook.join(format!("{slug}.md")),
+            format!("---\nid: {id}\ntitle: {slug}\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    let index = notebook.join(".noda/index.tsv");
+    let mut text = std::fs::read_to_string(&index).unwrap();
+    text.push_str("wwww\tghost\n");
+    std::fs::write(&index, text).unwrap();
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&out, "index"),
+        Some("3 problems"),
+        "the size of it comes first: {out}"
+    );
+    assert!(
+        out.contains("1 entry names a note that is not there  (ghost.md)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("2 notes the index does not name  (dropped-in.md; merged.md)"),
+        "{out}"
+    );
+}
+
+#[test]
 fn search_matches_the_body_the_title_and_the_tags() {
     let (_root, paths) = initialized();
     cmd::add(

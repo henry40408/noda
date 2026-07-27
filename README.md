@@ -131,6 +131,29 @@ remote    git@github.com:me/work-notes.git
 sync      2 to push (as of the last sync)
 ```
 
+It also holds the notes up against the committed `id ↔ slug` index and says where the two
+have stopped agreeing. noda's own commands keep them in step, so anything reported here
+arrived from outside — a note edited with a different editor, a file dropped in by hand, a
+merge that brought in a note this notebook had never seen. The frontmatter is treated as
+the truth, because that is what you edit and what git merges. The row is only there when
+there is something to say:
+
+```
+index     1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
+```
+
+Problems are counted by kind rather than listed one at a time. An index that was lost, or
+restored from a backup that missed `.noda/`, makes every note in the notebook a problem at
+once — `status` has to stay one screen through that, and "201 notes the index does not
+name" tells you what happened where 201 filenames would not. Where more than one kind
+turns up, the total comes first:
+
+```
+index     2 problems
+          1 note the index does not name  (merged.md)
+          1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
+```
+
 ### Notes
 
 | Command | Description |
