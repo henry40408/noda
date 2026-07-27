@@ -110,6 +110,63 @@ fn add_rejects_an_empty_note() {
 }
 
 #[test]
+fn add_refuses_a_title_or_a_tag_the_frontmatter_cannot_carry() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    // A second line in the title used to become a field of its own, so the file
+    // claimed an id the index had never minted.
+    let err = cmd::add(&paths, Some("Meeting\nid: zzzz"), Some("body\n"), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("one line"), "{err}");
+
+    // `,` separates tags and `]` closes the list, so neither can sit inside one.
+    for tag in ["work, secret", "a]", ""] {
+        assert!(
+            cmd::add(&paths, Some("Alpha"), Some("body\n"), &[tag.to_string()]).is_err(),
+            "tag `{tag}` should be refused"
+        );
+    }
+
+    assert!(
+        cmd::ls(&paths, None, None).unwrap().is_empty(),
+        "nothing written"
+    );
+    assert_eq!(commit_count(&notebook), before, "and nothing committed");
+}
+
+#[test]
+fn a_tag_is_stored_the_way_it_reads_back() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("a\n"),
+        &["  work  ".to_string()],
+    )
+    .unwrap();
+
+    // Surrounding space is dropped on the way in, because it is dropped on the
+    // way out — otherwise the tag shown is not the tag `ls --tag` matches.
+    assert!(cmd::show(&paths, "alpha").unwrap().contains("tags: [work]"));
+    assert!(
+        cmd::ls(&paths, None, Some("work"))
+            .unwrap()
+            .contains("alpha")
+    );
+
+    let err = cmd::tag(&paths, "alpha", &["+q3, urgent".to_string()])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains('`'), "{err}");
+    // Removal stays permissive: a tag that got in before the check must still
+    // have a way out.
+    assert!(cmd::tag(&paths, "alpha", &["-q3, urgent".to_string()]).is_ok());
+}
+
+#[test]
 fn add_disambiguates_colliding_slugs_but_keeps_ids_distinct() {
     let (_root, paths) = initialized();
 
@@ -303,6 +360,21 @@ fn mv_rejects_an_empty_title_and_sidesteps_an_occupied_slug() {
     );
 }
 
+#[test]
+fn mv_refuses_a_title_the_frontmatter_cannot_carry() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let err = cmd::mv(&paths, "alpha", "Renamed\ntitle: hijacked")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("one line"), "{err}");
+    assert!(
+        cmd::show(&paths, "alpha").unwrap().contains("title: Alpha"),
+        "the note keeps the title it had"
+    );
+}
+
 /// Writes an executable stand-in for `$EDITOR`. The note path arrives as `$1`.
 /// A path is used rather than an inline `sh -c '…'` because the editor string is
 /// split on whitespace, exactly as a real `$EDITOR` would be.
@@ -451,6 +523,30 @@ fn rm_resolves_by_id_and_reports_an_unknown_note() {
     assert!(cmd::rm(&paths, "nope").is_err());
     cmd::rm(&paths, &id).unwrap();
     assert!(cmd::ls(&paths, None, None).unwrap().is_empty());
+}
+
+#[test]
+fn rm_takes_the_index_entry_even_when_the_file_disagrees_about_the_id() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // Edited outside noda — with git, or any editor — so the file now names an
+    // id the index never minted. Nothing else ever revisits that entry, so a
+    // removal that misses it leaves it behind for good.
+    let path = notebook.join("alpha.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(&format!("id: {id}"), "id: zzzz");
+    std::fs::write(&path, text).unwrap();
+
+    cmd::rm(&paths, "alpha").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        "",
+        "the entry goes with the note, whichever id the file claimed"
+    );
 }
 
 #[test]
@@ -1260,6 +1356,26 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
     )
     .unwrap();
     assert_eq!(index, format!("{id}\talpha\n"));
+}
+
+#[test]
+fn restore_replaces_the_index_entry_of_a_note_deleted_outside_noda() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // Deleted with `rm(1)` rather than `noda rm`, so the entry is still there
+    // when the note comes back and writes its own.
+    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+
+    cmd::restore(&paths, &id, "HEAD").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        format!("{id}\talpha\n"),
+        "one entry for the note, not two"
+    );
+    assert!(cmd::show(&paths, &id).unwrap().ends_with("a\n"));
 }
 
 #[test]

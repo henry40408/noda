@@ -149,6 +149,10 @@ sync      2 to push (as of the last sync)
 `noda tag` takes signed tags — `noda tag meeting-notes +q3 -work` adds `q3` and removes
 `work`. Adding a tag a note already has is not an error; it just leaves nothing to commit.
 
+A title has to fit on one line, and a tag cannot contain `,`, `[`, `]` or a line break —
+the frontmatter writes both verbatim, and a value carrying its punctuation would read back
+as something else. noda says so when you try, rather than writing a note it cannot read.
+
 `noda search` looks through every note's title, tags and body in the active notebook. It
 matches case-insensitively and by substring rather than by word — Chinese and Japanese have
 no spaces to split on, and a word-based search would simply find nothing in them. Several

@@ -5,7 +5,7 @@
 //! calls back repeatedly until one succeeds, so every method is offered at most
 //! once and the callback then gives up rather than looping.
 
-use git2::{Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks};
+use git2::{Cred, CredentialType, FetchOptions, RemoteCallbacks};
 
 use crate::Error;
 
@@ -45,12 +45,6 @@ pub fn callbacks<'a>() -> RemoteCallbacks<'a> {
 
 pub fn fetch_options<'a>() -> FetchOptions<'a> {
     let mut options = FetchOptions::new();
-    options.remote_callbacks(callbacks());
-    options
-}
-
-pub fn push_options<'a>() -> PushOptions<'a> {
-    let mut options = PushOptions::new();
     options.remote_callbacks(callbacks());
     options
 }

@@ -1,6 +1,5 @@
 //! A notebook is a git repository of Markdown files. Every mutation is a commit.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -243,10 +242,6 @@ impl Notebook {
         std::fs::create_dir_all(self.path.join(META_DIR))?;
         std::fs::write(self.path.join(INDEX_FILE), body)?;
         Ok(())
-    }
-
-    pub fn taken_ids(&self) -> Result<HashSet<String>> {
-        Ok(self.index()?.into_iter().map(|(id, _)| id).collect())
     }
 
     /// Every note in the notebook, sorted by slug, read from the working tree.

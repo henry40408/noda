@@ -58,10 +58,6 @@ impl Config {
         Ok(Config { path, document })
     }
 
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
-
     /// A configured value, or `None` when it is unset or not a string.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.document.get(key).and_then(|item| item.as_str())
