@@ -733,19 +733,8 @@ pub fn status(paths: &Paths) -> Result<String> {
 
     // Only when there is something to say: a row that reads "0 problems" on
     // every healthy notebook teaches people to skip the line that matters.
-    if !status.inconsistencies.is_empty() {
-        let count = status.inconsistencies.len();
-        let noun = if count == 1 { "problem" } else { "problems" };
-        rows.push((
-            "index",
-            format!(
-                "{count} {noun}{}",
-                style::paint(
-                    style::MUTED,
-                    &format!("  ({})", status.inconsistencies.join("; "))
-                )
-            ),
-        ));
+    if !status.disagreements.is_empty() {
+        rows.push(("index", describe_disagreements(&status.disagreements)));
     }
 
     match status.remote {
@@ -766,9 +755,54 @@ pub fn status(paths: &Paths) -> Result<String> {
         .unwrap_or(0);
     let mut out = String::new();
     for (key, value) in rows {
-        let _ = writeln!(out, "{}  {value}", pad(key, width));
+        // A value may run to several lines; they line up under the first rather
+        // than under the label, so the table still reads as two columns.
+        let mut lines = value.lines();
+        let _ = writeln!(out, "{}  {}", pad(key, width), lines.next().unwrap_or(""));
+        for line in lines {
+            let _ = writeln!(out, "{}  {line}", pad("", width));
+        }
     }
     Ok(out)
+}
+
+/// How many notes and index entries disagree, and in what way.
+///
+/// One kind gets one line, which already says how many — a headline above it
+/// would only repeat the number. Several kinds get a total first, so the size
+/// of the problem is legible before its breakdown.
+fn describe_disagreements(disagreements: &[(notebook::Disagreement, Vec<String>)]) -> String {
+    let mut out = String::new();
+    if disagreements.len() > 1 {
+        let total: usize = disagreements
+            .iter()
+            .map(|(_, subjects)| subjects.len())
+            .sum();
+        let noun = if total == 1 { "problem" } else { "problems" };
+        let _ = writeln!(out, "{total} {noun}");
+    }
+    for (kind, subjects) in disagreements {
+        let _ = writeln!(
+            out,
+            "{}{}",
+            kind.describe(subjects.len()),
+            style::paint(style::MUTED, &format!("  ({})", elide(subjects)))
+        );
+    }
+    out.trim_end().to_string()
+}
+
+/// The first few subjects, with `…` standing in for the rest. Naming every one
+/// is what would let a lost index put a line per note on the screen.
+fn elide(subjects: &[String]) -> String {
+    /// Enough to recognise what is going on, few enough to stay on one line.
+    const SHOWN: usize = 3;
+
+    let mut shown: Vec<&str> = subjects.iter().take(SHOWN).map(String::as_str).collect();
+    if subjects.len() > SHOWN {
+        shown.push("…");
+    }
+    shown.join("; ")
 }
 
 /// How far the notebook has drifted, phrased as what there is left to do.

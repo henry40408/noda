@@ -139,7 +139,19 @@ the truth, because that is what you edit and what git merges. The row is only th
 there is something to say:
 
 ```
-index     1 problem  (reading-log.md carries id q7x2, but the index says k3f9)
+index     1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
+```
+
+Problems are counted by kind rather than listed one at a time. An index that was lost, or
+restored from a backup that missed `.noda/`, makes every note in the notebook a problem at
+once — `status` has to stay one screen through that, and "201 notes the index does not
+name" tells you what happened where 201 filenames would not. Where more than one kind
+turns up, the total comes first:
+
+```
+index     2 problems
+          1 note the index does not name  (merged.md)
+          1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
 ```
 
 ### Notes

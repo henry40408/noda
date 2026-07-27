@@ -1,6 +1,6 @@
 //! A notebook is a git repository of Markdown files. Every mutation is a commit.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -42,9 +42,64 @@ pub struct Status {
     /// `(ahead, behind)` against the remote-tracking ref, or `None` when there
     /// is nothing to compare against because the notebook has never fetched.
     pub drift: Option<(usize, usize)>,
-    /// Where the notes and the committed index disagree, in the words `status`
-    /// prints. Empty is the healthy state, and the ordinary one.
-    pub inconsistencies: Vec<String>,
+    /// Where the notes and the committed index disagree: each kind that
+    /// occurred, and what it happened to. Empty is the healthy state, and the
+    /// ordinary one.
+    pub disagreements: Vec<(Disagreement, Vec<String>)>,
+}
+
+/// A way the notes and the committed index can disagree.
+///
+/// Reported by kind rather than one occurrence at a time, because the
+/// commonest way this goes wrong is wholesale: an index that was lost,
+/// truncated, or restored from a backup without `.noda/` makes *every* note in
+/// the notebook a problem at once. One line saying how many is worth more than
+/// two thousand naming them, and it is the line that tells you what happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Disagreement {
+    /// The index names a note the working tree does not have.
+    Missing,
+    /// A note the index does not name at all.
+    Unlisted,
+    /// A note carrying an id the index recorded differently.
+    Mismatched,
+    /// One id carried by more than one note.
+    SharedByNotes,
+    /// One id the index gives to more than one note.
+    SharedByIndex,
+}
+
+impl Disagreement {
+    /// How to say that there are `count` of this kind. The subjects are notes
+    /// for the first three and ids for the last two, so the noun follows.
+    pub fn describe(self, count: usize) -> String {
+        match (self, count == 1) {
+            (Disagreement::Missing, true) => "1 entry names a note that is not there".to_string(),
+            (Disagreement::Missing, false) => {
+                format!("{count} entries name notes that are not there")
+            }
+            (Disagreement::Unlisted, true) => "1 note the index does not name".to_string(),
+            (Disagreement::Unlisted, false) => format!("{count} notes the index does not name"),
+            (Disagreement::Mismatched, true) => {
+                "1 note carries an id the index recorded differently".to_string()
+            }
+            (Disagreement::Mismatched, false) => {
+                format!("{count} notes carry ids the index recorded differently")
+            }
+            (Disagreement::SharedByNotes, true) => {
+                "1 id is carried by more than one note".to_string()
+            }
+            (Disagreement::SharedByNotes, false) => {
+                format!("{count} ids are carried by more than one note")
+            }
+            (Disagreement::SharedByIndex, true) => {
+                "1 id is given by the index to more than one note".to_string()
+            }
+            (Disagreement::SharedByIndex, false) => {
+                format!("{count} ids are given by the index to more than one note")
+            }
+        }
+    }
 }
 
 /// What a walk of the working tree found: every note as an `(id, slug)` pair —
@@ -127,7 +182,7 @@ impl Notebook {
     pub fn status(&self) -> Result<Status> {
         let branch = self.branch()?;
         let scan = self.scan()?;
-        let inconsistencies = reconcile(&scan.notes, &self.index()?);
+        let disagreements = reconcile(&scan.notes, &self.index()?);
 
         let mut options = git2::StatusOptions::new();
         options.include_untracked(true).include_ignored(false);
@@ -149,7 +204,7 @@ impl Notebook {
             uncommitted,
             remote: self.remote_url(),
             drift,
-            inconsistencies,
+            disagreements,
         })
     }
 
@@ -841,8 +896,7 @@ fn configured_author(paths: &Paths) -> Option<(String, String)> {
     config::author_parts(Config::load(paths).ok()?.get("author")?)
 }
 
-/// Where the notes and the committed index disagree, phrased for the person
-/// reading `noda status`.
+/// Where the notes and the committed index disagree, gathered by kind.
 ///
 /// noda's own commands keep the two in step, so everything here comes from
 /// outside: a note edited with another editor, a file dropped in by hand, a
@@ -852,11 +906,14 @@ fn configured_author(paths: &Paths) -> Option<(String, String)> {
 ///
 /// Ids are compared folded, the way `resolve` compares them — otherwise `k3f9`
 /// and `K3F9` read as two ids here while addressing one note everywhere else.
-fn reconcile(notes: &[(String, String)], index: &[(String, String)]) -> Vec<String> {
-    let mut problems = Vec::new();
+fn reconcile(
+    notes: &[(String, String)],
+    index: &[(String, String)],
+) -> Vec<(Disagreement, Vec<String>)> {
+    let mut found: BTreeMap<Disagreement, Vec<String>> = BTreeMap::new();
 
     // Keyed by slug: it is the filename, so it is unique on both sides.
-    let by_slug: std::collections::HashMap<&str, &str> = notes
+    let by_slug: HashMap<&str, &str> = notes
         .iter()
         .map(|(id, slug)| (slug.as_str(), id.as_str()))
         .collect();
@@ -865,16 +922,24 @@ fn reconcile(notes: &[(String, String)], index: &[(String, String)]) -> Vec<Stri
     let mut mapped: HashSet<String> = HashSet::new();
     for (id, slug) in index {
         match by_slug.get(slug.as_str()) {
-            None => problems.push(format!("the index names {slug}.md, which is not there")),
-            Some(carried) if note::normalize_id(carried) != note::normalize_id(id) => problems
-                .push(format!(
-                    "{slug}.md carries id {carried}, but the index says {id}"
-                )),
+            None => found
+                .entry(Disagreement::Missing)
+                .or_default()
+                .push(format!("{slug}.md")),
+            // The two ids are worth carrying: at one occurrence they are the
+            // whole answer, and they elide with everything else beyond that.
+            Some(carried) if note::normalize_id(carried) != note::normalize_id(id) => found
+                .entry(Disagreement::Mismatched)
+                .or_default()
+                .push(format!("{slug}.md: {carried}, not {id}")),
             Some(_) => {}
         }
         named.insert(slug.as_str());
         if !mapped.insert(note::normalize_id(id)) {
-            problems.push(format!("the index gives id {id} to more than one note"));
+            found
+                .entry(Disagreement::SharedByIndex)
+                .or_default()
+                .push(id.clone());
         }
     }
 
@@ -883,18 +948,28 @@ fn reconcile(notes: &[(String, String)], index: &[(String, String)]) -> Vec<Stri
         // A note the index names is already accounted for above, whether or not
         // the two agreed about its id — saying it twice helps nobody.
         if !named.contains(slug.as_str()) {
-            problems.push(format!(
-                "the index does not name {slug}.md, which carries id {id}"
-            ));
+            found
+                .entry(Disagreement::Unlisted)
+                .or_default()
+                .push(format!("{slug}.md"));
         }
         if !seen.insert(note::normalize_id(id)) {
-            problems.push(format!("more than one note carries id {id}"));
+            found
+                .entry(Disagreement::SharedByNotes)
+                .or_default()
+                .push(id.clone());
         }
     }
 
-    problems.sort();
-    problems.dedup();
-    problems
+    found
+        .into_iter()
+        .map(|(kind, mut subjects)| {
+            // An id repeated three times is one id in trouble, not two.
+            subjects.sort();
+            subjects.dedup();
+            (kind, subjects)
+        })
+        .collect()
 }
 
 /// The branch a fresh notebook starts on. libgit2 hardcodes `master`, so without
@@ -980,21 +1055,24 @@ mod tests {
 
     #[test]
     fn each_way_the_two_can_disagree_is_named_once() {
-        // The file and the index disagree about the id — one message for one
-        // problem, not one from each side of it.
+        // The file and the index disagree about the id — one problem, not one
+        // from each side of it. Both ids travel with it.
         assert_eq!(
             reconcile(&pairs(&[("zzzz", "alpha")]), &pairs(&[("k3f9", "alpha")])),
-            ["alpha.md carries id zzzz, but the index says k3f9"]
+            [(
+                Disagreement::Mismatched,
+                vec!["alpha.md: zzzz, not k3f9".to_string()]
+            )]
         );
 
         // An entry whose note is not there, and a note the index never heard of.
         assert_eq!(
             reconcile(&[], &pairs(&[("k3f9", "alpha")])),
-            ["the index names alpha.md, which is not there"]
+            [(Disagreement::Missing, vec!["alpha.md".to_string()])]
         );
         assert_eq!(
             reconcile(&pairs(&[("k3f9", "alpha")]), &[]),
-            ["the index does not name alpha.md, which carries id k3f9"]
+            [(Disagreement::Unlisted, vec!["alpha.md".to_string()])]
         );
 
         // One id, two notes — on both sides of the comparison.
@@ -1002,9 +1080,29 @@ mod tests {
         assert_eq!(
             reconcile(&doubled, &doubled),
             [
-                "more than one note carries id k3f9",
-                "the index gives id k3f9 to more than one note",
+                (Disagreement::SharedByNotes, vec!["k3f9".to_string()]),
+                (Disagreement::SharedByIndex, vec!["k3f9".to_string()]),
             ]
+        );
+    }
+
+    #[test]
+    fn a_wholesale_disagreement_stays_one_kind() {
+        // The commonest way this goes wrong: the index is lost, so every note
+        // in the notebook is a problem at once. However many, it is one kind
+        // and it is counted, not enumerated.
+        let notes: Vec<(String, String)> = (0..2_000)
+            .map(|n| (format!("id{n:04}"), format!("note-{n:04}")))
+            .collect();
+
+        let reported = reconcile(&notes, &[]);
+        assert_eq!(reported.len(), 1, "one kind, not two thousand problems");
+        let (kind, subjects) = &reported[0];
+        assert_eq!(*kind, Disagreement::Unlisted);
+        assert_eq!(subjects.len(), 2_000);
+        assert_eq!(
+            kind.describe(subjects.len()),
+            "2000 notes the index does not name"
         );
     }
 
