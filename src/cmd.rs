@@ -173,6 +173,13 @@ pub fn add(
 ) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
 
+    // Checked before the editor opens: nobody should compose a note only to be
+    // told afterwards that its title or its tags cannot be written down.
+    if let Some(title) = title {
+        note::validate_title(title)?;
+    }
+    let tags = clean_tags(tags)?;
+
     let body = match content {
         Some(text) => text.to_string(),
         None => compose_in_editor(paths, title)?,
@@ -189,7 +196,7 @@ pub fn add(
     let note = Note {
         id: note::mint_id(&taken),
         title,
-        tags: tags.to_vec(),
+        tags,
         body: body.trim_start_matches('\n').to_string(),
     };
 
@@ -283,6 +290,7 @@ pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
             if name.is_empty() {
                 return Err(Error::msg("`+` needs a tag name after it"));
             }
+            note::validate_tag(name)?;
             if !note.tags.iter().any(|t| t == name) {
                 note.tags.push(name.to_string());
             }
@@ -368,6 +376,7 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
     if title.is_empty() {
         return Err(Error::msg("a note needs a title"));
     }
+    note::validate_title(title)?;
 
     let base = note::slugify(title);
     let slug = if base == located.slug {
@@ -406,7 +415,11 @@ pub fn rm(paths: &Paths, key: &str) -> Result<String> {
 
     std::fs::remove_file(&located.path)?;
     let mut index = notebook.index()?;
-    index.retain(|(id, _)| *id != located.note.id);
+    // Keyed on the id noda minted, but a file edited outside noda can carry a
+    // different one — and then the entry for the note just deleted would stay
+    // behind forever, because nothing else ever revisits it. The slug is the
+    // file that has gone, so it settles the case the id cannot.
+    index.retain(|(id, slug)| *id != located.note.id && *slug != located.slug);
     notebook.write_index(&index)?;
     notebook.commit(
         &[
@@ -873,6 +886,10 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     let mut changed = vec![format!("{slug}.md")];
     if current.is_none() {
         let mut index = notebook.index()?;
+        // A note deleted outside noda still has its entry, so the id is dropped
+        // before it is written again: an index holding the same id twice maps it
+        // to whichever slug happens to sort first.
+        index.retain(|(entry, _)| *entry != id);
         index.push((id.clone(), slug.clone()));
         notebook.write_index(&index)?;
         changed.push(INDEX_PATH.to_string());
@@ -1072,6 +1089,18 @@ fn derive_title(body: &str) -> Option<String> {
         .map(|line| line.trim_start_matches('#').trim())
         .find(|line| !line.is_empty())
         .map(str::to_string)
+}
+
+/// Tags as they will be written: trimmed, because the frontmatter is read back
+/// trimmed, and refused when they carry something it cannot round-trip.
+fn clean_tags(tags: &[String]) -> Result<Vec<String>> {
+    tags.iter()
+        .map(|tag| {
+            let tag = tag.trim();
+            note::validate_tag(tag)?;
+            Ok(tag.to_string())
+        })
+        .collect()
 }
 
 /// Appends `-2`, `-3`, … until the slug is free within the notebook.

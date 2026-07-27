@@ -92,6 +92,36 @@ fn parse_tags(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// A title is written into the frontmatter verbatim, so a second line in it
+/// becomes a field of its own — `title: Meeting\nid: zzzz` gives the file an id
+/// its own index does not know about. Refusing it at the door keeps `render` and
+/// `parse` inverse without inventing an escaping syntax that every hand-edited
+/// note would then have to speak.
+pub fn validate_title(title: &str) -> Result<()> {
+    if title.contains(['\n', '\r']) {
+        return Err(Error::msg("a title has to fit on one line"));
+    }
+    Ok(())
+}
+
+/// Tags share the frontmatter's own punctuation: `,` separates them and `[]`
+/// bounds the list, so a tag carrying either comes back as something else — and
+/// an empty one does not come back at all. Same reasoning as `validate_title`.
+pub fn validate_tag(tag: &str) -> Result<()> {
+    if tag.is_empty() {
+        return Err(Error::msg("a tag needs a name"));
+    }
+    if let Some(bad) = tag.matches(['\n', '\r', ',', '[', ']']).next() {
+        let bad = if bad == "\n" || bad == "\r" {
+            "a line break".to_string()
+        } else {
+            format!("`{bad}`")
+        };
+        return Err(Error::msg(format!("a tag cannot contain {bad}: {tag}")));
+    }
+    Ok(())
+}
+
 /// A filename-safe, human-readable name derived from the title. Alphanumerics are
 /// kept (so CJK titles stay legible), everything else collapses to a single `-`.
 pub fn slugify(title: &str) -> String {
@@ -215,6 +245,21 @@ mod tests {
         assert_eq!(note.title, "Rust: a tour");
         assert!(note.tags.is_empty());
         assert_eq!(note.body, "hi\n");
+    }
+
+    #[test]
+    fn values_that_would_not_survive_the_round_trip_are_refused() {
+        assert!(validate_title("Meeting Notes").is_ok());
+        // The line that made the file claim an id its index never minted.
+        let err = validate_title("Meeting\nid: zzzz").unwrap_err().to_string();
+        assert!(err.contains("one line"), "{err}");
+        assert!(validate_title("Meeting\rnotes").is_err());
+
+        assert!(validate_tag("work").is_ok());
+        assert!(validate_tag("會議").is_ok());
+        for bad in ["", "work, secret", "a]", "[a", "two\nlines"] {
+            assert!(validate_tag(bad).is_err(), "{bad} should be refused");
+        }
     }
 
     #[test]
