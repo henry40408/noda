@@ -131,6 +131,17 @@ remote    git@github.com:me/work-notes.git
 sync      2 to push (as of the last sync)
 ```
 
+It also holds the notes up against the committed `id ↔ slug` index and says where the two
+have stopped agreeing. noda's own commands keep them in step, so anything reported here
+arrived from outside — a note edited with a different editor, a file dropped in by hand, a
+merge that brought in a note this notebook had never seen. The frontmatter is treated as
+the truth, because that is what you edit and what git merges. The row is only there when
+there is something to say:
+
+```
+index     1 problem  (reading-log.md carries id q7x2, but the index says k3f9)
+```
+
 ### Notes
 
 | Command | Description |

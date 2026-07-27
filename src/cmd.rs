@@ -1,7 +1,6 @@
 //! Command implementations. Each one takes `Paths` explicitly so tests can run
 //! against a throwaway root without touching the real environment.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -191,10 +190,11 @@ pub fn add(
     };
 
     let mut index = notebook.index()?;
-    let taken: HashSet<String> = index.iter().map(|(id, _)| id.clone()).collect();
     let slug = unique_slug(&notebook, &note::slugify(&title));
     let note = Note {
-        id: note::mint_id(&taken),
+        // Against the notes as well as the index: an id can be in the notebook
+        // without the index knowing, and handing it out twice is not undoable.
+        id: note::mint_id(&notebook.taken_ids()?),
         title,
         tags,
         body: body.trim_start_matches('\n').to_string(),
@@ -730,6 +730,23 @@ pub fn status(paths: &Paths) -> Result<String> {
         ("notes", notes),
         ("changes", changes),
     ];
+
+    // Only when there is something to say: a row that reads "0 problems" on
+    // every healthy notebook teaches people to skip the line that matters.
+    if !status.inconsistencies.is_empty() {
+        let count = status.inconsistencies.len();
+        let noun = if count == 1 { "problem" } else { "problems" };
+        rows.push((
+            "index",
+            format!(
+                "{count} {noun}{}",
+                style::paint(
+                    style::MUTED,
+                    &format!("  ({})", status.inconsistencies.join("; "))
+                )
+            ),
+        ));
+    }
 
     match status.remote {
         None => rows.push((

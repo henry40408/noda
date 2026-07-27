@@ -1,5 +1,6 @@
 //! A notebook is a git repository of Markdown files. Every mutation is a commit.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -41,6 +42,17 @@ pub struct Status {
     /// `(ahead, behind)` against the remote-tracking ref, or `None` when there
     /// is nothing to compare against because the notebook has never fetched.
     pub drift: Option<(usize, usize)>,
+    /// Where the notes and the committed index disagree, in the words `status`
+    /// prints. Empty is the healthy state, and the ordinary one.
+    pub inconsistencies: Vec<String>,
+}
+
+/// What a walk of the working tree found: every note as an `(id, slug)` pair —
+/// the shape the index carries, so the two can be compared directly — and the
+/// `*.md` files that are not notes at all.
+struct Scan {
+    notes: Vec<(String, String)>,
+    unreadable: Vec<String>,
 }
 
 /// One commit, as `noda log` reports it.
@@ -114,7 +126,8 @@ impl Notebook {
     /// you are on a train.
     pub fn status(&self) -> Result<Status> {
         let branch = self.branch()?;
-        let (notes, unreadable) = self.count_notes()?;
+        let scan = self.scan()?;
+        let inconsistencies = reconcile(&scan.notes, &self.index()?);
 
         let mut options = git2::StatusOptions::new();
         options.include_untracked(true).include_ignored(false);
@@ -131,32 +144,57 @@ impl Notebook {
 
         Ok(Status {
             branch,
-            notes,
-            unreadable,
+            notes: scan.notes.len(),
+            unreadable: scan.unreadable,
             uncommitted,
             remote: self.remote_url(),
             drift,
+            inconsistencies,
         })
     }
 
-    /// How many `*.md` files read as notes, and the names of the ones that do
-    /// not. Unlike `notes`, a single malformed file does not sink the count.
-    fn count_notes(&self) -> Result<(usize, Vec<String>)> {
-        let mut notes = 0;
+    /// Walks the working tree for what the notes themselves say.
+    ///
+    /// Tolerant where `notes` is strict: one malformed file must not stop the
+    /// notebook being described, nor stop a new note being given an id that
+    /// avoids the ones already out there.
+    fn scan(&self) -> Result<Scan> {
+        let mut found = Vec::new();
         let mut unreadable = Vec::new();
         for entry in std::fs::read_dir(&self.path)? {
             let path = entry?.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
                 continue;
             }
-            if Note::parse(&std::fs::read_to_string(&path)?).is_ok() {
-                notes += 1;
-            } else if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                unreadable.push(name.to_string());
+            let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            match Note::parse(&std::fs::read_to_string(&path)?) {
+                Ok(note) => found.push((note.id, slug.to_string())),
+                Err(_) => unreadable.push(format!("{slug}.md")),
             }
         }
+        found.sort();
         unreadable.sort();
-        Ok((notes, unreadable))
+        Ok(Scan {
+            notes: found,
+            unreadable,
+        })
+    }
+
+    /// Every id already spoken for, folded the way `resolve` folds them.
+    ///
+    /// `mint_id` is only ever as good as this set, and the index alone is not
+    /// enough: a note that arrived in a merge, or was written by hand, carries
+    /// an id the index has not heard of, and minting it a second time would
+    /// leave two notes answering to one id.
+    pub fn taken_ids(&self) -> Result<HashSet<String>> {
+        Ok(self
+            .index()?
+            .into_iter()
+            .chain(self.scan()?.notes)
+            .map(|(id, _)| note::normalize_id(&id))
+            .collect())
     }
 
     /// The identity git itself would use here — the repo's config, then the
@@ -803,6 +841,62 @@ fn configured_author(paths: &Paths) -> Option<(String, String)> {
     config::author_parts(Config::load(paths).ok()?.get("author")?)
 }
 
+/// Where the notes and the committed index disagree, phrased for the person
+/// reading `noda status`.
+///
+/// noda's own commands keep the two in step, so everything here comes from
+/// outside: a note edited with another editor, a file dropped in by hand, a
+/// merge that brought in a note this notebook had never seen. The frontmatter
+/// is taken as the truth, because that is what a person edits and what git
+/// merges; the index is the derived half, and the one that can be rebuilt.
+///
+/// Ids are compared folded, the way `resolve` compares them — otherwise `k3f9`
+/// and `K3F9` read as two ids here while addressing one note everywhere else.
+fn reconcile(notes: &[(String, String)], index: &[(String, String)]) -> Vec<String> {
+    let mut problems = Vec::new();
+
+    // Keyed by slug: it is the filename, so it is unique on both sides.
+    let by_slug: std::collections::HashMap<&str, &str> = notes
+        .iter()
+        .map(|(id, slug)| (slug.as_str(), id.as_str()))
+        .collect();
+
+    let mut named: HashSet<&str> = HashSet::new();
+    let mut mapped: HashSet<String> = HashSet::new();
+    for (id, slug) in index {
+        match by_slug.get(slug.as_str()) {
+            None => problems.push(format!("the index names {slug}.md, which is not there")),
+            Some(carried) if note::normalize_id(carried) != note::normalize_id(id) => problems
+                .push(format!(
+                    "{slug}.md carries id {carried}, but the index says {id}"
+                )),
+            Some(_) => {}
+        }
+        named.insert(slug.as_str());
+        if !mapped.insert(note::normalize_id(id)) {
+            problems.push(format!("the index gives id {id} to more than one note"));
+        }
+    }
+
+    let mut seen: HashSet<String> = HashSet::new();
+    for (id, slug) in notes {
+        // A note the index names is already accounted for above, whether or not
+        // the two agreed about its id — saying it twice helps nobody.
+        if !named.contains(slug.as_str()) {
+            problems.push(format!(
+                "the index does not name {slug}.md, which carries id {id}"
+            ));
+        }
+        if !seen.insert(note::normalize_id(id)) {
+            problems.push(format!("more than one note carries id {id}"));
+        }
+    }
+
+    problems.sort();
+    problems.dedup();
+    problems
+}
+
 /// The branch a fresh notebook starts on. libgit2 hardcodes `master`, so without
 /// this a notebook disagrees with every other repository on a machine that sets
 /// `init.defaultBranch` — and pushing it to a remote that expects `main` leaves
@@ -868,6 +962,57 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    fn pairs(entries: &[(&str, &str)]) -> Vec<(String, String)> {
+        entries
+            .iter()
+            .map(|(id, slug)| ((*id).to_string(), (*slug).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn an_index_that_matches_the_notes_has_nothing_to_report() {
+        let notes = pairs(&[("k3f9", "alpha"), ("q7x2", "beta")]);
+        assert!(reconcile(&notes, &notes).is_empty());
+        assert!(reconcile(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn each_way_the_two_can_disagree_is_named_once() {
+        // The file and the index disagree about the id — one message for one
+        // problem, not one from each side of it.
+        assert_eq!(
+            reconcile(&pairs(&[("zzzz", "alpha")]), &pairs(&[("k3f9", "alpha")])),
+            ["alpha.md carries id zzzz, but the index says k3f9"]
+        );
+
+        // An entry whose note is not there, and a note the index never heard of.
+        assert_eq!(
+            reconcile(&[], &pairs(&[("k3f9", "alpha")])),
+            ["the index names alpha.md, which is not there"]
+        );
+        assert_eq!(
+            reconcile(&pairs(&[("k3f9", "alpha")]), &[]),
+            ["the index does not name alpha.md, which carries id k3f9"]
+        );
+
+        // One id, two notes — on both sides of the comparison.
+        let doubled = pairs(&[("k3f9", "alpha"), ("k3f9", "beta")]);
+        assert_eq!(
+            reconcile(&doubled, &doubled),
+            [
+                "more than one note carries id k3f9",
+                "the index gives id k3f9 to more than one note",
+            ]
+        );
+    }
+
+    #[test]
+    fn ids_are_compared_the_way_they_are_addressed() {
+        // `resolve` folds case and the I/L/O confusables, so a difference that
+        // is not one anywhere else must not be reported as one here.
+        assert!(reconcile(&pairs(&[("K3F9", "alpha")]), &pairs(&[("k3f9", "alpha")])).is_empty());
     }
 
     #[test]
