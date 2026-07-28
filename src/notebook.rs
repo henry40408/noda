@@ -1,7 +1,12 @@
 //! A notebook is a git repository of Markdown files. Every mutation is a commit.
+//!
+//! A note's identity is its filename: `<id>-<slug>.md`. Nothing derived is
+//! committed alongside the notes, so there is no bookkeeping file to conflict on
+//! and nothing that can fall out of step with what the files say. Two machines
+//! that each add a note write two different filenames, and git merges them
+//! without anyone being asked to resolve anything.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Write as _;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryInitOptions, Signature};
@@ -12,10 +17,6 @@ use crate::paths::Paths;
 use crate::remote;
 use crate::{Error, Result};
 
-/// Directory holding noda's own bookkeeping inside a notebook.
-pub const META_DIR: &str = ".noda";
-/// Committed `id\tslug` lookup. Rebuildable from the notes' frontmatter.
-const INDEX_FILE: &str = ".noda/index.tsv";
 /// noda configures exactly one remote per notebook.
 const REMOTE_NAME: &str = "origin";
 
@@ -28,86 +29,119 @@ pub struct Notebook {
     author: Option<(String, String)>,
 }
 
+/// A note as it sits in the working tree: the identity its filename spells out,
+/// and what the file holds.
+pub struct NoteFile {
+    pub id: String,
+    pub slug: String,
+    pub note: Note,
+}
+
 /// Where a notebook stands, as `noda status` reports it.
 pub struct Status {
     pub branch: String,
     pub notes: usize,
-    /// `*.md` files that are not readable as notes. `status` is the command you
-    /// run to find out what is going on, so it reports these instead of dying
-    /// on them the way the note commands do.
-    pub unreadable: Vec<String>,
     /// Files differing from `HEAD`, untracked ones included.
     pub uncommitted: usize,
     pub remote: Option<String>,
     /// `(ahead, behind)` against the remote-tracking ref, or `None` when there
     /// is nothing to compare against because the notebook has never fetched.
     pub drift: Option<(usize, usize)>,
-    /// Where the notes and the committed index disagree: each kind that
-    /// occurred, and what it happened to. Empty is the healthy state, and the
-    /// ordinary one.
-    pub disagreements: Vec<(Disagreement, Vec<String>)>,
+    /// What the walk of the working tree turned up that wants attention. Empty
+    /// is the healthy state, and the ordinary one.
+    pub problems: Vec<(Problem, Vec<String>)>,
 }
 
-/// A way the notes and the committed index can disagree.
+/// Something in the notebook that noda will not settle on its own.
 ///
-/// Reported by kind rather than one occurrence at a time, because the
-/// commonest way this goes wrong is wholesale: an index that was lost,
-/// truncated, or restored from a backup without `.noda/` makes *every* note in
-/// the notebook a problem at once. One line saying how many is worth more than
-/// two thousand naming them, and it is the line that tells you what happened.
+/// Reported by kind rather than one occurrence at a time, because the commonest
+/// way this goes wrong is wholesale — a directory of files copied in at once. One
+/// line saying how many is worth more than two thousand naming them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Disagreement {
-    /// The index names a note the working tree does not have.
-    Missing,
-    /// A note the index does not name at all.
-    Unlisted,
-    /// A note carrying an id the index recorded differently.
-    Mismatched,
-    /// One id carried by more than one note.
-    SharedByNotes,
-    /// One id the index gives to more than one note.
-    SharedByIndex,
+pub enum Problem {
+    /// One id carried by more than one file. Two machines can mint the same id
+    /// without ever meeting; the filenames differ, so git merges them happily
+    /// and the collision only shows up here.
+    SharedId,
+    /// A `*.md` holding frontmatter but with no id in its name — a note waiting
+    /// to be adopted, which is what a file written by hand looks like.
+    Unnamed,
+    /// A filename that claims an id over a file with no frontmatter. Either a
+    /// note that lost its frontmatter or a file that was never one, and only its
+    /// author knows which.
+    Suspicious,
 }
 
-impl Disagreement {
-    /// How to say that there are `count` of this kind. The subjects are notes
-    /// for the first three and ids for the last two, so the noun follows.
+impl Problem {
+    /// How to say that there are `count` of this kind.
     pub fn describe(self, count: usize) -> String {
         match (self, count == 1) {
-            (Disagreement::Missing, true) => "1 entry names a note that is not there".to_string(),
-            (Disagreement::Missing, false) => {
-                format!("{count} entries name notes that are not there")
-            }
-            (Disagreement::Unlisted, true) => "1 note the index does not name".to_string(),
-            (Disagreement::Unlisted, false) => format!("{count} notes the index does not name"),
-            (Disagreement::Mismatched, true) => {
-                "1 note carries an id the index recorded differently".to_string()
-            }
-            (Disagreement::Mismatched, false) => {
-                format!("{count} notes carry ids the index recorded differently")
-            }
-            (Disagreement::SharedByNotes, true) => {
-                "1 id is carried by more than one note".to_string()
-            }
-            (Disagreement::SharedByNotes, false) => {
+            (Problem::SharedId, true) => "1 id is carried by more than one note".to_string(),
+            (Problem::SharedId, false) => {
                 format!("{count} ids are carried by more than one note")
             }
-            (Disagreement::SharedByIndex, true) => {
-                "1 id is given by the index to more than one note".to_string()
+            (Problem::Unnamed, true) => "1 note has no id in its filename".to_string(),
+            (Problem::Unnamed, false) => format!("{count} notes have no id in their filenames"),
+            (Problem::Suspicious, true) => {
+                "1 file is named like a note but has no frontmatter".to_string()
             }
-            (Disagreement::SharedByIndex, false) => {
-                format!("{count} ids are given by the index to more than one note")
+            (Problem::Suspicious, false) => {
+                format!("{count} files are named like notes but have no frontmatter")
             }
         }
     }
 }
 
-/// What a walk of the working tree found: every note as an `(id, slug)` pair —
-/// the shape the index carries, so the two can be compared directly — and the
-/// `*.md` files that are not notes at all.
+/// What a walk of the working tree found, sorted into the four cases a filename
+/// and a frontmatter block can produce between them.
+///
+/// The frontmatter says "I am a note"; the id prefix says "I have been adopted".
+/// A file with neither is just a file — an attachment, a README, anything — and
+/// noda leaves it alone rather than reporting it forever.
 pub struct Scan {
+    /// Adopted notes, as `(id, slug)`.
     pub notes: Vec<(String, String)>,
-    pub unreadable: Vec<String>,
+    /// Frontmatter but no id: adoptable.
+    pub unnamed: Vec<String>,
+    /// An id but no frontmatter: ambiguous.
+    pub suspicious: Vec<String>,
+}
+
+impl Scan {
+    /// Everything worth reporting, gathered by kind.
+    pub fn problems(&self) -> Vec<(Problem, Vec<String>)> {
+        let mut found: BTreeMap<Problem, Vec<String>> = BTreeMap::new();
+
+        let mut by_id: BTreeMap<String, usize> = BTreeMap::new();
+        for (id, _) in &self.notes {
+            *by_id.entry(note::normalize_id(id)).or_default() += 1;
+        }
+        for (id, _) in by_id.iter().filter(|(_, count)| **count > 1) {
+            found.entry(Problem::SharedId).or_default().push(id.clone());
+        }
+
+        if !self.unnamed.is_empty() {
+            found
+                .entry(Problem::Unnamed)
+                .or_default()
+                .extend(self.unnamed.iter().cloned());
+        }
+        if !self.suspicious.is_empty() {
+            found
+                .entry(Problem::Suspicious)
+                .or_default()
+                .extend(self.suspicious.iter().cloned());
+        }
+
+        found
+            .into_iter()
+            .map(|(kind, mut subjects)| {
+                subjects.sort();
+                subjects.dedup();
+                (kind, subjects)
+            })
+            .collect()
+    }
 }
 
 /// One commit, as `noda log` reports it.
@@ -127,7 +161,12 @@ impl Entry {
 }
 
 impl Notebook {
-    /// Creates the notebook repo and commits an empty index.
+    /// Creates the notebook repo with an empty root commit.
+    ///
+    /// Empty because there is nothing to put in it: noda commits no bookkeeping
+    /// of its own, so the first note is the first content. The commit itself is
+    /// still needed — `HEAD` has to name something before a branch can be pushed
+    /// or compared against a remote.
     pub fn create(paths: &Paths, name: &str) -> Result<Self> {
         validate_name(name)?;
         let path = paths.notebook_dir(name);
@@ -146,8 +185,7 @@ impl Notebook {
             repo,
             author: configured_author(paths),
         };
-        notebook.write_index(&[])?;
-        notebook.commit(&[Path::new(INDEX_FILE)], "chore: initialize notebook")?;
+        notebook.commit(&[], "chore: initialize notebook")?;
         Ok(notebook)
     }
 
@@ -172,15 +210,6 @@ impl Notebook {
         Notebook::open(paths, &active_name(paths)?)
     }
 
-    /// Where the notes and the committed index have stopped agreeing. Empty is
-    /// the healthy state.
-    ///
-    /// Shared by `status`, which reports it, and `sync`, which refuses on it —
-    /// so the two cannot drift into disagreeing about what a disagreement is.
-    pub fn disagreements(&self) -> Result<Vec<(Disagreement, Vec<String>)>> {
-        Ok(compare(&self.scan()?.notes, &self.index()?))
-    }
-
     /// Where the notebook stands: what is uncommitted, and how far it has
     /// drifted from the remote.
     ///
@@ -191,7 +220,6 @@ impl Notebook {
     pub fn status(&self) -> Result<Status> {
         let branch = self.branch()?;
         let scan = self.scan()?;
-        let disagreements = compare(&scan.notes, &self.index()?);
 
         let mut options = git2::StatusOptions::new();
         options.include_untracked(true).include_ignored(false);
@@ -209,54 +237,84 @@ impl Notebook {
         Ok(Status {
             branch,
             notes: scan.notes.len(),
-            unreadable: scan.unreadable,
             uncommitted,
             remote: self.remote_url(),
             drift,
-            disagreements,
+            problems: scan.problems(),
         })
     }
 
-    /// Walks the working tree for what the notes themselves say.
+    /// Walks the working tree and sorts every `*.md` into the four cases.
     ///
     /// Tolerant where `notes` is strict: one malformed file must not stop the
-    /// notebook being described, nor stop a new note being given an id that
-    /// avoids the ones already out there.
+    /// notebook being described.
     pub fn scan(&self) -> Result<Scan> {
-        let mut found = Vec::new();
-        let mut unreadable = Vec::new();
+        let mut notes = Vec::new();
+        let mut unnamed = Vec::new();
+        let mut suspicious = Vec::new();
+
         for entry in std::fs::read_dir(&self.path)? {
             let path = entry?.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
                 continue;
             }
-            let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            match Note::parse(&std::fs::read_to_string(&path)?) {
-                Ok(note) => found.push((note.id, slug.to_string())),
-                Err(_) => unreadable.push(format!("{slug}.md")),
+            let file = format!("{stem}.md");
+            let declared = Note::parse(&std::fs::read_to_string(&path)?).is_ok();
+            match (note::split_stem(stem), declared) {
+                (Some((id, slug)), true) => notes.push((id.to_string(), slug.to_string())),
+                (Some(_), false) => suspicious.push(file),
+                (None, true) => unnamed.push(file),
+                // Neither a name nor a declaration: not noda's business.
+                (None, false) => {}
+            }
+        }
+
+        notes.sort();
+        unnamed.sort();
+        suspicious.sort();
+        Ok(Scan {
+            notes,
+            unnamed,
+            suspicious,
+        })
+    }
+
+    /// Every `(id, slug)` a filename in the notebook spells out, whether or not
+    /// the file behind it can be read.
+    ///
+    /// The name is the whole record, so this opens nothing. It is deliberately
+    /// more forgiving than `scan`: a note whose frontmatter has gone still says
+    /// which note it is, and the commands that only need to know *which* — `rm`,
+    /// `log`, `diff`, `restore` — must keep working on exactly the file someone
+    /// is reaching for those commands to fix.
+    fn named_files(&self) -> Result<Vec<(String, String)>> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(&self.path)? {
+            let path = entry?.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && let Some((id, slug)) = note::split_stem(stem)
+            {
+                found.push((id.to_string(), slug.to_string()));
             }
         }
         found.sort();
-        unreadable.sort();
-        Ok(Scan {
-            notes: found,
-            unreadable,
-        })
+        Ok(found)
     }
 
     /// Every id already spoken for, folded the way `resolve` folds them.
     ///
-    /// `mint_id` is only ever as good as this set, and the index alone is not
-    /// enough: a note that arrived in a merge, or was written by hand, carries
-    /// an id the index has not heard of, and minting it a second time would
-    /// leave two notes answering to one id.
+    /// Read from the filenames alone, so this costs one directory listing and
+    /// opens nothing.
     pub fn taken_ids(&self) -> Result<HashSet<String>> {
         Ok(self
-            .index()?
+            .named_files()?
             .into_iter()
-            .chain(self.scan()?.notes)
             .map(|(id, _)| note::normalize_id(&id))
             .collect())
     }
@@ -315,78 +373,61 @@ impl Notebook {
         remote.url().ok().map(str::to_string)
     }
 
-    pub fn note_path(&self, slug: &str) -> PathBuf {
-        self.path.join(format!("{slug}.md"))
+    pub fn note_path(&self, id: &str, slug: &str) -> PathBuf {
+        self.path.join(note::file_name(id, slug))
     }
 
-    /// Every `(id, slug)` pair, read from the committed index.
-    pub fn index(&self) -> Result<Vec<(String, String)>> {
-        let path = self.path.join(INDEX_FILE);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
-        };
-        Ok(text
-            .lines()
-            .filter_map(|line| line.split_once('\t'))
-            .map(|(id, slug)| (id.to_string(), slug.to_string()))
-            .collect())
-    }
-
-    pub fn write_index(&self, entries: &[(String, String)]) -> Result<()> {
-        let mut sorted = entries.to_vec();
-        sorted.sort();
-        let mut body = String::new();
-        for (id, slug) in &sorted {
-            let _ = writeln!(body, "{id}\t{slug}");
-        }
-        std::fs::create_dir_all(self.path.join(META_DIR))?;
-        std::fs::write(self.path.join(INDEX_FILE), body)?;
-        Ok(())
-    }
-
-    /// Every note in the notebook, sorted by slug, read from the working tree.
-    pub fn notes(&self) -> Result<Vec<(String, Note)>> {
+    /// Every adopted note, sorted by slug, read from the working tree.
+    pub fn notes(&self) -> Result<Vec<NoteFile>> {
         let mut notes = Vec::new();
-        for entry in std::fs::read_dir(&self.path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
-                continue;
-            }
-            let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
+        for (id, slug) in self.scan()?.notes {
+            let path = self.note_path(&id, &slug);
             let text = std::fs::read_to_string(&path)?;
             let note =
                 Note::parse(&text).map_err(|e| Error::msg(format!("{}: {e}", path.display())))?;
-            notes.push((slug.to_string(), note));
+            notes.push(NoteFile { id, slug, note });
         }
-        notes.sort_by(|a, b| a.0.cmp(&b.0));
+        notes.sort_by(|a, b| a.slug.cmp(&b.slug));
         Ok(notes)
     }
 
-    /// Resolves an id or a slug to a note file. Both are matched exactly; an
-    /// unknown key is an error rather than a near miss.
-    pub fn resolve(&self, key: &str) -> Result<PathBuf> {
+    /// Resolves a key to one note's `(id, slug)`.
+    ///
+    /// An exact slug is tried first, then an id prefix — the same bargain git
+    /// makes with object ids, so `noda show k3f9` keeps working while the id
+    /// itself is long enough not to need policing. An ambiguous key is an error
+    /// naming the candidates, never a guess.
+    ///
+    /// Resolution reads no file. Whether the note behind the name can be parsed
+    /// is the caller's problem, and only some callers have it.
+    pub fn resolve(&self, key: &str) -> Result<(String, String)> {
         if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
             return Err(Error::msg(format!("invalid note reference: {key}")));
         }
-        let by_slug = self.note_path(key);
-        if by_slug.is_file() {
-            return Ok(by_slug);
+        let notes = self.named_files()?;
+
+        let mut matched: Vec<&(String, String)> =
+            notes.iter().filter(|(_, slug)| slug == key).collect();
+        if matched.is_empty() {
+            let wanted = note::normalize_id(key);
+            matched = notes
+                .iter()
+                .filter(|(id, _)| note::normalize_id(id).starts_with(&wanted))
+                .collect();
         }
-        let wanted = note::normalize_id(key);
-        for (id, slug) in self.index()? {
-            if note::normalize_id(&id) == wanted {
-                let path = self.note_path(&slug);
-                if path.is_file() {
-                    return Ok(path);
-                }
-            }
+
+        match matched.as_slice() {
+            [(id, slug)] => Ok((id.clone(), slug.clone())),
+            [] => Err(Error::msg(format!("note not found: {key}"))),
+            many => Err(Error::msg(format!(
+                "`{key}` matches {} notes — say which:\n{}",
+                many.len(),
+                many.iter()
+                    .map(|(id, slug)| format!("  {id}  {slug}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ))),
         }
-        Err(Error::msg(format!("note not found: {key}")))
     }
 
     /// Stages `files` (paths relative to the notebook root) and commits them.
@@ -568,6 +609,11 @@ impl Notebook {
     /// Fetches and integrates the remote branch: fast-forward where possible, a
     /// merge commit where the histories diverged. A merge that conflicts is
     /// rolled back rather than left half-applied — noda has no `--continue`.
+    ///
+    /// Two notebooks that each added a note no longer collide: the notes carry
+    /// their ids in their filenames, so they are two paths rather than two edits
+    /// to one. What is left here is a genuine conflict — the same note edited on
+    /// both sides — and only its author can settle that.
     pub fn pull(&self) -> Result<String> {
         if self.is_dirty()? {
             return Err(Error::msg(format!(
@@ -608,39 +654,15 @@ impl Notebook {
                 .filter_map(|c| c.our.or(c.their).or(c.ancestor))
                 .map(|entry| String::from_utf8_lossy(&entry.path).into_owned())
                 .collect();
-
-            // Two notebooks that each added a note both appended to the id ↔ slug
-            // index, which conflicts nearly every time. It is derived data, so
-            // noda rebuilds it from the merged notes instead of asking anyone to
-            // resolve a machine-written file. A conflict in a note is different:
-            // only its author can settle it.
-            let notes: Vec<&String> = conflicted.iter().filter(|p| *p != INDEX_FILE).collect();
-            if !notes.is_empty() {
-                self.abort_merge()?;
-                return Err(Error::msg(format!(
-                    "pull: `{branch}` conflicts with the remote in {} — the merge was rolled back; \
-                     resolve it with git in {}",
-                    notes
-                        .iter()
-                        .map(|p| p.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    self.path.display()
-                )));
-            }
-
-            index.conflict_remove(Path::new(INDEX_FILE))?;
-            let rebuilt: Vec<(String, String)> = self
-                .notes()?
-                .into_iter()
-                .map(|(slug, note)| (note.id, slug))
-                .collect();
-            self.write_index(&rebuilt)?;
-            index.add_path(Path::new(INDEX_FILE))?;
+            self.abort_merge()?;
+            return Err(Error::msg(format!(
+                "pull: `{branch}` conflicts with the remote in {} — the merge was rolled back; \
+                 resolve it with git in {}",
+                conflicted.join(", "),
+                self.path.display()
+            )));
         }
 
-        // Persist the resolved index before turning it into a tree, or the
-        // commit is right while `git status` still reports the merge as pending.
         index.write()?;
         let tree = self.repo.find_tree(index.write_tree()?)?;
         let signature = self.signature()?;
@@ -700,9 +722,12 @@ impl Notebook {
     }
 
     /// Commits, newest first. With `note_id`, only the commits that changed that
-    /// note. The path a note occupied is read from the index committed alongside
-    /// each commit, so a rename is followed without any rename detection —
-    /// that committed `id ↔ slug` map is exactly the record of where it lived.
+    /// note.
+    ///
+    /// A rename is followed without any rename detection: the id is in the
+    /// filename, so the file a note occupied at any commit is whichever tree
+    /// entry carried that prefix. Every commit records it, because every commit
+    /// records the filenames.
     pub fn log(&self, note_id: Option<&str>, max: Option<usize>) -> Result<Vec<Entry>> {
         let mut walk = self.repo.revwalk()?;
         walk.push_head()?;
@@ -715,7 +740,7 @@ impl Notebook {
         for oid in walk {
             let commit = self.repo.find_commit(oid?)?;
             if let Some(id) = note_id
-                && !self.touches(&commit, id)?
+                && !touches(&commit, id)?
             {
                 continue;
             }
@@ -782,77 +807,28 @@ impl Notebook {
 
     /// The slug and text of a note as it stood at `commit`.
     pub fn note_at(&self, commit: &git2::Commit<'_>, id: &str) -> Result<Option<(String, String)>> {
-        let Some((file, blob)) = self.note_blob(commit, id)? else {
+        let Some((file, blob)) = note_blob(commit, id)? else {
             return Ok(None);
         };
         let blob = self.repo.find_blob(blob)?;
         let text = String::from_utf8_lossy(blob.content()).into_owned();
-        Ok(Some((file.trim_end_matches(".md").to_string(), text)))
+        let slug = file
+            .strip_suffix(".md")
+            .and_then(note::split_stem)
+            .map_or_else(|| file.clone(), |(_, slug)| slug.to_string());
+        Ok(Some((slug, text)))
     }
 
-    /// The id a key referred to at `commit`, by slug or by id. Lets a note that
-    /// has since been deleted still be named.
+    /// The id a key referred to at `commit`, by slug or by id prefix. Lets a note
+    /// that has since been deleted still be named.
     pub fn id_at(&self, commit: &git2::Commit<'_>, key: &str) -> Result<Option<String>> {
         let wanted = note::normalize_id(key);
-        Ok(self
-            .index_at(&commit.tree()?)?
-            .into_iter()
-            .find(|(id, slug)| slug == key || note::normalize_id(id) == wanted)
-            .map(|(id, _)| id))
-    }
-
-    /// Whether `commit` changed the note with this id, against its first parent —
-    /// the same simplification `git log` makes for merges.
-    fn touches(&self, commit: &git2::Commit<'_>, id: &str) -> Result<bool> {
-        let now = self.note_blob(commit, id)?;
-        let before = match commit.parent(0) {
-            Ok(parent) => self.note_blob(&parent, id)?,
-            Err(_) => None,
-        };
-        // Comparing path as well as content catches a rename, which changes
-        // where the note lives without touching a byte of it.
-        Ok(now != before)
-    }
-
-    /// The file a note occupied at `commit` and the blob it held, or `None` when
-    /// the note was not in that commit.
-    fn note_blob(
-        &self,
-        commit: &git2::Commit<'_>,
-        id: &str,
-    ) -> Result<Option<(String, git2::Oid)>> {
-        let tree = commit.tree()?;
-        let wanted = note::normalize_id(id);
-        let Some(slug) = self
-            .index_at(&tree)?
-            .into_iter()
-            .find(|(entry, _)| note::normalize_id(entry) == wanted)
-            .map(|(_, slug)| slug)
-        else {
-            return Ok(None);
-        };
-
-        let file = format!("{slug}.md");
-        match tree.get_path(Path::new(&file)) {
-            Ok(entry) => Ok(Some((file, entry.id()))),
-            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
+        for (id, slug) in notes_in(&commit.tree()?) {
+            if slug == key || note::normalize_id(&id).starts_with(&wanted) {
+                return Ok(Some(id));
+            }
         }
-    }
-
-    /// The committed index as it stood in `tree`.
-    fn index_at(&self, tree: &git2::Tree<'_>) -> Result<Vec<(String, String)>> {
-        let entry = match tree.get_path(Path::new(INDEX_FILE)) {
-            Ok(entry) => entry,
-            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
-        };
-        let blob = self.repo.find_blob(entry.id())?;
-        Ok(String::from_utf8_lossy(blob.content())
-            .lines()
-            .filter_map(|line| line.split_once('\t'))
-            .map(|(id, slug)| (id.to_string(), slug.to_string()))
-            .collect())
+        Ok(None)
     }
 
     /// Undoes a conflicted merge, leaving the notebook exactly as it was.
@@ -905,83 +881,54 @@ fn configured_author(paths: &Paths) -> Option<(String, String)> {
     config::author_parts(Config::load(paths).ok()?.get("author")?)
 }
 
-/// Where the notes and the committed index disagree, gathered by kind.
-///
-/// noda's own commands keep the two in step, so everything here comes from
-/// outside: a note edited with another editor, a file dropped in by hand, a
-/// merge that brought in a note this notebook had never seen. The frontmatter
-/// is taken as the truth, because that is what a person edits and what git
-/// merges; the index is the derived half, and the one that can be rebuilt.
-///
-/// Ids are compared folded, the way `resolve` compares them — otherwise `k3f9`
-/// and `K3F9` read as two ids here while addressing one note everywhere else.
-///
-/// This only ever *reports*. `noda reconcile` is what repairs, and it shares
-/// this so the two never differ about what counts as a disagreement.
-pub(crate) fn compare(
-    notes: &[(String, String)],
-    index: &[(String, String)],
-) -> Vec<(Disagreement, Vec<String>)> {
-    let mut found: BTreeMap<Disagreement, Vec<String>> = BTreeMap::new();
+/// Whether `commit` changed the note with this id, against its first parent —
+/// the same simplification `git log` makes for merges.
+fn touches(commit: &git2::Commit<'_>, id: &str) -> Result<bool> {
+    let now = note_blob(commit, id)?;
+    let before = match commit.parent(0) {
+        Ok(parent) => note_blob(&parent, id)?,
+        Err(_) => None,
+    };
+    // Comparing path as well as content catches a rename, which changes where
+    // the note lives without touching a byte of it.
+    Ok(now != before)
+}
 
-    // Keyed by slug: it is the filename, so it is unique on both sides.
-    let by_slug: HashMap<&str, &str> = notes
-        .iter()
-        .map(|(id, slug)| (slug.as_str(), id.as_str()))
-        .collect();
-
-    let mut named: HashSet<&str> = HashSet::new();
-    let mut mapped: HashSet<String> = HashSet::new();
-    for (id, slug) in index {
-        match by_slug.get(slug.as_str()) {
-            None => found
-                .entry(Disagreement::Missing)
-                .or_default()
-                .push(format!("{slug}.md")),
-            // The two ids are worth carrying: at one occurrence they are the
-            // whole answer, and they elide with everything else beyond that.
-            Some(carried) if note::normalize_id(carried) != note::normalize_id(id) => found
-                .entry(Disagreement::Mismatched)
-                .or_default()
-                .push(format!("{slug}.md: {carried}, not {id}")),
-            Some(_) => {}
-        }
-        named.insert(slug.as_str());
-        if !mapped.insert(note::normalize_id(id)) {
-            found
-                .entry(Disagreement::SharedByIndex)
-                .or_default()
-                .push(id.clone());
+/// The file a note occupied at `commit` and the blob it held, or `None` when the
+/// note was not in that commit.
+///
+/// Every commit records this, because every commit records the filenames — which
+/// is why following a note across a rename needs no rename detection and no
+/// committed map of its own.
+fn note_blob(commit: &git2::Commit<'_>, id: &str) -> Result<Option<(String, git2::Oid)>> {
+    let tree = commit.tree()?;
+    let wanted = note::normalize_id(id);
+    for entry in &tree {
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        let Some((entry_id, _)) = name.strip_suffix(".md").and_then(note::split_stem) else {
+            continue;
+        };
+        if note::normalize_id(entry_id) == wanted {
+            return Ok(Some((name.to_string(), entry.id())));
         }
     }
+    Ok(None)
+}
 
-    let mut seen: HashSet<String> = HashSet::new();
-    for (id, slug) in notes {
-        // A note the index names is already accounted for above, whether or not
-        // the two agreed about its id — saying it twice helps nobody.
-        if !named.contains(slug.as_str()) {
-            found
-                .entry(Disagreement::Unlisted)
-                .or_default()
-                .push(format!("{slug}.md"));
-        }
-        if !seen.insert(note::normalize_id(id)) {
-            found
-                .entry(Disagreement::SharedByNotes)
-                .or_default()
-                .push(id.clone());
+/// Every `(id, slug)` a tree holds, read from its filenames.
+fn notes_in(tree: &git2::Tree<'_>) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for entry in tree {
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        if let Some((id, slug)) = name.strip_suffix(".md").and_then(note::split_stem) {
+            found.push((id.to_string(), slug.to_string()));
         }
     }
-
     found
-        .into_iter()
-        .map(|(kind, mut subjects)| {
-            // An id repeated three times is one id in trouble, not two.
-            subjects.sort();
-            subjects.dedup();
-            (kind, subjects)
-        })
-        .collect()
 }
 
 /// The branch a fresh notebook starts on. libgit2 hardcodes `master`, so without
@@ -1051,78 +998,75 @@ mod tests {
         }
     }
 
-    fn pairs(entries: &[(&str, &str)]) -> Vec<(String, String)> {
-        entries
-            .iter()
-            .map(|(id, slug)| ((*id).to_string(), (*slug).to_string()))
-            .collect()
+    fn scan_of(notes: &[(&str, &str)], unnamed: &[&str], suspicious: &[&str]) -> Scan {
+        Scan {
+            notes: notes
+                .iter()
+                .map(|(id, slug)| ((*id).to_string(), (*slug).to_string()))
+                .collect(),
+            unnamed: unnamed.iter().map(|f| (*f).to_string()).collect(),
+            suspicious: suspicious.iter().map(|f| (*f).to_string()).collect(),
+        }
     }
 
     #[test]
-    fn an_index_that_matches_the_notes_has_nothing_to_report() {
-        let notes = pairs(&[("k3f9", "alpha"), ("q7x2", "beta")]);
-        assert!(compare(&notes, &notes).is_empty());
-        assert!(compare(&[], &[]).is_empty());
+    fn a_healthy_notebook_has_nothing_to_report() {
+        let scan = scan_of(&[("k3f9m2p1", "alpha"), ("q7x2rstv", "beta")], &[], &[]);
+        assert!(scan.problems().is_empty());
+        assert!(scan_of(&[], &[], &[]).problems().is_empty());
     }
 
+    /// Two machines can mint one id without ever meeting. The filenames differ,
+    /// so git merges them without a word — this is the only place it surfaces.
     #[test]
-    fn each_way_the_two_can_disagree_is_named_once() {
-        // The file and the index disagree about the id — one problem, not one
-        // from each side of it. Both ids travel with it.
+    fn one_id_on_two_notes_is_reported_once() {
+        let scan = scan_of(&[("k3f9m2p1", "alpha"), ("k3f9m2p1", "beta")], &[], &[]);
         assert_eq!(
-            compare(&pairs(&[("zzzz", "alpha")]), &pairs(&[("k3f9", "alpha")])),
-            [(
-                Disagreement::Mismatched,
-                vec!["alpha.md: zzzz, not k3f9".to_string()]
-            )]
-        );
-
-        // An entry whose note is not there, and a note the index never heard of.
-        assert_eq!(
-            compare(&[], &pairs(&[("k3f9", "alpha")])),
-            [(Disagreement::Missing, vec!["alpha.md".to_string()])]
-        );
-        assert_eq!(
-            compare(&pairs(&[("k3f9", "alpha")]), &[]),
-            [(Disagreement::Unlisted, vec!["alpha.md".to_string()])]
-        );
-
-        // One id, two notes — on both sides of the comparison.
-        let doubled = pairs(&[("k3f9", "alpha"), ("k3f9", "beta")]);
-        assert_eq!(
-            compare(&doubled, &doubled),
-            [
-                (Disagreement::SharedByNotes, vec!["k3f9".to_string()]),
-                (Disagreement::SharedByIndex, vec!["k3f9".to_string()]),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_wholesale_disagreement_stays_one_kind() {
-        // The commonest way this goes wrong: the index is lost, so every note
-        // in the notebook is a problem at once. However many, it is one kind
-        // and it is counted, not enumerated.
-        let notes: Vec<(String, String)> = (0..2_000)
-            .map(|n| (format!("id{n:04}"), format!("note-{n:04}")))
-            .collect();
-
-        let reported = compare(&notes, &[]);
-        assert_eq!(reported.len(), 1, "one kind, not two thousand problems");
-        let (kind, subjects) = &reported[0];
-        assert_eq!(*kind, Disagreement::Unlisted);
-        assert_eq!(subjects.len(), 2_000);
-        assert_eq!(
-            kind.describe(subjects.len()),
-            "2000 notes the index does not name"
+            scan.problems(),
+            [(Problem::SharedId, vec!["k3f9m2p1".to_string()])]
         );
     }
 
     #[test]
     fn ids_are_compared_the_way_they_are_addressed() {
-        // `resolve` folds case and the I/L/O confusables, so a difference that
-        // is not one anywhere else must not be reported as one here.
-        assert!(compare(&pairs(&[("K3F9", "alpha")]), &pairs(&[("k3f9", "alpha")])).is_empty());
+        // `resolve` folds case and the I/L/O confusables, so two spellings of one
+        // id are one id here too.
+        let scan = scan_of(&[("K3F9M2P1", "alpha"), ("k3f9m2p1", "beta")], &[], &[]);
+        assert_eq!(scan.problems().len(), 1, "one id, spelled two ways");
+    }
+
+    #[test]
+    fn each_kind_of_stray_file_is_named() {
+        let scan = scan_of(&[], &["hand-written.md"], &["abcdefgh-hello.md"]);
+        assert_eq!(
+            scan.problems(),
+            [
+                (Problem::Unnamed, vec!["hand-written.md".to_string()]),
+                (Problem::Suspicious, vec!["abcdefgh-hello.md".to_string()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wholesale_problem_stays_one_kind() {
+        // A directory of files copied in at once: however many, it is one kind
+        // and it is counted, not enumerated.
+        let files: Vec<String> = (0..2_000).map(|n| format!("note-{n:04}.md")).collect();
+        let scan = Scan {
+            notes: Vec::new(),
+            unnamed: files,
+            suspicious: Vec::new(),
+        };
+
+        let reported = scan.problems();
+        assert_eq!(reported.len(), 1, "one kind, not two thousand problems");
+        let (kind, subjects) = &reported[0];
+        assert_eq!(*kind, Problem::Unnamed);
+        assert_eq!(subjects.len(), 2_000);
+        assert_eq!(
+            kind.describe(subjects.len()),
+            "2000 notes have no id in their filenames"
+        );
     }
 
     #[test]

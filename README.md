@@ -80,18 +80,24 @@ noda sync                       # pull + push over SSH/HTTPS
 in different places. A new notebook starts on the branch your `init.defaultBranch` names,
 the same one `git init` would have picked, so it agrees with the remote you push it to.
 
-**Note.** A Markdown file inside a notebook. It has:
-- a **slug** — a human-readable name derived from the title; it's also the filename
-  (`meeting-notes.md`) and changes if you rename the note;
-- an **id** — a short, stable code (Crockford base32, e.g. `k3f9`) stored in the note's
-  frontmatter. It's unique within the notebook and never changes, even across renames.
-  Ids are lowercase and matched case-insensitively; Crockford maps the easily-confused
-  `I`/`L` to `1` and `O` to `0`, so a mistyped id still resolves to the right note.
+**Note.** A Markdown file inside a notebook, named `<id>-<slug>.md`:
+- the **id** — a short, stable code (Crockford base32, e.g. `k3f9m2p1`). It is unique
+  within the notebook and never changes, even across renames. Ids are lowercase and
+  matched case-insensitively; Crockford maps the easily-confused `I`/`L` to `1` and `O`
+  to `0`, so a mistyped id still resolves to the right note;
+- the **slug** — a human-readable name derived from the title, which changes if you
+  retitle the note.
 
-Anywhere a command takes `<note>`, pass either the id or the slug. Both are matched
-**exactly** — there is no prefix guessing and there are no positional numbers to reshuffle,
-so `noda show k3f9` always resolves to one specific note or reports "not found". It never
-silently hits the wrong one.
+The identity is the filename, and nothing else records it. git will not put two entries
+under one path in a tree, so uniqueness is structural rather than something noda has to
+police — and two machines that each add a note write two different filenames, which git
+merges without asking anyone to resolve anything. The frontmatter carries only what you
+wrote: the title and the tags.
+
+Anywhere a command takes `<note>`, pass either the id or the slug. A slug is matched whole;
+an id is matched by any prefix that names exactly one note, the same bargain git makes with
+object ids — so `noda show k3f9` works. Ambiguity is an error listing the candidates, never
+a guess.
 
 **History.** Because storage is git, every add/edit/rm is a commit. Nothing is a
 destructive surprise — `noda rm` is a commit you can revert.
@@ -110,7 +116,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
 | `noda status` | Where the active notebook stands: notes, changes, drift from the remote. |
-| `noda reconcile [--dry-run]` | Rewrite the id index from the notes, when the two have stopped agreeing. |
+| `noda reconcile [--dry-run]` | Report what noda will not settle on its own, and adopt notes that only lack an id. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
@@ -121,8 +127,7 @@ rather than assumed, so `--force` is how a script says it meant it.
 
 `noda status` answers "where do I stand" without going to the network — the push/pull
 counts are measured against what the last sync left behind, so it works offline and
-returns instantly. It is also the one command that reports a `.md` file it cannot read as a
-note instead of failing on it, because finding that out is why you ran it.
+returns instantly.
 
 ```
 notebook  work  (main)
@@ -132,60 +137,52 @@ remote    git@github.com:me/work-notes.git
 sync      2 to push (as of the last sync)
 ```
 
-It also holds the notes up against the committed `id ↔ slug` index and says where the two
-have stopped agreeing. noda's own commands keep them in step, so anything reported here
-arrived from outside — a note edited with a different editor, a file dropped in by hand, a
-merge that brought in a note this notebook had never seen. The frontmatter is treated as
-the truth, because that is what you edit and what git merges. The row is only there when
+It also walks the notebook for what noda will not settle on its own. Two things decide what
+a `*.md` file is, and they are independent: a **frontmatter block** is the file saying "I am
+a note", and an **id in the filename** is it having been adopted. A file with both is a
+note. A file with neither is just a file — an attachment, a `README` — and noda says nothing
+about it. The other two combinations are what this row reports, and it is only there when
 there is something to say:
 
 ```
-index     1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
+problems  1 note has no id in its filename  (hand-written.md)
 ```
 
-Problems are counted by kind rather than listed one at a time. An index that was lost, or
-restored from a backup that missed `.noda/`, makes every note in the notebook a problem at
-once — `status` has to stay one screen through that, and "201 notes the index does not
-name" tells you what happened where 201 filenames would not. Where more than one kind
-turns up, the total comes first:
+Problems are counted by kind rather than listed one at a time. A directory of notes copied
+in at once makes every one of them a problem together — `status` has to stay one screen
+through that, and "201 notes have no id in their filenames" tells you what happened where
+201 filenames would not. Where more than one kind turns up, the total comes first:
 
 ```
-index     2 problems
-          1 note the index does not name  (merged.md)
-          1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
-          run `noda reconcile` to rewrite the index from the notes
+problems  2 problems
+          1 note has no id in its filename  (hand-written.md)
+          1 file is named like a note but has no frontmatter  (abcdefgh-hello.md)
+          run `noda reconcile` to look at these
 ```
 
-`noda reconcile` is the repair, and the place to see the full list that `status` elides. It
-rewrites `.noda/index.tsv` from what the notes themselves carry — adding a note the index
-does not name, dropping an entry whose note is gone, and taking a note's own id where the
-index recorded another. The repair is a commit like any other change, so `git revert` undoes
-it, and `--dry-run` shows what would change without writing anything.
+`noda reconcile` is where the full list that `status` elides can be seen, and it performs
+the one repair that cannot lose anything: a file that already declared itself a note and
+only lacks an id is given one. That is a commit like any other change, so `git revert`
+undoes it, and `--dry-run` shows what would happen without touching anything.
 
 ```
 $ noda reconcile --dry-run
-1 entry names a note that is not there
-  ghost.md
-1 note carries an id the index recorded differently
-  note-7.md: q7x2, not yjkv
-would rewrite .noda/index.tsv to name 42 notes — nothing was changed
+1 note has no id in its filename
+  hand-written.md
+would adopt 1 note — nothing was changed
 ```
 
-It reconciles the index **to** the notes and never renumbers. Assigning fresh ids would
-restore nothing: the ids live in the files, so new ones would invent identities and break
-every link and reference that already pointed at the old ones.
-
-Two cases it refuses rather than guesses, because either answer loses something that cannot
-be minted again — two notes carrying one id, and an index entry naming a file that is there
-but cannot be read as a note. Both are reported together, with what to do about each — and
-noda can do it: `noda restore <note> HEAD` puts the committed version of a broken file back,
-`noda rm <note>` gives its id up. A stray `*.md` the index never named is ignored: it is not
-a note, and it must not stand between a lost index and its repair.
+The other two it reports and leaves alone, because either answer loses something that
+cannot be minted again. **One id on two notes** — which two machines can produce without
+ever meeting — means keeping one identity by discarding the other; rename one of the files
+to settle it. **A name that claims an id over a file with no frontmatter** might be a note
+that lost its frontmatter or a file that was never one: add the `---` block back, or rename
+it so it no longer starts with an id. Only their author knows which.
 
 A file that will not parse does not lock you out of the commands that do not read it.
-`restore`, `rm`, `log` and `diff` identify a note by its filename and the index, so they
-work on one whose frontmatter has gone — which is exactly when they are wanted. `mv` and
-`tag` rewrite the frontmatter, so they still have to read it first and say so plainly.
+`restore`, `rm`, `log` and `diff` identify a note by its filename alone, so they work on one
+whose frontmatter has gone — which is exactly when they are wanted. `mv` and `tag` rewrite
+the frontmatter, so they still have to read it first and say so plainly.
 
 ### Notes
 
@@ -200,7 +197,9 @@ work on one whose frontmatter has gone — which is exactly when they are wanted
 | `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <query>...` | Full-text search across the active notebook. |
 
-`<note>` accepts an id (`k3f9`) or a slug (`meeting-notes`), matched exactly.
+`<note>` accepts an id (`k3f9m2p1`, or any prefix naming exactly one note) or a slug
+(`meeting-notes`, matched whole). Two notes may share a slug — the id in front of it keeps
+their filenames apart — and then the slug alone is ambiguous and noda asks which you meant.
 
 `noda tag` takes signed tags — `noda tag meeting-notes +q3 -work` adds `q3` and removes
 `work`. Adding a tag a note already has is not an error; it just leaves nothing to commit.
@@ -216,9 +215,10 @@ terms mean all of them, in any order. Results are listed the way `ls` lists them
 in the body quotes the line it was found on.
 
 `noda add` and `noda edit` open `$VISUAL`, falling back to `$EDITOR` and then to `vi`.
-`edit` opens the real file, frontmatter included, but refuses to commit an edit that
-breaks the frontmatter or rewrites the id — the file is left as you saved it so you can
-fix it or throw it away with `git checkout`.
+`edit` opens the real file, frontmatter included, but refuses to commit an edit that breaks
+the frontmatter — the file is left as you saved it so you can fix it or throw it away with
+`git checkout`. An edit cannot change *which* note it is editing: the id is in the filename,
+and the editor is handed the file.
 
 ### History (git-backed)
 
@@ -228,15 +228,14 @@ fix it or throw it away with `git checkout`.
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
 | `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
 
-`noda log <note>` follows a note across renames, because the committed index records which
-file the note lived in at every commit — no rename guessing involved. Nothing is capped:
-`-n` is there when you want less.
+`noda log <note>` follows a note across renames, because every commit records the filenames
+and the id is one of them — no rename guessing involved. Nothing is capped: `-n` is there
+when you want less.
 
 `noda diff` shows uncommitted changes when there are any, and otherwise what the last
 commit changed — noda commits as it goes, so a clean notebook is the normal state and
-"what just happened" is the useful answer. `.noda/index.tsv` is left out of the output;
-it changes on nearly every commit and is rebuildable from the notes. The output is a plain
-unified diff with nothing wrapped around it, so `git apply` will take it.
+"what just happened" is the useful answer. The output is a plain unified diff with nothing
+wrapped around it, so `git apply` will take it.
 
 `<commit>` is anything git accepts: a full or abbreviated id, `HEAD~3`, a tag, a branch.
 A restore is a new commit, never a rewrite, and a note keeps the name it has now — only its
@@ -250,26 +249,21 @@ can revert".
 | --- | --- |
 | `noda remote set <url>` | Set the active notebook's remote. |
 | `noda remote show` | Print the configured remote. |
-| `noda sync` | Pull, then push (auto-commits pending changes first). Refuses while the notes and the index disagree. |
+| `noda sync` | Pull, then push (auto-commits pending changes first). |
 | `noda push` / `noda pull` | One-directional sync. |
 
 HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. Credentials
 are not noda's to keep: SSH keys come from `ssh-agent`, HTTPS from git's credential helper.
 
 A pull fast-forwards when only the remote moved, and makes a merge commit when both sides
-did. Two notebooks that each added a note both appended to `.noda/index.tsv`, so it
-conflicts almost every time — noda settles that one itself by rebuilding the index from the
-notes, because the index is derived data. A conflict inside a note is yours: the merge is
-rolled back, the notebook is left exactly as it was, and you can resolve it with git in the
-notebook directory.
+did. Two notebooks that each added a note produce two different filenames, so there is
+nothing to conflict over and nothing for noda to reconcile afterwards. A conflict inside a
+note — the same note edited on both sides — is yours: the merge is rolled back, the notebook
+is left exactly as it was, and you can resolve it with git in the notebook directory.
 
-`noda sync` commits the whole working tree, so it stops before doing anything when the
-notes and the index have stopped agreeing — the `index` row `noda status` prints. That is
-the point at which a disagreement would otherwise become permanent and remote, including
-one noda has already refused once: `noda edit` will not commit a note whose `id:` changed,
-but it leaves the file on disk, and a sync that staged everything would send it anyway.
-`noda reconcile` is the way out; until the two agree again, `noda push` and `noda pull` still
-move one side at a time.
+`noda sync` commits the whole working tree and needs no guard before it. There is nothing
+derived to fall out of step with the notes, so there is no state in which committing
+everything would make a disagreement permanent and remote.
 
 ### Config
 
@@ -320,9 +314,8 @@ $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 └── notebooks/
     ├── work/                   # a notebook = a git repo
     │   ├── .git/
-    │   ├── .noda/index.tsv     # id ↔ slug lookup (committed; `noda reconcile` rebuilds it)
-    │   ├── meeting-notes.md
-    │   └── reading-log.md
+    │   ├── k3f9m2p1-meeting-notes.md
+    │   └── q7x2rstv-reading-log.md
     └── personal/
         ├── .git/
         └── ...
@@ -336,9 +329,10 @@ $XDG_CACHE_HOME/noda/           (default ~/.cache/noda/)
 ```
 
 Each notebook is a normal git repo; `cd "$XDG_DATA_HOME/noda/notebooks/work" && git log`
-works exactly as you'd expect. Only your notes live in `XDG_DATA_HOME` — config, the
-active-notebook pointer, and the editor's scratch buffer are kept out of your synced data
-on purpose.
+works exactly as you'd expect. Nothing but your notes is committed — noda keeps no
+bookkeeping file of its own, which is why there is none in the listing above. Only your
+notes live in `XDG_DATA_HOME` too: config, the active-notebook pointer, and the editor's
+scratch buffer are kept out of your synced data on purpose.
 
 **Platform note.** noda honors the XDG variables on **every** platform, including macOS
 (it does not use `~/Library/Application Support`). If a variable is unset, the standard

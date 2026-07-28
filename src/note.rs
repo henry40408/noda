@@ -1,4 +1,15 @@
-//! A note: its stable id, its slug, and the Markdown file that carries both.
+//! A note: the Markdown file that carries it, and the identity its filename
+//! spells out.
+//!
+//! The id lives in the filename, not in the frontmatter. git forbids two entries
+//! sharing a path in one tree, so a notebook cannot hold two notes under one
+//! filename — uniqueness is structural rather than something noda has to police.
+//! Two machines that each add a note produce two different filenames and merge
+//! without a conflict, and nothing derived has to be kept in step with anything.
+//!
+//! The frontmatter carries only what a person wrote: the title, because a slug
+//! is lossy and cannot be turned back into one, and the tags. Its *presence* is
+//! what marks a file as a note at all — see `notebook::Scan`.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -8,15 +19,21 @@ use crate::{Error, Result};
 /// Crockford base32 — `i`, `l`, `o` and `u` are absent, so an id can't be misread.
 const CROCKFORD: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
-/// Ids start at four characters (20 bits) and grow only if that space is exhausted.
-const ID_LEN: usize = 4;
+/// Ids are 8 characters: 40 bits, minted against what the notebook already
+/// holds. Long enough that a collision takes deliberate effort, short enough to
+/// stay in a filename you can read.
+pub const ID_LEN: usize = 8;
+
+/// How many base32 characters one draw of randomness can supply.
+const CHARS_PER_DRAW: usize = 12;
 
 /// Fallback slug for a title that contains nothing sluggable.
 const FALLBACK_SLUG: &str = "note";
 
+/// What a note file holds: the frontmatter a person edits, and the body.
+/// The id is not here — it is the filename.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
-    pub id: String,
     pub title: String,
     pub tags: Vec<String>,
     pub body: String,
@@ -24,9 +41,12 @@ pub struct Note {
 
 impl Note {
     /// The full file contents: frontmatter, a blank line, then the body.
+    ///
+    /// The block is always written, even with nothing to put in it: an empty one
+    /// still says "this file is a note", which is the distinction a bare `.md`
+    /// dropped into the notebook cannot make.
     pub fn render(&self) -> String {
         let mut out = String::from("---\n");
-        let _ = writeln!(out, "id: {}", self.id);
         let _ = writeln!(out, "title: {}", self.title);
         if !self.tags.is_empty() {
             let _ = writeln!(out, "tags: [{}]", self.tags.join(", "));
@@ -43,7 +63,6 @@ impl Note {
         let (frontmatter, body) =
             split_frontmatter(text).ok_or_else(|| Error::msg("note has no frontmatter block"))?;
 
-        let mut id = None;
         let mut title = None;
         let mut tags = Vec::new();
         for line in frontmatter.lines() {
@@ -52,7 +71,6 @@ impl Note {
             };
             let value = value.trim();
             match key.trim() {
-                "id" => id = Some(value.to_string()),
                 "title" => title = Some(value.to_string()),
                 "tags" => tags = parse_tags(value),
                 _ => {}
@@ -60,7 +78,6 @@ impl Note {
         }
 
         Ok(Note {
-            id: id.ok_or_else(|| Error::msg("note frontmatter has no id"))?,
             title: title.unwrap_or_default(),
             tags,
             body: body.trim_start_matches('\n').to_string(),
@@ -92,9 +109,37 @@ fn parse_tags(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// The filename a note with this id and slug lives under.
+pub fn file_name(id: &str, slug: &str) -> String {
+    format!("{id}-{slug}.md")
+}
+
+/// Splits a note filename's stem into its id and its slug.
+///
+/// The id alphabet has no `-`, so the first one is always the boundary and the
+/// rule does not change when ids grow longer. The length floor is what stops an
+/// ordinary slug being read as one: without it `c-vs-rust` parses as the id `c`
+/// carrying the slug `vs-rust`, and every hand-written note would claim an
+/// identity it never had.
+pub fn split_stem(stem: &str) -> Option<(&str, &str)> {
+    let (id, slug) = stem.split_once('-')?;
+    if slug.is_empty() || !is_id_shaped(id) {
+        return None;
+    }
+    Some((id, slug))
+}
+
+/// Whether a string could be an id noda minted: long enough, and drawn entirely
+/// from the alphabet ids use.
+pub fn is_id_shaped(text: &str) -> bool {
+    text.len() >= ID_LEN
+        && text
+            .bytes()
+            .all(|b| CROCKFORD.contains(&b.to_ascii_lowercase()))
+}
+
 /// A title is written into the frontmatter verbatim, so a second line in it
-/// becomes a field of its own — `title: Meeting\nid: zzzz` gives the file an id
-/// its own index does not know about. Refusing it at the door keeps `render` and
+/// becomes a field of its own. Refusing it at the door keeps `render` and
 /// `parse` inverse without inventing an escaping syntax that every hand-edited
 /// note would then have to speak.
 pub fn validate_title(title: &str) -> Result<()> {
@@ -160,12 +205,13 @@ pub fn normalize_id(input: &str) -> String {
 }
 
 /// Mints an id that is not already `taken`, widening the id space if it fills up.
+/// `taken` holds folded ids, the way `resolve` compares them.
 pub fn mint_id<S: std::hash::BuildHasher>(taken: &HashSet<String, S>) -> String {
     let mut len = ID_LEN;
     loop {
         for _ in 0..64 {
             let candidate = random_id(len);
-            if !taken.contains(&candidate) {
+            if !taken.contains(&normalize_id(&candidate)) {
                 return candidate;
             }
         }
@@ -174,9 +220,14 @@ pub fn mint_id<S: std::hash::BuildHasher>(taken: &HashSet<String, S>) -> String 
 }
 
 fn random_id(len: usize) -> String {
-    let mut bits = random_bits();
     let mut id = String::with_capacity(len);
-    for _ in 0..len {
+    let mut bits = 0u64;
+    for n in 0..len {
+        // One draw carries 60 usable bits. Past that the shift would be feeding
+        // in zeros, and every character after the twelfth would be `0`.
+        if n % CHARS_PER_DRAW == 0 {
+            bits = random_bits();
+        }
         id.push(CROCKFORD[(bits & 0x1f) as usize] as char);
         bits >>= 5;
     }
@@ -211,7 +262,7 @@ mod tests {
 
     #[test]
     fn normalize_id_folds_confusable_characters() {
-        assert_eq!(normalize_id("K3F9"), "k3f9");
+        assert_eq!(normalize_id("K3F9ABCD"), "k3f9abcd");
         assert_eq!(normalize_id("IL0O"), "1100");
     }
 
@@ -222,36 +273,94 @@ mod tests {
         assert_eq!(id.len(), ID_LEN);
         assert!(id.bytes().all(|b| CROCKFORD.contains(&b)), "{id}");
 
-        let taken: HashSet<String> = std::iter::once(id.clone()).collect();
+        let taken: HashSet<String> = std::iter::once(normalize_id(&id)).collect();
         assert_ne!(mint_id(&taken), id);
+    }
+
+    /// One draw of randomness runs out after twelve characters; a longer id used
+    /// to be padded with the zeros the shift kept supplying.
+    #[test]
+    fn a_widened_id_stays_random_past_the_first_draw() {
+        let long = random_id(24);
+        assert_eq!(long.len(), 24);
+        assert!(
+            long[CHARS_PER_DRAW..].chars().any(|c| c != '0'),
+            "the tail past one draw is all zeros: {long}"
+        );
+    }
+
+    #[test]
+    fn a_filename_splits_into_the_id_and_the_slug() {
+        assert_eq!(
+            split_stem("k3f9m2p1-meeting-notes"),
+            Some(("k3f9m2p1", "meeting-notes")),
+            "the slug keeps its own hyphens"
+        );
+        assert_eq!(
+            split_stem("k3f9m2p1-會議-筆記"),
+            Some(("k3f9m2p1", "會議-筆記"))
+        );
+    }
+
+    /// The floor that stops an ordinary slug claiming to be an id.
+    #[test]
+    fn a_slug_that_merely_starts_with_a_hyphenated_word_is_not_an_id() {
+        assert_eq!(
+            split_stem("c-vs-rust"),
+            None,
+            "`c` is too short to be an id"
+        );
+        assert_eq!(split_stem("meeting-notes"), None);
+        assert_eq!(split_stem("nohyphen"), None);
+        assert_eq!(split_stem("k3f9m2p1"), None, "an id with no slug after it");
+        assert_eq!(split_stem("k3f9m2p1-"), None, "an empty slug");
+        // `u` is not in the alphabet, so this eight-character word is not one.
+        assert_eq!(split_stem("untitled-thing"), None);
+    }
+
+    /// The example that prompted the rule: a filename can look exactly like a
+    /// note's without being one, so its shape alone must never settle the matter.
+    #[test]
+    fn a_plausible_looking_filename_is_still_id_shaped() {
+        assert!(is_id_shaped("abcdefgh"));
+        assert_eq!(split_stem("abcdefgh-hello"), Some(("abcdefgh", "hello")));
     }
 
     #[test]
     fn render_and_parse_round_trip() {
         let note = Note {
-            id: "k3f9".into(),
             title: "Meeting notes".into(),
             tags: vec!["work".into(), "q3".into()],
             body: "Body line one.\nBody line two.\n".into(),
         };
         let text = note.render();
-        assert!(text.starts_with("---\nid: k3f9\ntitle: Meeting notes\ntags: [work, q3]\n---\n\n"));
+        assert!(text.starts_with("---\ntitle: Meeting notes\ntags: [work, q3]\n---\n\n"));
+        assert!(!text.contains("id:"), "the id is the filename: {text}");
         assert_eq!(Note::parse(&text).unwrap(), note);
     }
 
     #[test]
     fn parse_tolerates_missing_tags_and_colons_in_titles() {
-        let note = Note::parse("---\nid: abcd\ntitle: Rust: a tour\n---\n\nhi\n").unwrap();
+        let note = Note::parse("---\ntitle: Rust: a tour\n---\n\nhi\n").unwrap();
         assert_eq!(note.title, "Rust: a tour");
         assert!(note.tags.is_empty());
         assert_eq!(note.body, "hi\n");
     }
 
+    /// An `id:` left over from a hand-edited file is just another field now, and
+    /// has no authority over the note's identity.
+    #[test]
+    fn a_stray_id_field_is_ignored_rather_than_obeyed() {
+        let note = Note::parse("---\nid: zzzz\ntitle: Alpha\n---\n\nbody\n").unwrap();
+        assert_eq!(note.title, "Alpha");
+    }
+
     #[test]
     fn values_that_would_not_survive_the_round_trip_are_refused() {
         assert!(validate_title("Meeting Notes").is_ok());
-        // The line that made the file claim an id its index never minted.
-        let err = validate_title("Meeting\nid: zzzz").unwrap_err().to_string();
+        let err = validate_title("Meeting\ntitle: other")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("one line"), "{err}");
         assert!(validate_title("Meeting\rnotes").is_err());
 
@@ -262,9 +371,13 @@ mod tests {
         }
     }
 
+    /// The frontmatter block is the declaration "this file is a note". A file
+    /// without one is something else, whatever its name looks like.
     #[test]
     fn parse_rejects_files_without_frontmatter() {
         assert!(Note::parse("just markdown\n").is_err());
-        assert!(Note::parse("---\ntitle: no id\n---\n").is_err());
+        assert!(Note::parse("# A heading\n\nprose\n").is_err());
+        // An empty block still declares it.
+        assert!(Note::parse("---\n---\n\nbody\n").is_ok());
     }
 }

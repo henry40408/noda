@@ -44,6 +44,19 @@ fn commit_count(notebook: &Path) -> usize {
     walk.count()
 }
 
+/// The id and the slug out of the `id  slug  [tags]` line every mutating
+/// command prints.
+fn parts(summary: &str) -> (&str, &str) {
+    let (id, rest) = summary.split_once("  ").expect("id and slug");
+    (id, rest.split("  ").next().expect("slug"))
+}
+
+/// The file a note lives in, from that same line.
+fn note_file(summary: &str) -> String {
+    let (id, slug) = parts(summary);
+    format!("{id}-{slug}.md")
+}
+
 #[test]
 fn init_creates_the_xdg_layout_and_is_idempotent() {
     let (_root, paths) = initialized();
@@ -51,8 +64,8 @@ fn init_creates_the_xdg_layout_and_is_idempotent() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     assert!(notebook.join(".git").is_dir(), "notebook is a git repo");
     assert!(
-        notebook.join(".noda/index.tsv").is_file(),
-        "index committed"
+        !notebook.join(".noda").exists(),
+        "noda commits no bookkeeping of its own"
     );
     assert!(paths.config_dir().is_dir(), "config dir created");
     assert_eq!(paths.active_notebook().unwrap(), cmd::DEFAULT_NOTEBOOK);
@@ -67,21 +80,20 @@ fn init_creates_the_xdg_layout_and_is_idempotent() {
 }
 
 #[test]
-fn add_writes_frontmatter_and_commits() {
+fn add_writes_the_id_into_the_filename_and_commits() {
     let (_root, paths) = initialized();
 
     let out = cmd::add(&paths, Some("Meeting Notes"), Some("agenda\n"), &[]).unwrap();
-    let (id, slug) = out.split_once("  ").expect("id and slug");
+    let (id, slug) = parts(&out);
     assert_eq!(slug, "meeting-notes");
 
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    let text = std::fs::read_to_string(notebook.join("meeting-notes.md")).unwrap();
-    assert!(text.contains(&format!("id: {id}")), "{text}");
+    let text = std::fs::read_to_string(notebook.join(format!("{id}-meeting-notes.md"))).unwrap();
+    // The identity is the filename; the frontmatter carries only what a person
+    // wrote, so there is nothing in the file to fall out of step with the name.
+    assert!(!text.contains("id:"), "{text}");
     assert!(text.contains("title: Meeting Notes"), "{text}");
     assert!(text.ends_with("agenda\n"), "{text}");
-
-    let index = std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap();
-    assert_eq!(index, format!("{id}\tmeeting-notes\n"));
 
     assert_eq!(commit_count(&notebook), 2, "the note is one commit");
     let repo = git2::Repository::open(&notebook).unwrap();
@@ -115,9 +127,9 @@ fn add_refuses_a_title_or_a_tag_the_frontmatter_cannot_carry() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
 
-    // A second line in the title used to become a field of its own, so the file
-    // claimed an id the index had never minted.
-    let err = cmd::add(&paths, Some("Meeting\nid: zzzz"), Some("body\n"), &[])
+    // A second line in the title becomes a field of its own, which makes `render`
+    // and `parse` stop being inverses.
+    let err = cmd::add(&paths, Some("Meeting\ntitle: other"), Some("body\n"), &[])
         .unwrap_err()
         .to_string();
     assert!(err.contains("one line"), "{err}");
@@ -166,18 +178,51 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     assert!(cmd::tag(&paths, "alpha", &["-q3, urgent".to_string()]).is_ok());
 }
 
+/// Two notes may share a slug: the id in front of it keeps the filenames apart.
+/// The `-2` suffix this used to append was only ever a local fix — two machines
+/// adding "Notes" at once could not see each other's, so both wrote `notes.md`
+/// and the sync conflicted. Now they write two files and git merges them.
 #[test]
-fn add_disambiguates_colliding_slugs_but_keeps_ids_distinct() {
+fn two_notes_may_share_a_slug_because_the_id_separates_them() {
     let (_root, paths) = initialized();
 
     let first = cmd::add(&paths, Some("Notes"), Some("one\n"), &[]).unwrap();
     let second = cmd::add(&paths, Some("Notes"), Some("two\n"), &[]).unwrap();
 
-    let (first_id, first_slug) = first.split_once("  ").unwrap();
-    let (second_id, second_slug) = second.split_once("  ").unwrap();
+    let (first_id, first_slug) = parts(&first);
+    let (second_id, second_slug) = parts(&second);
     assert_eq!(first_slug, "notes");
-    assert_eq!(second_slug, "notes-2");
+    assert_eq!(second_slug, "notes", "no `-2` invented");
     assert_ne!(first_id, second_id);
+
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    assert!(notebook.join(note_file(&first)).is_file());
+    assert!(notebook.join(note_file(&second)).is_file());
+    assert_eq!(cmd::ls(&paths, None, None).unwrap().lines().count(), 2);
+
+    // The slug alone no longer says which one, so noda asks rather than guesses.
+    let err = cmd::show(&paths, "notes").unwrap_err().to_string();
+    assert!(err.contains("matches 2 notes"), "{err}");
+    assert!(err.contains(first_id), "{err}");
+    // Either id still resolves outright.
+    assert!(cmd::show(&paths, first_id).unwrap().contains("one"));
+    assert!(cmd::show(&paths, second_id).unwrap().contains("two"));
+}
+
+/// An id prefix resolves the way git lets an abbreviated object id resolve.
+#[test]
+fn a_note_resolves_from_a_prefix_of_its_id() {
+    let (_root, paths) = initialized();
+    let out = cmd::add(&paths, Some("Meeting Notes"), Some("agenda\n"), &[]).unwrap();
+    let (id, _) = parts(&out);
+
+    let whole = cmd::show(&paths, id).unwrap();
+    assert_eq!(
+        cmd::show(&paths, &id[..4]).unwrap(),
+        whole,
+        "four characters"
+    );
+    assert_eq!(cmd::show(&paths, &id[..1]).unwrap(), whole, "even one");
 }
 
 #[test]
@@ -211,7 +256,7 @@ fn show_reports_unknown_and_unsafe_references() {
             .unwrap_err()
             .to_string()
             .contains("not found"),
-        "prefixes must not resolve"
+        "a slug is matched whole; only ids take a prefix"
     );
     assert!(cmd::show(&paths, "../../etc/passwd").is_err());
 }
@@ -304,21 +349,21 @@ fn tag_resolves_by_id_too() {
 fn mv_renames_the_slug_and_keeps_the_id() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let (id, _) = parts(&added);
+    let id = id.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
     let out = cmd::mv(&paths, "alpha", "Beta Notes").unwrap();
     assert_eq!(out, format!("{id}  beta-notes  [work]"));
 
-    assert!(!notebook.join("alpha.md").exists(), "old file is gone");
-    assert!(notebook.join("beta-notes.md").is_file());
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        format!("{id}\tbeta-notes\n"),
-        "the index follows the rename"
+    assert!(
+        !notebook.join(format!("{id}-alpha.md")).exists(),
+        "old file is gone"
     );
+    assert!(notebook.join(format!("{id}-beta-notes.md")).is_file());
 
-    // The id still resolves; the old slug no longer does.
+    // Only the slug half of the filename moved, so the id still resolves; the
+    // old slug no longer does. Nothing had to be told about the rename.
     assert!(
         cmd::show(&paths, &id)
             .unwrap()
@@ -334,102 +379,6 @@ fn mv_renames_the_slug_and_keeps_the_id() {
     );
 }
 
-/// `mv` used to key the index update on the id alone, and on a raw string at
-/// that. A file carrying an id the index recorded differently matched nothing,
-/// so the index was written back untouched while the file was renamed out from
-/// under it — leaving an entry naming a file that no longer existed *and* a file
-/// the index did not name. Two problems where there was one.
-#[test]
-fn mv_moves_the_index_entry_even_when_the_file_disagrees_about_the_id() {
-    let (_root, paths) = initialized();
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-
-    // Edited outside noda, the only way this arises.
-    let path = notebook.join("alpha.md");
-    let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace(&format!("id: {id}"), "id: zzzz");
-    std::fs::write(&path, text).unwrap();
-
-    cmd::mv(&paths, "alpha", "Renamed").unwrap();
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        format!("{id}\trenamed\n"),
-        "the entry goes with the file, whichever id the file claimed"
-    );
-
-    // The disagreement that was already there survives — `mv` does not invent an
-    // id — but it is still the one problem it was, not three.
-    let out = plain(&cmd::status(&paths).unwrap());
-    let row = status_row(&out, "index").unwrap_or_else(|| panic!("no index row: {out}"));
-    assert_eq!(
-        row,
-        format!(
-            "1 note carries an id the index recorded differently  (renamed.md: zzzz, not {id})"
-        )
-    );
-}
-
-#[test]
-fn mv_compares_ids_the_way_they_are_addressed() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
-
-    // `k3f9` and `K3F9` are one id everywhere a note is addressed, so they must
-    // not read as two here. Both notes answer to it, which is a disagreement in
-    // its own right — but renaming one must not drag the other's entry along.
-    for (slug, id) in [("alpha", "K3F9"), ("gamma", "k3f9")] {
-        let path = notebook.join(format!("{slug}.md"));
-        let text = std::fs::read_to_string(&path).unwrap();
-        let old = text
-            .lines()
-            .find(|line| line.starts_with("id: "))
-            .unwrap()
-            .to_string();
-        std::fs::write(&path, text.replace(&old, &format!("id: {id}"))).unwrap();
-    }
-    std::fs::write(
-        notebook.join(".noda/index.tsv"),
-        "k3f9\talpha\nk3f9\tgamma\n",
-    )
-    .unwrap();
-
-    cmd::mv(&paths, "alpha", "Renamed").unwrap();
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        "k3f9\tgamma\nk3f9\trenamed\n",
-        "only the file that moved moved"
-    );
-}
-
-#[test]
-fn mv_repoints_an_entry_recorded_under_a_slug_that_is_not_there() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
-
-    // Renamed by hand outside noda: the index still records the old slug, and
-    // nothing names the file that is actually there.
-    std::fs::write(notebook.join(".noda/index.tsv"), format!("{id}\toldname\n")).unwrap();
-
-    cmd::mv(&paths, "alpha", "Renamed").unwrap();
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        format!("{id}\trenamed\n"),
-        "the id repoints the stale entry rather than leaving two"
-    );
-    assert_eq!(
-        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
-        None,
-        "and the notebook agrees with itself again"
-    );
-}
-
 #[test]
 fn mv_retitles_without_moving_when_the_slug_is_unchanged() {
     let (_root, paths) = initialized();
@@ -440,20 +389,25 @@ fn mv_retitles_without_moving_when_the_slug_is_unchanged() {
     assert!(text.contains("title: ALPHA"), "{text}");
 }
 
+/// Retitling onto a slug another note already uses is no longer a collision to
+/// step around: the ids differ, so the filenames do.
 #[test]
-fn mv_rejects_an_empty_title_and_sidesteps_an_occupied_slug() {
+fn mv_may_land_on_a_slug_another_note_already_uses() {
     let (_root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let alpha = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let beta = cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let (alpha_id, _) = parts(&alpha);
+    let (beta_id, _) = parts(&beta);
 
     assert!(cmd::mv(&paths, "alpha", "   ").is_err());
 
-    let out = cmd::mv(&paths, "alpha", "Beta").unwrap();
-    assert!(out.ends_with("  beta-2"), "{out}");
+    let out = cmd::mv(&paths, alpha_id, "Beta").unwrap();
+    assert!(out.ends_with("  beta"), "no `-2` invented: {out}");
     assert!(
-        cmd::show(&paths, "beta").unwrap().ends_with("b\n"),
-        "beta is untouched"
+        cmd::show(&paths, beta_id).unwrap().ends_with("b\n"),
+        "the other beta is untouched"
     );
+    assert_eq!(cmd::ls(&paths, None, None).unwrap().lines().count(), 2);
 }
 
 #[test]
@@ -490,7 +444,7 @@ fn editor_script(root: &TempRoot, name: &str, script: &str) -> String {
 fn edit_commits_what_was_saved() {
     let (root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
 
@@ -520,9 +474,10 @@ fn edit_commits_nothing_when_the_file_is_untouched() {
 
 #[cfg(unix)]
 #[test]
-fn edit_refuses_to_commit_a_broken_or_reidentified_note() {
+fn edit_refuses_to_commit_a_broken_note() {
     let (root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let file = note_file(&added);
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
 
@@ -531,25 +486,32 @@ fn edit_refuses_to_commit_a_broken_or_reidentified_note() {
     assert!(err.to_string().contains("not committed"), "{err}");
     assert_eq!(commit_count(&notebook), before);
     assert!(
-        std::fs::read_to_string(notebook.join("alpha.md"))
+        std::fs::read_to_string(notebook.join(&file))
             .unwrap()
             .contains("no frontmatter"),
         "the edit is left on disk to be fixed or discarded, never dropped"
     );
+}
 
-    // Restore, then try to rewrite the id.
-    git2::Repository::open(&notebook)
-        .unwrap()
-        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-        .unwrap();
+/// An editor cannot change which note it is editing. The id is in the filename,
+/// and an editor is handed the file — so the guard `edit` used to need against a
+/// rewritten `id:` field has nothing left to guard against.
+#[cfg(unix)]
+#[test]
+fn an_edit_cannot_change_a_notes_identity() {
+    let (root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = parts(&added).0.to_string();
+
+    // Writing an `id:` line into the frontmatter is now just another field.
     let reid = editor_script(
         &root,
         "reid",
-        r#"sed 's/^id: .*/id: zzzz/' "$1" > "$1.tmp" && mv "$1.tmp" "$1""#,
+        r#"printf -- '---\ntitle: Alpha\nid: zzzz\n---\n\nbody\n' > "$1""#,
     );
-    let err = cmd::edit_with(&paths, "alpha", &reid).unwrap_err();
-    assert!(err.to_string().contains("ids are permanent"), "{err}");
-    assert_eq!(commit_count(&notebook), before);
+    let out = cmd::edit_with(&paths, "alpha", &reid).unwrap();
+    assert!(out.starts_with(&id), "the id is unmoved: {out}");
+    assert!(cmd::show(&paths, &id).unwrap().contains("body"));
 }
 
 #[cfg(unix)]
@@ -567,7 +529,8 @@ fn edit_reports_an_aborted_editor() {
 fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
+    let file = note_file(&added);
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
@@ -575,16 +538,7 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
     let out = cmd::rm(&paths, "alpha").unwrap();
     assert!(out.contains(&id) && out.contains("alpha"), "{out}");
 
-    assert!(!notebook.join("alpha.md").exists());
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv"))
-            .unwrap()
-            .lines()
-            .filter(|l| l.contains(&id))
-            .count(),
-        0,
-        "the index entry goes with the note"
-    );
+    assert!(!notebook.join(&file).exists());
     assert!(cmd::show(&paths, "alpha").is_err());
     assert!(cmd::show(&paths, &id).is_err());
     assert!(
@@ -605,7 +559,7 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
         .parent(0)
         .unwrap();
     assert!(
-        parent.tree().unwrap().get_name("alpha.md").is_some(),
+        parent.tree().unwrap().get_name(&file).is_some(),
         "the removal is revertible"
     );
 }
@@ -613,39 +567,31 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
 /// The commands that only need to know *which* note they were pointed at used
 /// to parse the file anyway, and so refused to run on one whose frontmatter had
 /// gone — leaving the tools for clearing that up unusable exactly when they were
-/// wanted, and `noda reconcile`'s "repair the file, or remove it" meaning reach
-/// for git.
+/// wanted.
 #[test]
 fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("the original body\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
+    let file = note_file(&added);
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    std::fs::write(notebook.join("alpha.md"), "frontmatter is gone\n").unwrap();
+    std::fs::write(notebook.join(&file), "frontmatter is gone\n").unwrap();
 
-    // History is about the file, and seeing what changed is how you find out
-    // why it will not parse.
-    assert!(
-        cmd::log(&paths, Some("alpha"), None)
-            .unwrap()
-            .contains("add:")
-    );
-    assert!(
-        cmd::diff(&paths, Some("alpha"))
-            .unwrap()
-            .contains("alpha.md")
-    );
+    // The filename still says which note this is, so `resolve` never needed to
+    // read it. History is about the file, and seeing what changed is how you
+    // find out why it will not parse.
+    assert!(cmd::log(&paths, Some(&id), None).unwrap().contains("add:"));
+    assert!(cmd::diff(&paths, Some(&id)).unwrap().contains(&file));
 
     // And the one that undoes the damage. It writes over the file, so reading it
     // first was never necessary.
-    cmd::restore(&paths, "alpha", "HEAD").unwrap();
-    let back = cmd::show(&paths, "alpha").unwrap();
-    assert!(back.contains(&format!("id: {id}")), "{back}");
+    cmd::restore(&paths, &id, "HEAD").unwrap();
+    let back = cmd::show(&paths, &id).unwrap();
     assert!(back.contains("the original body"), "{back}");
     assert_eq!(
-        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
+        status_row(&plain(&cmd::status(&paths).unwrap()), "problems"),
         None,
-        "the notebook is whole again, index included"
+        "the notebook is whole again"
     );
 }
 
@@ -653,93 +599,62 @@ fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
 fn rm_removes_a_note_whose_frontmatter_is_gone() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
+    let file = note_file(&added);
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
     // Deleting a file does not require understanding it.
-    std::fs::write(notebook.join("alpha.md"), "broken\n").unwrap();
-    let out = cmd::rm(&paths, "alpha").unwrap();
-    assert!(out.contains(&id), "the index still knew what it was: {out}");
-    assert!(!notebook.join("alpha.md").exists());
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        "",
-        "and the entry goes with it"
+    std::fs::write(notebook.join(&file), "broken\n").unwrap();
+    let out = cmd::rm(&paths, &id).unwrap();
+    assert!(
+        out.contains(&id),
+        "the filename still said what it was: {out}"
     );
-
-    // A file no id can be found for at all: not a note, not in the index. It is
-    // still a file the user asked to be rid of.
-    std::fs::write(notebook.join("orphan.md"), "junk\n").unwrap();
-    let out = cmd::rm(&paths, "orphan").unwrap();
-    assert!(out.contains("orphan"), "{out}");
-    assert!(!notebook.join("orphan.md").exists());
+    assert!(!notebook.join(&file).exists());
 }
 
 #[test]
 fn the_commands_that_read_a_note_still_refuse_one_that_cannot_be_read() {
     let (_root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = parts(&added).0.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    std::fs::write(notebook.join("alpha.md"), "frontmatter is gone\n").unwrap();
+    std::fs::write(notebook.join(note_file(&added)), "frontmatter is gone\n").unwrap();
 
     // The line is drawn at whether the command uses the note's contents. These
     // rewrite the frontmatter, so they have to be able to read it first.
     for err in [
-        cmd::mv(&paths, "alpha", "Renamed").unwrap_err(),
-        cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap_err(),
+        cmd::mv(&paths, &id, "Renamed").unwrap_err(),
+        cmd::tag(&paths, &id, &["+work".to_string()]).unwrap_err(),
     ] {
         assert!(err.to_string().contains("frontmatter"), "{err}");
     }
 }
 
+/// A file with neither an id in its name nor frontmatter is not a note, so it
+/// does not resolve — it is a file the notebook happens to hold.
 #[test]
-fn history_needs_something_to_go_on() {
+fn a_file_that_is_not_a_note_does_not_resolve() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
-    // Neither the file nor the index can say which note this is, so `log` says
-    // that rather than guessing or dying on a parse error.
     std::fs::write(notebook.join("orphan.md"), "junk\n").unwrap();
     let err = cmd::log(&paths, Some("orphan"), None)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("cannot tell which note"), "{err}");
+    assert!(err.contains("not found"), "{err}");
 }
 
 #[test]
 fn rm_resolves_by_id_and_reports_an_unknown_note() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
 
     assert!(cmd::rm(&paths, "nope").is_err());
     cmd::rm(&paths, &id).unwrap();
     assert!(cmd::ls(&paths, None, None).unwrap().is_empty());
-}
-
-#[test]
-fn rm_takes_the_index_entry_even_when_the_file_disagrees_about_the_id() {
-    let (_root, paths) = initialized();
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-
-    // Edited outside noda — with git, or any editor — so the file now names an
-    // id the index never minted. Nothing else ever revisits that entry, so a
-    // removal that misses it leaves it behind for good.
-    let path = notebook.join("alpha.md");
-    let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace(&format!("id: {id}"), "id: zzzz");
-    std::fs::write(&path, text).unwrap();
-
-    cmd::rm(&paths, "alpha").unwrap();
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        "",
-        "the entry goes with the note, whichever id the file claimed"
-    );
 }
 
 #[test]
@@ -982,10 +897,12 @@ fn sync_commits_pending_changes_before_pushing() {
     let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
     let url = bare_remote(&root, "origin.git", &branch);
     cmd::remote_set(&paths, &url).unwrap();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
     // Edited outside noda — a `$EDITOR` left open, a file synced by another tool.
-    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
     let text = std::fs::read_to_string(&note).unwrap();
     std::fs::write(&note, format!("{text}edited elsewhere\n")).unwrap();
 
@@ -1013,49 +930,6 @@ fn sync_commits_pending_changes_before_pushing() {
 /// stages the whole working tree, so without a guard of its own it picks that
 /// file up and makes the disagreement permanent — and remote.
 #[cfg(unix)]
-#[test]
-fn sync_refuses_to_commit_the_id_change_edit_refused() {
-    let (root, paths) = initialized();
-    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
-    let url = bare_remote(&root, "origin.git", &branch);
-    cmd::remote_set(&paths, &url).unwrap();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    cmd::sync(&paths).unwrap();
-
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    let before = commit_count(&notebook);
-    let reid = editor_script(
-        &root,
-        "reid",
-        r#"sed 's/^id: .*/id: zzzz/' "$1" > "$1.tmp" && mv "$1.tmp" "$1""#,
-    );
-    assert!(cmd::edit_with(&paths, "alpha", &reid).is_err());
-
-    let err = cmd::sync(&paths).unwrap_err().to_string();
-    assert!(err.contains("disagree"), "{err}");
-    assert!(err.contains("alpha.md"), "{err}");
-    assert_eq!(
-        commit_count(&notebook),
-        before,
-        "the refusal comes before the commit, not after it"
-    );
-
-    mirror(&paths, &url, "mirror");
-    assert!(
-        !std::fs::read_to_string(paths.notebook_dir("mirror").join("alpha.md"))
-            .unwrap()
-            .contains("zzzz"),
-        "and nothing reached the remote"
-    );
-
-    // The guard is not a dead end: put the file back and sync works again.
-    git2::Repository::open(&notebook)
-        .unwrap()
-        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-        .unwrap();
-    assert!(cmd::sync(&paths).is_ok());
-}
-
 #[test]
 fn sync_fast_forwards_a_notebook_that_only_received() {
     let (root, paths) = initialized();
@@ -1104,12 +978,8 @@ fn sync_merges_notebooks_that_both_moved() {
     assert!(listed.contains("laptop"), "{listed}");
     assert!(listed.contains("desktop"), "{listed}");
 
-    // Both sides appended to the id ↔ slug index, so it conflicted and was
-    // rebuilt: it has to come out complete, committed, and free of markers.
-    let index =
-        std::fs::read_to_string(paths.notebook_dir("mirror").join(".noda/index.tsv")).unwrap();
-    assert_eq!(index.lines().count(), 3, "{index}");
-    assert!(!index.contains("<<<"), "{index}");
+    // Each side wrote its own filename, so there was nothing to conflict over:
+    // the merge is clean without noda rebuilding anything.
     let repo = git2::Repository::open(paths.notebook_dir("mirror")).unwrap();
     assert!(repo.statuses(None).unwrap().is_empty(), "nothing left over");
     assert_eq!(repo.state(), git2::RepositoryState::Clean);
@@ -1131,7 +1001,17 @@ fn a_conflicting_pull_is_rolled_back() {
     mirror(&paths, &url, "mirror");
 
     let rewrite = |notebook: &str, body: &str| {
-        let path = paths.notebook_dir(notebook).join("shared.md");
+        let dir = paths.notebook_dir(notebook);
+        let path = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with("-shared.md"))
+            })
+            .expect("the shared note");
         let text = std::fs::read_to_string(&path).unwrap();
         let head = text
             .split("---\n")
@@ -1335,8 +1215,11 @@ fn status_counts_the_distance_from_the_remote_without_touching_it() {
     );
 }
 
+/// A file with neither an id in its name nor a frontmatter block is not a note
+/// and not a mistake — it is a file. noda says nothing about it, because a
+/// notebook is allowed to hold one.
 #[test]
-fn status_reports_what_it_cannot_read_instead_of_dying_on_it() {
+fn a_file_that_declares_nothing_is_left_alone() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     std::fs::write(
@@ -1345,103 +1228,120 @@ fn status_reports_what_it_cannot_read_instead_of_dying_on_it() {
     )
     .unwrap();
 
-    // Every other command chokes on this file. `status` is how you find out it
-    // is there, so it is the one that must not.
-    assert!(cmd::ls(&paths, None, None).is_err(), "ls still refuses it");
-    let out = plain(&cmd::status(&paths).unwrap());
-    assert!(status_row(&out, "notes").unwrap().starts_with('1'), "{out}");
-    assert!(
-        status_row(&out, "notes").unwrap().contains("stray.md"),
-        "{out}"
+    assert_eq!(
+        cmd::ls(&paths, None, None).unwrap().lines().count(),
+        1,
+        "ls no longer chokes on it"
     );
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(status_row(&out, "notes"), Some("1"), "{out}");
+    assert_eq!(status_row(&out, "problems"), None, "{out}");
     assert_eq!(status_row(&out, "changes"), Some("1 file uncommitted"));
 }
 
+/// The frontmatter is the declaration "I am a note". A file that makes it but
+/// carries no id in its name is one waiting to be adopted.
 #[test]
-fn status_reports_an_index_that_no_longer_matches_the_notes() {
+fn status_reports_a_note_with_no_id_in_its_name() {
     let (_root, paths) = initialized();
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
     let out = plain(&cmd::status(&paths).unwrap());
     assert_eq!(
-        status_row(&out, "index"),
+        status_row(&out, "problems"),
         None,
-        "a notebook that agrees with itself says nothing about it: {out}"
+        "a healthy notebook says nothing about it: {out}"
     );
 
-    // noda's own commands keep the two in step, so the divergence has to come
-    // from outside — an editor, a merge, a `git checkout`.
-    let path = notebook.join("alpha.md");
-    let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace(&format!("id: {id}"), "id: zzzz");
-    std::fs::write(&path, text).unwrap();
-
+    plant_unnamed(&notebook, "hand-written");
     let out = plain(&cmd::status(&paths).unwrap());
-    let row = status_row(&out, "index").unwrap_or_else(|| panic!("no index row: {out}"));
     assert_eq!(
-        row,
-        format!("1 note carries an id the index recorded differently  (alpha.md: zzzz, not {id})"),
-        // One kind needs no headline above it; the line already says how many.
-        "{out}"
-    );
-
-    // A file that is not a note at all belongs on the notes row, not this one.
-    std::fs::write(notebook.join("stray.md"), "not a note\n").unwrap();
-    let out = plain(&cmd::status(&paths).unwrap());
-    assert!(
-        !status_row(&out, "index").unwrap().contains("stray"),
+        status_row(&out, "problems"),
+        Some("1 note has no id in its filename  (hand-written.md)"),
         "{out}"
     );
 }
 
+/// The other half of the pair: a name that claims an id over a file that never
+/// declared itself. `abcdefgh` is a perfectly legal id, so the shape alone
+/// cannot settle whether this is a broken note or somebody's file.
 #[test]
-fn a_new_note_avoids_an_id_the_index_has_never_heard_of() {
+fn status_reports_a_file_that_claims_an_id_without_frontmatter() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    std::fs::write(notebook.join("abcdefgh-hello.md"), "no frontmatter\n").unwrap();
 
-    // A note the way a merge delivers one: a file carrying an id, with nothing
-    // in the index to say so. Minting against the index alone would be free to
-    // hand that id out a second time, and there is no undoing that.
-    std::fs::write(
-        notebook.join("merged.md"),
-        "---\nid: zzzz\ntitle: Merged\n---\n\nbody\n",
-    )
-    .unwrap();
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&out, "problems"),
+        Some("1 file is named like a note but has no frontmatter  (abcdefgh-hello.md)"),
+        "{out}"
+    );
+}
+
+/// Two machines can mint one id without ever meeting. The filenames differ, so
+/// git merges them without a word and this is the only place it shows up.
+#[test]
+fn status_reports_one_id_carried_by_two_notes() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant(&notebook, "k3f9m2p1", "alpha");
+    // Folded, the way every other comparison folds them: `K3F9M2P1` is not a
+    // second id.
+    plant(&notebook, "K3F9M2P1", "beta");
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&out, "problems"),
+        Some("1 id is carried by more than one note  (k3f9m2p1)"),
+        "{out}"
+    );
+}
+
+/// A note the way a merge or another machine delivers one: already adopted, with
+/// an id noda never minted here. Minting has to see it, or it could hand the
+/// same id out twice — and there is no undoing that.
+#[test]
+fn a_new_note_avoids_an_id_that_arrived_from_outside() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant(&notebook, "zzzzyyyy", "merged");
 
     let taken = noda::notebook::Notebook::open_active(&paths)
         .unwrap()
         .taken_ids()
         .unwrap();
-    assert!(taken.contains("zzzz"), "{taken:?}");
+    assert!(taken.contains("zzzzyyyy"), "{taken:?}");
 
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let out = plain(&cmd::status(&paths).unwrap());
     assert_eq!(
-        status_row(&out, "index"),
-        Some("1 note the index does not name  (merged.md)"),
-        "and status says the file is there unrecorded: {out}"
+        status_row(&plain(&cmd::status(&paths).unwrap()), "problems"),
+        None,
+        "a note that arrived adopted is simply a note"
     );
+    assert_eq!(cmd::ls(&paths, None, None).unwrap().lines().count(), 2);
 }
 
 #[test]
-fn a_wholesale_disagreement_is_counted_rather_than_listed() {
+fn a_wholesale_problem_is_counted_rather_than_listed() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Anchor"), Some("body\n"), &[]).unwrap();
+
+    // A directory of hand-written notes copied in at once makes every one of
+    // them a problem together. `status` has to stay one screen through that.
     for n in 0..12 {
-        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+        plant_unnamed(&notebook, &format!("note-{n:02}"));
     }
 
-    // The commonest way this goes wrong — a lost index, a restore that missed
-    // `.noda/` — makes every note in the notebook a problem at once. `status`
-    // has to stay one screen through that.
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
-
     let out = plain(&cmd::status(&paths).unwrap());
-    let row = status_row(&out, "index").unwrap();
-    assert!(row.starts_with("12 notes the index does not name"), "{row}");
+    let row = status_row(&out, "problems").unwrap();
+    assert!(
+        row.starts_with("12 notes have no id in their filenames"),
+        "{row}"
+    );
     assert_eq!(
         row.matches(".md").count(),
         3,
@@ -1449,13 +1349,12 @@ fn a_wholesale_disagreement_is_counted_rather_than_listed() {
     );
     assert!(row.ends_with("…)"), "and the rest elided: {row}");
     // Six lines: five rows plus the pointer to `noda reconcile`. What matters is
-    // that the count does not follow the number of notes, so a notebook twelve
+    // that the count does not follow the number of notes, so a notebook four
     // times the size prints the same screen.
     assert_eq!(out.lines().count(), 6, "{out}");
     for n in 12..48 {
-        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+        plant_unnamed(&notebook, &format!("note-{n:02}"));
     }
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
     let bigger = plain(&cmd::status(&paths).unwrap());
     assert_eq!(bigger.lines().count(), 6, "{bigger}");
 }
@@ -1466,78 +1365,76 @@ fn several_kinds_are_totalled_before_they_are_broken_down() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    // Two notes the index has never heard of, and one entry naming a note that
-    // is not there.
-    for (slug, id) in [("merged", "zzzz"), ("dropped-in", "yyyy")] {
-        std::fs::write(
-            notebook.join(format!("{slug}.md")),
-            format!("---\nid: {id}\ntitle: {slug}\n---\n\nbody\n"),
-        )
-        .unwrap();
-    }
-    let index = notebook.join(".noda/index.tsv");
-    let mut text = std::fs::read_to_string(&index).unwrap();
-    text.push_str("wwww\tghost\n");
-    std::fs::write(&index, text).unwrap();
+    plant_unnamed(&notebook, "merged");
+    plant_unnamed(&notebook, "dropped-in");
+    std::fs::write(notebook.join("abcdefgh-hello.md"), "no frontmatter\n").unwrap();
 
     let out = plain(&cmd::status(&paths).unwrap());
     assert_eq!(
-        status_row(&out, "index"),
+        status_row(&out, "problems"),
         Some("3 problems"),
         "the size of it comes first: {out}"
     );
     assert!(
-        out.contains("1 entry names a note that is not there  (ghost.md)"),
+        out.contains("2 notes have no id in their filenames  (dropped-in.md; merged.md)"),
         "{out}"
     );
     assert!(
-        out.contains("2 notes the index does not name  (dropped-in.md; merged.md)"),
+        out.contains("1 file is named like a note but has no frontmatter  (abcdefgh-hello.md)"),
         "{out}"
     );
 }
 
-/// Writes a note file directly, the way a merge or another editor would.
-fn plant(notebook: &Path, slug: &str, id: &str) {
+/// Writes an adopted note directly, the way a merge or another machine would.
+fn plant(notebook: &Path, id: &str, slug: &str) {
     std::fs::write(
-        notebook.join(format!("{slug}.md")),
-        format!("---\nid: {id}\ntitle: {slug}\n---\n\nbody\n"),
+        notebook.join(format!("{id}-{slug}.md")),
+        format!("---\ntitle: {slug}\n---\n\nbody\n"),
     )
     .unwrap();
 }
 
-fn index_of(notebook: &Path) -> String {
-    std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap()
+/// Writes a note that declares itself but has no id in its name — a file written
+/// by hand, or brought in from somewhere that never heard of noda.
+fn plant_unnamed(notebook: &Path, name: &str) {
+    std::fs::write(
+        notebook.join(format!("{name}.md")),
+        format!("---\ntitle: {name}\n---\n\nbody\n"),
+    )
+    .unwrap();
 }
 
+/// The one repair that cannot lose anything: the file has already said it is a
+/// note, and all it lacks is a name.
 #[test]
-fn reconcile_rewrites_a_lost_index_from_the_notes() {
+fn reconcile_adopts_a_note_that_only_lacks_an_id() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    for n in 0..3 {
-        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
-    }
-    let before = index_of(&notebook);
+    plant_unnamed(&notebook, "hand-written");
     let commits = commit_count(&notebook);
 
-    // A restore that missed `.noda/`, a truncation, a backup that lost it.
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
-
     let out = plain(&cmd::reconcile(&paths, false).unwrap());
-    assert!(out.contains("3 notes the index does not name"), "{out}");
+    assert!(out.contains("adopted 1 note"), "{out}");
+    assert!(
+        !notebook.join("hand-written.md").exists(),
+        "the file moved to its adopted name"
+    );
+
+    let listed = cmd::ls(&paths, None, None).unwrap();
+    assert_eq!(listed.lines().count(), 1, "{listed}");
+    assert!(
+        listed.contains("hand-written"),
+        "the slug survives: {listed}"
+    );
     assert_eq!(
-        index_of(&notebook),
-        before,
-        "the notes carried everything needed to write it again"
+        status_row(&plain(&cmd::status(&paths).unwrap()), "problems"),
+        None,
+        "and the notebook is in order again"
     );
     assert_eq!(
         commit_count(&notebook),
         commits + 1,
         "the repair is a commit, so it can be reverted like any other change"
-    );
-    assert_eq!(
-        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
-        None,
-        "and the notebook agrees with itself again"
     );
 }
 
@@ -1546,9 +1443,8 @@ fn reconcile_names_every_file_where_status_elides() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     for n in 0..12 {
-        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+        plant_unnamed(&notebook, &format!("note-{n:02}"));
     }
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
 
     // `status` shows three and a `…`; this is where the rest can be seen.
     let out = plain(&cmd::reconcile(&paths, true).unwrap());
@@ -1557,81 +1453,17 @@ fn reconcile_names_every_file_where_status_elides() {
 }
 
 #[test]
-fn reconcile_takes_the_note_id_when_the_index_recorded_another() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
-
-    let path = notebook.join("alpha.md");
-    let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace(&format!("id: {id}"), "id: zzzz");
-    std::fs::write(&path, text).unwrap();
-
-    // The symptom this cures: `ls` reads the id off the file, `resolve` looks it
-    // up in the index, so the id on screen cannot be used to address the note.
-    assert!(cmd::show(&paths, "zzzz").is_err());
-
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
-    assert!(out.contains("alpha.md: zzzz, not"), "{out}");
-    assert_eq!(index_of(&notebook), "zzzz\talpha\n");
-    assert!(
-        cmd::show(&paths, "zzzz").unwrap().contains("id: zzzz"),
-        "the id a note carries now addresses it"
-    );
-}
-
-#[test]
-fn reconcile_drops_an_entry_whose_note_is_gone() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let index = notebook.join(".noda/index.tsv");
-    let mut text = std::fs::read_to_string(&index).unwrap();
-    text.push_str("wwww\tghost\n");
-    std::fs::write(&index, text).unwrap();
-
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
-    assert!(out.contains("ghost.md"), "{out}");
-    assert!(
-        !index_of(&notebook).contains("ghost"),
-        "{}",
-        index_of(&notebook)
-    );
-}
-
-#[test]
-fn reconcile_gives_a_shared_index_id_to_the_note_that_carries_it() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    plant(&notebook, "alpha", "k3f9");
-    plant(&notebook, "beta", "aaaa");
-    // One id handed to two notes: only one of the files agrees, and that settles it.
-    std::fs::write(
-        notebook.join(".noda/index.tsv"),
-        "k3f9\talpha\nk3f9\tbeta\n",
-    )
-    .unwrap();
-
-    cmd::reconcile(&paths, false).unwrap();
-    assert_eq!(index_of(&notebook), "aaaa\tbeta\nk3f9\talpha\n");
-}
-
-#[test]
 fn reconcile_writes_nothing_on_a_dry_run() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+    plant_unnamed(&notebook, "hand-written");
     let commits = commit_count(&notebook);
 
     let out = plain(&cmd::reconcile(&paths, true).unwrap());
     assert!(out.contains("nothing was changed"), "{out}");
-    assert_eq!(
-        index_of(&notebook),
-        "",
-        "it rewrites a committed file, so a look first is free"
+    assert!(
+        notebook.join("hand-written.md").exists(),
+        "it renames a file, so a look first is free"
     );
     assert_eq!(commit_count(&notebook), commits);
 }
@@ -1644,7 +1476,7 @@ fn reconcile_says_so_when_there_is_nothing_to_do() {
     let commits = commit_count(&notebook);
 
     let out = plain(&cmd::reconcile(&paths, false).unwrap());
-    assert!(out.contains("already agree"), "{out}");
+    assert!(out.contains("in order"), "{out}");
     assert_eq!(
         commit_count(&notebook),
         commits,
@@ -1652,41 +1484,43 @@ fn reconcile_says_so_when_there_is_nothing_to_do() {
     );
 }
 
+/// Both files are real notes. Keeping either one's identity means discarding the
+/// other's, so this is reported and left alone.
 #[test]
-fn reconcile_refuses_when_two_notes_carry_one_id() {
+fn reconcile_reports_but_does_not_settle_a_shared_id() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    plant(&notebook, "alpha", "k3f9");
-    // Folded, the way every other comparison folds them: `K3F9` is not a second id.
-    plant(&notebook, "beta", "K3F9");
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+    plant(&notebook, "k3f9m2p1", "alpha");
+    plant(&notebook, "K3F9M2P1", "beta");
+    let commits = commit_count(&notebook);
 
-    let err = plain(&cmd::reconcile(&paths, false).unwrap_err().to_string());
-    assert!(err.contains("carried by 2 notes"), "{err}");
-    assert!(err.contains("alpha.md, beta.md"), "{err}");
-    assert_eq!(
-        index_of(&notebook),
-        "",
-        "both are real notes; picking one silently loses the other's identity"
-    );
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("carried by more than one note"), "{out}");
+    assert!(out.contains("rename one of the files"), "{out}");
+    assert!(notebook.join("k3f9m2p1-alpha.md").exists());
+    assert!(notebook.join("K3F9M2P1-beta.md").exists());
+    assert_eq!(commit_count(&notebook), commits, "nothing was decided");
 }
 
+/// The `abcdefgh-hello.md` case: a name that claims an id over a file that never
+/// declared itself. It might be a note that lost its frontmatter, or a file that
+/// was never one. Only its author knows.
 #[test]
-fn reconcile_refuses_when_the_index_names_a_file_it_cannot_read() {
+fn reconcile_reports_but_does_not_settle_a_file_that_claims_an_id() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
-    let before = index_of(&notebook);
+    std::fs::write(notebook.join("abcdefgh-hello.md"), "no frontmatter\n").unwrap();
+    let commits = commit_count(&notebook);
 
-    // Dropping the entry throws away an id nothing else records; keeping it
-    // leaves a disagreement no run could ever clear. Only its author knows which.
-    std::fs::write(notebook.join("alpha.md"), "frontmatter gone\n").unwrap();
-
-    let err = plain(&cmd::reconcile(&paths, false).unwrap_err().to_string());
-    assert!(err.contains("cannot be read as a note"), "{err}");
-    assert!(err.contains(&id), "the id at stake is named: {err}");
-    assert_eq!(index_of(&notebook), before);
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("abcdefgh-hello.md"), "{out}");
+    assert!(out.contains("add a `---` block back"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(notebook.join("abcdefgh-hello.md")).unwrap(),
+        "no frontmatter\n",
+        "untouched"
+    );
+    assert_eq!(commit_count(&notebook), commits);
 }
 
 #[test]
@@ -1694,49 +1528,16 @@ fn reconcile_ignores_a_file_that_was_never_a_note() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let before = index_of(&notebook);
-    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
 
-    // A stray `*.md` the index never named is not noda's business, and must not
-    // stand between a lost index and its repair.
+    // No id in the name, no frontmatter inside: not noda's business, and it must
+    // not stand between an adoptable note and its repair.
     std::fs::write(notebook.join("scratch.md"), "just some markdown\n").unwrap();
+    plant_unnamed(&notebook, "hand-written");
 
-    cmd::reconcile(&paths, false).unwrap();
-    assert_eq!(index_of(&notebook), before);
-}
-
-#[cfg(unix)]
-#[test]
-fn reconcile_is_the_way_out_of_the_state_sync_refuses_to_commit() {
-    let (root, paths) = initialized();
-    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
-    let url = bare_remote(&root, "origin.git", &branch);
-    cmd::remote_set(&paths, &url).unwrap();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    cmd::sync(&paths).unwrap();
-
-    let reid = editor_script(
-        &root,
-        "reid",
-        r#"sed 's/^id: .*/id: zzzz/' "$1" > "$1.tmp" && mv "$1.tmp" "$1""#,
-    );
-    assert!(cmd::edit_with(&paths, "alpha", &reid).is_err());
-    let err = cmd::sync(&paths).unwrap_err().to_string();
-    assert!(
-        err.contains("noda reconcile"),
-        "the refusal names the remedy: {err}"
-    );
-
-    cmd::reconcile(&paths, false).unwrap();
-    let out = cmd::sync(&paths).unwrap();
-    assert!(out.contains("push:"), "{out}");
-
-    mirror(&paths, &url, "mirror");
-    cmd::use_notebook(&paths, "mirror").unwrap();
-    assert!(
-        cmd::show(&paths, "zzzz").unwrap().contains("id: zzzz"),
-        "the reconciled id travels, and addresses the note on the other side"
-    );
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("adopted 1 note"), "{out}");
+    assert!(!out.contains("scratch.md"), "{out}");
+    assert!(notebook.join("scratch.md").exists(), "left where it was");
 }
 
 #[test]
@@ -1890,24 +1691,25 @@ fn log_for_a_note_follows_it_across_a_rename() {
 #[test]
 fn diff_shows_the_last_commit_when_nothing_is_pending() {
     let (_root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
     let out = plain(&cmd::diff(&paths, None).unwrap());
-    assert!(out.contains("+++ b/alpha.md"), "{out}");
-    assert!(out.contains("+a"), "{out}");
     assert!(
-        !out.contains("index.tsv"),
-        "the derived index would bury the note: {out}"
+        out.contains(&format!("+++ b/{}", note_file(&added))),
+        "{out}"
     );
+    assert!(out.contains("+a"), "{out}");
 }
 
 #[test]
 fn diff_shows_uncommitted_changes_when_there_are_some() {
     let (_root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
 
-    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
     let text = std::fs::read_to_string(&note).unwrap();
     std::fs::write(&note, text.replace("a\n", "changed by hand\n")).unwrap();
 
@@ -1924,9 +1726,11 @@ fn diff_shows_uncommitted_changes_when_there_are_some() {
 #[test]
 fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
     let (_root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
 
-    let note = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).join("alpha.md");
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
     let original = std::fs::read_to_string(&note).unwrap();
     std::fs::write(&note, original.replace("first\n", "second\n")).unwrap();
     commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
@@ -1958,11 +1762,14 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
 fn restore_brings_back_a_deleted_note_with_its_id() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
+    let file = note_file(&added);
     cmd::rm(&paths, "alpha").unwrap();
     assert!(cmd::show(&paths, "alpha").is_err(), "gone");
 
-    let out = cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
+    // Addressed by an id nothing on disk carries any more: the answer is in
+    // history, where every commit records the filenames.
+    let out = cmd::restore(&paths, &id, "HEAD~1").unwrap();
     assert!(out.starts_with(&id), "the id comes back unchanged: {out}");
     assert!(cmd::show(&paths, &id).unwrap().contains("a\n"));
     assert!(
@@ -1970,96 +1777,32 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
             .unwrap()
             .contains("alpha")
     );
-
-    let index = std::fs::read_to_string(
+    assert!(
         paths
             .notebook_dir(cmd::DEFAULT_NOTEBOOK)
-            .join(".noda/index.tsv"),
-    )
-    .unwrap();
-    assert_eq!(index, format!("{id}\talpha\n"));
+            .join(&file)
+            .is_file(),
+        "under the name it had"
+    );
 }
 
+/// Deleted with `rm(1)` rather than `noda rm`, so nothing recorded that it went.
+/// The filename is the record, and it comes back with it.
 #[test]
-fn restore_replaces_the_index_entry_of_a_note_deleted_outside_noda() {
+fn restore_brings_back_a_note_deleted_outside_noda() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
+    let id = parts(&added).0.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
-    // Deleted with `rm(1)` rather than `noda rm`, so the entry is still there
-    // when the note comes back and writes its own.
-    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+    std::fs::remove_file(notebook.join(note_file(&added))).unwrap();
 
     cmd::restore(&paths, &id, "HEAD").unwrap();
-    assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        format!("{id}\talpha\n"),
-        "one entry for the note, not two"
-    );
     assert!(cmd::show(&paths, &id).unwrap().ends_with("a\n"));
-}
-
-/// The entry `restore` replaces was found by a raw string comparison, so an
-/// index recording the id in another case kept its entry and the restored note
-/// wrote a second one — one id mapped to two slugs, which `resolve` then settles
-/// by whichever sorts first.
-#[test]
-fn restore_folds_the_id_of_the_entry_it_replaces() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-
-    // A fixed id rather than a minted one: `k3f9` has a letter, so it certainly
-    // has another case to be recorded in. A minted id can come out all digits,
-    // and then `to_uppercase` changes nothing and the test proves nothing.
-    plant(&notebook, "alpha", "k3f9");
-    std::fs::write(notebook.join(".noda/index.tsv"), "k3f9\talpha\n").unwrap();
-    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "add: alpha");
-
-    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
-    std::fs::write(notebook.join(".noda/index.tsv"), "K3F9\toldname\n").unwrap();
-
-    cmd::restore(&paths, "k3f9", "HEAD").unwrap();
     assert_eq!(
-        index_of(&notebook),
-        "k3f9\talpha\n",
-        "`K3F9` and `k3f9` are one id here too, so the leftover goes"
-    );
-    assert_eq!(
-        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
+        status_row(&plain(&cmd::status(&paths).unwrap()), "problems"),
         None,
         "and nothing is left to report"
-    );
-}
-
-#[test]
-fn restore_leaves_the_entry_of_a_note_that_is_still_there() {
-    let (_root, paths) = initialized();
-    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    plant(&notebook, "alpha", "k3f9");
-    plant(&notebook, "gamma", "aaaa");
-    std::fs::write(
-        notebook.join(".noda/index.tsv"),
-        "aaaa\tgamma\nk3f9\talpha\n",
-    )
-    .unwrap();
-    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "add: alpha and gamma");
-
-    // A live note's entry claiming the id the restored note carries. Dropping it
-    // would leave `gamma.md` named by nothing — trading one disagreement for
-    // another, in a note `restore` was never asked about. The ids here are
-    // identical rather than differently cased: the guard has nothing to do with
-    // folding, and this is the strongest form of the case.
-    //
-    // Addressed by slug, because by id `resolve` would land on gamma.
-    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
-    std::fs::write(notebook.join(".noda/index.tsv"), "k3f9\tgamma\n").unwrap();
-
-    cmd::restore(&paths, "alpha", "HEAD").unwrap();
-    assert_eq!(
-        index_of(&notebook),
-        "k3f9\talpha\nk3f9\tgamma\n",
-        "gamma keeps the entry it had; alpha gets its own"
     );
 }
 
