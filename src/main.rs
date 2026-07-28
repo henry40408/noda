@@ -63,6 +63,12 @@ enum Command {
     },
     /// Where the active notebook stands: notes, changes, drift from the remote.
     Status,
+    /// Rewrite the id index from the notes, when the two have stopped agreeing.
+    Reconcile {
+        /// Report what would change without writing or committing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Full-text search across the active notebook.
     Search {
         /// What to look for. Several words mean all of them, in any order.
@@ -198,7 +204,10 @@ fn main() -> std::process::ExitCode {
         // already gone.
         Err(e) if e.is_broken_pipe() => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("noda: {e}");
+            // Through `anstream`, like every other stream noda writes: an error
+            // may quote a command's own output, and a piped `noda sync` must not
+            // spit escape sequences at whatever is reading it.
+            anstream::eprintln!("noda: {e}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -221,6 +230,7 @@ fn run() -> noda::Result<()> {
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,
+        Command::Reconcile { dry_run } => cmd::reconcile(&paths, *dry_run)?,
         Command::Search { query } => cmd::search(&paths, &query.join(" "))?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,

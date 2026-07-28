@@ -1,6 +1,7 @@
 //! Command implementations. Each one takes `Paths` explicitly so tests can run
 //! against a throwaway root without touching the real environment.
 
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -789,6 +790,16 @@ fn describe_disagreements(disagreements: &[(notebook::Disagreement, Vec<String>)
             style::paint(style::MUTED, &format!("  ({})", elide(subjects)))
         );
     }
+    // Detection without a remedy is a trap, so the row that reports the problem
+    // names the command that fixes it — and where the whole list can be seen.
+    let _ = write!(
+        out,
+        "{}",
+        style::paint(
+            style::MUTED,
+            "run `noda reconcile` to rewrite the index from the notes"
+        )
+    );
     out.trim_end().to_string()
 }
 
@@ -803,6 +814,124 @@ fn elide(subjects: &[String]) -> String {
         shown.push("…");
     }
     shown.join("; ")
+}
+
+/// Rewrites `.noda/index.tsv` from what the notes themselves carry.
+///
+/// The id lives in each note's frontmatter, so the index is always derivable
+/// from the notes and never the other way round. That single fact decides the
+/// whole command: the repaired index *is* the scan, which settles every
+/// unambiguous case at once — a note the index does not name is added, an entry
+/// whose note is gone is dropped, a note whose id was recorded differently is
+/// taken at its own word, and an id the index gave to two notes goes to
+/// whichever file carries it.
+///
+/// It reconciles the index *to* the notes and never renumbers. A repair that
+/// assigned fresh ids would restore nothing — the ids are in the files, so new
+/// ones would invent identities and break every link that already pointed at
+/// the old ones.
+///
+/// Where `status` elides, this names every file: it is the place people are
+/// sent to see the full list.
+pub fn reconcile(paths: &Paths, dry_run: bool) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let scan = notebook.scan()?;
+    let index = notebook.index()?;
+
+    let stopped = refusals(&scan, &index);
+    if !stopped.is_empty() {
+        return Err(Error::msg(format!(
+            "nothing was changed — noda cannot settle this for you\n{}\n\
+             run `noda reconcile` again once it is settled",
+            stopped.join("\n")
+        )));
+    }
+
+    let changes = notebook::compare(&scan.notes, &index);
+    if changes.is_empty() {
+        return Ok("the notes and the index already agree".to_string());
+    }
+
+    let mut out = String::new();
+    for (kind, subjects) in &changes {
+        let _ = writeln!(out, "{}", kind.describe(subjects.len()));
+        for subject in subjects {
+            let _ = writeln!(out, "  {subject}");
+        }
+    }
+
+    let count = scan.notes.len();
+    let noun = if count == 1 { "note" } else { "notes" };
+    if dry_run {
+        let _ = write!(
+            out,
+            "{}",
+            style::paint(
+                style::MUTED,
+                &format!("would rewrite {INDEX_PATH} to name {count} {noun} — nothing was changed")
+            )
+        );
+        return Ok(out);
+    }
+
+    // A commit like every other change noda makes, so a repair that went
+    // somewhere unwanted is revertible.
+    notebook.write_index(&scan.notes)?;
+    notebook.commit(
+        &[Path::new(INDEX_PATH)],
+        &format!("reconcile: {INDEX_PATH} from {count} {noun}"),
+    )?;
+    let _ = write!(out, "reconciled {INDEX_PATH}: {count} {noun}");
+    Ok(out)
+}
+
+/// The cases `reconcile` must not settle on its own, as lines ready to print.
+///
+/// Both are the same shape of problem: two readings of the notebook are equally
+/// defensible and picking one silently loses something that cannot be minted
+/// again. Both are reported together, so nobody fixes one and discovers the
+/// other on the next run.
+fn refusals(scan: &notebook::Scan, index: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+
+    // Two note files carrying one id. Both are real notes; keeping either one's
+    // identity means discarding the other's.
+    let mut by_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (id, slug) in &scan.notes {
+        by_id
+            .entry(note::normalize_id(id))
+            .or_default()
+            .push(format!("{slug}.md"));
+    }
+    for (id, files) in by_id.iter_mut().filter(|(_, files)| files.len() > 1) {
+        // By name: the scan is ordered by id, which folds, so `K3F9`'s file would
+        // otherwise come before `k3f9`'s for a reason no reader can see.
+        files.sort();
+        out.push(format!(
+            "id `{id}` is carried by {} notes: {}\n  \
+             decide which one keeps it and give the others a new id",
+            files.len(),
+            files.join(", ")
+        ));
+    }
+
+    // An index entry naming a file that is there but is not readable as a note.
+    // Dropping the entry throws away an id that nothing else records; keeping it
+    // leaves a disagreement no run of this command can ever clear. Which one is
+    // right depends on whether the file is a note that lost its frontmatter or
+    // something that was never a note, and only its author knows.
+    let unreadable: HashSet<&str> = scan.unreadable.iter().map(String::as_str).collect();
+    for (id, slug) in index {
+        let file = format!("{slug}.md");
+        if unreadable.contains(file.as_str()) {
+            out.push(format!(
+                "{file} carries id `{id}` in the index but cannot be read as a note\n  \
+                 repair the file, or remove it to give the id up"
+            ));
+        }
+    }
+
+    out
 }
 
 /// How far the notebook has drifted, phrased as what there is left to do.
@@ -1001,7 +1130,7 @@ pub fn sync(paths: &Paths) -> Result<String> {
     if !disagreements.is_empty() {
         return Err(Error::msg(format!(
             "the notes and the index disagree; nothing was committed, pulled or pushed\n{}\n\
-             see `noda status`, or move one side at a time with `noda pull` and `noda push`",
+             or move one side at a time with `noda pull` and `noda push`",
             describe_disagreements(&disagreements)
         )));
     }

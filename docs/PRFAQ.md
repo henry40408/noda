@@ -72,7 +72,9 @@ and stops, naming the notes involved, rather than picking a winner. It cannot re
 way out: the id lives in the file, so a fresh one would not restore anything — it would
 invent a new identity and break every link that already pointed at the old one. Which of
 the two notes keeps the id is a person's call, and `noda status` shows the same thing
-without going near the network.
+without going near the network. Once you've settled it — and for every disagreement that
+*is* unambiguous — `noda reconcile` rewrites the index from the notes and commits the
+repair.
 
 **Q: Does it work offline?**
 Always. Writing, editing, searching, and history are 100% local git operations. `noda

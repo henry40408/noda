@@ -105,9 +105,9 @@ impl Disagreement {
 /// What a walk of the working tree found: every note as an `(id, slug)` pair —
 /// the shape the index carries, so the two can be compared directly — and the
 /// `*.md` files that are not notes at all.
-struct Scan {
-    notes: Vec<(String, String)>,
-    unreadable: Vec<String>,
+pub struct Scan {
+    pub notes: Vec<(String, String)>,
+    pub unreadable: Vec<String>,
 }
 
 /// One commit, as `noda log` reports it.
@@ -178,7 +178,7 @@ impl Notebook {
     /// Shared by `status`, which reports it, and `sync`, which refuses on it —
     /// so the two cannot drift into disagreeing about what a disagreement is.
     pub fn disagreements(&self) -> Result<Vec<(Disagreement, Vec<String>)>> {
-        Ok(reconcile(&self.scan()?.notes, &self.index()?))
+        Ok(compare(&self.scan()?.notes, &self.index()?))
     }
 
     /// Where the notebook stands: what is uncommitted, and how far it has
@@ -191,7 +191,7 @@ impl Notebook {
     pub fn status(&self) -> Result<Status> {
         let branch = self.branch()?;
         let scan = self.scan()?;
-        let disagreements = reconcile(&scan.notes, &self.index()?);
+        let disagreements = compare(&scan.notes, &self.index()?);
 
         let mut options = git2::StatusOptions::new();
         options.include_untracked(true).include_ignored(false);
@@ -222,7 +222,7 @@ impl Notebook {
     /// Tolerant where `notes` is strict: one malformed file must not stop the
     /// notebook being described, nor stop a new note being given an id that
     /// avoids the ones already out there.
-    fn scan(&self) -> Result<Scan> {
+    pub fn scan(&self) -> Result<Scan> {
         let mut found = Vec::new();
         let mut unreadable = Vec::new();
         for entry in std::fs::read_dir(&self.path)? {
@@ -915,7 +915,10 @@ fn configured_author(paths: &Paths) -> Option<(String, String)> {
 ///
 /// Ids are compared folded, the way `resolve` compares them — otherwise `k3f9`
 /// and `K3F9` read as two ids here while addressing one note everywhere else.
-fn reconcile(
+///
+/// This only ever *reports*. `noda reconcile` is what repairs, and it shares
+/// this so the two never differ about what counts as a disagreement.
+pub(crate) fn compare(
     notes: &[(String, String)],
     index: &[(String, String)],
 ) -> Vec<(Disagreement, Vec<String>)> {
@@ -1058,8 +1061,8 @@ mod tests {
     #[test]
     fn an_index_that_matches_the_notes_has_nothing_to_report() {
         let notes = pairs(&[("k3f9", "alpha"), ("q7x2", "beta")]);
-        assert!(reconcile(&notes, &notes).is_empty());
-        assert!(reconcile(&[], &[]).is_empty());
+        assert!(compare(&notes, &notes).is_empty());
+        assert!(compare(&[], &[]).is_empty());
     }
 
     #[test]
@@ -1067,7 +1070,7 @@ mod tests {
         // The file and the index disagree about the id — one problem, not one
         // from each side of it. Both ids travel with it.
         assert_eq!(
-            reconcile(&pairs(&[("zzzz", "alpha")]), &pairs(&[("k3f9", "alpha")])),
+            compare(&pairs(&[("zzzz", "alpha")]), &pairs(&[("k3f9", "alpha")])),
             [(
                 Disagreement::Mismatched,
                 vec!["alpha.md: zzzz, not k3f9".to_string()]
@@ -1076,18 +1079,18 @@ mod tests {
 
         // An entry whose note is not there, and a note the index never heard of.
         assert_eq!(
-            reconcile(&[], &pairs(&[("k3f9", "alpha")])),
+            compare(&[], &pairs(&[("k3f9", "alpha")])),
             [(Disagreement::Missing, vec!["alpha.md".to_string()])]
         );
         assert_eq!(
-            reconcile(&pairs(&[("k3f9", "alpha")]), &[]),
+            compare(&pairs(&[("k3f9", "alpha")]), &[]),
             [(Disagreement::Unlisted, vec!["alpha.md".to_string()])]
         );
 
         // One id, two notes — on both sides of the comparison.
         let doubled = pairs(&[("k3f9", "alpha"), ("k3f9", "beta")]);
         assert_eq!(
-            reconcile(&doubled, &doubled),
+            compare(&doubled, &doubled),
             [
                 (Disagreement::SharedByNotes, vec!["k3f9".to_string()]),
                 (Disagreement::SharedByIndex, vec!["k3f9".to_string()]),
@@ -1104,7 +1107,7 @@ mod tests {
             .map(|n| (format!("id{n:04}"), format!("note-{n:04}")))
             .collect();
 
-        let reported = reconcile(&notes, &[]);
+        let reported = compare(&notes, &[]);
         assert_eq!(reported.len(), 1, "one kind, not two thousand problems");
         let (kind, subjects) = &reported[0];
         assert_eq!(*kind, Disagreement::Unlisted);
@@ -1119,7 +1122,7 @@ mod tests {
     fn ids_are_compared_the_way_they_are_addressed() {
         // `resolve` folds case and the I/L/O confusables, so a difference that
         // is not one anywhere else must not be reported as one here.
-        assert!(reconcile(&pairs(&[("K3F9", "alpha")]), &pairs(&[("k3f9", "alpha")])).is_empty());
+        assert!(compare(&pairs(&[("K3F9", "alpha")]), &pairs(&[("k3f9", "alpha")])).is_empty());
     }
 
     #[test]
