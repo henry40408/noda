@@ -41,6 +41,9 @@ pub struct NoteFile {
 pub struct Status {
     pub branch: String,
     pub notes: usize,
+    /// Files the notebook holds that are not notes. Free to count: the walk that
+    /// finds the notes passes them anyway.
+    pub files: usize,
     /// Files differing from `HEAD`, untracked ones included.
     pub uncommitted: usize,
     pub remote: Option<String>,
@@ -105,6 +108,26 @@ pub struct Scan {
     pub unnamed: Vec<String>,
     /// An id but no frontmatter: ambiguous.
     pub suspicious: Vec<String>,
+    /// Everything else the notebook holds: an attachment, a README, a file
+    /// parked here on purpose.
+    ///
+    /// Counting them costs nothing — the walk that finds the notes passes them
+    /// anyway. Saying which note *uses* one is the expensive question, because
+    /// under this model the answer lives in the notes' prose; that is
+    /// `audit_links`, and it is why nothing here needs it.
+    pub files: Vec<String>,
+}
+
+/// What following every link in every note turned up.
+///
+/// Deliberately not part of `Scan`: building it reads and parses the body of
+/// every note, so `status` must never reach for it.
+pub struct Audit {
+    /// Files in the notebook that no note links to.
+    pub orphans: Vec<String>,
+    /// `(note filename, destination)` where the destination names nothing the
+    /// notebook holds.
+    pub broken: Vec<(String, String)>,
 }
 
 impl Scan {
@@ -237,6 +260,7 @@ impl Notebook {
         Ok(Status {
             branch,
             notes: scan.notes.len(),
+            files: scan.files.len(),
             uncommitted,
             remote: self.remote_url(),
             drift,
@@ -252,6 +276,7 @@ impl Notebook {
         let mut notes = Vec::new();
         let mut unnamed = Vec::new();
         let mut suspicious = Vec::new();
+        let mut files = Vec::new();
 
         for entry in std::fs::read_dir(&self.path)? {
             let entry = entry?;
@@ -259,7 +284,15 @@ impl Notebook {
                 continue;
             }
             let name = entry.file_name();
-            let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".md")) else {
+            // A name that is not UTF-8 cannot be compared against a link
+            // destination, which always is; and a dotfile is the repository's
+            // own configuration rather than anything the notebook holds.
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with('.') {
+                continue;
+            }
+            let Some(stem) = name.strip_suffix(".md") else {
+                files.push(name.to_string());
                 continue;
             };
             let file = format!("{stem}.md");
@@ -268,19 +301,58 @@ impl Notebook {
                 (Some((id, slug)), true) => notes.push((id.to_string(), slug.to_string())),
                 (Some(_), false) => suspicious.push(file),
                 (None, true) => unnamed.push(file),
-                // Neither a name nor a declaration: not noda's business.
-                (None, false) => {}
+                // Neither a name nor a declaration: not a note, so it is one
+                // more file the notebook happens to hold.
+                (None, false) => files.push(file),
             }
         }
 
         notes.sort();
         unnamed.sort();
         suspicious.sort();
+        files.sort();
         Ok(Scan {
             notes,
             unnamed,
             suspicious,
+            files,
         })
+    }
+
+    /// Follows every link in every note, and reports both directions in which a
+    /// link and a file can fail to meet.
+    ///
+    /// This is the expensive walk: it reads and parses the body of every note,
+    /// which is the cost of `search` rather than the cost of `ls`. Nothing calls
+    /// it unless asked to.
+    ///
+    /// A link is checked against the filesystem rather than against the scan, so
+    /// a destination reaching into a subdirectory resolves. The reverse does not
+    /// hold — only files at the notebook's root can be reported as orphans,
+    /// because the root is the whole of the notebook noda models.
+    pub fn audit_links(&self) -> Result<Audit> {
+        let (notes, files) = self.inventory()?;
+        let mut referenced: HashSet<String> = HashSet::new();
+        let mut broken = Vec::new();
+
+        for file in notes {
+            let name = note::file_name(&file.id, &file.slug);
+            for target in crate::link::targets(&file.note.body) {
+                if self.path.join(&target).exists() {
+                    referenced.insert(target);
+                } else {
+                    broken.push((name.clone(), target));
+                }
+            }
+        }
+
+        let orphans = files
+            .into_iter()
+            .filter(|file| !referenced.contains(file))
+            .collect();
+
+        broken.sort();
+        Ok(Audit { orphans, broken })
     }
 
     /// Every `(id, slug)` a filename in the notebook spells out, whether or not
@@ -387,19 +459,56 @@ impl Notebook {
     /// A file that will not parse is not a note and is skipped here, exactly as
     /// `scan` classifies it.
     pub fn notes(&self) -> Result<Vec<NoteFile>> {
+        Ok(self.inventory()?.0)
+    }
+
+    /// Every note the notebook holds, and every file it holds that is not one,
+    /// from a single walk.
+    ///
+    /// `ls` wants both, and reading the directory twice to answer one command is
+    /// what this exists to avoid. The classification is `scan`'s, so a file is
+    /// counted here exactly as it is reported there: the `*.md` that declare
+    /// themselves and carry an id are notes, the ones still waiting to be
+    /// adopted or missing their frontmatter are neither notes nor files —
+    /// `scan` already reports them as problems, and listing them as attachments
+    /// would name them twice.
+    pub fn inventory(&self) -> Result<(Vec<NoteFile>, Vec<String>)> {
         let mut notes = Vec::new();
-        for (id, slug) in self.named_files()? {
-            let path = self.note_path(&id, &slug);
-            let Ok(text) = std::fs::read_to_string(&path) else {
+        let mut files = Vec::new();
+
+        for entry in std::fs::read_dir(&self.path)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with('.') {
+                continue;
+            }
+            let Some(stem) = name.strip_suffix(".md") else {
+                files.push(name.to_string());
                 continue;
             };
-            let Ok(note) = Note::parse(&text) else {
-                continue;
-            };
-            notes.push(NoteFile { id, slug, note });
+            let parsed = std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|text| Note::parse(&text).ok());
+            match (note::split_stem(stem), parsed) {
+                (Some((id, slug)), Some(note)) => notes.push(NoteFile {
+                    id: id.to_string(),
+                    slug: slug.to_string(),
+                    note,
+                }),
+                // Named but unreadable, or readable but unnamed: a problem for
+                // `scan` to report, and not a file the notebook is holding.
+                (Some(_), None) | (None, Some(_)) => {}
+                (None, None) => files.push(name.to_string()),
+            }
         }
+
         notes.sort_by(|a, b| a.slug.cmp(&b.slug));
-        Ok(notes)
+        files.sort();
+        Ok((notes, files))
     }
 
     /// Resolves a key to one note's `(id, slug)`.
@@ -1044,6 +1153,7 @@ mod tests {
                 .collect(),
             unnamed: unnamed.iter().map(|f| (*f).to_string()).collect(),
             suspicious: suspicious.iter().map(|f| (*f).to_string()).collect(),
+            files: Vec::new(),
         }
     }
 
@@ -1094,6 +1204,7 @@ mod tests {
             notes: Vec::new(),
             unnamed: files,
             suspicious: Vec::new(),
+            files: Vec::new(),
         };
 
         let reported = scan.problems();

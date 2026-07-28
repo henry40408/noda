@@ -63,11 +63,16 @@ enum Command {
     },
     /// Where the active notebook stands: notes, changes, drift from the remote.
     Status,
-    /// Rewrite the id index from the notes, when the two have stopped agreeing.
-    Reconcile {
+    /// Diagnose the notebook, and adopt the notes that only lack an id.
+    Doctor {
         /// Report what would change without writing or committing anything.
         #[arg(long)]
         dry_run: bool,
+        /// Also follow every link in every note: report the files no note links
+        /// to, and the links that name nothing. Reads the whole notebook, so it
+        /// is asked for rather than assumed.
+        #[arg(long)]
+        links: bool,
     },
     /// Full-text search across the active notebook.
     Search {
@@ -230,7 +235,7 @@ fn run() -> noda::Result<()> {
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,
-        Command::Reconcile { dry_run } => cmd::reconcile(&paths, *dry_run)?,
+        Command::Doctor { dry_run, links } => cmd::doctor(&paths, *dry_run, *links)?,
         Command::Search { query } => cmd::search(&paths, &query.join(" "))?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,

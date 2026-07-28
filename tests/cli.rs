@@ -1216,10 +1216,10 @@ fn status_counts_the_distance_from_the_remote_without_touching_it() {
 }
 
 /// A file with neither an id in its name nor a frontmatter block is not a note
-/// and not a mistake — it is a file. noda says nothing about it, because a
-/// notebook is allowed to hold one.
+/// and not a mistake — it is a file. It is listed as one and counted as one, and
+/// it is never a problem, because a notebook is allowed to hold it.
 #[test]
-fn a_file_that_declares_nothing_is_left_alone() {
+fn a_file_that_declares_nothing_is_listed_as_a_file() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     std::fs::write(
@@ -1228,13 +1228,19 @@ fn a_file_that_declares_nothing_is_left_alone() {
     )
     .unwrap();
 
-    assert_eq!(
-        cmd::ls(&paths, None, None).unwrap().lines().count(),
-        1,
-        "ls no longer chokes on it"
+    let listed = plain(&cmd::ls(&paths, None, None).unwrap());
+    assert!(
+        listed.contains("alpha"),
+        "the note is still a note: {listed}"
     );
+    assert!(
+        listed.contains("files\n  stray.md"),
+        "and the file is under its own heading: {listed}"
+    );
+
     let out = plain(&cmd::status(&paths).unwrap());
     assert_eq!(status_row(&out, "notes"), Some("1"), "{out}");
+    assert_eq!(status_row(&out, "files"), Some("1"), "{out}");
     assert_eq!(status_row(&out, "problems"), None, "{out}");
     assert_eq!(status_row(&out, "changes"), Some("1 file uncommitted"));
 }
@@ -1348,7 +1354,7 @@ fn a_wholesale_problem_is_counted_rather_than_listed() {
         "three named, not twelve: {row}"
     );
     assert!(row.ends_with("…)"), "and the rest elided: {row}");
-    // Six lines: five rows plus the pointer to `noda reconcile`. What matters is
+    // Six lines: five rows plus the pointer to `noda doctor`. What matters is
     // that the count does not follow the number of notes, so a notebook four
     // times the size prints the same screen.
     assert_eq!(out.lines().count(), 6, "{out}");
@@ -1407,13 +1413,13 @@ fn plant_unnamed(notebook: &Path, name: &str) {
 /// The one repair that cannot lose anything: the file has already said it is a
 /// note, and all it lacks is a name.
 #[test]
-fn reconcile_adopts_a_note_that_only_lacks_an_id() {
+fn doctor_adopts_a_note_that_only_lacks_an_id() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     plant_unnamed(&notebook, "hand-written");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
     assert!(out.contains("adopted 1 note"), "{out}");
     assert!(
         !notebook.join("hand-written.md").exists(),
@@ -1439,7 +1445,7 @@ fn reconcile_adopts_a_note_that_only_lacks_an_id() {
 }
 
 #[test]
-fn reconcile_names_every_file_where_status_elides() {
+fn doctor_names_every_file_where_status_elides() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     for n in 0..12 {
@@ -1447,19 +1453,19 @@ fn reconcile_names_every_file_where_status_elides() {
     }
 
     // `status` shows three and a `…`; this is where the rest can be seen.
-    let out = plain(&cmd::reconcile(&paths, true).unwrap());
+    let out = plain(&cmd::doctor(&paths, true, false).unwrap());
     assert_eq!(out.matches(".md").count(), 12, "{out}");
     assert!(!out.contains('…'), "nothing elided here: {out}");
 }
 
 #[test]
-fn reconcile_writes_nothing_on_a_dry_run() {
+fn doctor_writes_nothing_on_a_dry_run() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     plant_unnamed(&notebook, "hand-written");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::reconcile(&paths, true).unwrap());
+    let out = plain(&cmd::doctor(&paths, true, false).unwrap());
     assert!(out.contains("nothing was changed"), "{out}");
     assert!(
         notebook.join("hand-written.md").exists(),
@@ -1469,13 +1475,13 @@ fn reconcile_writes_nothing_on_a_dry_run() {
 }
 
 #[test]
-fn reconcile_says_so_when_there_is_nothing_to_do() {
+fn doctor_says_so_when_there_is_nothing_to_do() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
     assert!(out.contains("in order"), "{out}");
     assert_eq!(
         commit_count(&notebook),
@@ -1487,14 +1493,14 @@ fn reconcile_says_so_when_there_is_nothing_to_do() {
 /// Both files are real notes. Keeping either one's identity means discarding the
 /// other's, so this is reported and left alone.
 #[test]
-fn reconcile_reports_but_does_not_settle_a_shared_id() {
+fn doctor_reports_but_does_not_settle_a_shared_id() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     plant(&notebook, "k3f9m2p1", "alpha");
     plant(&notebook, "K3F9M2P1", "beta");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
     assert!(out.contains("carried by more than one note"), "{out}");
     assert!(out.contains("rename one of the files"), "{out}");
     assert!(notebook.join("k3f9m2p1-alpha.md").exists());
@@ -1506,13 +1512,13 @@ fn reconcile_reports_but_does_not_settle_a_shared_id() {
 /// declared itself. It might be a note that lost its frontmatter, or a file that
 /// was never one. Only its author knows.
 #[test]
-fn reconcile_reports_but_does_not_settle_a_file_that_claims_an_id() {
+fn doctor_reports_but_does_not_settle_a_file_that_claims_an_id() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     std::fs::write(notebook.join("abcdefgh-hello.md"), "no frontmatter\n").unwrap();
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
     assert!(out.contains("abcdefgh-hello.md"), "{out}");
     assert!(out.contains("add a `---` block back"), "{out}");
     assert_eq!(
@@ -1524,7 +1530,7 @@ fn reconcile_reports_but_does_not_settle_a_file_that_claims_an_id() {
 }
 
 #[test]
-fn reconcile_ignores_a_file_that_was_never_a_note() {
+fn doctor_ignores_a_file_that_was_never_a_note() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
@@ -1534,10 +1540,135 @@ fn reconcile_ignores_a_file_that_was_never_a_note() {
     std::fs::write(notebook.join("scratch.md"), "just some markdown\n").unwrap();
     plant_unnamed(&notebook, "hand-written");
 
-    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
     assert!(out.contains("adopted 1 note"), "{out}");
     assert!(!out.contains("scratch.md"), "{out}");
     assert!(notebook.join("scratch.md").exists(), "left where it was");
+}
+
+/// Drops `name` into the notebook as a file that is not a note.
+fn plant_file(notebook: &Path, name: &str) {
+    std::fs::write(notebook.join(name), "contents\n").unwrap();
+}
+
+/// The expensive checks are the ones nobody asked for until they ask, so the
+/// default run must not perform them — nor mention what they would have found.
+#[test]
+fn doctor_says_nothing_about_links_until_it_is_asked_to() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("see ![d](missing.png)\n"), &[]).unwrap();
+    plant_file(&notebook, "unreferenced.png");
+
+    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    assert!(out.contains("in order"), "{out}");
+    assert!(!out.contains("unreferenced.png"), "{out}");
+    assert!(!out.contains("missing.png"), "{out}");
+}
+
+#[test]
+fn doctor_links_reports_a_file_no_note_links_to() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("![d](used.png)\n"), &[]).unwrap();
+    plant_file(&notebook, "used.png");
+    plant_file(&notebook, "receipt.pdf");
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    assert!(out.contains("1 file no note links to"), "{out}");
+    assert!(out.contains("receipt.pdf"), "{out}");
+    assert!(
+        !out.contains("used.png"),
+        "a file a note links to is not an orphan: {out}"
+    );
+    assert!(
+        notebook.join("receipt.pdf").exists(),
+        "reported, never removed"
+    );
+    assert_eq!(commit_count(&notebook), commits, "and nothing was decided");
+}
+
+#[test]
+fn doctor_links_reports_a_link_that_names_nothing() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("see ![d](missing.png)\n"), &[]).unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    assert!(out.contains("1 broken link"), "{out}");
+    assert!(out.contains("missing.png"), "{out}");
+    assert!(
+        out.contains("alpha.md"),
+        "the note holding it is named: {out}"
+    );
+}
+
+/// The reason this reads Markdown with a parser instead of searching for the
+/// filename: both of these are how a correct answer differs from a plausible
+/// one, and both would otherwise be wrong.
+#[test]
+fn only_a_real_link_counts_as_a_reference() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    // Named in a fenced block, which is prose about a link, not a link.
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("```\n![d](quoted.png)\n```\n"),
+        &[],
+    )
+    .unwrap();
+    // Named only at the bottom, which a search of the paragraph would miss.
+    cmd::add(
+        &paths,
+        Some("Beta"),
+        Some("see ![the diagram][d]\n\n[d]: referenced.png\n"),
+        &[],
+    )
+    .unwrap();
+    plant_file(&notebook, "quoted.png");
+    plant_file(&notebook, "referenced.png");
+
+    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    assert!(
+        out.contains("quoted.png"),
+        "a link inside a fence references nothing: {out}"
+    );
+    assert!(
+        !out.contains("referenced.png"),
+        "a reference-style link is still a link: {out}"
+    );
+}
+
+/// A destination that reaches outside the notebook, or names somebody else's
+/// server, is not a file this notebook can be missing.
+#[test]
+fn a_destination_the_notebook_does_not_own_is_never_broken() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("[a](https://example.com/x.png) [b](#section) [c](mailto:me@example.com)\n"),
+        &[],
+    )
+    .unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    assert!(out.contains("in order"), "{out}");
+}
+
+/// Asking for a tag is asking about notes.
+#[test]
+fn listing_by_tag_does_not_list_the_notebooks_files() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
+    plant_file(&notebook, "receipt.pdf");
+
+    assert!(cmd::ls(&paths, None, None).unwrap().contains("receipt.pdf"));
+    let tagged = cmd::ls(&paths, None, Some("work")).unwrap();
+    assert!(!tagged.contains("receipt.pdf"), "{tagged}");
+    assert!(tagged.contains("alpha"), "{tagged}");
 }
 
 #[test]
