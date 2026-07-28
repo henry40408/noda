@@ -394,8 +394,22 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
         changed.push(format!("{}.md", located.slug));
 
         let mut index = notebook.index()?;
+        let wanted = note::normalize_id(&note.id);
         for (id, entry) in &mut index {
-            if *id == note.id {
+            // The entry that moves is the one naming the file that moved. Keying
+            // on the id alone missed whenever the file carried one the index had
+            // recorded differently: nothing matched, the index was written back
+            // untouched, and the rename left an entry pointing at a file that no
+            // longer existed *and* a file the index did not name.
+            //
+            // The id is still worth trying, folded the way `resolve` folds it, so
+            // a note recorded under a slug that is not there is repointed rather
+            // than left stale. It is only followed when that slug has no file of
+            // its own — otherwise one id shared by two entries would drag another
+            // live note's entry along with this rename.
+            if *entry == located.slug
+                || (note::normalize_id(id) == wanted && !notebook.note_path(entry).is_file())
+            {
                 entry.clone_from(&slug);
             }
         }
