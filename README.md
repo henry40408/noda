@@ -110,6 +110,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
 | `noda status` | Where the active notebook stands: notes, changes, drift from the remote. |
+| `noda reconcile [--dry-run]` | Rewrite the id index from the notes, when the two have stopped agreeing. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
@@ -152,7 +153,33 @@ turns up, the total comes first:
 index     2 problems
           1 note the index does not name  (merged.md)
           1 note carries an id the index recorded differently  (note-7.md: q7x2, not yjkv)
+          run `noda reconcile` to rewrite the index from the notes
 ```
+
+`noda reconcile` is the repair, and the place to see the full list that `status` elides. It
+rewrites `.noda/index.tsv` from what the notes themselves carry — adding a note the index
+does not name, dropping an entry whose note is gone, and taking a note's own id where the
+index recorded another. The repair is a commit like any other change, so `git revert` undoes
+it, and `--dry-run` shows what would change without writing anything.
+
+```
+$ noda reconcile --dry-run
+1 entry names a note that is not there
+  ghost.md
+1 note carries an id the index recorded differently
+  note-7.md: q7x2, not yjkv
+would rewrite .noda/index.tsv to name 42 notes — nothing was changed
+```
+
+It reconciles the index **to** the notes and never renumbers. Assigning fresh ids would
+restore nothing: the ids live in the files, so new ones would invent identities and break
+every link and reference that already pointed at the old ones.
+
+Two cases it refuses rather than guesses, because either answer loses something that cannot
+be minted again — two notes carrying one id, and an index entry naming a file that is there
+but cannot be read as a note. Both are reported together, with what to do about each. A
+stray `*.md` the index never named is ignored: it is not a note, and it must not stand
+between a lost index and its repair.
 
 ### Notes
 
@@ -235,7 +262,8 @@ notes and the index have stopped agreeing — the `index` row `noda status` prin
 the point at which a disagreement would otherwise become permanent and remote, including
 one noda has already refused once: `noda edit` will not commit a note whose `id:` changed,
 but it leaves the file on disk, and a sync that staged everything would send it anyway.
-Until the two agree again, move one side at a time with `noda push` and `noda pull`.
+`noda reconcile` is the way out; until the two agree again, `noda push` and `noda pull` still
+move one side at a time.
 
 ### Config
 
@@ -286,7 +314,7 @@ $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 └── notebooks/
     ├── work/                   # a notebook = a git repo
     │   ├── .git/
-    │   ├── .noda/index.tsv     # id ↔ slug lookup (committed; rebuildable from frontmatter)
+    │   ├── .noda/index.tsv     # id ↔ slug lookup (committed; `noda reconcile` rebuilds it)
     │   ├── meeting-notes.md
     │   └── reading-log.md
     └── personal/

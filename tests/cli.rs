@@ -1255,7 +1255,16 @@ fn a_wholesale_disagreement_is_counted_rather_than_listed() {
         "three named, not twelve: {row}"
     );
     assert!(row.ends_with("…)"), "and the rest elided: {row}");
-    assert_eq!(out.lines().count(), 5, "still one line per row: {out}");
+    // Six lines: five rows plus the pointer to `noda reconcile`. What matters is
+    // that the count does not follow the number of notes, so a notebook twelve
+    // times the size prints the same screen.
+    assert_eq!(out.lines().count(), 6, "{out}");
+    for n in 12..48 {
+        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+    }
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+    let bigger = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(bigger.lines().count(), 6, "{bigger}");
 }
 
 #[test]
@@ -1291,6 +1300,249 @@ fn several_kinds_are_totalled_before_they_are_broken_down() {
     assert!(
         out.contains("2 notes the index does not name  (dropped-in.md; merged.md)"),
         "{out}"
+    );
+}
+
+/// Writes a note file directly, the way a merge or another editor would.
+fn plant(notebook: &Path, slug: &str, id: &str) {
+    std::fs::write(
+        notebook.join(format!("{slug}.md")),
+        format!("---\nid: {id}\ntitle: {slug}\n---\n\nbody\n"),
+    )
+    .unwrap();
+}
+
+fn index_of(notebook: &Path) -> String {
+    std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap()
+}
+
+#[test]
+fn reconcile_rewrites_a_lost_index_from_the_notes() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    for n in 0..3 {
+        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+    }
+    let before = index_of(&notebook);
+    let commits = commit_count(&notebook);
+
+    // A restore that missed `.noda/`, a truncation, a backup that lost it.
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("3 notes the index does not name"), "{out}");
+    assert_eq!(
+        index_of(&notebook),
+        before,
+        "the notes carried everything needed to write it again"
+    );
+    assert_eq!(
+        commit_count(&notebook),
+        commits + 1,
+        "the repair is a commit, so it can be reverted like any other change"
+    );
+    assert_eq!(
+        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
+        None,
+        "and the notebook agrees with itself again"
+    );
+}
+
+#[test]
+fn reconcile_names_every_file_where_status_elides() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    for n in 0..12 {
+        cmd::add(&paths, Some(&format!("Note {n}")), Some("body\n"), &[]).unwrap();
+    }
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+
+    // `status` shows three and a `…`; this is where the rest can be seen.
+    let out = plain(&cmd::reconcile(&paths, true).unwrap());
+    assert_eq!(out.matches(".md").count(), 12, "{out}");
+    assert!(!out.contains('…'), "nothing elided here: {out}");
+}
+
+#[test]
+fn reconcile_takes_the_note_id_when_the_index_recorded_another() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+
+    let path = notebook.join("alpha.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(&format!("id: {id}"), "id: zzzz");
+    std::fs::write(&path, text).unwrap();
+
+    // The symptom this cures: `ls` reads the id off the file, `resolve` looks it
+    // up in the index, so the id on screen cannot be used to address the note.
+    assert!(cmd::show(&paths, "zzzz").is_err());
+
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("alpha.md: zzzz, not"), "{out}");
+    assert_eq!(index_of(&notebook), "zzzz\talpha\n");
+    assert!(
+        cmd::show(&paths, "zzzz").unwrap().contains("id: zzzz"),
+        "the id a note carries now addresses it"
+    );
+}
+
+#[test]
+fn reconcile_drops_an_entry_whose_note_is_gone() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let index = notebook.join(".noda/index.tsv");
+    let mut text = std::fs::read_to_string(&index).unwrap();
+    text.push_str("wwww\tghost\n");
+    std::fs::write(&index, text).unwrap();
+
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("ghost.md"), "{out}");
+    assert!(
+        !index_of(&notebook).contains("ghost"),
+        "{}",
+        index_of(&notebook)
+    );
+}
+
+#[test]
+fn reconcile_gives_a_shared_index_id_to_the_note_that_carries_it() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant(&notebook, "alpha", "k3f9");
+    plant(&notebook, "beta", "aaaa");
+    // One id handed to two notes: only one of the files agrees, and that settles it.
+    std::fs::write(
+        notebook.join(".noda/index.tsv"),
+        "k3f9\talpha\nk3f9\tbeta\n",
+    )
+    .unwrap();
+
+    cmd::reconcile(&paths, false).unwrap();
+    assert_eq!(index_of(&notebook), "aaaa\tbeta\nk3f9\talpha\n");
+}
+
+#[test]
+fn reconcile_writes_nothing_on_a_dry_run() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::reconcile(&paths, true).unwrap());
+    assert!(out.contains("nothing was changed"), "{out}");
+    assert_eq!(
+        index_of(&notebook),
+        "",
+        "it rewrites a committed file, so a look first is free"
+    );
+    assert_eq!(commit_count(&notebook), commits);
+}
+
+#[test]
+fn reconcile_says_so_when_there_is_nothing_to_do() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::reconcile(&paths, false).unwrap());
+    assert!(out.contains("already agree"), "{out}");
+    assert_eq!(
+        commit_count(&notebook),
+        commits,
+        "and makes no empty commit"
+    );
+}
+
+#[test]
+fn reconcile_refuses_when_two_notes_carry_one_id() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant(&notebook, "alpha", "k3f9");
+    // Folded, the way every other comparison folds them: `K3F9` is not a second id.
+    plant(&notebook, "beta", "K3F9");
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+
+    let err = plain(&cmd::reconcile(&paths, false).unwrap_err().to_string());
+    assert!(err.contains("carried by 2 notes"), "{err}");
+    assert!(err.contains("alpha.md, beta.md"), "{err}");
+    assert_eq!(
+        index_of(&notebook),
+        "",
+        "both are real notes; picking one silently loses the other's identity"
+    );
+}
+
+#[test]
+fn reconcile_refuses_when_the_index_names_a_file_it_cannot_read() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let before = index_of(&notebook);
+
+    // Dropping the entry throws away an id nothing else records; keeping it
+    // leaves a disagreement no run could ever clear. Only its author knows which.
+    std::fs::write(notebook.join("alpha.md"), "frontmatter gone\n").unwrap();
+
+    let err = plain(&cmd::reconcile(&paths, false).unwrap_err().to_string());
+    assert!(err.contains("cannot be read as a note"), "{err}");
+    assert!(err.contains(&id), "the id at stake is named: {err}");
+    assert_eq!(index_of(&notebook), before);
+}
+
+#[test]
+fn reconcile_ignores_a_file_that_was_never_a_note() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let before = index_of(&notebook);
+    std::fs::write(notebook.join(".noda/index.tsv"), "").unwrap();
+
+    // A stray `*.md` the index never named is not noda's business, and must not
+    // stand between a lost index and its repair.
+    std::fs::write(notebook.join("scratch.md"), "just some markdown\n").unwrap();
+
+    cmd::reconcile(&paths, false).unwrap();
+    assert_eq!(index_of(&notebook), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn reconcile_is_the_way_out_of_the_state_sync_refuses_to_commit() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    let reid = editor_script(
+        &root,
+        "reid",
+        r#"sed 's/^id: .*/id: zzzz/' "$1" > "$1.tmp" && mv "$1.tmp" "$1""#,
+    );
+    assert!(cmd::edit_with(&paths, "alpha", &reid).is_err());
+    let err = cmd::sync(&paths).unwrap_err().to_string();
+    assert!(
+        err.contains("noda reconcile"),
+        "the refusal names the remedy: {err}"
+    );
+
+    cmd::reconcile(&paths, false).unwrap();
+    let out = cmd::sync(&paths).unwrap();
+    assert!(out.contains("push:"), "{out}");
+
+    mirror(&paths, &url, "mirror");
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    assert!(
+        cmd::show(&paths, "zzzz").unwrap().contains("id: zzzz"),
+        "the reconciled id travels, and addresses the note on the other side"
     );
 }
 
