@@ -2007,21 +2007,22 @@ fn restore_replaces_the_index_entry_of_a_note_deleted_outside_noda() {
 #[test]
 fn restore_folds_the_id_of_the_entry_it_replaces() {
     let (_root, paths) = initialized();
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
-    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
-    std::fs::write(
-        notebook.join(".noda/index.tsv"),
-        format!("{}\toldname\n", id.to_uppercase()),
-    )
-    .unwrap();
+    // A fixed id rather than a minted one: `k3f9` has a letter, so it certainly
+    // has another case to be recorded in. A minted id can come out all digits,
+    // and then `to_uppercase` changes nothing and the test proves nothing.
+    plant(&notebook, "alpha", "k3f9");
+    std::fs::write(notebook.join(".noda/index.tsv"), "k3f9\talpha\n").unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "add: alpha");
 
-    cmd::restore(&paths, &id, "HEAD").unwrap();
+    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+    std::fs::write(notebook.join(".noda/index.tsv"), "K3F9\toldname\n").unwrap();
+
+    cmd::restore(&paths, "k3f9", "HEAD").unwrap();
     assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        format!("{id}\talpha\n"),
+        index_of(&notebook),
+        "k3f9\talpha\n",
         "`K3F9` and `k3f9` are one id here too, so the leftover goes"
     );
     assert_eq!(
@@ -2034,26 +2035,30 @@ fn restore_folds_the_id_of_the_entry_it_replaces() {
 #[test]
 fn restore_leaves_the_entry_of_a_note_that_is_still_there() {
     let (_root, paths) = initialized();
-    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    let id = added.split_once("  ").unwrap().0.to_string();
-    cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-
-    // A live note's entry claiming the id the restored note carries. Folding
-    // alone would drop it and leave `gamma.md` named by nothing — trading one
-    // disagreement for another, in a note `restore` was never asked about.
-    // Addressed by slug, because by id `resolve` would land on gamma.
-    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+    plant(&notebook, "alpha", "k3f9");
+    plant(&notebook, "gamma", "aaaa");
     std::fs::write(
         notebook.join(".noda/index.tsv"),
-        format!("{}\tgamma\n", id.to_uppercase()),
+        "aaaa\tgamma\nk3f9\talpha\n",
     )
     .unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "add: alpha and gamma");
+
+    // A live note's entry claiming the id the restored note carries. Dropping it
+    // would leave `gamma.md` named by nothing — trading one disagreement for
+    // another, in a note `restore` was never asked about. The ids here are
+    // identical rather than differently cased: the guard has nothing to do with
+    // folding, and this is the strongest form of the case.
+    //
+    // Addressed by slug, because by id `resolve` would land on gamma.
+    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+    std::fs::write(notebook.join(".noda/index.tsv"), "k3f9\tgamma\n").unwrap();
 
     cmd::restore(&paths, "alpha", "HEAD").unwrap();
     assert_eq!(
-        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
-        format!("{}\tgamma\n{id}\talpha\n", id.to_uppercase()),
+        index_of(&notebook),
+        "k3f9\talpha\nk3f9\tgamma\n",
         "gamma keeps the entry it had; alpha gets its own"
     );
 }
