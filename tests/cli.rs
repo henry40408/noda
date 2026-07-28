@@ -2011,6 +2011,16 @@ fn path_refuses_a_key_that_names_both_a_note_and_a_file() {
     assert!(err.contains("diagram.md"), "and lists them: {err}");
 }
 
+/// A query the way a shell hands one over: one token per word.
+fn search(paths: &Paths, query: &str) -> noda::Result<String> {
+    let tokens: Vec<String> = query
+        .split(' ')
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect();
+    cmd::search(paths, &tokens)
+}
+
 #[test]
 fn search_matches_the_body_the_title_and_the_tags() {
     let (_root, paths) = initialized();
@@ -2030,7 +2040,7 @@ fn search_matches_the_body_the_title_and_the_tags() {
     .unwrap();
 
     // A body hit quotes the line it was found on.
-    let out = plain(&cmd::search(&paths, "Q3 BUDGET").unwrap());
+    let out = plain(&search(&paths, "Q3 BUDGET").unwrap());
     assert_eq!(out.lines().count(), 2, "one result and its excerpt: {out}");
     assert!(
         out.lines().next().unwrap().contains("meeting-notes"),
@@ -2045,22 +2055,20 @@ fn search_matches_the_body_the_title_and_the_tags() {
     );
 
     // A title or tag hit needs no excerpt — it is already on the first line.
-    let out = plain(&cmd::search(&paths, "work").unwrap());
+    let out = plain(&search(&paths, "work").unwrap());
     assert_eq!(out.lines().count(), 1, "{out}");
     assert!(out.contains("[work]"), "{out}");
     assert_eq!(
-        plain(&cmd::search(&paths, "reading").unwrap())
-            .lines()
-            .count(),
+        plain(&search(&paths, "reading").unwrap()).lines().count(),
         1
     );
 
     // Substring, not whole word: "budget" finds "budgets" too. Both notes match
     // in the body, so both bring an excerpt with them.
-    let out = plain(&cmd::search(&paths, "budget").unwrap());
+    let out = plain(&search(&paths, "budget").unwrap());
     assert_eq!(out.lines().count(), 4, "{out}");
     assert!(out.contains("a book about budgets"), "{out}");
-    assert!(cmd::search(&paths, "absent").unwrap().is_empty());
+    assert!(search(&paths, "absent").unwrap().is_empty());
 }
 
 #[test]
@@ -2069,11 +2077,11 @@ fn search_requires_every_term_but_not_their_order() {
     cmd::add(&paths, Some("Alpha"), Some("budget for the offsite\n"), &[]).unwrap();
     cmd::add(&paths, Some("Beta"), Some("budget only\n"), &[]).unwrap();
 
-    let out = plain(&cmd::search(&paths, "offsite budget").unwrap());
+    let out = plain(&search(&paths, "offsite budget").unwrap());
     assert!(out.contains("alpha"), "{out}");
     assert!(!out.contains("beta"), "both terms are required: {out}");
 
-    assert!(cmd::search(&paths, "   ").is_err(), "a query is required");
+    assert!(search(&paths, "   ").is_err(), "a query is required");
 }
 
 #[test]
@@ -2089,10 +2097,10 @@ fn search_works_on_a_language_without_spaces() {
     cmd::add(&paths, Some("Reading Log"), Some("unrelated\n"), &[]).unwrap();
 
     // No word boundaries to tokenise on: substring matching is the whole point.
-    let out = plain(&cmd::search(&paths, "第三季預算").unwrap());
+    let out = plain(&search(&paths, "第三季預算").unwrap());
     assert_eq!(out.lines().count(), 2, "{out}");
     assert!(out.contains("討論第三季預算與人力計畫"), "{out}");
-    assert!(plain(&cmd::search(&paths, "會議").unwrap()).contains("會議記錄"));
+    assert!(plain(&search(&paths, "會議").unwrap()).contains("會議記錄"));
 }
 
 #[test]
@@ -2101,11 +2109,20 @@ fn search_only_looks_at_the_note_not_the_file_around_it() {
     let added = cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
     let id = added.split_once("  ").unwrap().0;
 
-    // The frontmatter is the container, not searchable text.
-    assert!(cmd::search(&paths, "---").unwrap().is_empty());
-    assert!(cmd::search(&paths, "id:").unwrap().is_empty());
-    // The id is how you address a note, not something to find it by.
-    assert!(cmd::search(&paths, id).unwrap().is_empty());
+    // The frontmatter is the container, not searchable text. Spelled `text:---`
+    // because a leading `-` is a negation, and the field prefix is the way to
+    // say a term starts with one.
+    assert!(search(&paths, "text:---").unwrap().is_empty());
+    assert!(search(&paths, "title:").is_err(), "a field needs a value");
+    // A bare word is text, and the id is not written anywhere in the note — it
+    // is the filename. Asking for it as text finds nothing; `id:` is how you
+    // ask for it as an identity.
+    assert!(search(&paths, id).unwrap().is_empty());
+    assert!(
+        search(&paths, &format!("id:{}", &id[..4]))
+            .unwrap()
+            .contains("alpha")
+    );
 }
 
 #[test]

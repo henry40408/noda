@@ -301,7 +301,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda rm <note>` | Delete a note (as a revertible commit). |
 | `noda mv <note> <new-title>` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
-| `noda search <query>...` | Full-text search across the active notebook. |
+| `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
 
 `<note>` accepts an id (`k3f9m2p1`, or any prefix naming exactly one note) or a slug
 (`meeting-notes`, matched whole). Two notes may share a slug — the id in front of it keeps
@@ -316,9 +316,50 @@ as something else. noda says so when you try, rather than writing a note it cann
 
 `noda search` looks through every note's title, tags and body in the active notebook. It
 matches case-insensitively and by substring rather than by word — Chinese and Japanese have
-no spaces to split on, and a word-based search would simply find nothing in them. Several
-terms mean all of them, in any order. Results are listed the way `ls` lists them, and a hit
-in the body quotes the line it was found on.
+no spaces to split on, and a word-based search would simply find nothing in them. Results
+are listed the way `ls` lists them, and a hit in the body quotes the line it was found on.
+
+A bare word searches the title, the tags and the body together, and several of them mean all
+of them, in any order. A term can also name one field, be `OR`ed with the next, or be ruled
+out with a leading `-`:
+
+```
+$ noda search budget tag:work OR tag:q3 -tag:archived
+s33wpe5y  q3-planning  Q3 planning  [work, q3]
+          the budget and the hiring plan
+```
+
+The grammar is four lines and stays that way:
+
+```text
+query := term-group…                 every group must match
+group := term ('OR' term)…           any term in the group will do
+term  := ['-'] [field ':'] value
+field := tag | title | id | text
+```
+
+`OR` binds tighter than the space between groups, so the example above reads as
+`budget AND (work OR q3) AND NOT archived` — the way somebody listing alternatives for one
+field means it. That precedence is what makes parentheses unnecessary rather than missing:
+`a OR b c OR d` already says `(a OR b) AND (c OR d)`, which is any query at all in
+conjunctive normal form. What it cannot say is `(a AND b) OR (c AND d)`; that is two
+searches, and it is the price of a grammar you can hold in your head.
+
+Four details worth knowing:
+
+- **Each field matches the way noda already matches that thing.** `tag:` compares a tag
+  whole, like `ls --tag`. `id:` takes any prefix and folds the confusable characters, like
+  `noda show k3f9`. `title:` and `text:` are case-insensitive substrings, like the rest of
+  search.
+- **`OR` must be uppercase**, so that `noda search or` can still find the English word.
+- **The shell does the quoting.** One argument is one term, so `noda search "title:Q3
+  budget"` searches that title for that phrase, and no escape syntax had to be invented.
+- **A leading `-` is always a negation**, so a term that really starts with one is written
+  `text:--flag`. The field prefix is the escape.
+
+An unknown prefix is not an error: `noda search https://example.com` looks for that text,
+because only `tag`, `title`, `id` and `text` are fields and everything else is punctuation
+in a word.
 
 `noda add` and `noda edit` open `$VISUAL`, falling back to `$EDITOR` and then to `vi`.
 `edit` opens the real file, frontmatter included, but refuses to commit an edit that breaks

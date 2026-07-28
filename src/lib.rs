@@ -11,6 +11,7 @@ pub mod link;
 pub mod note;
 pub mod notebook;
 pub mod paths;
+pub mod query;
 pub mod remote;
 pub mod style;
 
