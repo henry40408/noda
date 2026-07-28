@@ -404,11 +404,9 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
             //
             // The id is still worth trying, folded the way `resolve` folds it, so
             // a note recorded under a slug that is not there is repointed rather
-            // than left stale. It is only followed when that slug has no file of
-            // its own — otherwise one id shared by two entries would drag another
-            // live note's entry along with this rename.
+            // than left stale — but only where the entry is stale.
             if *entry == located.slug
-                || (note::normalize_id(id) == wanted && !notebook.note_path(entry).is_file())
+                || (note::normalize_id(id) == wanted && is_stale(&notebook, entry))
             {
                 entry.clone_from(&slug);
             }
@@ -420,6 +418,17 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
     let files: Vec<&Path> = changed.iter().map(Path::new).collect();
     notebook.commit(&files, &format!("mv: {} -> {slug}", located.slug))?;
     Ok(summary(&note.id, &slug, &note.tags))
+}
+
+/// Whether an index entry records a slug no file bears — a leftover, which the
+/// command rewriting the index may take over or drop.
+///
+/// The guard on every id-keyed index edit. Ids are compared folded, so an entry
+/// can match on id alone while belonging to a different, live note; rewriting or
+/// dropping *that* one turns one disagreement into another somewhere else. Only
+/// what nothing is using is fair game.
+fn is_stale(notebook: &Notebook, slug: &str) -> bool {
+    !notebook.note_path(slug).is_file()
 }
 
 /// Deletes a note. The file goes, but the commit that removed it does not, so
@@ -1082,8 +1091,18 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
         let mut index = notebook.index()?;
         // A note deleted outside noda still has its entry, so the id is dropped
         // before it is written again: an index holding the same id twice maps it
-        // to whichever slug happens to sort first.
-        index.retain(|(entry, _)| *entry != id);
+        // to whichever slug happens to sort first. Folded, the way `resolve`
+        // folds it — a raw comparison reads `K3F9` and `k3f9` as two ids here
+        // while they address one note everywhere else, and leaves both entries.
+        let wanted = note::normalize_id(&id);
+        index.retain(|(entry, entry_slug)| {
+            // The file is already back on disk by now, so this note's own entry
+            // does not read as stale — it is named outright instead. An entry
+            // naming a *different* live note is not restore's to take, however
+            // its id folds.
+            let replaceable = *entry_slug == slug || is_stale(&notebook, entry_slug);
+            note::normalize_id(entry) != wanted || !replaceable
+        });
         index.push((id.clone(), slug.clone()));
         notebook.write_index(&index)?;
         changed.push(INDEX_PATH.to_string());
