@@ -436,6 +436,132 @@ pub fn rm(paths: &Paths, key: &str) -> Result<String> {
     ))
 }
 
+/// Copies files into the active notebook and commits them.
+///
+/// A notebook is a directory, so this wraps a copy — but the directory is one
+/// noda chose and only noda can name, and sending someone to find it themselves
+/// is sending them to operate the storage by hand. The command exists so that
+/// nothing about a notebook requires knowing where it is.
+///
+/// It says nothing about notes. Which note uses a file is written in that note's
+/// prose as an ordinary Markdown link, and a command that took a note here would
+/// put that relationship in two places at once.
+pub fn file_add(paths: &Paths, sources: &[PathBuf], rename: Option<&str>) -> Result<String> {
+    if rename.is_some() && sources.len() > 1 {
+        return Err(Error::msg(
+            "`--as` renames one file, so it cannot be given with several",
+        ));
+    }
+    let notebook = Notebook::open_active(paths)?;
+
+    // Every source is checked before any of them is copied: a half-done copy
+    // would leave the notebook in a state nobody asked for, and the commit that
+    // followed would record it.
+    let mut planned = Vec::new();
+    for source in sources {
+        if !source.is_file() {
+            return Err(Error::msg(format!(
+                "not a file: {} — a notebook holds files, not directories",
+                source.display()
+            )));
+        }
+        let name = match rename {
+            Some(name) => name.to_string(),
+            None => source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    Error::msg(format!("cannot read a filename from {}", source.display()))
+                })?
+                .to_string(),
+        };
+        validate_file_name(&name)?;
+        // Only when adding: this refuses to *manufacture* a name that reads as a
+        // note, which is not the same question as whether an existing file may
+        // be removed.
+        if let Some(stem) = name.strip_suffix(".md")
+            && note::split_stem(stem).is_some()
+        {
+            return Err(Error::msg(format!(
+                "{name} claims a note's id — a file noda would then report as a broken note"
+            )));
+        }
+        if notebook.path.join(&name).exists() {
+            return Err(Error::msg(format!(
+                "the notebook already holds {name} — copy it in under another name with `--as`"
+            )));
+        }
+        planned.push((source.clone(), name));
+    }
+
+    for (source, name) in &planned {
+        std::fs::copy(source, notebook.path.join(name))?;
+    }
+
+    let names: Vec<&str> = planned.iter().map(|(_, name)| name.as_str()).collect();
+    let message = match names.as_slice() {
+        [one] => format!("file: add {one}"),
+        many => format!("file: add {} files", many.len()),
+    };
+    let files: Vec<&Path> = names.iter().map(Path::new).collect();
+    notebook.commit(&files, &message)?;
+
+    let mut out = String::new();
+    for name in names {
+        let _ = writeln!(out, "added  {name}");
+    }
+    Ok(out)
+}
+
+/// Removes one of the notebook's files. A commit like any other, so `git revert`
+/// brings it back.
+///
+/// A note is refused rather than deleted: `rm` is where a note goes, and the two
+/// are not interchangeable — one of them has an identity to lose.
+pub fn file_rm(paths: &Paths, name: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    validate_file_name(name)?;
+
+    let (notes, files) = notebook.inventory()?;
+    if !files.iter().any(|file| file == name) {
+        let is_note = notes
+            .iter()
+            .any(|file| note::file_name(&file.id, &file.slug) == name);
+        return Err(if is_note {
+            Error::msg(format!("{name} is a note — remove it with `noda rm`"))
+        } else {
+            Error::msg(format!("the notebook holds no file called {name}"))
+        });
+    }
+
+    std::fs::remove_file(notebook.path.join(name))?;
+    notebook.commit(&[Path::new(name)], &format!("file: rm {name}"))?;
+    Ok(format!("removed  {name}"))
+}
+
+/// What a file in the notebook may be called.
+///
+/// A notebook is one flat directory, so a name is a name and never a path. A
+/// leading `.` is refused because noda's walk skips dotfiles — a file added
+/// under one would be committed and then never mentioned again by any command
+/// that lists what the notebook holds.
+fn validate_file_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(Error::msg("a file needs a name"));
+    }
+    if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(Error::msg(format!(
+            "a file's name cannot be a path: {name}"
+        )));
+    }
+    if name.starts_with('.') {
+        return Err(Error::msg(format!(
+            "noda does not list dotfiles, so it will not add one: {name}"
+        )));
+    }
+    Ok(())
+}
+
 /// Creates a notebook — a new git repo — optionally pointed at a remote.
 pub fn notebook_add(paths: &Paths, name: &str, remote: Option<&str>) -> Result<String> {
     std::fs::create_dir_all(paths.notebooks_dir())?;
