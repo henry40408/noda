@@ -1830,6 +1830,187 @@ fn file_rm_says_so_when_there_is_no_such_file() {
     assert!(err.contains("no file called nope.txt"), "{err}");
 }
 
+/// The default: rename it, then say what that just broke. Silence here would
+/// leave links pointing at nothing with nothing having said so.
+#[test]
+fn file_mv_renames_and_reports_the_links_it_stranded() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "old.png")),
+        None,
+    )
+    .unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("![a](old.png)\n"), &[]).unwrap();
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::file_mv(&paths, "old.png", "new.png", false).unwrap());
+    assert!(out.contains("renamed  old.png -> new.png"), "{out}");
+    assert!(out.contains("1 note links to old.png"), "{out}");
+    assert!(out.contains("alpha.md"), "and says which: {out}");
+    assert!(notebook.join("new.png").is_file());
+    assert!(!notebook.join("old.png").exists());
+    assert_eq!(commit_count(&notebook), commits + 1);
+    assert!(
+        !out.contains("updated"),
+        "the notes were not touched: {out}"
+    );
+}
+
+/// Opt-in, because it edits the prose of notes the command was not pointed at.
+#[test]
+fn file_mv_update_links_rewrites_both_spellings_and_leaves_it_in_order() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "old.png")),
+        None,
+    )
+    .unwrap();
+    let first = cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("Inline ![a](old.png) and a reference ![b][r].\n\n[r]: old.png\n"),
+        &[],
+    )
+    .unwrap();
+    let second = cmd::add(&paths, Some("Beta"), Some("![c](old.png#page=2)\n"), &[]).unwrap();
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::file_mv(&paths, "old.png", "new.png", true).unwrap());
+    assert!(out.contains("updated  2 notes"), "{out}");
+    assert!(!out.contains("still link"), "nothing was missed: {out}");
+
+    let alpha = std::fs::read_to_string(notebook.join(note_file(&first))).unwrap();
+    assert!(alpha.contains("![a](new.png)"), "{alpha}");
+    assert!(alpha.contains("[r]: new.png"), "{alpha}");
+    assert!(alpha.starts_with("---\ntitle: Alpha\n"), "frontmatter kept");
+    let beta = std::fs::read_to_string(notebook.join(note_file(&second))).unwrap();
+    assert!(
+        beta.contains("![c](new.png#page=2)"),
+        "the fragment says how to open it, not which file: {beta}"
+    );
+
+    assert!(
+        plain(&cmd::doctor(&paths, false, true).unwrap()).contains("in order"),
+        "no orphan and no broken link is left behind"
+    );
+    assert_eq!(
+        commit_count(&notebook),
+        commits + 1,
+        "the rename and the rewrites are one commit"
+    );
+}
+
+/// A destination written with backslash escapes is not in the source literally,
+/// so it cannot be rewritten. It is reported rather than assumed fixed.
+#[test]
+fn file_mv_says_which_notes_it_could_not_rewrite() {
+    let (root, paths) = initialized();
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "my(file).png")),
+        None,
+    )
+    .unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("[a](my\\(file\\).png)\n"), &[]).unwrap();
+
+    let out = plain(&cmd::file_mv(&paths, "my(file).png", "new.png", true).unwrap());
+    assert!(out.contains("renamed"), "{out}");
+    assert!(
+        out.contains("1 note still links to my(file).png"),
+        "reported, not silently left: {out}"
+    );
+}
+
+#[test]
+fn file_mv_refuses_what_it_should_not_rename() {
+    let (root, paths) = initialized();
+    let source = source_file(&root, "a.png");
+    cmd::file_add(&paths, std::slice::from_ref(&source), None).unwrap();
+    cmd::file_add(&paths, std::slice::from_ref(&source), Some("b.png")).unwrap();
+    let summary = cmd::add(&paths, Some("Alpha"), Some("x\n"), &[]).unwrap();
+
+    for (old, new, expected) in [
+        ("a.png", "b.png", "already holds b.png"),
+        ("a.png", "a.png", "already is its name"),
+        ("a.png", "abcdefgh-hello.md", "claims a note's id"),
+        ("nope.png", "x.png", "no file called nope.png"),
+    ] {
+        let err = cmd::file_mv(&paths, old, new, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(expected), "{old} -> {new}: {err}");
+    }
+
+    let err = cmd::file_mv(&paths, &note_file(&summary), "x.png", false)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("is a note"), "{err}");
+    assert!(err.contains("`noda mv`"), "{err}");
+}
+
+#[test]
+fn path_prints_the_notebook_a_note_and_a_file() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let summary = cmd::add(&paths, Some("Meeting Notes"), Some("x\n"), &[]).unwrap();
+    let (id, _) = parts(&summary);
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "diagram.png")),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        cmd::path(&paths, None).unwrap().trim_end(),
+        notebook.display().to_string(),
+        "no argument is the notebook itself"
+    );
+    let note = notebook.join(note_file(&summary));
+    assert_eq!(
+        cmd::path(&paths, Some("meeting-notes")).unwrap().trim_end(),
+        note.display().to_string()
+    );
+    assert_eq!(
+        cmd::path(&paths, Some(&id[..4])).unwrap().trim_end(),
+        note.display().to_string(),
+        "an id prefix addresses a note here like everywhere else"
+    );
+    assert_eq!(
+        cmd::path(&paths, Some("diagram.png")).unwrap().trim_end(),
+        notebook.join("diagram.png").display().to_string()
+    );
+}
+
+#[test]
+fn path_says_so_when_nothing_answers_to_the_key() {
+    let (_root, paths) = initialized();
+    let err = cmd::path(&paths, Some("nope")).unwrap_err().to_string();
+    assert!(err.contains("no note and no file"), "{err}");
+}
+
+/// A file may be named exactly like a note's slug. noda never guesses which one
+/// was meant.
+#[test]
+fn path_refuses_a_key_that_names_both_a_note_and_a_file() {
+    let (root, paths) = initialized();
+    cmd::add(&paths, Some("Diagram"), Some("x\n"), &[]).unwrap();
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "diagram")),
+        None,
+    )
+    .unwrap();
+
+    let err = cmd::path(&paths, Some("diagram")).unwrap_err().to_string();
+    assert!(err.contains("names both a note and a file"), "{err}");
+    assert!(err.contains("diagram.md"), "and lists them: {err}");
+}
+
 #[test]
 fn search_matches_the_body_the_title_and_the_tags() {
     let (_root, paths) = initialized();

@@ -93,6 +93,13 @@ ordinary Markdown link, so the note still renders correctly in any other Markdow
 `noda doctor --links` follows every link and tells you which files no note uses and which
 links name nothing — it only reports, and it never deletes.
 
+**Q: How do I use a note with pandoc, or open an attachment in something else?**
+`noda path` prints where it lives: `pandoc "$(noda path meeting-notes)" -o notes.pdf`,
+`open "$(noda path diagram.png)"`, `cd "$(noda path)"`. noda does not wrap your toolchain,
+so rather than growing a verb per tool it tells you the one thing those tools need. The
+argument is resolved as a note first — by id prefix or slug — and then as a file by name; a
+key that means both is an error naming both.
+
 **Q: What about a web UI?**
 Planned. The v1 focus is the CLI. A `noda web` local server that serves the same notebook
 over a browser is on the roadmap; because storage is just git, the web UI reads the exact
@@ -196,6 +203,20 @@ is prose about a link. Each of those turns a used file into a reported one, and 
 about unused files that cries wolf is a report nobody reads. The cost is a read of every
 note — `search`'s cost, not `ls`'s — which is why it sits behind `--links` rather than
 running on every `status`.
+
+**Q: Why does `noda file mv` edit notes only when asked, when it knows exactly which links
+it just broke?**
+Because it would be the first time noda changed prose the command was not pointed at. Every
+other write is to the thing named on the command line: `tag` rewrites one note's
+frontmatter, `mv` renames one note's file. A rename that silently reached into three other
+notes and rewrote their bodies is a different kind of act, however correct each individual
+edit is, and it should be asked for.
+
+Reporting is not a lesser answer either. It is the same rule the orphan check already
+follows — say what is true, let the person decide — and it is what makes `--update-links`
+safe to offer at all: the rewrite is checked by re-reading the notes afterwards, so a
+destination written with backslash escapes, which cannot be located in the source, is
+reported as still pointing at the old name rather than assumed fixed.
 
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:

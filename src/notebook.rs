@@ -20,6 +20,11 @@ use crate::{Error, Result};
 /// noda configures exactly one remote per notebook.
 const REMOTE_NAME: &str = "origin";
 
+/// How `resolve` says a key matched nothing. Named because `cmd::path` widens
+/// exactly this case — it was asked about a file too — and passes every other
+/// failure through untouched.
+pub const NOT_FOUND: &str = "note not found";
+
 pub struct Notebook {
     pub name: String,
     pub path: PathBuf,
@@ -565,7 +570,7 @@ impl Notebook {
 
         match matched.len() {
             1 => Ok(matched.remove(0)),
-            0 => Err(Error::msg(format!("note not found: {key}"))),
+            0 => Err(Error::msg(format!("{NOT_FOUND}: {key}"))),
             n => Err(Error::msg(format!(
                 "`{key}` matches {n} notes — say which:\n{}",
                 matched
