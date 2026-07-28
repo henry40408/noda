@@ -234,6 +234,26 @@ listing two acceptable tags meant.
 The one thing the grammar cannot express is `(a AND b) OR (c AND d)`. That is two searches,
 and running two searches is cheaper than a language nobody can predict.
 
+**Q: Why hand-write the JSON instead of adding serde?**
+Because it is one object with five string fields, and the alternative is two crates and a
+derive macro on the dependency path of a tool whose whole distribution story is one small
+static binary. The part that has to be right is the escaping, and that is thirty lines with
+tests rather than a judgement call. This is the same trade the project already made for
+percent-decoding and for having no error-handling crate.
+
+**Q: Why does `noda ls -0` exist when `-q` already prints one record per line?**
+Because `noda file add` allows a space in a filename, so newline-separated output is not
+safe to hand to `xargs`, and a listing that is *nearly* safe is worse than one that is
+obviously not.
+
+It also turned out to be the one thing the test suite could not see. Every other test calls
+the command functions directly, where the behaviour lives — but `-0` is a promise about the
+bytes leaving the process, and the layer between the two ate them: the colour handling that
+makes a piped `noda show` byte-exact strips NUL along with the escape sequences it exists to
+remove, and the trailing newline every other command wants arrived after the last
+terminator. Machine-separated output now bypasses both, and one test runs the real binary to
+say so.
+
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:
 multiple git-backed notebooks, add/ls/show/edit/rm, id+slug addressing, full-text search,

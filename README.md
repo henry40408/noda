@@ -295,7 +295,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | Command | Description |
 | --- | --- |
 | `noda add [title] [-c <content>] [--tag <t>]...` | Create a note. Opens `$EDITOR` if no `-c`. Auto-commits. |
-| `noda ls [--tag <t>] [--notebook <name>]` | List notes: id, slug, title, tags. |
+| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only]` | List what the notebook holds. |
 | `noda show <note>` | Print a note to stdout. |
 | `noda edit <note>` | Open a note in `$EDITOR`; auto-commits on save. |
 | `noda rm <note>` | Delete a note (as a revertible commit). |
@@ -360,6 +360,29 @@ Four details worth knowing:
 An unknown prefix is not an error: `noda search https://example.com` looks for that text,
 because only `tag`, `title`, `id` and `text` are fields and everything else is punctuation
 in a word.
+
+`noda ls` prints an aligned table for a person to read. Two other shapes are for programs.
+`--json` is one object on one line, and each note carries its filename as well as its id and
+slug — that is what a script needs next, and deriving it means knowing noda's naming rule:
+
+```
+$ noda ls --json | jq -r '.notes[] | select(.tags[]? == "work") | .file'
+k7n5qz9k-q3-planning.md
+```
+
+`-q` prints one identifier per record and nothing else — a note's id, a file's name, because
+those are what the commands taking them expect. `-0` separates those with NUL instead of a
+newline, which is not decoration: `noda file add` allows a space in a name, so
+newline-separated output is not safe to hand to `xargs`.
+
+```sh
+noda ls -q0 --files-only | xargs -0 -n1 file
+noda ls -q --notes-only | xargs -n1 noda show
+```
+
+`--notes-only` and `--files-only` narrow any of the three shapes to one half of the
+notebook. Filtering beyond a single `--tag` belongs to `noda search`, which is where the
+query language lives — one language in one command beats two commands nobody can tell apart.
 
 `noda add` and `noda edit` open `$VISUAL`, falling back to `$EDITOR` and then to `vi`.
 `edit` opens the real file, frontmatter included, but refuses to commit an edit that breaks
