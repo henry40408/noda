@@ -1903,6 +1903,64 @@ fn restore_replaces_the_index_entry_of_a_note_deleted_outside_noda() {
     assert!(cmd::show(&paths, &id).unwrap().ends_with("a\n"));
 }
 
+/// The entry `restore` replaces was found by a raw string comparison, so an
+/// index recording the id in another case kept its entry and the restored note
+/// wrote a second one — one id mapped to two slugs, which `resolve` then settles
+/// by whichever sorts first.
+#[test]
+fn restore_folds_the_id_of_the_entry_it_replaces() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+    std::fs::write(
+        notebook.join(".noda/index.tsv"),
+        format!("{}\toldname\n", id.to_uppercase()),
+    )
+    .unwrap();
+
+    cmd::restore(&paths, &id, "HEAD").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        format!("{id}\talpha\n"),
+        "`K3F9` and `k3f9` are one id here too, so the leftover goes"
+    );
+    assert_eq!(
+        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
+        None,
+        "and nothing is left to report"
+    );
+}
+
+#[test]
+fn restore_leaves_the_entry_of_a_note_that_is_still_there() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // A live note's entry claiming the id the restored note carries. Folding
+    // alone would drop it and leave `gamma.md` named by nothing — trading one
+    // disagreement for another, in a note `restore` was never asked about.
+    // Addressed by slug, because by id `resolve` would land on gamma.
+    std::fs::remove_file(notebook.join("alpha.md")).unwrap();
+    std::fs::write(
+        notebook.join(".noda/index.tsv"),
+        format!("{}\tgamma\n", id.to_uppercase()),
+    )
+    .unwrap();
+
+    cmd::restore(&paths, "alpha", "HEAD").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        format!("{}\tgamma\n{id}\talpha\n", id.to_uppercase()),
+        "gamma keeps the entry it had; alpha gets its own"
+    );
+}
+
 #[test]
 fn restore_reports_what_it_cannot_find() {
     let (_root, paths) = initialized();
