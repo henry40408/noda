@@ -68,7 +68,11 @@ positional numbers to reshuffle.
 No. An id is written into the note's frontmatter and committed, so it's part of the synced
 state, not a positional guess — machine A and machine B always agree that `k3f9` is the
 same note. In the rare event two machines mint the same id offline, `noda sync` detects it
-and regenerates one, leaving the durable slug untouched.
+and stops, naming the notes involved, rather than picking a winner. It cannot renumber its
+way out: the id lives in the file, so a fresh one would not restore anything — it would
+invent a new identity and break every link that already pointed at the old one. Which of
+the two notes keeps the id is a person's call, and `noda status` shows the same thing
+without going near the network.
 
 **Q: Does it work offline?**
 Always. Writing, editing, searching, and history are 100% local git operations. `noda

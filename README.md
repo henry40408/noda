@@ -217,7 +217,7 @@ can revert".
 | --- | --- |
 | `noda remote set <url>` | Set the active notebook's remote. |
 | `noda remote show` | Print the configured remote. |
-| `noda sync` | Pull, then push (auto-commits pending changes first). |
+| `noda sync` | Pull, then push (auto-commits pending changes first). Refuses while the notes and the index disagree. |
 | `noda push` / `noda pull` | One-directional sync. |
 
 HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. Credentials
@@ -229,6 +229,13 @@ conflicts almost every time — noda settles that one itself by rebuilding the i
 notes, because the index is derived data. A conflict inside a note is yours: the merge is
 rolled back, the notebook is left exactly as it was, and you can resolve it with git in the
 notebook directory.
+
+`noda sync` commits the whole working tree, so it stops before doing anything when the
+notes and the index have stopped agreeing — the `index` row `noda status` prints. That is
+the point at which a disagreement would otherwise become permanent and remote, including
+one noda has already refused once: `noda edit` will not commit a note whose `id:` changed,
+but it leaves the file on disk, and a sync that staged everything would send it anyway.
+Until the two agree again, move one side at a time with `noda push` and `noda pull`.
 
 ### Config
 

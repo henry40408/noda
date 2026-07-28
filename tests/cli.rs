@@ -816,6 +816,53 @@ fn sync_commits_pending_changes_before_pushing() {
     assert!(out.contains("already up to date"), "{out}");
 }
 
+/// `edit` refuses to commit an id change and leaves the file on disk. `sync`
+/// stages the whole working tree, so without a guard of its own it picks that
+/// file up and makes the disagreement permanent — and remote.
+#[cfg(unix)]
+#[test]
+fn sync_refuses_to_commit_the_id_change_edit_refused() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+    let reid = editor_script(
+        &root,
+        "reid",
+        r#"sed 's/^id: .*/id: zzzz/' "$1" > "$1.tmp" && mv "$1.tmp" "$1""#,
+    );
+    assert!(cmd::edit_with(&paths, "alpha", &reid).is_err());
+
+    let err = cmd::sync(&paths).unwrap_err().to_string();
+    assert!(err.contains("disagree"), "{err}");
+    assert!(err.contains("alpha.md"), "{err}");
+    assert_eq!(
+        commit_count(&notebook),
+        before,
+        "the refusal comes before the commit, not after it"
+    );
+
+    mirror(&paths, &url, "mirror");
+    assert!(
+        !std::fs::read_to_string(paths.notebook_dir("mirror").join("alpha.md"))
+            .unwrap()
+            .contains("zzzz"),
+        "and nothing reached the remote"
+    );
+
+    // The guard is not a dead end: put the file back and sync works again.
+    git2::Repository::open(&notebook)
+        .unwrap()
+        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+    assert!(cmd::sync(&paths).is_ok());
+}
+
 #[test]
 fn sync_fast_forwards_a_notebook_that_only_received() {
     let (root, paths) = initialized();
