@@ -254,15 +254,16 @@ impl Notebook {
         let mut suspicious = Vec::new();
 
         for entry in std::fs::read_dir(&self.path)? {
-            let path = entry?.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
                 continue;
             }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            let name = entry.file_name();
+            let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".md")) else {
                 continue;
             };
             let file = format!("{stem}.md");
-            let declared = Note::parse(&std::fs::read_to_string(&path)?).is_ok();
+            let declared = Note::parse(&std::fs::read_to_string(entry.path())?).is_ok();
             match (note::split_stem(stem), declared) {
                 (Some((id, slug)), true) => notes.push((id.to_string(), slug.to_string())),
                 (Some(_), false) => suspicious.push(file),
@@ -285,7 +286,8 @@ impl Notebook {
     /// Every `(id, slug)` a filename in the notebook spells out, whether or not
     /// the file behind it can be read.
     ///
-    /// The name is the whole record, so this opens nothing. It is deliberately
+    /// The name is the whole record, so this opens nothing — and the file type
+    /// comes back with the directory entry, so it does not `stat` either. It is deliberately
     /// more forgiving than `scan`: a note whose frontmatter has gone still says
     /// which note it is, and the commands that only need to know *which* — `rm`,
     /// `log`, `diff`, `restore` — must keep working on exactly the file someone
@@ -293,11 +295,12 @@ impl Notebook {
     fn named_files(&self) -> Result<Vec<(String, String)>> {
         let mut found = Vec::new();
         for entry in std::fs::read_dir(&self.path)? {
-            let path = entry?.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("md") || !path.is_file() {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
                 continue;
             }
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            let name = entry.file_name();
+            if let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".md"))
                 && let Some((id, slug)) = note::split_stem(stem)
             {
                 found.push((id.to_string(), slug.to_string()));
@@ -378,13 +381,21 @@ impl Notebook {
     }
 
     /// Every adopted note, sorted by slug, read from the working tree.
+    /// Reads each file once. Going through `scan` would parse the whole notebook
+    /// to decide which files are notes and then parse it again to read them,
+    /// which is the dominant cost of `ls` and `search` — both open every note.
+    /// A file that will not parse is not a note and is skipped here, exactly as
+    /// `scan` classifies it.
     pub fn notes(&self) -> Result<Vec<NoteFile>> {
         let mut notes = Vec::new();
-        for (id, slug) in self.scan()?.notes {
+        for (id, slug) in self.named_files()? {
             let path = self.note_path(&id, &slug);
-            let text = std::fs::read_to_string(&path)?;
-            let note =
-                Note::parse(&text).map_err(|e| Error::msg(format!("{}: {e}", path.display())))?;
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(note) = Note::parse(&text) else {
+                continue;
+            };
             notes.push(NoteFile { id, slug, note });
         }
         notes.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -400,29 +411,56 @@ impl Notebook {
     ///
     /// Resolution reads no file. Whether the note behind the name can be parsed
     /// is the caller's problem, and only some callers have it.
+    ///
+    /// The directory is walked once and only matches are kept: on the notebook
+    /// sizes this has to be quick at, building a list of every name first costs
+    /// more than the comparison it feeds.
     pub fn resolve(&self, key: &str) -> Result<(String, String)> {
         if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
             return Err(Error::msg(format!("invalid note reference: {key}")));
         }
-        let notes = self.named_files()?;
+        let wanted = note::normalize_id(key);
 
-        let mut matched: Vec<&(String, String)> =
-            notes.iter().filter(|(_, slug)| slug == key).collect();
-        if matched.is_empty() {
-            let wanted = note::normalize_id(key);
-            matched = notes
-                .iter()
-                .filter(|(id, _)| note::normalize_id(id).starts_with(&wanted))
-                .collect();
+        // An exact slug wins outright, so an id prefix that happens to match as
+        // well never gets a say — collected separately rather than sorted out
+        // afterwards.
+        let mut by_slug = Vec::new();
+        let mut by_id = Vec::new();
+        for entry in std::fs::read_dir(&self.path)? {
+            let entry = entry?;
+            // `file_type` comes back with the directory entry on every platform
+            // noda ships to; `Path::is_file` would be a `stat` per candidate, and
+            // there is one candidate per note.
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some((id, slug)) = name
+                .to_str()
+                .and_then(|name| name.strip_suffix(".md"))
+                .and_then(note::split_stem)
+            else {
+                continue;
+            };
+            if slug == key {
+                by_slug.push((id.to_string(), slug.to_string()));
+            } else if note::normalize_id(id).starts_with(&wanted) {
+                by_id.push((id.to_string(), slug.to_string()));
+            }
         }
 
-        match matched.as_slice() {
-            [(id, slug)] => Ok((id.clone(), slug.clone())),
-            [] => Err(Error::msg(format!("note not found: {key}"))),
-            many => Err(Error::msg(format!(
-                "`{key}` matches {} notes — say which:\n{}",
-                many.len(),
-                many.iter()
+        let mut matched = if by_slug.is_empty() { by_id } else { by_slug };
+        // Directory order is whatever the filesystem hands back; the candidate
+        // list a person has to choose from must not be.
+        matched.sort();
+
+        match matched.len() {
+            1 => Ok(matched.remove(0)),
+            0 => Err(Error::msg(format!("note not found: {key}"))),
+            n => Err(Error::msg(format!(
+                "`{key}` matches {n} notes — say which:\n{}",
+                matched
+                    .iter()
                     .map(|(id, slug)| format!("  {id}  {slug}"))
                     .collect::<Vec<_>>()
                     .join("\n")
