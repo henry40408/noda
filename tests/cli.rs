@@ -334,6 +334,102 @@ fn mv_renames_the_slug_and_keeps_the_id() {
     );
 }
 
+/// `mv` used to key the index update on the id alone, and on a raw string at
+/// that. A file carrying an id the index recorded differently matched nothing,
+/// so the index was written back untouched while the file was renamed out from
+/// under it — leaving an entry naming a file that no longer existed *and* a file
+/// the index did not name. Two problems where there was one.
+#[test]
+fn mv_moves_the_index_entry_even_when_the_file_disagrees_about_the_id() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // Edited outside noda, the only way this arises.
+    let path = notebook.join("alpha.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(&format!("id: {id}"), "id: zzzz");
+    std::fs::write(&path, text).unwrap();
+
+    cmd::mv(&paths, "alpha", "Renamed").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        format!("{id}\trenamed\n"),
+        "the entry goes with the file, whichever id the file claimed"
+    );
+
+    // The disagreement that was already there survives — `mv` does not invent an
+    // id — but it is still the one problem it was, not three.
+    let out = plain(&cmd::status(&paths).unwrap());
+    let row = status_row(&out, "index").unwrap_or_else(|| panic!("no index row: {out}"));
+    assert_eq!(
+        row,
+        format!(
+            "1 note carries an id the index recorded differently  (renamed.md: zzzz, not {id})"
+        )
+    );
+}
+
+#[test]
+fn mv_compares_ids_the_way_they_are_addressed() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
+
+    // `k3f9` and `K3F9` are one id everywhere a note is addressed, so they must
+    // not read as two here. Both notes answer to it, which is a disagreement in
+    // its own right — but renaming one must not drag the other's entry along.
+    for (slug, id) in [("alpha", "K3F9"), ("gamma", "k3f9")] {
+        let path = notebook.join(format!("{slug}.md"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let old = text
+            .lines()
+            .find(|line| line.starts_with("id: "))
+            .unwrap()
+            .to_string();
+        std::fs::write(&path, text.replace(&old, &format!("id: {id}"))).unwrap();
+    }
+    std::fs::write(
+        notebook.join(".noda/index.tsv"),
+        "k3f9\talpha\nk3f9\tgamma\n",
+    )
+    .unwrap();
+
+    cmd::mv(&paths, "alpha", "Renamed").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        "k3f9\tgamma\nk3f9\trenamed\n",
+        "only the file that moved moved"
+    );
+}
+
+#[test]
+fn mv_repoints_an_entry_recorded_under_a_slug_that_is_not_there() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+
+    // Renamed by hand outside noda: the index still records the old slug, and
+    // nothing names the file that is actually there.
+    std::fs::write(notebook.join(".noda/index.tsv"), format!("{id}\toldname\n")).unwrap();
+
+    cmd::mv(&paths, "alpha", "Renamed").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        format!("{id}\trenamed\n"),
+        "the id repoints the stale entry rather than leaving two"
+    );
+    assert_eq!(
+        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
+        None,
+        "and the notebook agrees with itself again"
+    );
+}
+
 #[test]
 fn mv_retitles_without_moving_when_the_slug_is_unchanged() {
     let (_root, paths) = initialized();
