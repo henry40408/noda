@@ -84,6 +84,14 @@ sync` is the only command that touches the network, and only when you run it.
 Yes. `noda clone <url>` pulls an existing remote, and pointing noda at a directory of
 Markdown files adopts them in place.
 
+**Q: Can I keep images or PDFs in a notebook?**
+Yes, and there is nothing to learn: copy the file into the notebook directory. It is
+committed and synced like anything else, and a note points at it with an ordinary Markdown
+link, so the note still renders correctly in any other Markdown reader. `noda ls` lists
+those files under their own heading and `noda status` counts them. `noda doctor --links`
+follows every link and tells you which files no note uses and which links name nothing —
+it only reports, and it never deletes.
+
 **Q: What about a web UI?**
 Planned. The v1 focus is the CLI. A `noda web` local server that serves the same notebook
 over a browser is on the roadmap; because storage is just git, the web UI reads the exact
@@ -153,6 +161,31 @@ maybe 50 ms at 5000 notes and cost a staleness story, a `reindex` command, inval
 after every `pull`, and a corruption path. v1 declines that trade. If notebooks in the tens
 of thousands turn up, a cache is a cache: it can be added later without changing anything
 the user's repository holds.
+
+**Q: Why is there no `noda attach`, and why is an attachment not tied to a note by its
+filename?**
+Both were designed and both were rejected. A command was rejected because a notebook is a
+directory: `cp` already puts a file in one, and a verb that wraps `cp` would be noda's first
+piece of ceremony that git and the filesystem do not already provide. The rule this project
+keeps reaching for is a convention, not a verb — identity is a filename rather than an `id`
+field, and the notebook is "a normal git repo, `cd` in".
+
+Tying an attachment to a note by naming it `<note-id>-diagram.png` was rejected for a
+different reason. It is nearly free to check — ownership would be structural, readable from
+a directory listing without opening a single note — but it asks a person to encode a
+relationship in a filename by hand, and to keep encoding it. That is a mental burden the
+model puts on the user in exchange for a saving the machine enjoys, which is the wrong way
+round. It also breaks the id-prefix bargain: `k3f9m2p1-diagram.md` and its owning note share
+a prefix, so `noda show k3f9` becomes ambiguous.
+
+What is left is the honest reading — a file is used if a note links to it — and that has to
+be read with a CommonMark parser rather than a text search. A reference-style link holds its
+destination at the bottom of the file, so the paragraph using it never contains the
+filename; `%20` in a destination is a space on disk; and a link inside a fenced code block
+is prose about a link. Each of those turns a used file into a reported one, and a report
+about unused files that cries wolf is a report nobody reads. The cost is a read of every
+note — `search`'s cost, not `ls`'s — which is why it sits behind `--links` rather than
+running on every `status`.
 
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:

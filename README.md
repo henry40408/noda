@@ -116,7 +116,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
 | `noda status` | Where the active notebook stands: notes, changes, drift from the remote. |
-| `noda reconcile [--dry-run]` | Report what noda will not settle on its own, and adopt notes that only lack an id. |
+| `noda doctor [--dry-run] [--links]` | Report what noda will not settle on its own, and adopt notes that only lack an id. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
@@ -140,9 +140,9 @@ sync      2 to push (as of the last sync)
 It also walks the notebook for what noda will not settle on its own. Two things decide what
 a `*.md` file is, and they are independent: a **frontmatter block** is the file saying "I am
 a note", and an **id in the filename** is it having been adopted. A file with both is a
-note. A file with neither is just a file — an attachment, a `README` — and noda says nothing
-about it. The other two combinations are what this row reports, and it is only there when
-there is something to say:
+note. A file with neither is just a file — an attachment, a `README` — and it is counted on
+the `files` row, never reported as a problem. The other two combinations are what the
+`problems` row reports, and it is only there when there is something to say:
 
 ```
 problems  1 note has no id in its filename  (hand-written.md)
@@ -157,16 +157,16 @@ through that, and "201 notes have no id in their filenames" tells you what happe
 problems  2 problems
           1 note has no id in its filename  (hand-written.md)
           1 file is named like a note but has no frontmatter  (abcdefgh-hello.md)
-          run `noda reconcile` to look at these
+          run `noda doctor` to look at these
 ```
 
-`noda reconcile` is where the full list that `status` elides can be seen, and it performs
+`noda doctor` is where the full list that `status` elides can be seen, and it performs
 the one repair that cannot lose anything: a file that already declared itself a note and
 only lacks an id is given one. That is a commit like any other change, so `git revert`
 undoes it, and `--dry-run` shows what would happen without touching anything.
 
 ```
-$ noda reconcile --dry-run
+$ noda doctor --dry-run
 1 note has no id in its filename
   hand-written.md
 would adopt 1 note — nothing was changed
@@ -183,6 +183,57 @@ A file that will not parse does not lock you out of the commands that do not rea
 `restore`, `rm`, `log` and `diff` identify a note by its filename alone, so they work on one
 whose frontmatter has gone — which is exactly when they are wanted. `mv` and `tag` rewrite
 the frontmatter, so they still have to read it first and say so plainly.
+
+### Attachments
+
+There is no command for attaching a file, because a notebook is a directory: copy the file
+in and it is there. It is committed and synced with everything else, and a note points at it
+with an ordinary Markdown link, which is what makes the note render correctly in anything
+else that reads Markdown too.
+
+```
+$ cp ~/Downloads/diagram.png ~/.local/share/noda/notebooks/work/
+$ noda edit meeting-notes        # write: ![the shape of it](diagram.png)
+```
+
+`noda ls` lists these under their own heading, and `noda status` counts them on the `files`
+row. Both are free: the walk that finds the notes passes them anyway.
+
+```
+$ noda ls
+jjvgqnrv  meeting-notes  Meeting notes
+b60ccfw0  reading-log    Reading log
+
+files
+  diagram.png
+  receipt.txt
+```
+
+What is *not* free is the other question — which files are actually used, and which links
+actually resolve. Answering it means reading every note's prose rather than its filename, so
+it is a flag rather than the default:
+
+```
+$ noda doctor --links
+1 file no note links to
+  receipt.txt
+1 broken link
+  b60ccfw0-reading-log.md -> cover.jpg
+```
+
+Both are reported and neither is repaired. A file nothing links to may be an attachment
+whose note was deleted, or a receipt you parked here on purpose — and the only repair
+available is deleting something git cannot regenerate from anything else. A link that names
+nothing may be a typo, or a file you have not copied in yet.
+
+The links are read with a CommonMark parser rather than searched for as text, because the
+alternative reports files as unused when they are not: a reference-style link keeps its
+destination at the bottom of the file, so the paragraph using it never contains the
+filename; `%20` in a destination is a space in a filename; and a link inside a fenced code
+block is prose about a link, not a link. Two limits are worth knowing: a destination written
+as raw HTML (`<img src="...">`) is passed through by CommonMark and is not followed, and
+only files at the notebook's root can be reported as unused, though a link *into* a
+subdirectory resolves normally.
 
 ### Notes
 
@@ -314,6 +365,7 @@ $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 └── notebooks/
     ├── work/                   # a notebook = a git repo
     │   ├── .git/
+    │   ├── diagram.png         # an attachment is just a file you copied in
     │   ├── k3f9m2p1-meeting-notes.md
     │   └── q7x2rstv-reading-log.md
     └── personal/
@@ -329,10 +381,10 @@ $XDG_CACHE_HOME/noda/           (default ~/.cache/noda/)
 ```
 
 Each notebook is a normal git repo; `cd "$XDG_DATA_HOME/noda/notebooks/work" && git log`
-works exactly as you'd expect. Nothing but your notes is committed — noda keeps no
+works exactly as you'd expect. Nothing but what you put there is committed — noda keeps no
 bookkeeping file of its own, which is why there is none in the listing above. Only your
-notes live in `XDG_DATA_HOME` too: config, the active-notebook pointer, and the editor's
-scratch buffer are kept out of your synced data on purpose.
+notes and the files beside them live in `XDG_DATA_HOME` too: config, the active-notebook
+pointer, and the editor's scratch buffer are kept out of your synced data on purpose.
 
 **Platform note.** noda honors the XDG variables on **every** platform, including macOS
 (it does not use `~/Library/Application Support`). If a variable is unset, the standard
@@ -342,7 +394,7 @@ scratch buffer are kept out of your synced data on purpose.
 
 - **Web UI** — `noda web` serves the active notebook in the browser, reading the same
   git-backed files. (v1 is CLI-only.)
-- Attachments, note linking/backlinks, and encrypted notebooks are under consideration.
+- Note linking/backlinks and encrypted notebooks are under consideration.
 
 ## Building from source
 

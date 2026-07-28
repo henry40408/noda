@@ -211,9 +211,9 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
         None => notebook::active_name(paths)?,
     };
     let notebook = Notebook::open(paths, &name)?;
+    let (notes, files) = notebook.inventory()?;
 
-    let rows: Vec<(String, String, String, String)> = notebook
-        .notes()?
+    let rows: Vec<(String, String, String, String)> = notes
         .into_iter()
         .filter(|file| tag.is_none_or(|t| file.note.tags.iter().any(|nt| nt == t)))
         .map(|file| {
@@ -226,7 +226,11 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
         })
         .collect();
 
-    if rows.is_empty() {
+    // Asking for one tag is asking about notes, so the notebook's other files
+    // are not an answer to it.
+    let files = if tag.is_some() { Vec::new() } else { files };
+
+    if rows.is_empty() && files.is_empty() {
         return Ok(String::new());
     }
 
@@ -246,6 +250,19 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
         }
         out.push_str(line.trim_end());
         out.push('\n');
+    }
+
+    // The notebook's other files, under a heading rather than mixed in: they
+    // have no id, no title and no tags, so a row of theirs would be three empty
+    // columns. The heading only appears when there is something under it.
+    if !files.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let _ = writeln!(out, "{}", style::paint(style::MUTED, "files"));
+        for file in files {
+            let _ = writeln!(out, "  {file}");
+        }
     }
     Ok(out)
 }
@@ -702,8 +719,15 @@ pub fn status(paths: &Paths) -> Result<String> {
             ),
         ),
         ("notes", status.notes.to_string()),
-        ("changes", changes),
     ];
+
+    // Only when the notebook holds some: `files 0` on every notebook that keeps
+    // nothing but notes is a row that never says anything, and rows that never
+    // say anything are how the ones that do get skipped.
+    if status.files > 0 {
+        rows.push(("files", status.files.to_string()));
+    }
+    rows.push(("changes", changes));
 
     // Only when there is something to say: a row that reads "0 problems" on
     // every healthy notebook teaches people to skip the line that matters.
@@ -765,7 +789,7 @@ fn describe_problems(problems: &[(Problem, Vec<String>)]) -> String {
     let _ = write!(
         out,
         "{}",
-        style::paint(style::MUTED, "run `noda reconcile` to look at these")
+        style::paint(style::MUTED, "run `noda doctor` to look at these")
     );
     out.trim_end().to_string()
 }
@@ -783,7 +807,7 @@ fn elide(subjects: &[String]) -> String {
     shown.join("; ")
 }
 
-/// Reports what the notebook holds that noda cannot simply act on, and adopts
+/// Diagnoses what the notebook holds that noda cannot simply act on, and adopts
 /// the notes that are only waiting for an id.
 ///
 /// There is nothing derived to rebuild any more — the id is in the filename, so
@@ -798,14 +822,30 @@ fn elide(subjects: &[String]) -> String {
 /// claims an id without frontmatter might be a broken note or might never have
 /// been one. Only their author knows.
 ///
+/// `links` adds the two checks that need every note's prose read rather than its
+/// name: see `describe_audit`. It is a flag rather than the default because it
+/// is the only part of noda that costs a full read of the notebook.
+///
 /// Where `status` elides, this names every file: it is the place people are
 /// sent to see the full list.
-pub fn reconcile(paths: &Paths, dry_run: bool) -> Result<String> {
+pub fn doctor(paths: &Paths, dry_run: bool, links: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let scan = notebook.scan()?;
     let problems = scan.problems();
+
+    let audit = if links {
+        Some(notebook.audit_links()?)
+    } else {
+        None
+    };
+    let link_report = audit.as_ref().map(describe_audit).unwrap_or_default();
+
     if problems.is_empty() {
-        return Ok("the notebook is in order".to_string());
+        return Ok(if link_report.is_empty() {
+            "the notebook is in order".to_string()
+        } else {
+            link_report
+        });
     }
 
     let mut out = String::new();
@@ -817,6 +857,9 @@ pub fn reconcile(paths: &Paths, dry_run: bool) -> Result<String> {
     }
     for line in advice(&scan) {
         let _ = writeln!(out, "{line}");
+    }
+    if !link_report.is_empty() {
+        let _ = writeln!(out, "{link_report}");
     }
 
     if scan.unnamed.is_empty() {
@@ -851,9 +894,47 @@ pub fn reconcile(paths: &Paths, dry_run: bool) -> Result<String> {
         changed.push(adopted);
     }
     let files: Vec<&Path> = changed.iter().map(Path::new).collect();
-    notebook.commit(&files, &format!("reconcile: adopt {count} {noun}"))?;
+    notebook.commit(&files, &format!("doctor: adopt {count} {noun}"))?;
     let _ = write!(out, "adopted {count} {noun}");
     Ok(out.trim_end().to_string())
+}
+
+/// The two ways a link and a file can fail to meet, as lines ready to print.
+///
+/// Both are reported and neither is repaired, for the same reason: noda cannot
+/// tell an accident from an intention here. A file nothing links to may be an
+/// attachment whose note was deleted, or it may be exactly where you meant to
+/// park it — and the only "repair" available is deleting something noda cannot
+/// regenerate. A link that names nothing may be a typo, or a file you have not
+/// copied in yet.
+fn describe_audit(audit: &notebook::Audit) -> String {
+    let mut out = String::new();
+
+    if !audit.orphans.is_empty() {
+        let count = audit.orphans.len();
+        let noun = if count == 1 { "file" } else { "files" };
+        // `links` either way: the subject of the clause is `no note`, which is
+        // singular however many files it fails to reach.
+        let _ = writeln!(out, "{count} {noun} no note links to");
+        for file in &audit.orphans {
+            let _ = writeln!(out, "  {file}");
+        }
+    }
+
+    if !audit.broken.is_empty() {
+        let count = audit.broken.len();
+        let noun = if count == 1 { "link" } else { "links" };
+        let _ = writeln!(out, "{count} broken {noun}");
+        for (note, target) in &audit.broken {
+            let _ = writeln!(
+                out,
+                "  {note} {} {target}",
+                style::paint(style::MUTED, "->")
+            );
+        }
+    }
+
+    out.trim_end().to_string()
 }
 
 /// What to do about each kind of problem, as lines ready to print. Detection
