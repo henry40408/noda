@@ -206,18 +206,81 @@ pub fn add(
     Ok(summary(&id, &slug, &note.tags))
 }
 
+/// What `ls` was asked for. A struct rather than a row of arguments because the
+/// shapes multiply: three formats times three subsets, and every caller cares
+/// about two of them at most.
+#[derive(Default)]
+pub struct List<'a> {
+    /// List another notebook instead of the active one.
+    pub notebook: Option<&'a str>,
+    /// Only notes carrying this tag. Anything more selective than one tag is
+    /// `search`'s job — the query language lives there so that it lives in one
+    /// place.
+    pub tag: Option<&'a str>,
+    pub format: Format,
+    pub only: Only,
+    /// Separate the identifiers `Format::Quiet` prints with NUL rather than a
+    /// newline. A file's name may contain a space, and this is what makes
+    /// `noda ls -q0 | xargs -0` correct rather than nearly correct.
+    pub null: bool,
+}
+
+/// How a listing is written out.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// Aligned columns for a person to read.
+    #[default]
+    Table,
+    /// One object, for a program to read.
+    Json,
+    /// One identifier per line and nothing else.
+    Quiet,
+}
+
+/// Which half of the notebook to list.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Only {
+    #[default]
+    Everything,
+    Notes,
+    Files,
+}
+
 /// Lists notes as `id  slug  title  tags`, aligned.
-pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<String> {
-    let name = match notebook {
+pub fn ls(paths: &Paths, options: &List) -> Result<String> {
+    let name = match options.notebook {
         Some(name) => name.to_string(),
         None => notebook::active_name(paths)?,
     };
     let notebook = Notebook::open(paths, &name)?;
     let (notes, files) = notebook.inventory()?;
+    let tag = options.tag;
+
+    let notes: Vec<notebook::NoteFile> = if options.only == Only::Files {
+        Vec::new()
+    } else {
+        notes
+            .into_iter()
+            .filter(|file| tag.is_none_or(|t| file.note.tags.iter().any(|nt| nt == t)))
+            .collect()
+    };
+
+    // Asking for one tag is asking about notes, so the notebook's other files
+    // are not an answer to it.
+    let files = if tag.is_some() || options.only == Only::Notes {
+        Vec::new()
+    } else {
+        files
+    };
+
+    match options.format {
+        Format::Json => return Ok(as_json(&name, &notes, &files)),
+        Format::Quiet => return Ok(as_identifiers(&notes, &files, options.null)),
+        Format::Table => {}
+    }
 
     let rows: Vec<(String, String, String, String)> = notes
         .into_iter()
-        .filter(|file| tag.is_none_or(|t| file.note.tags.iter().any(|nt| nt == t)))
         .map(|file| {
             (
                 file.id,
@@ -227,10 +290,6 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
             )
         })
         .collect();
-
-    // Asking for one tag is asking about notes, so the notebook's other files
-    // are not an answer to it.
-    let files = if tag.is_some() { Vec::new() } else { files };
 
     if rows.is_empty() && files.is_empty() {
         return Ok(String::new());
@@ -267,6 +326,95 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
         }
     }
     Ok(out)
+}
+
+/// The listing as one JSON object, on one line.
+///
+/// Hand-written rather than derived: noda has no serialization crate, and one
+/// object of five string fields does not justify adding the supply-chain
+/// surface of one. The escaping is the part that has to be right, and it is
+/// tested.
+///
+/// Each note carries its filename as well as its id and slug, because that is
+/// what a script actually needs next and deriving it means knowing noda's naming
+/// rule.
+fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> String {
+    let mut out = String::from("{\"notebook\":");
+    out.push_str(&json_string(notebook));
+    out.push_str(",\"notes\":[");
+    for (index, file) in notes.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{},\"tags\":[",
+            json_string(&file.id),
+            json_string(&file.slug),
+            json_string(&note::file_name(&file.id, &file.slug)),
+            json_string(&file.note.title),
+        );
+        for (n, tag) in file.note.tags.iter().enumerate() {
+            if n > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_string(tag));
+        }
+        out.push_str("]}");
+    }
+    out.push_str("],\"files\":[");
+    for (index, file) in files.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_string(file));
+    }
+    out.push_str("]}\n");
+    out
+}
+
+/// One identifier per record: a note's id, a file's name.
+///
+/// A file has no id — its name is its identity — so this is the one listing
+/// where the two halves are addressed differently, and both are what the
+/// commands that take them expect.
+fn as_identifiers(notes: &[notebook::NoteFile], files: &[String], null: bool) -> String {
+    let separator = if null { '\0' } else { '\n' };
+    let mut out = String::new();
+    for file in notes {
+        out.push_str(&file.id);
+        out.push(separator);
+    }
+    for file in files {
+        out.push_str(file);
+        out.push(separator);
+    }
+    out
+}
+
+/// A JSON string literal, quotes included.
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            // Everything else below a space has no shorthand and cannot be
+            // written literally.
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Prints a note verbatim — frontmatter included, because that is the file.
@@ -1666,6 +1814,16 @@ fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
 /// everywhere else — so a redirected `noda show` writes the file byte for byte.
 pub fn print(output: &str) -> Result<()> {
     if output.is_empty() {
+        return Ok(());
+    }
+    // Output carrying a NUL is machine-separated by construction — `ls -q0`,
+    // written for `xargs -0` — and needs both of the things below skipped.
+    // anstream strips NUL along with the escape sequences it is there to
+    // remove, and the trailing newline would arrive after a terminator and
+    // become part of the next record.
+    if output.contains('\0') {
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(output.as_bytes())?;
         return Ok(());
     }
     let mut stdout = anstream::stdout().lock();

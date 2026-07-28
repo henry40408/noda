@@ -143,7 +143,7 @@ fn add_refuses_a_title_or_a_tag_the_frontmatter_cannot_carry() {
     }
 
     assert!(
-        cmd::ls(&paths, None, None).unwrap().is_empty(),
+        cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty(),
         "nothing written"
     );
     assert_eq!(commit_count(&notebook), before, "and nothing committed");
@@ -164,9 +164,15 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     // way out — otherwise the tag shown is not the tag `ls --tag` matches.
     assert!(cmd::show(&paths, "alpha").unwrap().contains("tags: [work]"));
     assert!(
-        cmd::ls(&paths, None, Some("work"))
-            .unwrap()
-            .contains("alpha")
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                tag: Some("work"),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .contains("alpha")
     );
 
     let err = cmd::tag(&paths, "alpha", &["+q3, urgent".to_string()])
@@ -198,7 +204,13 @@ fn two_notes_may_share_a_slug_because_the_id_separates_them() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     assert!(notebook.join(note_file(&first)).is_file());
     assert!(notebook.join(note_file(&second)).is_file());
-    assert_eq!(cmd::ls(&paths, None, None).unwrap().lines().count(), 2);
+    assert_eq!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
 
     // The slug alone no longer says which one, so noda asks rather than guesses.
     let err = cmd::show(&paths, "notes").unwrap_err().to_string();
@@ -267,16 +279,33 @@ fn ls_lists_notes_and_filters_by_tag() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
 
-    let all = cmd::ls(&paths, None, None).unwrap();
+    let all = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert_eq!(all.lines().count(), 2);
     assert!(all.lines().next().unwrap().contains("alpha"), "{all}");
     assert!(all.contains("[work]"), "{all}");
 
-    let tagged = cmd::ls(&paths, None, Some("work")).unwrap();
+    let tagged = cmd::ls(
+        &paths,
+        &cmd::List {
+            tag: Some("work"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(tagged.lines().count(), 1);
     assert!(tagged.contains("alpha"), "{tagged}");
 
-    assert!(cmd::ls(&paths, None, Some("nope")).unwrap().is_empty());
+    assert!(
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                tag: Some("nope"),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .is_empty()
+    );
 }
 
 #[test]
@@ -285,8 +314,27 @@ fn ls_can_target_another_notebook() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     noda::notebook::Notebook::create(&paths, "work").unwrap();
 
-    assert!(cmd::ls(&paths, Some("work"), None).unwrap().is_empty());
-    assert!(cmd::ls(&paths, Some("missing"), None).is_err());
+    assert!(
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                notebook: Some("work"),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                notebook: Some("missing"),
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -316,7 +364,17 @@ fn tag_drops_the_tags_line_when_the_last_tag_goes() {
     cmd::tag(&paths, "alpha", &["-work".to_string()]).unwrap();
     let text = cmd::show(&paths, "alpha").unwrap();
     assert!(!text.contains("tags:"), "{text}");
-    assert!(cmd::ls(&paths, None, Some("work")).unwrap().is_empty());
+    assert!(
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                tag: Some("work"),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .is_empty()
+    );
 }
 
 #[test]
@@ -407,7 +465,13 @@ fn mv_may_land_on_a_slug_another_note_already_uses() {
         cmd::show(&paths, beta_id).unwrap().ends_with("b\n"),
         "the other beta is untouched"
     );
-    assert_eq!(cmd::ls(&paths, None, None).unwrap().lines().count(), 2);
+    assert_eq!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -654,7 +718,7 @@ fn rm_resolves_by_id_and_reports_an_unknown_note() {
 
     assert!(cmd::rm(&paths, "nope").is_err());
     cmd::rm(&paths, &id).unwrap();
-    assert!(cmd::ls(&paths, None, None).unwrap().is_empty());
+    assert!(cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty());
 }
 
 #[test]
@@ -702,18 +766,28 @@ fn use_switches_which_notebook_the_note_commands_see() {
 
     cmd::use_notebook(&paths, "work").unwrap();
     assert_eq!(cmd::notebook_current(&paths).unwrap(), "work");
-    assert!(cmd::ls(&paths, None, None).unwrap().is_empty());
+    assert!(cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty());
     assert!(
         cmd::show(&paths, "alpha").is_err(),
         "notebooks are separate"
     );
 
     cmd::add(&paths, Some("Work Item"), Some("w\n"), &[]).unwrap();
-    assert!(cmd::ls(&paths, None, None).unwrap().contains("work-item"));
     assert!(
-        cmd::ls(&paths, Some("default"), None)
+        cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("alpha")
+            .contains("work-item")
+    );
+    assert!(
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                notebook: Some("default"),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .contains("alpha")
     );
 
     assert!(cmd::use_notebook(&paths, "missing").is_err());
@@ -840,7 +914,7 @@ fn push_and_clone_round_trip_a_notebook() {
     cmd::clone(&paths, &url, None).unwrap();
     cmd::use_notebook(&paths, "origin").unwrap();
     assert!(
-        cmd::ls(&paths, None, None)
+        cmd::ls(&paths, &cmd::List::default())
             .unwrap()
             .contains("meeting-notes")
     );
@@ -867,7 +941,9 @@ fn clone_adopts_the_only_branch_when_the_remote_head_points_elsewhere() {
     cmd::clone(&paths, &url, Some("mirror")).unwrap();
     cmd::use_notebook(&paths, "mirror").unwrap();
     assert!(
-        cmd::ls(&paths, None, None).unwrap().contains("alpha"),
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .contains("alpha"),
         "a clone that checks out nothing reads as an empty notebook, not a broken one"
     );
     assert_eq!(
@@ -946,7 +1022,11 @@ fn sync_fast_forwards_a_notebook_that_only_received() {
     cmd::use_notebook(&paths, "mirror").unwrap();
     let out = cmd::sync(&paths).unwrap();
     assert!(out.contains("fast-forwarded"), "{out}");
-    assert!(cmd::ls(&paths, None, None).unwrap().contains("beta"));
+    assert!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .contains("beta")
+    );
     assert_eq!(
         merge_commits(&paths.notebook_dir("mirror")),
         0,
@@ -974,7 +1054,7 @@ fn sync_merges_notebooks_that_both_moved() {
     assert!(out.contains("merged"), "{out}");
     assert_eq!(merge_commits(&paths.notebook_dir("mirror")), 1);
 
-    let listed = cmd::ls(&paths, None, None).unwrap();
+    let listed = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert!(listed.contains("laptop"), "{listed}");
     assert!(listed.contains("desktop"), "{listed}");
 
@@ -987,7 +1067,11 @@ fn sync_merges_notebooks_that_both_moved() {
     // And the merge comes back to the notebook that pushed first.
     cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
     cmd::sync(&paths).unwrap();
-    assert!(cmd::ls(&paths, None, None).unwrap().contains("desktop"));
+    assert!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .contains("desktop")
+    );
 }
 
 #[test]
@@ -1228,7 +1312,7 @@ fn a_file_that_declares_nothing_is_listed_as_a_file() {
     )
     .unwrap();
 
-    let listed = plain(&cmd::ls(&paths, None, None).unwrap());
+    let listed = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap());
     assert!(
         listed.contains("alpha"),
         "the note is still a note: {listed}"
@@ -1327,7 +1411,13 @@ fn a_new_note_avoids_an_id_that_arrived_from_outside() {
         None,
         "a note that arrived adopted is simply a note"
     );
-    assert_eq!(cmd::ls(&paths, None, None).unwrap().lines().count(), 2);
+    assert_eq!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -1426,7 +1516,7 @@ fn doctor_adopts_a_note_that_only_lacks_an_id() {
         "the file moved to its adopted name"
     );
 
-    let listed = cmd::ls(&paths, None, None).unwrap();
+    let listed = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert_eq!(listed.lines().count(), 1, "{listed}");
     assert!(
         listed.contains("hand-written"),
@@ -1665,10 +1755,206 @@ fn listing_by_tag_does_not_list_the_notebooks_files() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
     plant_file(&notebook, "receipt.pdf");
 
-    assert!(cmd::ls(&paths, None, None).unwrap().contains("receipt.pdf"));
-    let tagged = cmd::ls(&paths, None, Some("work")).unwrap();
+    assert!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .contains("receipt.pdf")
+    );
+    let tagged = cmd::ls(
+        &paths,
+        &cmd::List {
+            tag: Some("work"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(!tagged.contains("receipt.pdf"), "{tagged}");
     assert!(tagged.contains("alpha"), "{tagged}");
+}
+
+/// A notebook holding one tagged note and one file, for the listing tests.
+fn listable() -> (TempRoot, Paths, String) {
+    let (root, paths) = initialized();
+    let summary = cmd::add(
+        &paths,
+        Some("Meeting Notes"),
+        Some("body\n"),
+        &["work".to_string()],
+    )
+    .unwrap();
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "my diagram.png")),
+        None,
+    )
+    .unwrap();
+    (root, paths, summary)
+}
+
+#[test]
+fn ls_json_carries_the_filename_as_well_as_the_id() {
+    let (_root, paths, summary) = listable();
+    let (id, slug) = parts(&summary);
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Json,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(out.ends_with("}\n"), "one object, one line: {out}");
+    assert!(out.contains(&format!("\"id\":\"{id}\"")), "{out}");
+    assert!(out.contains(&format!("\"slug\":\"{slug}\"")), "{out}");
+    assert!(
+        out.contains(&format!("\"file\":\"{id}-{slug}.md\"")),
+        "the name a script needs next, not one it has to derive: {out}"
+    );
+    assert!(out.contains("\"title\":\"Meeting Notes\""), "{out}");
+    assert!(out.contains("\"tags\":[\"work\"]"), "{out}");
+    assert!(out.contains("\"files\":[\"my diagram.png\"]"), "{out}");
+    assert!(out.contains("\"notebook\":\"default\""), "{out}");
+}
+
+#[test]
+fn ls_json_escapes_what_would_otherwise_break_the_document() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some(r#"He said "hi" \ bye"#), Some("x\n"), &[]).unwrap();
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Json,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(out.contains(r#""title":"He said \"hi\" \\ bye""#), "{out}");
+}
+
+#[test]
+fn ls_json_says_so_when_the_notebook_is_empty() {
+    let (_root, paths) = initialized();
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Json,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        out.trim_end(),
+        r#"{"notebook":"default","notes":[],"files":[]}"#,
+        "an empty listing is still a document a program can parse"
+    );
+}
+
+/// A note is addressed by its id and a file by its name, so that is what each
+/// one prints — whatever takes the output next expects exactly those.
+#[test]
+fn ls_quiet_prints_one_identifier_per_record() {
+    let (_root, paths, summary) = listable();
+    let (id, _) = parts(&summary);
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Quiet,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(out, format!("{id}\nmy diagram.png\n"));
+}
+
+/// The reason `-0` exists: `noda file add` allows a space in a name, so a
+/// newline-separated list is not safe to hand to `xargs`.
+#[test]
+fn ls_quiet_can_separate_with_nul() {
+    let (_root, paths, summary) = listable();
+    let (id, _) = parts(&summary);
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Quiet,
+            null: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(out, format!("{id}\0my diagram.png\0"));
+}
+
+#[test]
+fn ls_can_leave_out_either_half() {
+    let (_root, paths, summary) = listable();
+    let (id, _) = parts(&summary);
+
+    let notes = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Quiet,
+            only: cmd::Only::Notes,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(notes, format!("{id}\n"));
+
+    let files = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Quiet,
+            only: cmd::Only::Files,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(files, "my diagram.png\n");
+
+    // And the same subsetting reaches the other two formats.
+    let table = plain(
+        &cmd::ls(
+            &paths,
+            &cmd::List {
+                only: cmd::Only::Files,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    assert!(table.contains("my diagram.png"), "{table}");
+    assert!(!table.contains("meeting-notes"), "{table}");
+}
+
+/// The one test that runs the real binary.
+///
+/// Everything else here calls the command functions, which is where the
+/// behaviour lives — but `-0` is a promise about the *bytes that leave the
+/// process*, and the layer between the two ate them: colour handling strips NUL
+/// along with the escape sequences it exists to remove, and the newline every
+/// other command wants would have arrived after the last terminator.
+#[test]
+fn ls_null_separators_survive_the_way_out_of_the_process() {
+    let (root, _paths, _) = listable();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_noda"))
+        .args(["ls", "-q0", "--files-only"])
+        .env("XDG_CONFIG_HOME", root.0.join("config"))
+        .env("XDG_DATA_HOME", root.0.join("data"))
+        .env("XDG_STATE_HOME", root.0.join("state"))
+        .env("XDG_CACHE_HOME", root.0.join("cache"))
+        .output()
+        .expect("run noda");
+
+    assert_eq!(
+        output.stdout,
+        b"my diagram.png\0",
+        "stdout was {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 /// A file somewhere else on disk, to copy into a notebook from.
@@ -1697,7 +1983,7 @@ fn file_add_copies_it_in_and_commits_it() {
         "one commit, revertible like every other change"
     );
     assert!(
-        plain(&cmd::ls(&paths, None, None).unwrap()).contains("files\n  diagram.png"),
+        plain(&cmd::ls(&paths, &cmd::List::default()).unwrap()).contains("files\n  diagram.png"),
         "and it is listed"
     );
 }
@@ -2163,7 +2449,7 @@ fn log_for_a_note_follows_it_across_a_rename() {
     assert!(!out.contains("beta"), "{out}");
 
     // The id addresses the same history as the current slug does.
-    let id = cmd::ls(&paths, None, None)
+    let id = cmd::ls(&paths, &cmd::List::default())
         .unwrap()
         .lines()
         .find(|line| line.contains("renamed"))
@@ -2261,9 +2547,15 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
     assert!(out.starts_with(&id), "the id comes back unchanged: {out}");
     assert!(cmd::show(&paths, &id).unwrap().contains("a\n"));
     assert!(
-        cmd::ls(&paths, None, Some("work"))
-            .unwrap()
-            .contains("alpha")
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                tag: Some("work"),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .contains("alpha")
     );
     assert!(
         paths
@@ -2465,13 +2757,17 @@ fn the_configured_notebook_is_what_init_creates_and_what_stands_in() {
     // State is "where am I now" and can be thrown away; config is "where I
     // belong", so losing the pointer must not lose the notebook.
     std::fs::remove_file(paths.active_file()).unwrap();
-    assert!(cmd::ls(&paths, None, None).unwrap().contains("alpha"));
+    assert!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .contains("alpha")
+    );
 }
 
 #[test]
 fn commands_refuse_to_run_before_init() {
     let root = TempRoot::new();
     let paths = root.paths();
-    let err = cmd::ls(&paths, None, None).unwrap_err();
+    let err = cmd::ls(&paths, &cmd::List::default()).unwrap_err();
     assert!(err.to_string().contains("noda init"), "{err}");
 }

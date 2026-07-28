@@ -32,12 +32,30 @@ enum Command {
     },
     /// List notes: id, slug, title, tags.
     Ls {
-        /// Only notes carrying this tag.
-        #[arg(long)]
+        /// Only notes carrying this tag. Anything more selective is `noda
+        /// search`, which is where the query language lives.
+        #[arg(long, conflicts_with = "files_only")]
         tag: Option<String>,
         /// List another notebook instead of the active one.
         #[arg(long)]
         notebook: Option<String>,
+        /// Print one JSON object instead of a table.
+        #[arg(long, conflicts_with = "quiet")]
+        json: bool,
+        /// Print one identifier per record and nothing else: a note's id, a
+        /// file's name.
+        #[arg(short, long)]
+        quiet: bool,
+        /// Separate what `--quiet` prints with NUL, for `xargs -0`. A file's
+        /// name may contain a space.
+        #[arg(short = '0', long, requires = "quiet")]
+        null: bool,
+        /// Leave out the notebook's files.
+        #[arg(long, conflicts_with = "files_only")]
+        notes_only: bool,
+        /// Leave out the notes.
+        #[arg(long)]
+        files_only: bool,
     },
     /// Print a note to stdout, addressed by id or slug.
     Show {
@@ -278,7 +296,32 @@ fn run() -> noda::Result<()> {
             content,
             tags,
         } => cmd::add(&paths, title.as_deref(), content.as_deref(), tags)?,
-        Command::Ls { tag, notebook } => cmd::ls(&paths, notebook.as_deref(), tag.as_deref())?,
+        Command::Ls {
+            tag,
+            notebook,
+            json,
+            quiet,
+            null,
+            notes_only,
+            files_only,
+        } => cmd::ls(
+            &paths,
+            &cmd::List {
+                notebook: notebook.as_deref(),
+                tag: tag.as_deref(),
+                format: match (json, quiet) {
+                    (true, _) => cmd::Format::Json,
+                    (_, true) => cmd::Format::Quiet,
+                    _ => cmd::Format::Table,
+                },
+                only: match (notes_only, files_only) {
+                    (true, _) => cmd::Only::Notes,
+                    (_, true) => cmd::Only::Files,
+                    _ => cmd::Only::Everything,
+                },
+                null: *null,
+            },
+        )?,
         Command::Show { note } => cmd::show(&paths, note)?,
         Command::Edit { note } => cmd::edit(&paths, note)?,
         Command::Mv { note, new_title } => cmd::mv(&paths, note, new_title)?,
