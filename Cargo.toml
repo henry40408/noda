@@ -14,14 +14,18 @@ panic = "abort"
 strip = true
 
 [dependencies]
-# 兩者已經因為 clap 在依賴樹裡，直接用不增加供應鏈面積。
-# anstream 負責偵測終端機、遵守 NO_COLOR，並在輸出被導向管線或檔案時剝掉跳脫碼，
-# 所以 `noda show` 送出去的位元組永遠等於檔案本身。
+# Both are already in the tree by way of clap, so reaching for them directly adds
+# no supply-chain surface. anstream detects the terminal, honours NO_COLOR, and
+# strips the escape codes when output goes to a pipe or a file — which is what
+# makes the bytes `noda show` emits identical to the file itself.
 anstream = "1.0.0"
 anstyle = "1.0.14"
 clap = { version = "4.6.2", features = ["derive"] }
-# 傳輸永遠內建：GitHub/GitLab 必走 HTTPS/SSH，不做成 feature 開關。
-# vendored-*：libgit2 / openssl 全部從源碼編入，換來單一靜態執行檔 + 乾淨跨編（musl/arm64）。
+# The transports are always compiled in: GitHub and GitLab are reached over HTTPS
+# or SSH, so a build that made either optional could not sync to the hosts every
+# user actually targets.
+# vendored-*: libgit2 and OpenSSL are built from source into the binary, which is
+# what buys a single static executable and a clean cross-compile (musl/arm64).
 git2 = { version = "0.21.0", default-features = false, features = [
     "vendored-libgit2",
     "https",
