@@ -81,10 +81,20 @@ enum Command {
         /// the notebook's own directory.
         key: Option<String>,
     },
-    /// Full-text search across the active notebook.
+    /// Search the active notebook: `noda search tag:work OR tag:q3 budget`.
     Search {
-        /// What to look for. Several words mean all of them, in any order.
-        #[arg(required = true, num_args = 1.., value_name = "QUERY")]
+        /// Terms, all of which must match. `field:value` narrows one to `tag`,
+        /// `title`, `id` or `text`; `OR` between two terms takes either; `-` in
+        /// front of one rules it out.
+        ///
+        /// Hyphen values are allowed through so `-tag:archived` reaches the
+        /// command as a term rather than being read as an option.
+        #[arg(
+            required = true,
+            num_args = 1..,
+            allow_hyphen_values = true,
+            value_name = "QUERY"
+        )]
         query: Vec<String>,
     },
     /// Show commit history for the notebook, or for one note.
@@ -276,7 +286,7 @@ fn run() -> noda::Result<()> {
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,
         Command::Doctor { dry_run, links } => cmd::doctor(&paths, *dry_run, *links)?,
-        Command::Search { query } => cmd::search(&paths, &query.join(" "))?,
+        Command::Search { query } => cmd::search(&paths, query)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
         Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,

@@ -10,6 +10,7 @@ use crate::link;
 use crate::note::{self, Note};
 use crate::notebook::{self, Notebook, Problem};
 use crate::paths::Paths;
+use crate::query::Query;
 use crate::remote;
 use crate::style;
 use crate::{Error, Result};
@@ -852,28 +853,22 @@ const EXCERPT_LEAD: usize = 28;
 /// Chinese or Japanese notes has no spaces to tokenise on, and a tokeniser would
 /// simply fail to find anything in it. Several terms mean all of them, anywhere
 /// in the note.
-pub fn search(paths: &Paths, query: &str) -> Result<String> {
-    let terms: Vec<String> = query
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .filter(|term| !term.is_empty())
-        .collect();
-    if terms.is_empty() {
-        return Err(Error::msg("search needs something to look for"));
-    }
+pub fn search(paths: &Paths, tokens: &[String]) -> Result<String> {
+    let query = Query::parse(tokens)?;
+    // A `tag:` or an `id:` matched something the body does not contain, so only
+    // the text terms can point at a line.
+    let terms = query.excerpt_terms();
 
     let notebook = Notebook::open_active(paths)?;
     let mut rows = Vec::new();
     for file in notebook.notes()? {
-        let note = file.note;
         // The note's own fields, not the raw file — otherwise `---` and the
         // frontmatter keys would be searchable text, and they are the container,
         // not the note.
-        let haystack =
-            format!("{}\n{}\n{}", note.title, note.tags.join(" "), note.body).to_lowercase();
-        if !terms.iter().all(|term| haystack.contains(term.as_str())) {
+        if !query.matches(&file.id, &file.note) {
             continue;
         }
+        let note = file.note;
         rows.push((
             file.id,
             file.slug,

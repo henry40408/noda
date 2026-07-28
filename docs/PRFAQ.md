@@ -218,6 +218,22 @@ safe to offer at all: the rewrite is checked by re-reading the notes afterwards,
 destination written with backslash escapes, which cannot be located in the source, is
 reported as still pointing at the old name rather than assumed fixed.
 
+**Q: Why does the search grammar have `OR` but no parentheses, and why does `OR` bind
+tighter than a space?**
+Because those two choices are the same choice. A query language compounds — `tag:` invites
+`OR`, `OR` invites parentheses, parentheses invite precedence rules nobody remembers — so
+the grammar is fixed at one shape: an AND of ORs, four lines, written into the README.
+
+Binding `OR` tighter than the space is what makes that shape sufficient rather than
+crippled. `a OR b c OR d` reads as `(a OR b) AND (c OR d)`, and an AND of ORs is
+conjunctive normal form, which is every query expressible at all — so parentheses would add
+notation without adding power. Boolean algebra would have bound the other way and made
+`budget tag:x OR tag:y` mean `(budget AND tag:x) OR tag:y`, which is not what anybody
+listing two acceptable tags meant.
+
+The one thing the grammar cannot express is `(a AND b) OR (c AND d)`. That is two searches,
+and running two searches is cheaper than a language nobody can predict.
+
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:
 multiple git-backed notebooks, add/ls/show/edit/rm, id+slug addressing, full-text search,
