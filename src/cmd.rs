@@ -426,27 +426,37 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
 /// `git revert` brings the note back with its id intact.
 pub fn rm(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    let located = locate(&notebook, key)?;
+    // Deleting a file does not require understanding it. Refusing to remove a
+    // note whose frontmatter is gone leaves the one command that could clear it
+    // up unusable exactly when it is wanted.
+    let found = find(&notebook, key)?;
 
-    std::fs::remove_file(&located.path)?;
+    std::fs::remove_file(&found.path)?;
     let mut index = notebook.index()?;
     // Keyed on the id noda minted, but a file edited outside noda can carry a
     // different one — and then the entry for the note just deleted would stay
     // behind forever, because nothing else ever revisits it. The slug is the
-    // file that has gone, so it settles the case the id cannot.
-    index.retain(|(id, slug)| *id != located.note.id && *slug != located.slug);
+    // file that has gone, so it settles the case the id cannot, including a file
+    // that cannot be read and so offers no id at all.
+    index.retain(|(id, slug)| found.id.as_deref() != Some(id.as_str()) && *slug != found.slug);
     notebook.write_index(&index)?;
     notebook.commit(
         &[
-            Path::new(&format!("{}.md", located.slug)),
+            Path::new(&format!("{}.md", found.slug)),
             Path::new(INDEX_PATH),
         ],
-        &format!("rm: {}", located.slug),
+        &format!("rm: {}", found.slug),
     )?;
 
+    let tags = found.note.as_ref().ok().map(|note| note.tags.clone());
     Ok(format!(
         "removed  {}",
-        summary(&located.note.id, &located.slug, &located.note.tags)
+        match &found.id {
+            Some(id) => summary(id, &found.slug, &tags.unwrap_or_default()),
+            // Neither the file nor the index could say what it was called. The
+            // slug is what there is, and it is what was asked for.
+            None => found.slug.clone(),
+        }
     ))
 }
 
@@ -940,7 +950,8 @@ fn refusals(scan: &notebook::Scan, index: &[(String, String)]) -> Vec<String> {
         if unreadable.contains(file.as_str()) {
             out.push(format!(
                 "{file} carries id `{id}` in the index but cannot be read as a note\n  \
-                 repair the file, or remove it to give the id up"
+                 `noda restore {slug} HEAD` puts the committed version back, \
+                 or `noda rm {slug}` gives the id up"
             ));
         }
     }
@@ -965,8 +976,15 @@ fn describe_drift(drift: Option<(usize, usize)>) -> String {
 /// The notebook's history, or one note's.
 pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
+    // History is about the file, not its contents: a note whose frontmatter has
+    // gone is precisely the one whose past you want to look at.
     let id = match key {
-        Some(key) => Some(locate(&notebook, key)?.note.id),
+        Some(key) => Some(find(&notebook, key)?.id.ok_or_else(|| {
+            Error::msg(format!(
+                "cannot tell which note `{key}` is — the file cannot be read and \
+                 the index does not name it"
+            ))
+        })?),
         None => None,
     };
 
@@ -992,8 +1010,10 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
 /// `git apply` will take.
 pub fn diff(paths: &Paths, key: Option<&str>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
+    // Only the filename is needed, so a file that will not parse is no obstacle
+    // — and seeing what changed is how you find out why it will not.
     let file = match key {
-        Some(key) => Some(format!("{}.md", locate(&notebook, key)?.slug)),
+        Some(key) => Some(format!("{}.md", find(&notebook, key)?.slug)),
         None => None,
     };
 
@@ -1036,12 +1056,19 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // A note that still exists is found the usual way; one that was removed is
     // looked up in the index as it stood at that commit, so `restore` doubles as
     // the way back from `noda rm`.
+    //
+    // The file is found without being read. `restore` is about to write over it,
+    // so refusing to act on one whose frontmatter has gone turns the command for
+    // undoing damage into another casualty of it — and that is the moment a
+    // person reaches for it.
     let current = match notebook.resolve(key) {
-        Ok(_) => Some(locate(&notebook, key)?),
+        Ok(_) => Some(find(&notebook, key)?),
         Err(_) => None,
     };
-    let id = match &current {
-        Some(located) => located.note.id.clone(),
+    // From the file when it can be read, from the index when it cannot, and from
+    // history when neither knows.
+    let id = match current.as_ref().and_then(|found| found.id.clone()) {
+        Some(id) => id,
         None => notebook
             .id_at(&commit, key)?
             .ok_or_else(|| Error::msg(format!("note not found at {rev}: {key}")))?,
@@ -1056,8 +1083,8 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // The id is the note's identity, so a restored note keeps the name it has
     // now; only its contents travel back. A note that is gone comes back under
     // the name it had then.
-    let (slug, path) = if let Some(located) = &current {
-        (located.slug.clone(), located.path.clone())
+    let (slug, path) = if let Some(found) = &current {
+        (found.slug.clone(), found.path.clone())
     } else {
         let slug = unique_slug(&notebook, &slug_then);
         let path = notebook.note_path(&slug);
@@ -1068,7 +1095,7 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
         .map_err(|e| Error::msg(format!("the copy of `{key}` at {rev} cannot be read: {e}")))?;
     if current
         .as_ref()
-        .is_some_and(|located| std::fs::read_to_string(&located.path).ok() == Some(text.clone()))
+        .is_some_and(|found| std::fs::read_to_string(&found.path).ok() == Some(text.clone()))
     {
         return Ok(format!(
             "{}  (no change)",
@@ -1191,14 +1218,24 @@ pub fn notebook_current(paths: &Paths) -> Result<String> {
     notebook::active_name(paths)
 }
 
-/// A note reference resolved to everything the mutating commands need.
-struct Located {
+/// A note reference resolved to a file, with the reading of it kept separate.
+///
+/// A command that only needs to know *which* note it was pointed at — to delete
+/// it, to show its history, to write an old version over it — has no business
+/// failing on a file it is not going to read. `status` already takes that line
+/// with the notebook as a whole; these take it one note at a time.
+struct Found {
     slug: String,
     path: PathBuf,
-    note: Note,
+    /// What came of reading the file, kept rather than thrown so the commands
+    /// that do need the note can fail with the parse error itself.
+    note: Result<Note>,
+    /// The id the file carries; the one the index records for this slug when the
+    /// file cannot be read; `None` when neither knows.
+    id: Option<String>,
 }
 
-fn locate(notebook: &Notebook, key: &str) -> Result<Located> {
+fn find(notebook: &Notebook, key: &str) -> Result<Found> {
     let path = notebook.resolve(key)?;
     let slug = path
         .file_stem()
@@ -1206,8 +1243,37 @@ fn locate(notebook: &Notebook, key: &str) -> Result<Located> {
         .ok_or_else(|| Error::msg(format!("unreadable note filename: {}", path.display())))?
         .to_string();
     let note = Note::parse(&std::fs::read_to_string(&path)?)
-        .map_err(|e| Error::msg(format!("{}: {e}", path.display())))?;
-    Ok(Located { slug, path, note })
+        .map_err(|e| Error::msg(format!("{}: {e}", path.display())));
+    let id = match &note {
+        Ok(note) => Some(note.id.clone()),
+        Err(_) => notebook
+            .index()?
+            .into_iter()
+            .find(|(_, entry)| *entry == slug)
+            .map(|(id, _)| id),
+    };
+    Ok(Found {
+        slug,
+        path,
+        note,
+        id,
+    })
+}
+
+/// A note reference resolved to everything the commands that read a note need.
+struct Located {
+    slug: String,
+    path: PathBuf,
+    note: Note,
+}
+
+fn locate(notebook: &Notebook, key: &str) -> Result<Located> {
+    let found = find(notebook, key)?;
+    Ok(Located {
+        slug: found.slug,
+        path: found.path,
+        note: found.note?,
+    })
 }
 
 /// The one-line acknowledgement every mutating command prints.

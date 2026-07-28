@@ -610,6 +610,103 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
     );
 }
 
+/// The commands that only need to know *which* note they were pointed at used
+/// to parse the file anyway, and so refused to run on one whose frontmatter had
+/// gone — leaving the tools for clearing that up unusable exactly when they were
+/// wanted, and `noda reconcile`'s "repair the file, or remove it" meaning reach
+/// for git.
+#[test]
+fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("the original body\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(notebook.join("alpha.md"), "frontmatter is gone\n").unwrap();
+
+    // History is about the file, and seeing what changed is how you find out
+    // why it will not parse.
+    assert!(
+        cmd::log(&paths, Some("alpha"), None)
+            .unwrap()
+            .contains("add:")
+    );
+    assert!(
+        cmd::diff(&paths, Some("alpha"))
+            .unwrap()
+            .contains("alpha.md")
+    );
+
+    // And the one that undoes the damage. It writes over the file, so reading it
+    // first was never necessary.
+    cmd::restore(&paths, "alpha", "HEAD").unwrap();
+    let back = cmd::show(&paths, "alpha").unwrap();
+    assert!(back.contains(&format!("id: {id}")), "{back}");
+    assert!(back.contains("the original body"), "{back}");
+    assert_eq!(
+        status_row(&plain(&cmd::status(&paths).unwrap()), "index"),
+        None,
+        "the notebook is whole again, index included"
+    );
+}
+
+#[test]
+fn rm_removes_a_note_whose_frontmatter_is_gone() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let id = added.split_once("  ").unwrap().0.to_string();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // Deleting a file does not require understanding it.
+    std::fs::write(notebook.join("alpha.md"), "broken\n").unwrap();
+    let out = cmd::rm(&paths, "alpha").unwrap();
+    assert!(out.contains(&id), "the index still knew what it was: {out}");
+    assert!(!notebook.join("alpha.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(notebook.join(".noda/index.tsv")).unwrap(),
+        "",
+        "and the entry goes with it"
+    );
+
+    // A file no id can be found for at all: not a note, not in the index. It is
+    // still a file the user asked to be rid of.
+    std::fs::write(notebook.join("orphan.md"), "junk\n").unwrap();
+    let out = cmd::rm(&paths, "orphan").unwrap();
+    assert!(out.contains("orphan"), "{out}");
+    assert!(!notebook.join("orphan.md").exists());
+}
+
+#[test]
+fn the_commands_that_read_a_note_still_refuse_one_that_cannot_be_read() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(notebook.join("alpha.md"), "frontmatter is gone\n").unwrap();
+
+    // The line is drawn at whether the command uses the note's contents. These
+    // rewrite the frontmatter, so they have to be able to read it first.
+    for err in [
+        cmd::mv(&paths, "alpha", "Renamed").unwrap_err(),
+        cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap_err(),
+    ] {
+        assert!(err.to_string().contains("frontmatter"), "{err}");
+    }
+}
+
+#[test]
+fn history_needs_something_to_go_on() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    // Neither the file nor the index can say which note this is, so `log` says
+    // that rather than guessing or dying on a parse error.
+    std::fs::write(notebook.join("orphan.md"), "junk\n").unwrap();
+    let err = cmd::log(&paths, Some("orphan"), None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot tell which note"), "{err}");
+}
+
 #[test]
 fn rm_resolves_by_id_and_reports_an_unknown_note() {
     let (_root, paths) = initialized();

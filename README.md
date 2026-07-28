@@ -177,9 +177,15 @@ every link and reference that already pointed at the old ones.
 
 Two cases it refuses rather than guesses, because either answer loses something that cannot
 be minted again — two notes carrying one id, and an index entry naming a file that is there
-but cannot be read as a note. Both are reported together, with what to do about each. A
-stray `*.md` the index never named is ignored: it is not a note, and it must not stand
-between a lost index and its repair.
+but cannot be read as a note. Both are reported together, with what to do about each — and
+noda can do it: `noda restore <note> HEAD` puts the committed version of a broken file back,
+`noda rm <note>` gives its id up. A stray `*.md` the index never named is ignored: it is not
+a note, and it must not stand between a lost index and its repair.
+
+A file that will not parse does not lock you out of the commands that do not read it.
+`restore`, `rm`, `log` and `diff` identify a note by its filename and the index, so they
+work on one whose frontmatter has gone — which is exactly when they are wanted. `mv` and
+`tag` rewrite the frontmatter, so they still have to read it first and say so plainly.
 
 ### Notes
 
