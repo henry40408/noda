@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::{self, Config};
+use crate::link;
 use crate::note::{self, Note};
 use crate::notebook::{self, Notebook, Problem};
 use crate::paths::Paths;
@@ -476,16 +477,10 @@ pub fn file_add(paths: &Paths, sources: &[PathBuf], rename: Option<&str>) -> Res
                 .to_string(),
         };
         validate_file_name(&name)?;
-        // Only when adding: this refuses to *manufacture* a name that reads as a
-        // note, which is not the same question as whether an existing file may
-        // be removed.
-        if let Some(stem) = name.strip_suffix(".md")
-            && note::split_stem(stem).is_some()
-        {
-            return Err(Error::msg(format!(
-                "{name} claims a note's id — a file noda would then report as a broken note"
-            )));
-        }
+        // Only where a name is being chosen: refusing to *manufacture* one that
+        // reads as a note is not the same question as whether an existing file
+        // may be removed.
+        refuse_a_notes_name(&name)?;
         if notebook.path.join(&name).exists() {
             return Err(Error::msg(format!(
                 "the notebook already holds {name} — copy it in under another name with `--as`"
@@ -524,19 +519,175 @@ pub fn file_rm(paths: &Paths, name: &str) -> Result<String> {
 
     let (notes, files) = notebook.inventory()?;
     if !files.iter().any(|file| file == name) {
-        let is_note = notes
-            .iter()
-            .any(|file| note::file_name(&file.id, &file.slug) == name);
-        return Err(if is_note {
-            Error::msg(format!("{name} is a note — remove it with `noda rm`"))
-        } else {
-            Error::msg(format!("the notebook holds no file called {name}"))
-        });
+        return Err(missing_file(&notes, name, "remove it with `noda rm`"));
     }
 
     std::fs::remove_file(notebook.path.join(name))?;
     notebook.commit(&[Path::new(name)], &format!("file: rm {name}"))?;
     Ok(format!("removed  {name}"))
+}
+
+/// Renames one of the notebook's files.
+///
+/// Every link that named the old file now names nothing, so this always says
+/// which — the walk that finds out is the same one `doctor --links` pays for,
+/// and a rename is rare enough to pay it rather than leave the damage silent.
+///
+/// `update_links` rewrites those links instead of reporting them. It is opt-in
+/// because it edits the prose of notes the command was not pointed at, which
+/// nothing else in noda does. Even then the notes are re-read afterwards: a
+/// destination written with backslash escapes cannot be located in the source,
+/// and one that could not be rewritten is reported rather than assumed fixed.
+pub fn file_mv(paths: &Paths, old: &str, new: &str, update_links: bool) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    validate_file_name(old)?;
+    validate_file_name(new)?;
+    refuse_a_notes_name(new)?;
+    if old == new {
+        return Err(Error::msg(format!("{old} already is its name")));
+    }
+
+    let (notes, files) = notebook.inventory()?;
+    if !files.iter().any(|file| file == old) {
+        return Err(missing_file(&notes, old, "retitle it with `noda mv`"));
+    }
+    if notebook.path.join(new).exists() {
+        return Err(Error::msg(format!(
+            "the notebook already holds {new} — pick a name it does not"
+        )));
+    }
+
+    std::fs::rename(notebook.path.join(old), notebook.path.join(new))?;
+    let mut changed = vec![old.to_string(), new.to_string()];
+
+    // Every note is read either way: to rewrite the links, or to say which ones
+    // now name nothing.
+    let mut updated = Vec::new();
+    let mut stranded = Vec::new();
+    for file in &notes {
+        let name = note::file_name(&file.id, &file.slug);
+        if !link::targets(&file.note.body).contains(old) {
+            continue;
+        }
+        if !update_links {
+            stranded.push(name);
+            continue;
+        }
+        let path = notebook.path.join(&name);
+        let text = std::fs::read_to_string(&path)?;
+        // Only the body is Markdown. The frontmatter is carried over byte for
+        // byte rather than re-rendered, so a rename cannot reformat what
+        // somebody wrote by hand.
+        let Some((_, body)) = note::split_frontmatter(&text) else {
+            stranded.push(name);
+            continue;
+        };
+        let Some(rewritten) = link::rewrite(body, old, new) else {
+            stranded.push(name);
+            continue;
+        };
+        let prefix = &text[..text.len() - body.len()];
+        std::fs::write(&path, format!("{prefix}{rewritten}"))?;
+        if link::targets(&rewritten).contains(old) {
+            stranded.push(name.clone());
+        }
+        changed.push(name);
+        updated.push(());
+    }
+
+    let files: Vec<&Path> = changed
+        .iter()
+        .map(|name| Path::new(name.as_str()))
+        .collect();
+    notebook.commit(&files, &format!("file: mv {old} -> {new}"))?;
+
+    let mut out = format!("renamed  {old} -> {new}\n");
+    if !updated.is_empty() {
+        let count = updated.len();
+        let noun = if count == 1 { "note" } else { "notes" };
+        let _ = writeln!(out, "updated  {count} {noun}");
+    }
+    if !stranded.is_empty() {
+        stranded.sort();
+        stranded.dedup();
+        let count = stranded.len();
+        let (noun, verb) = if count == 1 {
+            ("note", "links")
+        } else {
+            ("notes", "link")
+        };
+        let still = if update_links { "still " } else { "" };
+        let _ = writeln!(out, "{count} {noun} {still}{verb} to {old}");
+        for name in &stranded {
+            let _ = writeln!(out, "  {name}");
+        }
+    }
+    Ok(out)
+}
+
+/// Prints where something lives, so the tools noda does not wrap can be pointed
+/// at it: `pandoc "$(noda path meeting-notes)"`, `open "$(noda path
+/// diagram.png)"`, `cd "$(noda path)"`.
+///
+/// Exposing the location on request is not the same as making somebody build it
+/// themselves, which is what the absence of this command used to require.
+pub fn path(paths: &Paths, key: Option<&str>) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let Some(key) = key else {
+        return Ok(format!("{}\n", notebook.path.display()));
+    };
+
+    // A note is addressed by id or slug and a file by the name it was given, so
+    // one key can in principle mean both. Resolution reads no file, and the file
+    // is one `stat`, so asking both costs nothing worth avoiding.
+    let as_note = notebook.resolve(key);
+    let as_file = notebook.path.join(key);
+    let is_file = !key.contains('/') && !key.contains('\\') && as_file.is_file();
+
+    match (as_note, is_file) {
+        (Ok((id, slug)), false) => Ok(format!("{}\n", notebook.note_path(&id, &slug).display())),
+        (Err(_), true) => Ok(format!("{}\n", as_file.display())),
+        (Ok((id, slug)), true) => Err(Error::msg(format!(
+            "`{key}` names both a note and a file — say which:\n  {}\n  {}",
+            note::file_name(&id, &slug),
+            key
+        ))),
+        // An ambiguous key is `resolve`'s to explain: it already names the
+        // candidates. Only "no such note" needs widening, because this command
+        // was asked about a file just as much as about a note.
+        (Err(Error::Msg(said)), false) if said.starts_with(notebook::NOT_FOUND) => Err(Error::msg(
+            format!("nothing called `{key}` — the notebook holds no note and no file by that name"),
+        )),
+        (Err(other), false) => Err(other),
+    }
+}
+
+/// The error for a file the notebook does not hold. When the name is a note's,
+/// it says so and names the command that wanted it instead — the two are not
+/// interchangeable, and being told only "no such file" about a file plainly
+/// sitting there is the unhelpful version.
+fn missing_file(notes: &[notebook::NoteFile], name: &str, instead: &str) -> Error {
+    let is_note = notes
+        .iter()
+        .any(|file| note::file_name(&file.id, &file.slug) == name);
+    if is_note {
+        Error::msg(format!("{name} is a note — {instead}"))
+    } else {
+        Error::msg(format!("the notebook holds no file called {name}"))
+    }
+}
+
+/// Refuses a name that would read as a note which had lost its frontmatter, and
+/// which `doctor` would then report as broken from the moment it appeared.
+fn refuse_a_notes_name(name: &str) -> Result<()> {
+    if let Some(stem) = name.strip_suffix(".md")
+        && note::split_stem(stem).is_some()
+    {
+        return Err(Error::msg(format!(
+            "{name} claims a note's id — a file noda would then report as a broken note"
+        )));
+    }
+    Ok(())
 }
 
 /// What a file in the notebook may be called.

@@ -189,6 +189,7 @@ the frontmatter, so they still have to read it first and say so plainly.
 | Command | Description |
 | --- | --- |
 | `noda file add <path>... [--as <name>]` | Copy files into the active notebook. Auto-commits. |
+| `noda file mv <old> <new> [--update-links]` | Rename one of the notebook's files. Auto-commits. |
 | `noda file rm <name>` | Remove one of the notebook's files (a revertible commit). |
 
 A notebook holds files that are not notes: an image a note shows, a PDF you want kept with
@@ -208,6 +209,29 @@ makes the note render correctly in anything else that reads Markdown.
 Adding a file never overwrites one the notebook already holds; `--as <name>` stores it under
 a different name instead. `noda file rm` refuses a note and points at `noda rm`, because a
 note has an identity to lose and a file does not.
+
+Renaming a file leaves every link that named it pointing at nothing, so `noda file mv`
+always says which notes those are:
+
+```
+$ noda file mv IMG_4821.png diagram.png
+renamed  IMG_4821.png -> diagram.png
+2 notes link to IMG_4821.png
+  3fmwhh8y-meeting-notes.md
+  qs6vpx2s-reading-log.md
+```
+
+`--update-links` rewrites them instead. It is opt-in because it edits the prose of notes the
+command was not pointed at, which nothing else in noda does. Only the destination's bytes
+change — the link text, the title and a trailing `#page=2` are left where they were — and
+the notes are re-read afterwards, so a destination that could not be located is reported
+rather than assumed fixed.
+
+```
+$ noda file mv IMG_4821.png diagram.png --update-links
+renamed  IMG_4821.png -> diagram.png
+updated  2 notes
+```
 
 `noda ls` lists these under their own heading, and `noda status` counts them on the `files`
 row. Both are free: the walk that finds the notes passes them anyway.
@@ -247,6 +271,24 @@ block is prose about a link, not a link. Two limits are worth knowing: a destina
 as raw HTML (`<img src="...">`) is passed through by CommonMark and is not followed, and
 only files at the notebook's root can be reported as unused, though a link *into* a
 subdirectory resolves normally.
+
+### Paths
+
+| Command | Description |
+| --- | --- |
+| `noda path [<note-or-file>]` | Print where something lives. Omit the argument for the notebook itself. |
+
+noda does not wrap the rest of your toolchain, so it tells you where things are and gets out
+of the way. The argument is resolved the way noda resolves anything: as a note first, by id
+prefix or slug, and then as one of the notebook's files by name.
+
+```sh
+pandoc "$(noda path meeting-notes)" -o notes.pdf
+open "$(noda path diagram.png)"
+cd "$(noda path)" && git log --stat
+```
+
+A key that names both a note and a file is an error listing both, never a guess.
 
 ### Notes
 

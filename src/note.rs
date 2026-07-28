@@ -86,7 +86,7 @@ impl Note {
 }
 
 /// Splits `text` into the frontmatter body and everything after the closing `---`.
-fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
     let rest = text.strip_prefix("---\n")?;
     let mut pos = 0;
     for line in rest.split_inclusive('\n') {

@@ -74,6 +74,13 @@ enum Command {
         #[arg(long)]
         links: bool,
     },
+    /// Print where something lives, for the tools noda does not wrap:
+    /// `pandoc "$(noda path meeting-notes)"`.
+    Path {
+        /// A note (id or slug), or one of the notebook's files by name. Omit for
+        /// the notebook's own directory.
+        key: Option<String>,
+    },
     /// Full-text search across the active notebook.
     Search {
         /// What to look for. Several words mean all of them, in any order.
@@ -174,6 +181,16 @@ enum FileCommand {
         /// Store it under this name instead of its own. One file at a time.
         #[arg(long = "as", value_name = "NAME")]
         rename: Option<String>,
+    },
+    /// Rename one of the notebook's files. Auto-commits.
+    Mv {
+        /// The file's current name in the notebook.
+        old: String,
+        /// What to call it instead.
+        new: String,
+        /// Rewrite the links that named it, instead of reporting them.
+        #[arg(long)]
+        update_links: bool,
     },
     /// Remove one of the notebook's files (as a revertible commit).
     Rm {
@@ -281,8 +298,14 @@ fn run() -> noda::Result<()> {
                 paths: sources,
                 rename,
             } => cmd::file_add(&paths, sources, rename.as_deref())?,
+            FileCommand::Mv {
+                old,
+                new,
+                update_links,
+            } => cmd::file_mv(&paths, old, new, *update_links)?,
             FileCommand::Rm { name } => cmd::file_rm(&paths, name)?,
         },
+        Command::Path { key } => cmd::path(&paths, key.as_deref())?,
         Command::Notebook { command } => match command {
             NotebookCommand::Add { name, remote } => {
                 cmd::notebook_add(&paths, name, remote.as_deref())?

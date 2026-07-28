@@ -13,6 +13,7 @@
 //! notebook's business.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use pulldown_cmark::{Event, Parser, Tag};
 
@@ -35,6 +36,128 @@ pub fn targets(body: &str) -> BTreeSet<String> {
         }
     }
     found
+}
+
+/// Rewrites every destination that resolves to `old` so that it resolves to
+/// `new`, and returns the new body — or `None` when the body names `old`
+/// nowhere and there is nothing to change.
+///
+/// Only the destination's own bytes are replaced, so the link text, the title
+/// and the surrounding prose are left exactly as they were. Both spellings a
+/// destination can have are covered: written inline, and written once at the
+/// bottom as a reference definition.
+///
+/// This does not promise to have caught everything. A destination that survives
+/// backslash escapes or character references does not appear literally in the
+/// source and cannot be located, so the caller checks the result with `targets`
+/// rather than trusting it — see `cmd::file_mv`.
+pub fn rewrite(body: &str, old: &str, new: &str) -> Option<String> {
+    let encoded = encode_destination(new);
+    let mut edits: Vec<(Range<usize>, &str)> = Vec::new();
+
+    let parser = Parser::new(body);
+    // Taken before the iterator is consumed: the definitions are collected as
+    // the document is parsed, and this borrows the table they land in.
+    let definitions: Vec<(String, Range<usize>)> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, def)| (def.dest.to_string(), def.span.clone()))
+        .collect();
+
+    for (event, range) in parser.into_offset_iter() {
+        let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event else {
+            continue;
+        };
+        if local_path(&dest_url).as_deref() != Some(old) {
+            continue;
+        }
+        // A reference-style usage carries the destination it resolved to, but
+        // the bytes it was written from are in the definition, not here. Nothing
+        // to do at the usage: the definition below is the thing to rewrite.
+        if let Some(span) = locate(body, &range, &dest_url) {
+            edits.push((span, encoded.as_str()));
+        }
+    }
+
+    for (dest, span) in &definitions {
+        if local_path(dest).as_deref() == Some(old)
+            && let Some(span) = locate(body, span, dest)
+        {
+            edits.push((span, encoded.as_str()));
+        }
+    }
+
+    if edits.is_empty() {
+        return None;
+    }
+
+    // Applied back to front so an earlier edit cannot move a later one's bytes.
+    edits.sort_by_key(|(span, _)| span.start);
+    edits.dedup_by_key(|(span, _)| span.start);
+    let mut out = body.to_string();
+    for (span, replacement) in edits.into_iter().rev() {
+        out.replace_range(span, replacement);
+    }
+    Some(out)
+}
+
+/// Where inside `range` the destination's *path* was written.
+///
+/// Only the path: a `#page=2` or `?v=2` after it says how to open the file
+/// rather than which file it is, so it is left where it was.
+fn locate(body: &str, range: &Range<usize>, dest: &str) -> Option<Range<usize>> {
+    let source = body.get(range.clone())?;
+    let at = written_at(source, dest)?;
+    let path = dest.find(['#', '?']).unwrap_or(dest.len());
+    Some(range.start + at..range.start + at + path)
+}
+
+/// Which occurrence of `dest` inside `source` is the destination.
+///
+/// `[diagram.png](diagram.png)` writes it twice and only the second is the
+/// destination, so an occurrence sitting where a destination opens is preferred
+/// over one that merely reads like it. When nothing distinguishes them, this
+/// gives up rather than guessing — `targets` is what notices the miss.
+fn written_at(source: &str, dest: &str) -> Option<usize> {
+    let mut all = Vec::new();
+    let mut from = 0;
+    while let Some(at) = source[from..].find(dest) {
+        all.push(from + at);
+        from += at + 1;
+    }
+
+    let mut opens = all.iter().copied().filter(|&at| {
+        let before = &source[..at];
+        before.ends_with("](") || before.ends_with('<') || before.ends_with(": ")
+    });
+    match (opens.next(), opens.next()) {
+        (Some(only), None) => Some(only),
+        (None, _) => match all.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Percent-encodes the characters that would otherwise end a destination or
+/// start its title, so a filename with a space in it survives being written
+/// into a link.
+fn encode_destination(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        match ch {
+            '%' => out.push_str("%25"),
+            ' ' => out.push_str("%20"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            '<' => out.push_str("%3C"),
+            '>' => out.push_str("%3E"),
+            '"' => out.push_str("%22"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The notebook-relative file a destination names, or `None` when it does not
@@ -192,6 +315,74 @@ mod tests {
             targets_of("[a](./diagram.png) [b](diagram.png) ![c](diagram.png)\n"),
             ["diagram.png"]
         );
+    }
+
+    #[test]
+    fn rewrite_replaces_only_the_destination() {
+        let body = "See ![diagram.png](diagram.png \"the shape\") and [x](other.png)\n";
+        let out = rewrite(body, "diagram.png", "shape.png").unwrap();
+        assert_eq!(
+            out, "See ![diagram.png](shape.png \"the shape\") and [x](other.png)\n",
+            "the link text, the title and the other link are untouched"
+        );
+    }
+
+    #[test]
+    fn rewrite_reaches_a_reference_definition_at_the_bottom() {
+        let body = "See ![the diagram][d].\n\n[d]: diagram.png\n";
+        let out = rewrite(body, "diagram.png", "shape.png").unwrap();
+        assert_eq!(out, "See ![the diagram][d].\n\n[d]: shape.png\n");
+        assert!(targets(&out).contains("shape.png"));
+        assert!(!targets(&out).contains("diagram.png"));
+    }
+
+    #[test]
+    fn rewrite_finds_every_spelling_of_the_same_file() {
+        let body = "![a](diagram.png) [b](./diagram.png) [c](diagram.png#page=2)\n";
+        let out = rewrite(body, "diagram.png", "shape.png").unwrap();
+        assert_eq!(targets(&out), targets("[x](shape.png)"), "{out}");
+        assert!(out.contains("#page=2"), "the fragment survives: {out}");
+    }
+
+    #[test]
+    fn rewrite_leaves_a_body_that_never_named_it_alone() {
+        assert!(rewrite("![a](other.png)\n", "diagram.png", "shape.png").is_none());
+        assert!(
+            rewrite("```\n![a](diagram.png)\n```\n", "diagram.png", "shape.png").is_none(),
+            "a link inside a fence is not a link here either"
+        );
+    }
+
+    /// A name that needs escaping to survive being written into a destination
+    /// gets it, so the rewritten link still resolves to the file.
+    #[test]
+    fn rewrite_encodes_a_new_name_that_would_not_survive_verbatim() {
+        let out = rewrite("![a](diagram.png)\n", "diagram.png", "my shape (v2).png").unwrap();
+        assert_eq!(out, "![a](my%20shape%20%28v2%29.png)\n");
+        assert_eq!(
+            targets(&out).into_iter().next().unwrap(),
+            "my shape (v2).png"
+        );
+    }
+
+    /// The link text can read exactly like the destination. Only the one that
+    /// sits where a destination opens is the destination.
+    #[test]
+    fn the_link_text_is_not_mistaken_for_the_destination() {
+        let out = rewrite("[diagram.png](diagram.png)\n", "diagram.png", "shape.png").unwrap();
+        assert_eq!(out, "[diagram.png](shape.png)\n");
+    }
+
+    /// A destination written with backslash escapes does not appear literally in
+    /// the source, so it cannot be located. `rewrite` leaves it rather than
+    /// guessing, and `targets` is what tells the caller it was missed.
+    #[test]
+    fn a_destination_that_cannot_be_located_is_left_for_the_caller_to_notice() {
+        let body = "[a](my\\(file\\).png)\n";
+        assert_eq!(targets(body).into_iter().next().unwrap(), "my(file).png");
+        assert!(rewrite(body, "my(file).png", "shape.png").is_none());
+        // Which is why the caller re-reads the body instead of trusting it.
+        assert!(targets(body).contains("my(file).png"));
     }
 
     #[test]
