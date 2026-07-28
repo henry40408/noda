@@ -1671,6 +1671,165 @@ fn listing_by_tag_does_not_list_the_notebooks_files() {
     assert!(tagged.contains("alpha"), "{tagged}");
 }
 
+/// A file somewhere else on disk, to copy into a notebook from.
+fn source_file(root: &TempRoot, name: &str) -> PathBuf {
+    let dir = root.0.join("elsewhere");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, "contents\n").unwrap();
+    path
+}
+
+#[test]
+fn file_add_copies_it_in_and_commits_it() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let source = source_file(&root, "diagram.png");
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::file_add(&paths, std::slice::from_ref(&source), None).unwrap());
+    assert_eq!(out.trim_end(), "added  diagram.png");
+    assert!(notebook.join("diagram.png").is_file());
+    assert!(source.is_file(), "a copy, so the original stays put");
+    assert_eq!(
+        commit_count(&notebook),
+        commits + 1,
+        "one commit, revertible like every other change"
+    );
+    assert!(
+        plain(&cmd::ls(&paths, None, None).unwrap()).contains("files\n  diagram.png"),
+        "and it is listed"
+    );
+}
+
+#[test]
+fn file_add_takes_several_at_once_in_one_commit() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let sources = vec![source_file(&root, "a.png"), source_file(&root, "b.pdf")];
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::file_add(&paths, &sources, None).unwrap());
+    assert!(out.contains("added  a.png"), "{out}");
+    assert!(out.contains("added  b.pdf"), "{out}");
+    assert_eq!(commit_count(&notebook), commits + 1, "one commit, not two");
+}
+
+#[test]
+fn file_add_will_not_overwrite_what_the_notebook_already_holds() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let source = source_file(&root, "diagram.png");
+    cmd::file_add(&paths, std::slice::from_ref(&source), None).unwrap();
+    std::fs::write(notebook.join("diagram.png"), "the one already here\n").unwrap();
+
+    let err = cmd::file_add(&paths, std::slice::from_ref(&source), None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("already holds diagram.png"), "{err}");
+    assert!(err.contains("--as"), "and says how to get past it: {err}");
+    assert_eq!(
+        std::fs::read_to_string(notebook.join("diagram.png")).unwrap(),
+        "the one already here\n",
+        "untouched"
+    );
+
+    cmd::file_add(&paths, &[source], Some("diagram-2.png")).unwrap();
+    assert!(notebook.join("diagram-2.png").is_file());
+}
+
+/// Nothing is copied until every source has been checked, so a command that
+/// fails leaves the notebook exactly as it found it.
+#[test]
+fn file_add_copies_nothing_when_one_of_them_cannot_be_added() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let good = source_file(&root, "good.png");
+    let missing = root.0.join("elsewhere").join("not-here.png");
+    let commits = commit_count(&notebook);
+
+    assert!(cmd::file_add(&paths, &[good, missing], None).is_err());
+    assert!(
+        !notebook.join("good.png").exists(),
+        "the one that could have been copied was not"
+    );
+    assert_eq!(commit_count(&notebook), commits);
+}
+
+#[test]
+fn file_add_refuses_the_names_it_could_not_then_account_for() {
+    let (root, paths) = initialized();
+    let source = source_file(&root, "diagram.png");
+
+    for (rename, expected) in [
+        (".hidden.png", "dotfiles"),
+        ("sub/x.png", "cannot be a path"),
+        // A `*.md` whose name splits into an id and a slug reads as a note that
+        // has lost its frontmatter, and `doctor` would report it as one.
+        ("abcdefgh-hello.md", "claims a note's id"),
+    ] {
+        let err = cmd::file_add(&paths, std::slice::from_ref(&source), Some(rename))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(expected), "{rename}: {err}");
+    }
+
+    let err = cmd::file_add(&paths, &[source.clone(), source], Some("x.png"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot be given with several"), "{err}");
+}
+
+#[test]
+fn file_add_refuses_a_directory() {
+    let (root, paths) = initialized();
+    source_file(&root, "inside.png");
+    let dir = root.0.join("elsewhere");
+
+    let err = cmd::file_add(&paths, &[dir], None).unwrap_err().to_string();
+    assert!(err.contains("not a file"), "{err}");
+}
+
+#[test]
+fn file_rm_removes_it_as_a_commit() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::file_add(&paths, &[source_file(&root, "diagram.png")], None).unwrap();
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::file_rm(&paths, "diagram.png").unwrap());
+    assert_eq!(out.trim_end(), "removed  diagram.png");
+    assert!(!notebook.join("diagram.png").exists());
+    assert_eq!(commit_count(&notebook), commits + 1);
+}
+
+/// The two are not interchangeable: a note has an identity to lose, so the
+/// command that removes one is not the command that removes a file.
+#[test]
+fn file_rm_refuses_a_note_and_says_which_command_wants_it() {
+    let (_root, paths) = initialized();
+    let summary = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let file = note_file(&summary);
+
+    let err = cmd::file_rm(&paths, &file).unwrap_err().to_string();
+    assert!(err.contains("is a note"), "{err}");
+    assert!(err.contains("`noda rm`"), "{err}");
+    assert!(
+        paths
+            .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+            .join(&file)
+            .exists(),
+        "and the note is still there"
+    );
+}
+
+#[test]
+fn file_rm_says_so_when_there_is_no_such_file() {
+    let (_root, paths) = initialized();
+    let err = cmd::file_rm(&paths, "nope.txt").unwrap_err().to_string();
+    assert!(err.contains("no file called nope.txt"), "{err}");
+}
+
 #[test]
 fn search_matches_the_body_the_title_and_the_tags() {
     let (_root, paths) = initialized();

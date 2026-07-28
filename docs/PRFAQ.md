@@ -85,12 +85,13 @@ Yes. `noda clone <url>` pulls an existing remote, and pointing noda at a directo
 Markdown files adopts them in place.
 
 **Q: Can I keep images or PDFs in a notebook?**
-Yes, and there is nothing to learn: copy the file into the notebook directory. It is
-committed and synced like anything else, and a note points at it with an ordinary Markdown
-link, so the note still renders correctly in any other Markdown reader. `noda ls` lists
-those files under their own heading and `noda status` counts them. `noda doctor --links`
-follows every link and tells you which files no note uses and which links name nothing —
-it only reports, and it never deletes.
+Yes. `noda file add ~/Downloads/diagram.png` puts one in the active notebook and commits it,
+and `noda file rm diagram.png` takes it out again — you never need to know where on disk the
+notebook lives. The file is synced like anything else, and a note points at it with an
+ordinary Markdown link, so the note still renders correctly in any other Markdown reader.
+`noda ls` lists those files under their own heading and `noda status` counts them.
+`noda doctor --links` follows every link and tells you which files no note uses and which
+links name nothing — it only reports, and it never deletes.
 
 **Q: What about a web UI?**
 Planned. The v1 focus is the CLI. A `noda web` local server that serves the same notebook
@@ -162,17 +163,26 @@ after every `pull`, and a corruption path. v1 declines that trade. If notebooks 
 of thousands turn up, a cache is a cache: it can be added later without changing anything
 the user's repository holds.
 
-**Q: Why is there no `noda attach`, and why is an attachment not tied to a note by its
-filename?**
-Both were designed and both were rejected. A command was rejected because a notebook is a
-directory: `cp` already puts a file in one, and a verb that wraps `cp` would be noda's first
-piece of ceremony that git and the filesystem do not already provide. The rule this project
-keeps reaching for is a convention, not a verb — identity is a filename rather than an `id`
-field, and the notebook is "a normal git repo, `cd` in".
+**Q: Why is the command `noda file add <path>` rather than `noda attach <note> <file>`?**
+Because the file goes into the notebook, not into a note.
+
+An earlier draft of this document argued there should be no command at all: a notebook is a
+directory, `cp` already puts a file in one, and a verb wrapping `cp` would be ceremony the
+filesystem already provides. That was wrong, and the sentence it produced in the README is
+what showed it — `cp ~/Downloads/diagram.png ~/.local/share/noda/notebooks/work/`. Every
+other thing you can do to a notebook, noda does; that line sent you to find noda's own
+directory and operate the storage by hand, and it was only correct when `XDG_DATA_HOME` was
+unset and the notebook happened to be called `work`. A command that saves someone from
+knowing where their data lives is not ceremony.
+
+What stayed rejected is the *note* argument. Which note uses a file is written in that
+note's prose as a Markdown link; a command that also took a note would record the same
+relationship in two places, and they would disagree the first time anyone edited one of
+them.
 
 Tying an attachment to a note by naming it `<note-id>-diagram.png` was rejected for a
-different reason. It is nearly free to check — ownership would be structural, readable from
-a directory listing without opening a single note — but it asks a person to encode a
+different reason again. It is nearly free to check — ownership would be structural, readable
+from a directory listing without opening a single note — but it asks a person to encode a
 relationship in a filename by hand, and to keep encoding it. That is a mental burden the
 model puts on the user in exchange for a saving the machine enjoys, which is the wrong way
 round. It also breaks the id-prefix bargain: `k3f9m2p1-diagram.md` and its owning note share

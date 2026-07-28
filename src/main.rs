@@ -113,6 +113,11 @@ enum Command {
         #[arg(long, conflicts_with_all = ["key", "unset"])]
         edit: bool,
     },
+    /// Put files in the notebook, and take them out again.
+    File {
+        #[command(subcommand)]
+        command: FileCommand,
+    },
     /// Manage notebooks.
     Notebook {
         #[command(subcommand)]
@@ -156,6 +161,24 @@ enum Command {
             value_name = "+TAG|-TAG"
         )]
         changes: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FileCommand {
+    /// Copy files into the active notebook. Auto-commits.
+    Add {
+        /// Files to copy in.
+        #[arg(required = true, num_args = 1.., value_name = "PATH")]
+        paths: Vec<std::path::PathBuf>,
+        /// Store it under this name instead of its own. One file at a time.
+        #[arg(long = "as", value_name = "NAME")]
+        rename: Option<String>,
+    },
+    /// Remove one of the notebook's files (as a revertible commit).
+    Rm {
+        /// The file's name in the notebook, as `noda ls` shows it.
+        name: String,
     },
 }
 
@@ -253,6 +276,13 @@ fn run() -> noda::Result<()> {
             (_, None, ..) => cmd::config_show(&paths)?,
         },
         Command::Use { name } => cmd::use_notebook(&paths, name)?,
+        Command::File { command } => match command {
+            FileCommand::Add {
+                paths: sources,
+                rename,
+            } => cmd::file_add(&paths, sources, rename.as_deref())?,
+            FileCommand::Rm { name } => cmd::file_rm(&paths, name)?,
+        },
         Command::Notebook { command } => match command {
             NotebookCommand::Add { name, remote } => {
                 cmd::notebook_add(&paths, name, remote.as_deref())?

@@ -186,15 +186,28 @@ the frontmatter, so they still have to read it first and say so plainly.
 
 ### Attachments
 
-There is no command for attaching a file, because a notebook is a directory: copy the file
-in and it is there. It is committed and synced with everything else, and a note points at it
-with an ordinary Markdown link, which is what makes the note render correctly in anything
-else that reads Markdown too.
+| Command | Description |
+| --- | --- |
+| `noda file add <path>... [--as <name>]` | Copy files into the active notebook. Auto-commits. |
+| `noda file rm <name>` | Remove one of the notebook's files (a revertible commit). |
+
+A notebook holds files that are not notes: an image a note shows, a PDF you want kept with
+what you wrote about it, a receipt parked where you will find it again. `noda file add` puts
+one there and commits it; nothing about a notebook requires knowing where on disk it lives.
 
 ```
-$ cp ~/Downloads/diagram.png ~/.local/share/noda/notebooks/work/
+$ noda file add ~/Downloads/diagram.png
+added  diagram.png
 $ noda edit meeting-notes        # write: ![the shape of it](diagram.png)
 ```
+
+The command says nothing about notes, and takes no note as an argument. Which note uses a
+file is written in that note's prose, as an ordinary Markdown link — which is also what
+makes the note render correctly in anything else that reads Markdown.
+
+Adding a file never overwrites one the notebook already holds; `--as <name>` stores it under
+a different name instead. `noda file rm` refuses a note and points at `noda rm`, because a
+note has an identity to lose and a file does not.
 
 `noda ls` lists these under their own heading, and `noda status` counts them on the `files`
 row. Both are free: the walk that finds the notes passes them anyway.
@@ -224,7 +237,7 @@ $ noda doctor --links
 Both are reported and neither is repaired. A file nothing links to may be an attachment
 whose note was deleted, or a receipt you parked here on purpose — and the only repair
 available is deleting something git cannot regenerate from anything else. A link that names
-nothing may be a typo, or a file you have not copied in yet.
+nothing may be a typo, or a file you have not added yet.
 
 The links are read with a CommonMark parser rather than searched for as text, because the
 alternative reports files as unused when they are not: a reference-style link keeps its
@@ -365,7 +378,7 @@ $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 └── notebooks/
     ├── work/                   # a notebook = a git repo
     │   ├── .git/
-    │   ├── diagram.png         # an attachment is just a file you copied in
+    │   ├── diagram.png         # a file put there by `noda file add`
     │   ├── k3f9m2p1-meeting-notes.md
     │   └── q7x2rstv-reading-log.md
     └── personal/
