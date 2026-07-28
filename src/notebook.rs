@@ -172,6 +172,15 @@ impl Notebook {
         Notebook::open(paths, &active_name(paths)?)
     }
 
+    /// Where the notes and the committed index have stopped agreeing. Empty is
+    /// the healthy state.
+    ///
+    /// Shared by `status`, which reports it, and `sync`, which refuses on it —
+    /// so the two cannot drift into disagreeing about what a disagreement is.
+    pub fn disagreements(&self) -> Result<Vec<(Disagreement, Vec<String>)>> {
+        Ok(reconcile(&self.scan()?.notes, &self.index()?))
+    }
+
     /// Where the notebook stands: what is uncommitted, and how far it has
     /// drifted from the remote.
     ///

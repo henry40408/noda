@@ -988,8 +988,23 @@ pub fn push(paths: &Paths) -> Result<String> {
 
 /// Commit, pull, push — in that order, so local work is never left behind by a
 /// merge and the push always carries it.
+///
+/// Refuses outright while the notes and the index disagree. `sync` commits the
+/// whole working tree without asking what is in it, so without this it is the
+/// command that makes such a disagreement permanent and remote — including the
+/// one case noda already refuses by hand, an `edit` that changed a note's id and
+/// was left on disk rather than committed. Guarding the id in `edit` and staging
+/// it silently here would be the same codebase saying two different things.
 pub fn sync(paths: &Paths) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
+    let disagreements = notebook.disagreements()?;
+    if !disagreements.is_empty() {
+        return Err(Error::msg(format!(
+            "the notes and the index disagree; nothing was committed, pulled or pushed\n{}\n\
+             see `noda status`, or move one side at a time with `noda pull` and `noda push`",
+            describe_disagreements(&disagreements)
+        )));
+    }
     let mut lines = Vec::new();
     if notebook.commit_all("sync: local changes")? {
         lines.push("commit: local changes".to_string());
