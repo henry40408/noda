@@ -1,14 +1,13 @@
 //! Command implementations. Each one takes `Paths` explicitly so tests can run
 //! against a throwaway root without touching the real environment.
 
-use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::{self, Config};
 use crate::note::{self, Note};
-use crate::notebook::{self, Notebook};
+use crate::notebook::{self, Notebook, Problem};
 use crate::paths::Paths;
 use crate::remote;
 use crate::style;
@@ -19,9 +18,6 @@ pub const DEFAULT_NOTEBOOK: &str = config::DEFAULT_NOTEBOOK;
 
 /// Scratch file used when composing a note in `$EDITOR`.
 const EDIT_FILE: &str = "NOTE_EDITMSG.md";
-
-/// Committed `id ↔ slug` lookup, relative to the notebook root.
-const INDEX_PATH: &str = ".noda/index.tsv";
 
 /// Creates the XDG directories, a default notebook, and points `active` at it.
 /// Safe to run more than once.
@@ -190,26 +186,22 @@ pub fn add(
             .ok_or_else(|| Error::msg("aborted: the note is empty, so it has no title"))?,
     };
 
-    let mut index = notebook.index()?;
-    let slug = unique_slug(&notebook, &note::slugify(&title));
+    // Two notes may share a slug: the id in front of it keeps the filenames
+    // apart, which is what git needs. `resolve` asks for an id when a slug turns
+    // out to name more than one note.
+    let slug = note::slugify(&title);
+    let id = note::mint_id(&notebook.taken_ids()?);
     let note = Note {
-        // Against the notes as well as the index: an id can be in the notebook
-        // without the index knowing, and handing it out twice is not undoable.
-        id: note::mint_id(&notebook.taken_ids()?),
         title,
         tags,
         body: body.trim_start_matches('\n').to_string(),
     };
 
-    std::fs::write(notebook.note_path(&slug), note.render())?;
-    index.push((note.id.clone(), slug.clone()));
-    notebook.write_index(&index)?;
-    notebook.commit(
-        &[Path::new(&format!("{slug}.md")), Path::new(INDEX_PATH)],
-        &format!("add: {slug}"),
-    )?;
+    let file = note::file_name(&id, &slug);
+    std::fs::write(notebook.path.join(&file), note.render())?;
+    notebook.commit(&[Path::new(&file)], &format!("add: {slug}"))?;
 
-    Ok(summary(&note.id, &slug, &note.tags))
+    Ok(summary(&id, &slug, &note.tags))
 }
 
 /// Lists notes as `id  slug  title  tags`, aligned.
@@ -223,8 +215,15 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
     let rows: Vec<(String, String, String, String)> = notebook
         .notes()?
         .into_iter()
-        .filter(|(_, note)| tag.is_none_or(|t| note.tags.iter().any(|nt| nt == t)))
-        .map(|(slug, note)| (note.id, slug, note.title, note.tags.join(", ")))
+        .filter(|file| tag.is_none_or(|t| file.note.tags.iter().any(|nt| nt == t)))
+        .map(|file| {
+            (
+                file.id,
+                file.slug,
+                file.note.title,
+                file.note.tags.join(", "),
+            )
+        })
         .collect();
 
     if rows.is_empty() {
@@ -254,8 +253,9 @@ pub fn ls(paths: &Paths, notebook: Option<&str>, tag: Option<&str>) -> Result<St
 /// Prints a note verbatim — frontmatter included, because that is the file.
 pub fn show(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
+    let (id, slug) = notebook.resolve(key)?;
     Ok(dim_frontmatter(&std::fs::read_to_string(
-        notebook.resolve(key)?,
+        notebook.note_path(&id, &slug),
     )?))
 }
 
@@ -311,16 +311,16 @@ pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
     if note.tags == before {
         return Ok(format!(
             "{}  (no change)",
-            summary(&note.id, &located.slug, &note.tags)
+            summary(&located.id, &located.slug, &note.tags)
         ));
     }
 
     std::fs::write(&located.path, note.render())?;
     notebook.commit(
-        &[Path::new(&format!("{}.md", located.slug))],
+        &[Path::new(&note::file_name(&located.id, &located.slug))],
         &format!("tag: {}", located.slug),
     )?;
-    Ok(summary(&note.id, &located.slug, &note.tags))
+    Ok(summary(&located.id, &located.slug, &note.tags))
 }
 
 /// Opens a note in `$EDITOR` and commits whatever was saved.
@@ -344,27 +344,22 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
 
     // The file is left exactly as it was saved: a rejected edit stays on disk to
     // be fixed or thrown away with `git checkout`, never silently discarded.
+    //
+    // There is no id to guard here any more. It is in the filename, which an
+    // editor never touches, so an edit cannot change which note this is — the
+    // one thing this command used to have to check for by hand.
     let edited = Note::parse(&after).map_err(|e| {
         Error::msg(format!(
             "{}: {e}\nthe file was left as you saved it and was not committed",
             located.path.display()
         ))
     })?;
-    if edited.id != located.note.id {
-        return Err(Error::msg(format!(
-            "{}: the id changed from {} to {} — ids are permanent; \
-             the file was left as you saved it and was not committed",
-            located.path.display(),
-            located.note.id,
-            edited.id
-        )));
-    }
 
     notebook.commit(
-        &[Path::new(&format!("{}.md", located.slug))],
+        &[Path::new(&note::file_name(&located.id, &located.slug))],
         &format!("edit: {}", located.slug),
     )?;
-    Ok(summary(&edited.id, &located.slug, &edited.tags))
+    Ok(summary(&located.id, &located.slug, &edited.tags))
 }
 
 /// Retitles a note. The slug follows the new title; the id never moves.
@@ -379,56 +374,23 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
     }
     note::validate_title(title)?;
 
-    let base = note::slugify(title);
-    let slug = if base == located.slug {
-        located.slug.clone()
-    } else {
-        unique_slug(&notebook, &base)
-    };
+    let slug = note::slugify(title);
     note.title = title.to_string();
 
-    std::fs::write(notebook.note_path(&slug), note.render())?;
-    let mut changed = vec![format!("{slug}.md")];
+    // Only the slug half of the filename moves. The id stays, so the note keeps
+    // its identity and its history across the rename without anything having to
+    // be told about it.
+    let file = note::file_name(&located.id, &slug);
+    std::fs::write(notebook.path.join(&file), note.render())?;
+    let mut changed = vec![file];
     if slug != located.slug {
         std::fs::remove_file(&located.path)?;
-        changed.push(format!("{}.md", located.slug));
-
-        let mut index = notebook.index()?;
-        let wanted = note::normalize_id(&note.id);
-        for (id, entry) in &mut index {
-            // The entry that moves is the one naming the file that moved. Keying
-            // on the id alone missed whenever the file carried one the index had
-            // recorded differently: nothing matched, the index was written back
-            // untouched, and the rename left an entry pointing at a file that no
-            // longer existed *and* a file the index did not name.
-            //
-            // The id is still worth trying, folded the way `resolve` folds it, so
-            // a note recorded under a slug that is not there is repointed rather
-            // than left stale — but only where the entry is stale.
-            if *entry == located.slug
-                || (note::normalize_id(id) == wanted && is_stale(&notebook, entry))
-            {
-                entry.clone_from(&slug);
-            }
-        }
-        notebook.write_index(&index)?;
-        changed.push(INDEX_PATH.to_string());
+        changed.push(note::file_name(&located.id, &located.slug));
     }
 
     let files: Vec<&Path> = changed.iter().map(Path::new).collect();
     notebook.commit(&files, &format!("mv: {} -> {slug}", located.slug))?;
-    Ok(summary(&note.id, &slug, &note.tags))
-}
-
-/// Whether an index entry records a slug no file bears — a leftover, which the
-/// command rewriting the index may take over or drop.
-///
-/// The guard on every id-keyed index edit. Ids are compared folded, so an entry
-/// can match on id alone while belonging to a different, live note; rewriting or
-/// dropping *that* one turns one disagreement into another somewhere else. Only
-/// what nothing is using is fair game.
-fn is_stale(notebook: &Notebook, slug: &str) -> bool {
-    !notebook.note_path(slug).is_file()
+    Ok(summary(&located.id, &slug, &note.tags))
 }
 
 /// Deletes a note. The file goes, but the commit that removed it does not, so
@@ -441,31 +403,19 @@ pub fn rm(paths: &Paths, key: &str) -> Result<String> {
     let found = find(&notebook, key)?;
 
     std::fs::remove_file(&found.path)?;
-    let mut index = notebook.index()?;
-    // Keyed on the id noda minted, but a file edited outside noda can carry a
-    // different one — and then the entry for the note just deleted would stay
-    // behind forever, because nothing else ever revisits it. The slug is the
-    // file that has gone, so it settles the case the id cannot, including a file
-    // that cannot be read and so offers no id at all.
-    index.retain(|(id, slug)| found.id.as_deref() != Some(id.as_str()) && *slug != found.slug);
-    notebook.write_index(&index)?;
     notebook.commit(
-        &[
-            Path::new(&format!("{}.md", found.slug)),
-            Path::new(INDEX_PATH),
-        ],
+        &[Path::new(&note::file_name(&found.id, &found.slug))],
         &format!("rm: {}", found.slug),
     )?;
 
-    let tags = found.note.as_ref().ok().map(|note| note.tags.clone());
+    let tags = found
+        .note
+        .as_ref()
+        .map(|note| note.tags.clone())
+        .unwrap_or_default();
     Ok(format!(
         "removed  {}",
-        match &found.id {
-            Some(id) => summary(id, &found.slug, &tags.unwrap_or_default()),
-            // Neither the file nor the index could say what it was called. The
-            // slug is what there is, and it is what was asked for.
-            None => found.slug.clone(),
-        }
+        summary(&found.id, &found.slug, &tags)
     ))
 }
 
@@ -620,17 +570,19 @@ pub fn search(paths: &Paths, query: &str) -> Result<String> {
 
     let notebook = Notebook::open_active(paths)?;
     let mut rows = Vec::new();
-    for (slug, note) in notebook.notes()? {
-        // The note's own fields, not the raw file — otherwise `---` and `id:`
-        // would be searchable text, and they are the container, not the note.
+    for file in notebook.notes()? {
+        let note = file.note;
+        // The note's own fields, not the raw file — otherwise `---` and the
+        // frontmatter keys would be searchable text, and they are the container,
+        // not the note.
         let haystack =
             format!("{}\n{}\n{}", note.title, note.tags.join(" "), note.body).to_lowercase();
         if !terms.iter().all(|term| haystack.contains(term.as_str())) {
             continue;
         }
         rows.push((
-            note.id,
-            slug,
+            file.id,
+            file.slug,
             note.title,
             note.tags.join(", "),
             excerpt(&note.body, &terms),
@@ -740,18 +692,6 @@ pub fn status(paths: &Paths) -> Result<String> {
         1 => "1 file uncommitted".to_string(),
         n => format!("{n} files uncommitted"),
     };
-    // The row is already labelled "notes"; saying it twice helps nobody.
-    let mut notes = status.notes.to_string();
-    if !status.unreadable.is_empty() {
-        let names = status.unreadable.join(", ");
-        let count = status.unreadable.len();
-        let noun = if count == 1 { "file is" } else { "files are" };
-        notes.push_str(&style::paint(
-            style::MUTED,
-            &format!("  ({count} {noun} not a note: {names})"),
-        ));
-    }
-
     let mut rows = vec![
         (
             "notebook",
@@ -761,14 +701,14 @@ pub fn status(paths: &Paths) -> Result<String> {
                 style::paint(style::MUTED, &format!("({})", status.branch))
             ),
         ),
-        ("notes", notes),
+        ("notes", status.notes.to_string()),
         ("changes", changes),
     ];
 
     // Only when there is something to say: a row that reads "0 problems" on
     // every healthy notebook teaches people to skip the line that matters.
-    if !status.disagreements.is_empty() {
-        rows.push(("index", describe_disagreements(&status.disagreements)));
+    if !status.problems.is_empty() {
+        rows.push(("problems", describe_problems(&status.problems)));
     }
 
     match status.remote {
@@ -800,22 +740,19 @@ pub fn status(paths: &Paths) -> Result<String> {
     Ok(out)
 }
 
-/// How many notes and index entries disagree, and in what way.
+/// What the walk of the notebook turned up, and in what way.
 ///
 /// One kind gets one line, which already says how many — a headline above it
 /// would only repeat the number. Several kinds get a total first, so the size
 /// of the problem is legible before its breakdown.
-fn describe_disagreements(disagreements: &[(notebook::Disagreement, Vec<String>)]) -> String {
+fn describe_problems(problems: &[(Problem, Vec<String>)]) -> String {
     let mut out = String::new();
-    if disagreements.len() > 1 {
-        let total: usize = disagreements
-            .iter()
-            .map(|(_, subjects)| subjects.len())
-            .sum();
+    if problems.len() > 1 {
+        let total: usize = problems.iter().map(|(_, subjects)| subjects.len()).sum();
         let noun = if total == 1 { "problem" } else { "problems" };
         let _ = writeln!(out, "{total} {noun}");
     }
-    for (kind, subjects) in disagreements {
+    for (kind, subjects) in problems {
         let _ = writeln!(
             out,
             "{}{}",
@@ -824,14 +761,11 @@ fn describe_disagreements(disagreements: &[(notebook::Disagreement, Vec<String>)
         );
     }
     // Detection without a remedy is a trap, so the row that reports the problem
-    // names the command that fixes it — and where the whole list can be seen.
+    // names the command that looks at it — and where the whole list can be seen.
     let _ = write!(
         out,
         "{}",
-        style::paint(
-            style::MUTED,
-            "run `noda reconcile` to rewrite the index from the notes"
-        )
+        style::paint(style::MUTED, "run `noda reconcile` to look at these")
     );
     out.trim_end().to_string()
 }
@@ -849,51 +783,47 @@ fn elide(subjects: &[String]) -> String {
     shown.join("; ")
 }
 
-/// Rewrites `.noda/index.tsv` from what the notes themselves carry.
+/// Reports what the notebook holds that noda cannot simply act on, and adopts
+/// the notes that are only waiting for an id.
 ///
-/// The id lives in each note's frontmatter, so the index is always derivable
-/// from the notes and never the other way round. That single fact decides the
-/// whole command: the repaired index *is* the scan, which settles every
-/// unambiguous case at once — a note the index does not name is added, an entry
-/// whose note is gone is dropped, a note whose id was recorded differently is
-/// taken at its own word, and an id the index gave to two notes goes to
-/// whichever file carries it.
+/// There is nothing derived to rebuild any more — the id is in the filename, so
+/// the files *are* the record and there is no second copy to fall out of step.
+/// What is left is what arrives from outside: a note written by hand, a file
+/// copied in, two machines that minted one id without ever meeting.
 ///
-/// It reconciles the index *to* the notes and never renumbers. A repair that
-/// assigned fresh ids would restore nothing — the ids are in the files, so new
-/// ones would invent identities and break every link that already pointed at
-/// the old ones.
+/// Exactly one of those has a repair that cannot lose anything: a `*.md` holding
+/// frontmatter but no id is a note that has said what it is and only lacks a
+/// name, so it is given one. The other two are reported and left alone — an id
+/// on two notes means discarding one identity to keep the other, and a file that
+/// claims an id without frontmatter might be a broken note or might never have
+/// been one. Only their author knows.
 ///
 /// Where `status` elides, this names every file: it is the place people are
 /// sent to see the full list.
 pub fn reconcile(paths: &Paths, dry_run: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let scan = notebook.scan()?;
-    let index = notebook.index()?;
-
-    let stopped = refusals(&scan, &index);
-    if !stopped.is_empty() {
-        return Err(Error::msg(format!(
-            "nothing was changed — noda cannot settle this for you\n{}\n\
-             run `noda reconcile` again once it is settled",
-            stopped.join("\n")
-        )));
-    }
-
-    let changes = notebook::compare(&scan.notes, &index);
-    if changes.is_empty() {
-        return Ok("the notes and the index already agree".to_string());
+    let problems = scan.problems();
+    if problems.is_empty() {
+        return Ok("the notebook is in order".to_string());
     }
 
     let mut out = String::new();
-    for (kind, subjects) in &changes {
+    for (kind, subjects) in &problems {
         let _ = writeln!(out, "{}", kind.describe(subjects.len()));
         for subject in subjects {
             let _ = writeln!(out, "  {subject}");
         }
     }
+    for line in advice(&scan) {
+        let _ = writeln!(out, "{line}");
+    }
 
-    let count = scan.notes.len();
+    if scan.unnamed.is_empty() {
+        return Ok(out.trim_end().to_string());
+    }
+
+    let count = scan.unnamed.len();
     let noun = if count == 1 { "note" } else { "notes" };
     if dry_run {
         let _ = write!(
@@ -901,70 +831,60 @@ pub fn reconcile(paths: &Paths, dry_run: bool) -> Result<String> {
             "{}",
             style::paint(
                 style::MUTED,
-                &format!("would rewrite {INDEX_PATH} to name {count} {noun} — nothing was changed")
+                &format!("would adopt {count} {noun} — nothing was changed")
             )
         );
-        return Ok(out);
+        return Ok(out.trim_end().to_string());
     }
 
     // A commit like every other change noda makes, so a repair that went
     // somewhere unwanted is revertible.
-    notebook.write_index(&scan.notes)?;
-    notebook.commit(
-        &[Path::new(INDEX_PATH)],
-        &format!("reconcile: {INDEX_PATH} from {count} {noun}"),
-    )?;
-    let _ = write!(out, "reconciled {INDEX_PATH}: {count} {noun}");
-    Ok(out)
+    let mut taken = notebook.taken_ids()?;
+    let mut changed = Vec::new();
+    for file in &scan.unnamed {
+        let stem = file.strip_suffix(".md").unwrap_or(file);
+        let id = note::mint_id(&taken);
+        taken.insert(note::normalize_id(&id));
+        let adopted = note::file_name(&id, &note::slugify(stem));
+        std::fs::rename(notebook.path.join(file), notebook.path.join(&adopted))?;
+        changed.push(file.clone());
+        changed.push(adopted);
+    }
+    let files: Vec<&Path> = changed.iter().map(Path::new).collect();
+    notebook.commit(&files, &format!("reconcile: adopt {count} {noun}"))?;
+    let _ = write!(out, "adopted {count} {noun}");
+    Ok(out.trim_end().to_string())
 }
 
-/// The cases `reconcile` must not settle on its own, as lines ready to print.
-///
-/// Both are the same shape of problem: two readings of the notebook are equally
-/// defensible and picking one silently loses something that cannot be minted
-/// again. Both are reported together, so nobody fixes one and discovers the
-/// other on the next run.
-fn refusals(scan: &notebook::Scan, index: &[(String, String)]) -> Vec<String> {
+/// What to do about each kind of problem, as lines ready to print. Detection
+/// without a remedy is a trap, and the two noda refuses to settle are exactly
+/// the ones where saying nothing would leave someone stuck.
+fn advice(scan: &notebook::Scan) -> Vec<String> {
     let mut out = Vec::new();
-
-    // Two note files carrying one id. Both are real notes; keeping either one's
-    // identity means discarding the other's.
-    let mut by_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (id, slug) in &scan.notes {
-        by_id
-            .entry(note::normalize_id(id))
-            .or_default()
-            .push(format!("{slug}.md"));
-    }
-    for (id, files) in by_id.iter_mut().filter(|(_, files)| files.len() > 1) {
-        // By name: the scan is ordered by id, which folds, so `K3F9`'s file would
-        // otherwise come before `k3f9`'s for a reason no reader can see.
-        files.sort();
-        out.push(format!(
-            "id `{id}` is carried by {} notes: {}\n  \
-             decide which one keeps it and give the others a new id",
-            files.len(),
-            files.join(", ")
-        ));
-    }
-
-    // An index entry naming a file that is there but is not readable as a note.
-    // Dropping the entry throws away an id that nothing else records; keeping it
-    // leaves a disagreement no run of this command can ever clear. Which one is
-    // right depends on whether the file is a note that lost its frontmatter or
-    // something that was never a note, and only its author knows.
-    let unreadable: HashSet<&str> = scan.unreadable.iter().map(String::as_str).collect();
-    for (id, slug) in index {
-        let file = format!("{slug}.md");
-        if unreadable.contains(file.as_str()) {
-            out.push(format!(
-                "{file} carries id `{id}` in the index but cannot be read as a note\n  \
-                 `noda restore {slug} HEAD` puts the committed version back, \
-                 or `noda rm {slug}` gives the id up"
-            ));
+    if !scan.notes.is_empty() {
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut shared = false;
+        for (id, _) in &scan.notes {
+            if !seen.insert(note::normalize_id(id)) {
+                shared = true;
+            }
+        }
+        if shared {
+            out.push(
+                "  to settle a shared id, rename one of the files so it starts with a \
+                 different id"
+                    .to_string(),
+            );
         }
     }
-
+    if !scan.suspicious.is_empty() {
+        out.push(
+            "  a file named like a note but holding no frontmatter is either a note that lost \
+             it — add a `---` block back — or a file that was never one, which you can rename \
+             so it no longer starts with an id"
+                .to_string(),
+        );
+    }
     out
 }
 
@@ -986,14 +906,10 @@ fn describe_drift(drift: Option<(usize, usize)>) -> String {
 pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     // History is about the file, not its contents: a note whose frontmatter has
-    // gone is precisely the one whose past you want to look at.
+    // gone is precisely the one whose past you want to look at. The id comes
+    // from the filename, so it is there to be had either way.
     let id = match key {
-        Some(key) => Some(find(&notebook, key)?.id.ok_or_else(|| {
-            Error::msg(format!(
-                "cannot tell which note `{key}` is — the file cannot be read and \
-                 the index does not name it"
-            ))
-        })?),
+        Some(key) => Some(find(&notebook, key)?.id),
         None => None,
     };
 
@@ -1022,25 +938,17 @@ pub fn diff(paths: &Paths, key: Option<&str>) -> Result<String> {
     // Only the filename is needed, so a file that will not parse is no obstacle
     // — and seeing what changed is how you find out why it will not.
     let file = match key {
-        Some(key) => Some(format!("{}.md", find(&notebook, key)?.slug)),
+        Some(key) => {
+            let found = find(&notebook, key)?;
+            Some(note::file_name(&found.id, &found.slug))
+        }
         None => None,
     };
 
     let mut out = String::new();
     notebook
         .diff(file.as_deref())?
-        .print(git2::DiffFormat::Patch, |delta, _hunk, line| {
-            // The id ↔ slug index changes on nearly every commit and is derived
-            // from the notes themselves; showing it would bury the note.
-            let generated = delta
-                .new_file()
-                .path()
-                .or_else(|| delta.old_file().path())
-                .is_some_and(|path| path.starts_with(notebook::META_DIR));
-            if generated {
-                return true;
-            }
-
+        .print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
             let text = String::from_utf8_lossy(line.content());
             let painted = match line.origin() {
                 '+' => style::paint(style::ADDED, &format!("+{text}")),
@@ -1070,14 +978,11 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // so refusing to act on one whose frontmatter has gone turns the command for
     // undoing damage into another casualty of it — and that is the moment a
     // person reaches for it.
-    let current = match notebook.resolve(key) {
-        Ok(_) => Some(find(&notebook, key)?),
-        Err(_) => None,
-    };
-    // From the file when it can be read, from the index when it cannot, and from
-    // history when neither knows.
-    let id = match current.as_ref().and_then(|found| found.id.clone()) {
-        Some(id) => id,
+    let current = find(&notebook, key).ok();
+    // From the filename when the note is still here, and from history when it is
+    // not — which is how `restore` doubles as the way back from `noda rm`.
+    let id = match current.as_ref() {
+        Some(found) => found.id.clone(),
         None => notebook
             .id_at(&commit, key)?
             .ok_or_else(|| Error::msg(format!("note not found at {rev}: {key}")))?,
@@ -1092,13 +997,11 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // The id is the note's identity, so a restored note keeps the name it has
     // now; only its contents travel back. A note that is gone comes back under
     // the name it had then.
-    let (slug, path) = if let Some(found) = &current {
-        (found.slug.clone(), found.path.clone())
-    } else {
-        let slug = unique_slug(&notebook, &slug_then);
-        let path = notebook.note_path(&slug);
-        (slug, path)
+    let slug = match &current {
+        Some(found) => found.slug.clone(),
+        None => slug_then,
     };
+    let path = notebook.note_path(&id, &slug);
 
     let restored = Note::parse(&text)
         .map_err(|e| Error::msg(format!("the copy of `{key}` at {rev} cannot be read: {e}")))?;
@@ -1113,30 +1016,8 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     }
 
     std::fs::write(&path, &text)?;
-    let mut changed = vec![format!("{slug}.md")];
-    if current.is_none() {
-        let mut index = notebook.index()?;
-        // A note deleted outside noda still has its entry, so the id is dropped
-        // before it is written again: an index holding the same id twice maps it
-        // to whichever slug happens to sort first. Folded, the way `resolve`
-        // folds it — a raw comparison reads `K3F9` and `k3f9` as two ids here
-        // while they address one note everywhere else, and leaves both entries.
-        let wanted = note::normalize_id(&id);
-        index.retain(|(entry, entry_slug)| {
-            // The file is already back on disk by now, so this note's own entry
-            // does not read as stale — it is named outright instead. An entry
-            // naming a *different* live note is not restore's to take, however
-            // its id folds.
-            let replaceable = *entry_slug == slug || is_stale(&notebook, entry_slug);
-            note::normalize_id(entry) != wanted || !replaceable
-        });
-        index.push((id.clone(), slug.clone()));
-        notebook.write_index(&index)?;
-        changed.push(INDEX_PATH.to_string());
-    }
-    let files: Vec<&Path> = changed.iter().map(Path::new).collect();
     notebook.commit(
-        &files,
+        &[Path::new(&note::file_name(&id, &slug))],
         &format!("restore: {slug} to {}", &commit.id().to_string()[..7]),
     )?;
 
@@ -1178,22 +1059,12 @@ pub fn push(paths: &Paths) -> Result<String> {
 /// Commit, pull, push — in that order, so local work is never left behind by a
 /// merge and the push always carries it.
 ///
-/// Refuses outright while the notes and the index disagree. `sync` commits the
-/// whole working tree without asking what is in it, so without this it is the
-/// command that makes such a disagreement permanent and remote — including the
-/// one case noda already refuses by hand, an `edit` that changed a note's id and
-/// was left on disk rather than committed. Guarding the id in `edit` and staging
-/// it silently here would be the same codebase saying two different things.
+/// This used to refuse while the notes and the index disagreed, because `sync`
+/// commits the whole working tree without asking what is in it and would have
+/// made such a disagreement permanent and remote. There is no index now, so
+/// there is nothing for the files to disagree with and nothing to guard.
 pub fn sync(paths: &Paths) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    let disagreements = notebook.disagreements()?;
-    if !disagreements.is_empty() {
-        return Err(Error::msg(format!(
-            "the notes and the index disagree; nothing was committed, pulled or pushed\n{}\n\
-             or move one side at a time with `noda pull` and `noda push`",
-            describe_disagreements(&disagreements)
-        )));
-    }
     let mut lines = Vec::new();
     if notebook.commit_all("sync: local changes")? {
         lines.push("commit: local changes".to_string());
@@ -1244,43 +1115,32 @@ pub fn notebook_current(paths: &Paths) -> Result<String> {
 /// failing on a file it is not going to read. `status` already takes that line
 /// with the notebook as a whole; these take it one note at a time.
 struct Found {
+    /// Always known: the filename carries it, so a file that will not parse
+    /// still says which note it is.
+    id: String,
     slug: String,
     path: PathBuf,
     /// What came of reading the file, kept rather than thrown so the commands
     /// that do need the note can fail with the parse error itself.
     note: Result<Note>,
-    /// The id the file carries; the one the index records for this slug when the
-    /// file cannot be read; `None` when neither knows.
-    id: Option<String>,
 }
 
 fn find(notebook: &Notebook, key: &str) -> Result<Found> {
-    let path = notebook.resolve(key)?;
-    let slug = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| Error::msg(format!("unreadable note filename: {}", path.display())))?
-        .to_string();
+    let (id, slug) = notebook.resolve(key)?;
+    let path = notebook.note_path(&id, &slug);
     let note = Note::parse(&std::fs::read_to_string(&path)?)
         .map_err(|e| Error::msg(format!("{}: {e}", path.display())));
-    let id = match &note {
-        Ok(note) => Some(note.id.clone()),
-        Err(_) => notebook
-            .index()?
-            .into_iter()
-            .find(|(_, entry)| *entry == slug)
-            .map(|(id, _)| id),
-    };
     Ok(Found {
+        id,
         slug,
         path,
         note,
-        id,
     })
 }
 
 /// A note reference resolved to everything the commands that read a note need.
 struct Located {
+    id: String,
     slug: String,
     path: PathBuf,
     note: Note,
@@ -1289,6 +1149,7 @@ struct Located {
 fn locate(notebook: &Notebook, key: &str) -> Result<Located> {
     let found = find(notebook, key)?;
     Ok(Located {
+        id: found.id,
         slug: found.slug,
         path: found.path,
         note: found.note?,
@@ -1395,20 +1256,6 @@ fn clean_tags(tags: &[String]) -> Result<Vec<String>> {
             Ok(tag.to_string())
         })
         .collect()
-}
-
-/// Appends `-2`, `-3`, … until the slug is free within the notebook.
-fn unique_slug(notebook: &Notebook, base: &str) -> String {
-    if !notebook.note_path(base).exists() {
-        return base.to_string();
-    }
-    for n in 2.. {
-        let candidate = format!("{base}-{n}");
-        if !notebook.note_path(&candidate).exists() {
-            return candidate;
-        }
-    }
-    unreachable!("the range is unbounded")
 }
 
 fn configured_editor(paths: &Paths) -> String {

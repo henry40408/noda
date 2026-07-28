@@ -58,23 +58,23 @@ hidden — it's a normal repo, so `cd` in and run `git log` anytime. noda never 
 anything to the repo you couldn't inspect or undo with git.
 
 **Q: How do I refer to a note?**
-By a short **id** or by its **slug** — both matched exactly. Every note carries a stable id
-(a short Crockford base32 code like `k3f9`) that never changes, even across renames, plus a slug
-derived from its title. `noda show k3f9` and `noda show meeting-notes` resolve to the same
-note, or report "not found" — they never silently hit the wrong one. There are no
-positional numbers to reshuffle.
+By a short **id** or by its **slug**. A note's filename is `<id>-<slug>.md`: the id is a
+stable Crockford base32 code that never changes, even across renames, and the slug is
+derived from the title. A slug is matched whole; an id is matched by any prefix that names
+exactly one note, the same bargain git makes with object ids — so `noda show k3f9` works
+without you typing all eight characters. An ambiguous key is an error listing the
+candidates, never a guess, and there are no positional numbers to reshuffle.
 
 **Q: Will ids get scrambled when I sync across machines?**
-No. An id is written into the note's frontmatter and committed, so it's part of the synced
-state, not a positional guess — machine A and machine B always agree that `k3f9` is the
-same note. In the rare event two machines mint the same id offline, `noda sync` detects it
-and stops, naming the notes involved, rather than picking a winner. It cannot renumber its
-way out: the id lives in the file, so a fresh one would not restore anything — it would
-invent a new identity and break every link that already pointed at the old one. Which of
-the two notes keeps the id is a person's call, and `noda status` shows the same thing
-without going near the network. Once you've settled it — and for every disagreement that
-*is* unambiguous — `noda reconcile` rewrites the index from the notes and commits the
-repair.
+No. The id is the filename, so it is part of the synced state by construction — machine A
+and machine B always agree that `k3f9m2p1` is the same note, and there is nothing derived
+that could drift away from it. Two machines that each add a note write two different
+filenames, so the merge is clean and noda has nothing to reconcile afterwards.
+
+In the rare event two machines mint the same id offline, git still merges them without
+complaint — the filenames differ, because the slugs do — and `noda status` reports the
+collision. noda will not settle it: both files are real notes, and keeping one identity
+means discarding the other's. Renaming one of the files is a person's call.
 
 **Q: Does it work offline?**
 Always. Writing, editing, searching, and history are 100% local git operations. `noda
@@ -108,19 +108,29 @@ distribution story (one file, musl, arm64). Shelling out would reintroduce a run
 dependency and fragile output parsing. Trade-off accepted; if we ever need a transport
 libgit2 lacks, we can selectively shell out for that one operation.
 
-**Q: Why is the committed `id ↔ slug` index a TSV?**
-Because of where this particular file sits: it is written by noda, read by noda, never
-edited by hand, and fully rebuildable from the notes' frontmatter. Both of its fields are
-constrained by construction — an id is Crockford base32, and a slug keeps only alphanumeric
-characters — so a tab cannot appear inside a value. That buys a parser that is one
-`split_once('\t')` with no escaping rules to get wrong, and a file that `cut -f2` reads
-straight out of a pipe. CSV earns its ubiquity on a different problem: its quoting rules let
-a value carry the delimiter itself, which is what you want when fields are arbitrary user
-text — a spreadsheet export, say. noda's index isn't that, so it pays TSV's price instead:
-the writer must keep tabs and newlines out of the fields, which stays cheap as the index
-grows to carry titles because the index is derived data, and a rebuild is always available.
-Interchange is a separate concern from storage; if noda ever needs to hand this data to
-another tool, that is an output format on `ls`, not a change to what sits in the repo.
+**Q: Why is a note's id in its filename rather than in its frontmatter?**
+Because that is where git can enforce it. An earlier design put the id in the frontmatter
+and kept a committed `id ↔ slug` index beside the notes; this replaced both.
+
+git's own conventions decided it. git gives unchanging things an identity from their content
+(a blob's hash) and changing things a name (a branch, a tag) — a note is a changing thing,
+so it gets a name. git commits no bookkeeping of its own: refs, the staging index and the
+reflog all live outside the tree, which is precisely why git never has to merge them. And
+where git does keep a mutable map, it is one file per name — two people creating two branches
+create two files, not two edits to one.
+
+Every problem the old design had came from breaking those rules. Two notebooks that each
+added a note both appended to the index, so it conflicted on nearly every divergent sync and
+noda needed a special case to rebuild it. The frontmatter could be edited to claim an id the
+index never minted, so `edit` needed a guard, `sync` needed a refusal, and `mv`, `rm` and
+`restore` each needed rules for which entry to move. Putting the id in the path deletes all
+of it: uniqueness is structural (git forbids duplicate paths in a tree), the ids of two
+concurrently-added notes cannot collide into one file, and there is no second copy of
+anything to keep in step.
+
+It also made history simpler rather than harder. `noda log <note>` followed a rename by
+reading the index committed alongside each commit; now it looks for the tree entry carrying
+that id prefix. Every commit records the filenames, so every commit already records the map.
 
 **Q: Why is the container image the only distribution channel?**
 Because it is the only one that can be kept honest. crates.io and Homebrew are promises to
@@ -142,8 +152,7 @@ sizes that are actually common. An index would buy
 maybe 50 ms at 5000 notes and cost a staleness story, a `reindex` command, invalidation
 after every `pull`, and a corruption path. v1 declines that trade. If notebooks in the tens
 of thousands turn up, a cache is a cache: it can be added later without changing anything
-the user's repository holds. Note that the committed `id ↔ slug` index cannot serve search
-either way — it carries metadata, and search reads bodies.
+the user's repository holds.
 
 **Q: What's explicitly *out* of scope for v1?**
 Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:
