@@ -21,6 +21,15 @@ strip = true
 anstream = "1.0.0"
 anstyle = "1.0.14"
 clap = { version = "4.6.2", features = ["derive"] }
+# Only `std`: the default features bundle a copy of the tz database and read the
+# system zone, and noda does neither. It records instants in UTC and prints them
+# back as they were written, so `Timestamp` is the whole of what it needs.
+#
+# Hand-rolling this was the alternative and would have been about sixty lines.
+# The line is the parsing: a note that came from elsewhere carries a UTC offset
+# (`2019-03-14T16:21:00+08:00`), and an offset is where a hand-written date
+# parser starts getting the day rollover wrong.
+jiff = { version = "0.2.35", default-features = false, features = ["std"] }
 # The transports are always compiled in: GitHub and GitLab are reached over HTTPS
 # or SSH, so a build that made either optional could not sync to the hosts every
 # user actually targets.

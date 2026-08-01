@@ -193,9 +193,15 @@ pub fn add(
     // out to name more than one note.
     let slug = note::slugify(&title);
     let id = note::mint_id(&notebook.taken_ids()?);
+    // Both, with the same value: a note that has never been changed has been
+    // changed as recently as it was made. Writing only one would buy a tidier
+    // file at the cost of every reader having to know the other is implied.
+    let now = note::now();
     let note = Note {
         title,
         tags,
+        created: Some(now.clone()),
+        updated: Some(now),
         extra: Vec::new(),
         body: body.trim_start_matches('\n').to_string(),
     };
@@ -483,6 +489,7 @@ pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
         ));
     }
 
+    note.updated = Some(note::now());
     std::fs::write(&located.path, note.render())?;
     notebook.commit(
         &[Path::new(&note::file_name(&located.id, &located.slug))],
@@ -510,8 +517,8 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
         return Ok(format!("{}  (unchanged)", located.slug));
     }
 
-    // The file is left exactly as it was saved: a rejected edit stays on disk to
-    // be fixed or thrown away with `git checkout`, never silently discarded.
+    // A rejected edit stays on disk to be fixed or thrown away with
+    // `git checkout`, never silently discarded.
     //
     // There is no id to guard here any more. It is in the filename, which an
     // editor never touches, so an edit cannot change which note this is — the
@@ -522,6 +529,16 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
             located.path.display()
         ))
     })?;
+
+    // `edit` is how a note is usually changed, so it is where `updated` would
+    // most often be wrong if noda left it alone. One field is set in place —
+    // everything else is committed exactly as it was saved, including the order
+    // the block was just arranged in.
+    let stamped = note::set_field(&after, "updated", &note::now())
+        .expect("the note parsed, so it has a frontmatter block");
+    if stamped != after {
+        std::fs::write(&located.path, &stamped)?;
+    }
 
     notebook.commit(
         &[Path::new(&note::file_name(&located.id, &located.slug))],
@@ -544,6 +561,7 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
 
     let slug = note::slugify(title);
     note.title = title.to_string();
+    note.updated = Some(note::now());
 
     // Only the slug half of the filename moves. The id stays, so the note keeps
     // its identity and its history across the rename without anything having to
@@ -1507,9 +1525,16 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
 
     let restored = Note::parse(&text)
         .map_err(|e| Error::msg(format!("the copy of `{key}` at {rev} cannot be read: {e}")))?;
+    // `updated` is noda's record of when the file last changed, not part of what
+    // is being restored, so it is held aside for the comparison. Otherwise
+    // restoring the same revision twice would never say "no change": the first
+    // restore writes a timestamp the copy in history cannot have.
+    let ignoring_updated =
+        |text: &str| note::set_field(text, "updated", "").unwrap_or_else(|| text.to_string());
     if current
         .as_ref()
-        .is_some_and(|found| std::fs::read_to_string(&found.path).ok() == Some(text.clone()))
+        .and_then(|found| std::fs::read_to_string(&found.path).ok())
+        .is_some_and(|on_disk| ignoring_updated(&on_disk) == ignoring_updated(&text))
     {
         return Ok(format!(
             "{}  (no change)",
@@ -1517,6 +1542,12 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
         ));
     }
 
+    // The contents travel back; the record of when they landed does not. The
+    // file changed just now, whatever the copy in history says about itself.
+    // `created` is left as it was found: it belongs to the note, and the note is
+    // the same one it always was.
+    let text = note::set_field(&text, "updated", &note::now())
+        .expect("the copy at this revision parsed, so it has a frontmatter block");
     std::fs::write(&path, &text)?;
     notebook.commit(
         &[Path::new(&note::file_name(&id, &slug))],
