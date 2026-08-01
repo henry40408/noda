@@ -3009,6 +3009,118 @@ fn restore_brings_back_a_note_deleted_outside_noda() {
     );
 }
 
+/// The commit `deleted` prints is the one *before* the deletion, because that
+/// is what `restore` has to be given — reporting the deletion and leaving the
+/// `~1` to be worked out would be a remedy the reader has to finish.
+#[test]
+fn deleted_names_the_commit_that_brings_a_note_back() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
+    let (id, slug) = parts(&added);
+    let (id, slug) = (id.to_string(), slug.to_string());
+    cmd::rm(&paths, "gamma").unwrap();
+
+    let out = plain(&cmd::deleted(&paths).unwrap());
+    let row = out.lines().next().unwrap();
+    assert!(row.starts_with(&id), "{out}");
+    assert!(row.contains(&slug), "{out}");
+    assert!(
+        row.ends_with("Gamma"),
+        "the title it had when it went: {out}"
+    );
+
+    // The revision in the row is enough on its own.
+    let commit = row.split_whitespace().nth(4).unwrap().to_string();
+    cmd::restore(&paths, &slug, &commit).unwrap();
+    assert!(cmd::show(&paths, &id).unwrap().ends_with("g\n"));
+
+    assert_eq!(
+        cmd::deleted(&paths).unwrap(),
+        "",
+        "and it is not deleted any more — the check is against what is on disk, \
+         not against what history did"
+    );
+}
+
+/// `mv` changes a filename without changing an identity. Nothing was deleted,
+/// and the tree comparison has to agree — it compares ids, not names.
+#[test]
+fn deleted_does_not_count_a_rename() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::mv(&paths, "beta", "Beta Renamed").unwrap();
+
+    assert_eq!(cmd::deleted(&paths).unwrap(), "");
+}
+
+/// Nothing here reads a commit message, so a deletion made with plain git is
+/// found exactly like one made with `noda rm`.
+#[test]
+fn deleted_finds_what_was_removed_outside_noda() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+
+    std::fs::remove_file(notebook.join(note_file(&added))).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "whatever i felt like typing");
+
+    let out = plain(&cmd::deleted(&paths).unwrap());
+    assert!(out.contains(parts(&added).0), "{out}");
+    assert!(out.contains("Alpha"), "{out}");
+}
+
+/// Deleted twice with a restore in between: the disappearance that counts is
+/// the last one, so the commit offered is the one that undoes *that*.
+#[test]
+fn deleted_reports_the_most_recent_disappearance() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+    let slug = parts(&added).1.to_string();
+
+    cmd::rm(&paths, &slug).unwrap();
+    let first = plain(&cmd::deleted(&paths).unwrap());
+    let commit = first
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(4)
+        .unwrap()
+        .to_string();
+    cmd::restore(&paths, &slug, &commit).unwrap();
+
+    // Change it, then lose it again. The older commit would bring back the
+    // wrong contents.
+    cmd::tag(&paths, &slug, &["+work".to_string()]).unwrap();
+    cmd::rm(&paths, &slug).unwrap();
+
+    let out = plain(&cmd::deleted(&paths).unwrap());
+    assert_eq!(out.lines().count(), 2, "one note, one hint: {out}");
+    let latest = out
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(4)
+        .unwrap()
+        .to_string();
+    assert_ne!(latest, commit, "not the first deletion");
+
+    cmd::restore(&paths, &slug, &latest).unwrap();
+    assert!(
+        cmd::show(&paths, &slug).unwrap().contains("tags: [work]"),
+        "the version that was actually lost came back"
+    );
+}
+
+#[test]
+fn deleted_says_nothing_when_nothing_is_gone() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    assert_eq!(cmd::deleted(&paths).unwrap(), "");
+}
+
 #[test]
 fn restore_reports_what_it_cannot_find() {
     let (_root, paths) = initialized();

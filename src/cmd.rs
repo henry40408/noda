@@ -1640,6 +1640,61 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
     Ok(out)
 }
 
+/// The notes history holds that the notebook no longer does, most recently lost
+/// first.
+///
+/// A command of its own rather than a flag on `ls`, for two reasons. `ls` reads
+/// a directory; this walks all of history, and one command should not carry two
+/// costs that far apart. And every column `ls` prints describes something that
+/// exists — a deleted note's slug and title are what they were the moment it
+/// went, which is a different claim under the same heading.
+///
+/// The revision printed is not the commit that did the deleting. It is that
+/// commit's parent, the last one that still held the note, because that is what
+/// `restore` has to be given. Naming the deletion and leaving the `~1` to be
+/// worked out would be reporting a problem without its remedy.
+pub fn deleted(paths: &Paths) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let gone = notebook.deleted()?;
+    if gone.is_empty() {
+        return Ok(String::new());
+    }
+
+    let id_width = gone.iter().map(|d| display_width(&d.id)).max().unwrap_or(0);
+    let slug_width = gone
+        .iter()
+        .map(|d| display_width(&d.slug))
+        .max()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+    for note in &gone {
+        let line = format!(
+            "{}  {}  {}  {}  {}",
+            pad(&note.id, id_width),
+            pad(&note.slug, slug_width),
+            style::paint(
+                style::MUTED,
+                &format_time(note.removed_at, note.offset_minutes)
+            ),
+            style::paint(style::COMMIT, &note.restore_from_short()),
+            note.title
+        );
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+
+    let _ = write!(
+        out,
+        "{}",
+        style::paint(
+            style::MUTED,
+            "`noda restore <note> <commit>` with the commit above brings one back"
+        )
+    );
+    Ok(out)
+}
+
 /// Uncommitted changes, or what the last commit changed. The output is a plain
 /// unified diff — no header, nothing wrapped around it — so it stays something
 /// `git apply` will take.
