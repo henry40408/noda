@@ -356,6 +356,28 @@ fn tag_adds_and_removes_and_commits_once() {
     );
 }
 
+/// A note written somewhere else brings fields noda has never heard of. `tag`
+/// rewrites the note through `render`, so that is where they would be lost —
+/// and for an imported note the file is the only copy.
+#[test]
+fn a_write_back_keeps_the_fields_noda_does_not_understand() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-imported.md"),
+        "---\ntitle: Imported\nsource_id: 4821\nstarred: true\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    cmd::tag(&paths, "imported", &["+work".to_string()]).unwrap();
+
+    let text = cmd::show(&paths, "imported").unwrap();
+    assert!(text.contains("source_id: 4821"), "{text}");
+    assert!(text.contains("starred: true"), "{text}");
+    assert!(text.contains("tags: [work]"), "{text}");
+    assert!(text.ends_with("body\n"), "{text}");
+}
+
 #[test]
 fn tag_drops_the_tags_line_when_the_last_tag_goes() {
     let (_root, paths) = initialized();

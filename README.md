@@ -91,8 +91,13 @@ the same one `git init` would have picked, so it agrees with the remote you push
 The identity is the filename, and nothing else records it. git will not put two entries
 under one path in a tree, so uniqueness is structural rather than something noda has to
 police — and two machines that each add a note write two different filenames, which git
-merges without asking anyone to resolve anything. The frontmatter carries only what you
-wrote: the title and the tags.
+merges without asking anyone to resolve anything. The frontmatter carries what you wrote:
+the title and the tags.
+
+noda reads those two fields and leaves the rest of the block alone. A note that came from
+somewhere else keeps whatever fields came with it — `noda tag`, `noda mv` and the other
+commands that rewrite a note write them back untouched rather than dropping what they do
+not understand.
 
 Anywhere a command takes `<note>`, pass either the id or the slug. A slug is matched whole;
 an id is matched by any prefix that names exactly one note, the same bargain git makes with

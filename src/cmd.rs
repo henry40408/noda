@@ -196,6 +196,7 @@ pub fn add(
     let note = Note {
         title,
         tags,
+        extra: Vec::new(),
         body: body.trim_start_matches('\n').to_string(),
     };
 
