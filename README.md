@@ -533,6 +533,12 @@ list is an answer. `--notebook` looks at one you are not currently in.
 
 HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. Credentials
 are not noda's to keep: SSH keys come from `ssh-agent`, HTTPS from git's credential helper.
+The helper is looked up in the notebook's own `.git/config` as well as `~/.gitconfig`,
+`~/.config/git/config` and `/etc/gitconfig`, so one notebook can authenticate differently
+from the rest. Those four are the whole list: noda carries its own libgit2 rather than
+calling `git`, so a helper your `git` reads from its installation's own `etc/gitconfig` —
+where a packaged build may well have put `credential.helper = osxkeychain` for you — is
+invisible to noda and has to be repeated in one of the files above.
 
 A pull fast-forwards when only the remote moved, and makes a merge commit when both sides
 did. Two notebooks that each added a note produce two different filenames, so there is
