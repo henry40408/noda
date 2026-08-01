@@ -1,6 +1,7 @@
 //! Command implementations. Each one takes `Paths` explicitly so tests can run
 //! against a throwaway root without touching the real environment.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1352,7 +1353,7 @@ fn elide(subjects: &[String]) -> String {
 ///
 /// Where `status` elides, this names every file: it is the place people are
 /// sent to see the full list.
-pub fn doctor(paths: &Paths, dry_run: bool, links: bool) -> Result<String> {
+pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let scan = notebook.scan()?;
     let problems = scan.problems();
@@ -1362,7 +1363,18 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool) -> Result<String> {
     } else {
         None
     };
-    let link_report = audit.as_ref().map(describe_audit).unwrap_or_default();
+    let mut report = audit.as_ref().map(describe_audit).unwrap_or_default();
+
+    if times {
+        let found = describe_times(&notebook.notes()?, &notebook.last_changed()?);
+        if !found.is_empty() {
+            if !report.is_empty() {
+                report.push('\n');
+            }
+            report.push_str(&found);
+        }
+    }
+    let link_report = report;
 
     if problems.is_empty() {
         return Ok(if link_report.is_empty() {
@@ -1458,6 +1470,99 @@ fn describe_audit(audit: &notebook::Audit) -> String {
         }
     }
 
+    out.trim_end().to_string()
+}
+
+/// How far a note's last commit may sit after what its `updated` claims before
+/// the gap means something.
+///
+/// noda writes the file and commits it in the same breath, so the honest gap is
+/// under a second. The allowance is for a slow commit on a large notebook, not
+/// for a judgement call: an edit made outside noda is discovered minutes, hours
+/// or days later, never inside a minute.
+const COMMIT_LAG: i64 = 60;
+
+/// The times, checked against themselves and against git.
+///
+/// Reads every note's frontmatter — already paid for — and walks all of history,
+/// which is not. Hence the flag, on the same terms as `--links`.
+///
+/// Nothing here is repaired. `updated` going stale is what happens when a note
+/// is edited outside noda, and the only thing noda could do about it is
+/// overwrite somebody's record of their own work with a guess.
+fn describe_times(notes: &[notebook::NoteFile], last: &HashMap<String, i64>) -> String {
+    let mut unreadable = Vec::new();
+    let mut reversed = Vec::new();
+    let mut stale = Vec::new();
+
+    for file in notes {
+        let name = note::file_name(&file.id, &file.slug);
+        for (field, value) in [
+            ("created", file.note.created.as_ref()),
+            ("updated", file.note.updated.as_ref()),
+        ] {
+            if let Some(value) = value
+                && instant(Some(value)).is_none()
+            {
+                unreadable.push(format!("{name} {field}: {value}"));
+            }
+        }
+
+        let created = instant(file.note.created.as_ref());
+        let updated = instant(file.note.updated.as_ref());
+        if let (Some(created), Some(updated)) = (created, updated)
+            && updated < created
+        {
+            reversed.push(name.clone());
+        }
+
+        // git is the only witness to a change noda did not make. It cannot say
+        // what changed, only that the file did — which is the whole of what is
+        // being claimed here.
+        if let (Some(updated), Some(committed)) = (updated, last.get(&note::normalize_id(&file.id)))
+            && *committed - updated.as_second() > COMMIT_LAG
+        {
+            stale.push(name.clone());
+        }
+    }
+
+    let mut out = String::new();
+    if !unreadable.is_empty() {
+        let count = unreadable.len();
+        let noun = if count == 1 { "time" } else { "times" };
+        let _ = writeln!(out, "{count} {noun} cannot be read");
+        for line in &unreadable {
+            let _ = writeln!(out, "  {line}");
+        }
+    }
+    if !reversed.is_empty() {
+        let count = reversed.len();
+        let noun = if count == 1 { "note" } else { "notes" };
+        let _ = writeln!(out, "{count} {noun} changed before being created");
+        for name in &reversed {
+            let _ = writeln!(out, "  {name}");
+        }
+    }
+    if !stale.is_empty() {
+        let count = stale.len();
+        let (noun, verb) = if count == 1 {
+            ("note", "was")
+        } else {
+            ("notes", "were")
+        };
+        let _ = writeln!(out, "{count} {noun} {verb} changed outside noda");
+        for name in &stale {
+            let _ = writeln!(out, "  {name}");
+        }
+        let _ = writeln!(
+            out,
+            "{}",
+            style::paint(
+                style::MUTED,
+                "git has a commit newer than the note's own `updated`"
+            )
+        );
+    }
     out.trim_end().to_string()
 }
 

@@ -109,6 +109,12 @@ enum Command {
         /// is asked for rather than assumed.
         #[arg(long)]
         links: bool,
+        /// Also check the timestamps: values that cannot be read, notes changed
+        /// before they were created, and notes git has a newer commit for than
+        /// their own `updated` claims. Walks all of history, so it is asked for
+        /// rather than assumed.
+        #[arg(long)]
+        times: bool,
     },
     /// Print where something lives, for the tools noda does not wrap:
     /// `pandoc "$(noda path meeting-notes)"`.
@@ -355,7 +361,11 @@ fn run() -> noda::Result<()> {
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,
-        Command::Doctor { dry_run, links } => cmd::doctor(&paths, *dry_run, *links)?,
+        Command::Doctor {
+            dry_run,
+            links,
+            times,
+        } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
