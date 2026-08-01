@@ -3020,7 +3020,7 @@ fn deleted_names_the_commit_that_brings_a_note_back() {
     let (id, slug) = (id.to_string(), slug.to_string());
     cmd::rm(&paths, "gamma").unwrap();
 
-    let out = plain(&cmd::deleted(&paths).unwrap());
+    let out = plain(&cmd::deleted(&paths, None, false).unwrap());
     let row = out.lines().next().unwrap();
     assert!(row.starts_with(&id), "{out}");
     assert!(row.contains(&slug), "{out}");
@@ -3035,7 +3035,7 @@ fn deleted_names_the_commit_that_brings_a_note_back() {
     assert!(cmd::show(&paths, &id).unwrap().ends_with("g\n"));
 
     assert_eq!(
-        cmd::deleted(&paths).unwrap(),
+        cmd::deleted(&paths, None, false).unwrap(),
         "",
         "and it is not deleted any more — the check is against what is on disk, \
          not against what history did"
@@ -3050,7 +3050,7 @@ fn deleted_does_not_count_a_rename() {
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
     cmd::mv(&paths, "beta", "Beta Renamed").unwrap();
 
-    assert_eq!(cmd::deleted(&paths).unwrap(), "");
+    assert_eq!(cmd::deleted(&paths, None, false).unwrap(), "");
 }
 
 /// Nothing here reads a commit message, so a deletion made with plain git is
@@ -3064,7 +3064,7 @@ fn deleted_finds_what_was_removed_outside_noda() {
     std::fs::remove_file(notebook.join(note_file(&added))).unwrap();
     commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "whatever i felt like typing");
 
-    let out = plain(&cmd::deleted(&paths).unwrap());
+    let out = plain(&cmd::deleted(&paths, None, false).unwrap());
     assert!(out.contains(parts(&added).0), "{out}");
     assert!(out.contains("Alpha"), "{out}");
 }
@@ -3078,7 +3078,7 @@ fn deleted_reports_the_most_recent_disappearance() {
     let slug = parts(&added).1.to_string();
 
     cmd::rm(&paths, &slug).unwrap();
-    let first = plain(&cmd::deleted(&paths).unwrap());
+    let first = plain(&cmd::deleted(&paths, None, false).unwrap());
     let commit = first
         .lines()
         .next()
@@ -3094,7 +3094,7 @@ fn deleted_reports_the_most_recent_disappearance() {
     cmd::tag(&paths, &slug, &["+work".to_string()]).unwrap();
     cmd::rm(&paths, &slug).unwrap();
 
-    let out = plain(&cmd::deleted(&paths).unwrap());
+    let out = plain(&cmd::deleted(&paths, None, false).unwrap());
     assert_eq!(out.lines().count(), 2, "one note, one hint: {out}");
     let latest = out
         .lines()
@@ -3113,12 +3113,84 @@ fn deleted_reports_the_most_recent_disappearance() {
     );
 }
 
+/// `--json` carries the full object ids, not the abbreviations the table shows:
+/// `restore` takes either, and an abbreviation is a thing that can stop being
+/// unique later.
+#[test]
+fn deleted_json_carries_what_a_script_needs_to_restore() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
+    let (id, slug) = parts(&added);
+    let (id, slug) = (id.to_string(), slug.to_string());
+    cmd::rm(&paths, &slug).unwrap();
+
+    let out = cmd::deleted(&paths, None, true).unwrap();
+    assert!(out.ends_with("}\n"), "one object, one line: {out}");
+    assert!(out.contains("\"notebook\":\"default\""), "{out}");
+    assert!(out.contains(&format!("\"id\":\"{id}\"")), "{out}");
+    assert!(out.contains(&format!("\"slug\":\"{slug}\"")), "{out}");
+    assert!(
+        out.contains(&format!("\"file\":\"{id}-{slug}.md\"")),
+        "the name it had when it went: {out}"
+    );
+    assert!(out.contains("\"title\":\"Gamma\""), "{out}");
+    // RFC 3339 UTC, the same spelling a note's own times use.
+    assert!(out.contains("\"removed_at\":\"20"), "{out}");
+    assert!(out.contains("Z\""), "{out}");
+
+    // The revision is usable straight out of the document, at full length.
+    let restore_from = out
+        .split("\"restore_from\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_string();
+    assert_eq!(restore_from.len(), 40, "a full object id: {restore_from}");
+    cmd::restore(&paths, &slug, &restore_from).unwrap();
+    assert!(cmd::show(&paths, &id).unwrap().ends_with("g\n"));
+}
+
+/// A program asking for JSON gets a document either way — an empty list is an
+/// answer, where the table prints nothing at all.
+#[test]
+fn deleted_json_is_a_document_even_when_nothing_is_gone() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    assert_eq!(cmd::deleted(&paths, None, false).unwrap(), "");
+    assert_eq!(
+        cmd::deleted(&paths, None, true).unwrap(),
+        "{\"notebook\":\"default\",\"deleted\":[]}\n"
+    );
+}
+
+#[test]
+fn deleted_can_target_another_notebook() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::rm(&paths, "alpha").unwrap();
+    noda::notebook::Notebook::create(&paths, "work").unwrap();
+
+    assert!(
+        cmd::deleted(&paths, Some("work"), false)
+            .unwrap()
+            .is_empty(),
+        "the other notebook has lost nothing"
+    );
+    assert!(
+        cmd::deleted(&paths, Some("default"), false)
+            .unwrap()
+            .contains("alpha")
+    );
+    assert!(cmd::deleted(&paths, Some("missing"), false).is_err());
+}
+
 #[test]
 fn deleted_says_nothing_when_nothing_is_gone() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    assert_eq!(cmd::deleted(&paths).unwrap(), "");
+    assert_eq!(cmd::deleted(&paths, None, false).unwrap(), "");
 }
 
 #[test]

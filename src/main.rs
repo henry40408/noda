@@ -154,7 +154,14 @@ enum Command {
     },
     /// List notes the notebook no longer holds, with the commit to restore each
     /// from. Walks all of history.
-    Deleted,
+    Deleted {
+        /// Look at another notebook instead of the active one.
+        #[arg(long)]
+        notebook: Option<String>,
+        /// Print one JSON object instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
     /// Restore a note to an earlier version, as a new commit.
     Restore {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
@@ -372,7 +379,7 @@ fn run() -> noda::Result<()> {
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
-        Command::Deleted => cmd::deleted(&paths)?,
+        Command::Deleted { notebook, json } => cmd::deleted(&paths, notebook.as_deref(), *json)?,
         Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,
         Command::Config {
             key,

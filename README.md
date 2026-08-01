@@ -463,7 +463,7 @@ and the editor is handed the file.
 | --- | --- |
 | `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note. |
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
-| `noda deleted` | List notes the notebook no longer holds, with the commit to restore each from. |
+| `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
 | `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
 
 `noda log <note>` follows a note across renames, because every commit records the filenames
@@ -504,6 +504,23 @@ because nothing here cares what the commit message said.
 
 It walks all of history, which is why it is a command of its own rather than a flag on
 `noda ls` — that one reads a directory, and the two costs should not share a name.
+
+`--json` makes the whole thing scriptable, and carries the object ids in full because an
+abbreviation is a thing that can stop being unique later:
+
+```sh
+noda deleted --json | jq -r '.deleted[] | "noda restore \(.slug) \(.restore_from)"'
+```
+```
+noda restore old-draft 4953133a9f2e154d8bcc11672de7503c77862c71
+noda restore meeting-notes a40b843e5d29a008fe8a3124cd9a1b7b705570d2
+```
+
+`removed_at` is RFC 3339 UTC there, the same spelling a note's own `created` and `updated`
+use, so a script never meets two ways of writing a time. The table shows it in the zone the
+commit was made in, which is a question a person asks and a program should not have to.
+Unlike the table, `--json` prints a document even when nothing has been deleted — an empty
+list is an answer. `--notebook` looks at one you are not currently in.
 
 ### Remote sync (HTTPS / SSH)
 
