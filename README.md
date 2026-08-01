@@ -91,13 +91,40 @@ the same one `git init` would have picked, so it agrees with the remote you push
 The identity is the filename, and nothing else records it. git will not put two entries
 under one path in a tree, so uniqueness is structural rather than something noda has to
 police — and two machines that each add a note write two different filenames, which git
-merges without asking anyone to resolve anything. The frontmatter carries what you wrote:
-the title and the tags.
+merges without asking anyone to resolve anything. The frontmatter carries what you wrote —
+the title and the tags — and when the note was written:
 
-noda reads those two fields and leaves the rest of the block alone. A note that came from
-somewhere else keeps whatever fields came with it — `noda tag`, `noda mv` and the other
-commands that rewrite a note write them back untouched rather than dropping what they do
-not understand.
+```
+---
+title: Reading notes on TAOCP
+tags: [books, algorithms]
+created: 2019-03-14T08:21:00Z
+updated: 2024-11-02T16:40:12Z
+---
+```
+
+`created` is set once and never moves again. `updated` follows every change noda makes:
+`add`, `edit`, `tag`, `mv` and `restore`. Renaming an attachment does not count — it
+rewrites links in notes you did not point the command at, and dating them all today would
+flatten the order you read them in.
+
+They live in the file because that is the only place that survives a `clone`. The
+filesystem's own timestamps do not: git does not record them, so a fresh checkout stamps
+every note with the moment you cloned it. git's history does survive, but it only knows
+when a note reached *this* notebook — import a note written in 2019 and history will
+truthfully tell you it arrived today.
+
+Which is the other half of why they live there: **you can write them yourself**. A note
+imported from somewhere else keeps the times you give it. Anything RFC 3339 is read, offset
+and all, and noda does not restate it — write `2019-03-14T16:21:00+08:00` and that is what
+stays in the file. noda writes UTC when it writes one itself.
+
+The same goes for every other field. noda reads `title`, `tags`, `created` and `updated`,
+and leaves the rest of the block alone: a note that came from somewhere else keeps whatever
+came with it rather than losing it to the first command that rewrites the note.
+
+A note without the fields keeps not having them. noda will not invent a `created` it was
+never told — the only sources it could invent one from are the two that just failed.
 
 Anywhere a command takes `<note>`, pass either the id or the slug. A slug is matched whole;
 an id is matched by any prefix that names exactly one note, the same bargain git makes with

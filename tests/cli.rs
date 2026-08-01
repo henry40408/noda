@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use noda::cmd;
+use noda::note;
 use noda::paths::Paths;
 
 /// A self-deleting directory; enough for tests without adding a dev-dependency.
@@ -356,6 +357,94 @@ fn tag_adds_and_removes_and_commits_once() {
     );
 }
 
+/// The note as it sits on disk. `show` dims the frontmatter, so it is the wrong
+/// side of the colour handling to read a field back from.
+fn note_text(paths: &Paths, key: &str) -> String {
+    let path = cmd::path(paths, Some(key)).unwrap();
+    std::fs::read_to_string(path.trim_end()).unwrap()
+}
+
+/// The two times a note carries.
+fn times(paths: &Paths, key: &str) -> (Option<String>, Option<String>) {
+    let note = note::Note::parse(&note_text(paths, key)).unwrap();
+    (note.created, note.updated)
+}
+
+#[test]
+fn a_new_note_is_created_and_updated_at_the_same_moment() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let (created, updated) = times(&paths, "alpha");
+    let created = created.expect("a new note records when it was made");
+    assert_eq!(
+        Some(&created),
+        updated.as_ref(),
+        "a note nobody has changed was last changed when it was made"
+    );
+    assert!(created.ends_with('Z'), "{created}");
+}
+
+/// `created` is a fact about the note and never moves again. `updated` is the
+/// one that follows what noda does to it.
+#[test]
+fn changing_a_note_moves_updated_and_leaves_created_alone() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let created = times(&paths, "alpha").0;
+
+    // Backdated, so the change is visible however fast the test runs.
+    let path = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
+    let backdated = note::set_field(
+        &std::fs::read_to_string(&path).unwrap(),
+        "updated",
+        "2000-01-01T00:00:00Z",
+    )
+    .unwrap();
+    std::fs::write(&path, backdated).unwrap();
+
+    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
+    let (after_created, after_updated) = times(&paths, "alpha");
+    assert_eq!(after_created, created, "created does not move");
+    assert_ne!(
+        after_updated.as_deref(),
+        Some("2000-01-01T00:00:00Z"),
+        "a tag change is a change"
+    );
+
+    cmd::mv(&paths, "alpha", "Beta").unwrap();
+    assert_eq!(
+        times(&paths, "beta").0,
+        created,
+        "a retitle is not a rebirth"
+    );
+}
+
+/// Notes that predate the fields, or arrived without them, are left as they are.
+/// The only honest value would come from git, and inventing one from the
+/// filesystem would be inventing it after a clone.
+#[test]
+fn a_note_without_times_does_not_get_them_invented() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-imported.md"),
+        "---\ntitle: Imported\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    assert_eq!(times(&paths, "imported"), (None, None));
+
+    // A change noda makes is a change noda can date. It still does not backfill
+    // the one it was never told.
+    cmd::tag(&paths, "imported", &["+work".to_string()]).unwrap();
+    let (created, updated) = times(&paths, "imported");
+    assert_eq!(created, None, "noda does not know when this was written");
+    assert!(updated.is_some(), "it does know when it just touched it");
+}
+
 /// A note written somewhere else brings fields noda has never heard of. `tag`
 /// rewrites the note through `render`, so that is where they would be lost —
 /// and for an imported note the file is the only copy.
@@ -542,6 +631,41 @@ fn edit_commits_what_was_saved() {
 
     let repo = git2::Repository::open(&notebook).unwrap();
     assert!(repo.statuses(None).unwrap().is_empty());
+}
+
+/// `edit` is how a note is usually changed, so it has to record that — but it
+/// records it in place. Rearranging the block somebody just arranged in their
+/// editor, as the price of noting that they did, is not a trade worth making.
+#[cfg(unix)]
+#[test]
+fn edit_records_the_change_without_rearranging_the_block() {
+    let (root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let editor = editor_script(
+        &root,
+        "rewrite",
+        r#"printf -- '---\nzebra: 1\ntitle: Alpha\nupdated: 2000-01-01T00:00:00Z\n---\n\nsaved\n' > "$1""#,
+    );
+    cmd::edit_with(&paths, "alpha", &editor).unwrap();
+
+    let text = note_text(&paths, "alpha");
+    let (block, _) = text.split_once("\n---\n").unwrap();
+    let keys: Vec<&str> = block
+        .trim_start_matches("---\n")
+        .lines()
+        .filter_map(|l| l.split_once(':').map(|(k, _)| k))
+        .collect();
+    assert_eq!(
+        keys,
+        ["zebra", "title", "updated"],
+        "every line stayed where it was put: {text}"
+    );
+    assert!(
+        !text.contains("2000-01-01"),
+        "but the note was changed just now: {text}"
+    );
+    assert!(text.ends_with("saved\n"), "{text}");
 }
 
 #[cfg(unix)]
@@ -2166,6 +2290,31 @@ fn file_mv_renames_and_reports_the_links_it_stranded() {
     );
 }
 
+/// Renaming an attachment rewrites links in notes the command was not pointed
+/// at. That is a mechanical fixup, not somebody editing their notes, and dating
+/// every one of them today would flatten the order they are read in — which is
+/// most of what `updated` is for.
+#[test]
+fn renaming_a_file_does_not_date_the_notes_that_linked_to_it() {
+    let (root, paths) = initialized();
+    cmd::file_add(
+        &paths,
+        std::slice::from_ref(&source_file(&root, "old.png")),
+        None,
+    )
+    .unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("![a](old.png)\n"), &[]).unwrap();
+    let before = times(&paths, "alpha");
+
+    cmd::file_mv(&paths, "old.png", "new.png", true).unwrap();
+
+    assert!(
+        note_text(&paths, "alpha").contains("![a](new.png)"),
+        "the link was rewritten"
+    );
+    assert_eq!(times(&paths, "alpha"), before, "the note was not edited");
+}
+
 /// Opt-in, because it edits the prose of notes the command was not pointed at.
 #[test]
 fn file_mv_update_links_rewrites_both_spellings_and_leaves_it_in_order() {
@@ -2533,7 +2682,13 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
     let before = commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK));
 
     cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
-    assert_eq!(std::fs::read_to_string(&note).unwrap(), original);
+    // Everything but `updated` comes back exactly: that one records when the
+    // file changed, and it changed just now. It has its own test below.
+    let held_aside = |text: &str| note::set_field(text, "updated", "-").unwrap();
+    assert_eq!(
+        held_aside(&std::fs::read_to_string(&note).unwrap()),
+        held_aside(&original)
+    );
     assert_eq!(
         commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)),
         before + 1,
@@ -2552,6 +2707,44 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
         commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)),
         before + 1
     );
+}
+
+/// The contents travel back; the record of when they landed does not. A version
+/// from last year is being written to disk right now, and `updated` is noda's
+/// answer to "when did this file last change", not to "which version is this".
+#[test]
+fn restore_dates_the_note_now_rather_than_then() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+    let path = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
+
+    let long_ago = note::set_field(
+        &std::fs::read_to_string(&path).unwrap(),
+        "updated",
+        "2000-01-01T00:00:00Z",
+    )
+    .unwrap();
+    std::fs::write(&path, &long_ago).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
+    std::fs::write(&path, long_ago.replace("first\n", "second\n")).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha again");
+
+    cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(after.contains("first\n"), "the contents came back: {after}");
+    assert!(
+        !after.contains("2000-01-01"),
+        "the date they were written did not: {after}"
+    );
+
+    // That same revision is now two back, the restore having moved history
+    // forward. Asking for it again is not a change: its contents are already on
+    // disk, and the only thing that differs is the timestamp the restore itself
+    // wrote — which is not what is being compared.
+    let out = cmd::restore(&paths, "alpha", "HEAD~2").unwrap();
+    assert!(out.contains("(no change)"), "{out}");
 }
 
 #[test]
