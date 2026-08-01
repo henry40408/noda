@@ -7,9 +7,14 @@
 //! Two machines that each add a note produce two different filenames and merge
 //! without a conflict, and nothing derived has to be kept in step with anything.
 //!
-//! The frontmatter carries only what a person wrote: the title, because a slug
-//! is lossy and cannot be turned back into one, and the tags. Its *presence* is
+//! The frontmatter carries what a person wrote: the title, because a slug is
+//! lossy and cannot be turned back into one, and the tags. Its *presence* is
 //! what marks a file as a note at all — see `notebook::Scan`.
+//!
+//! noda interprets those two fields and no others, but it does not own the
+//! block. Any other field is carried through a write-back untouched, which is
+//! the same promise `file_mv` already makes when it rewrites links without
+//! reformatting the frontmatter around them.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -36,6 +41,15 @@ const FALLBACK_SLUG: &str = "note";
 pub struct Note {
     pub title: String,
     pub tags: Vec<String>,
+    /// Frontmatter lines noda does not interpret, kept in the order they were
+    /// read so that a write-back does not discard them. A note that arrived from
+    /// somewhere else carries fields noda has never heard of, and losing them on
+    /// the first `tag add` would be losing the only copy.
+    ///
+    /// These come from inside a frontmatter block, so none of them can be `---`:
+    /// such a line would have closed the block instead of landing here. That is
+    /// what keeps `render` from writing a file `parse` can no longer read.
+    pub extra: Vec<String>,
     pub body: String,
 }
 
@@ -51,6 +65,13 @@ impl Note {
         if !self.tags.is_empty() {
             let _ = writeln!(out, "tags: [{}]", self.tags.join(", "));
         }
+        // After the fields noda owns, never interleaved with them: their order
+        // relative to each other is preserved, their position relative to
+        // `title` is not. Somebody's own fields keep their sequence; noda's
+        // stay where a reader expects to find them.
+        for line in &self.extra {
+            let _ = writeln!(out, "{line}");
+        }
         out.push_str("---\n\n");
         out.push_str(&self.body);
         if !out.ends_with('\n') {
@@ -65,21 +86,26 @@ impl Note {
 
         let mut title = None;
         let mut tags = Vec::new();
+        let mut extra = Vec::new();
         for line in frontmatter.lines() {
+            // A line noda cannot even split into a field is still somebody's.
             let Some((key, value)) = line.split_once(':') else {
+                extra.push(line.to_string());
                 continue;
             };
             let value = value.trim();
             match key.trim() {
                 "title" => title = Some(value.to_string()),
                 "tags" => tags = parse_tags(value),
-                _ => {}
+                // Every other field belongs to whoever wrote it.
+                _ => extra.push(line.to_string()),
             }
         }
 
         Ok(Note {
             title: title.unwrap_or_default(),
             tags,
+            extra,
             body: body.trim_start_matches('\n').to_string(),
         })
     }
@@ -331,6 +357,7 @@ mod tests {
         let note = Note {
             title: "Meeting notes".into(),
             tags: vec!["work".into(), "q3".into()],
+            extra: Vec::new(),
             body: "Body line one.\nBody line two.\n".into(),
         };
         let text = note.render();
@@ -348,11 +375,54 @@ mod tests {
     }
 
     /// An `id:` left over from a hand-edited file is just another field now, and
-    /// has no authority over the note's identity.
+    /// has no authority over the note's identity. Ignoring it is not the same as
+    /// deleting it: it survives the round trip, it just never gets obeyed.
     #[test]
     fn a_stray_id_field_is_ignored_rather_than_obeyed() {
         let note = Note::parse("---\nid: zzzz\ntitle: Alpha\n---\n\nbody\n").unwrap();
         assert_eq!(note.title, "Alpha");
+        assert_eq!(note.extra, ["id: zzzz"]);
+        assert!(note.render().contains("id: zzzz"));
+    }
+
+    /// The reason `extra` exists: a note that arrived from somewhere else brings
+    /// fields noda has never heard of, and `tag`/`mv`/`add` all write back
+    /// through `render`. Dropping them there would destroy the only copy.
+    #[test]
+    fn fields_noda_does_not_know_survive_a_write_back() {
+        let text =
+            "---\ntitle: Imported\nsource_id: 4821\nstarred: true\ntags: [work]\n---\n\nbody\n";
+        let mut note = Note::parse(text).unwrap();
+        assert_eq!(note.extra, ["source_id: 4821", "starred: true"]);
+
+        // What `noda tag add` does to a note it read.
+        note.tags.push("q3".into());
+        let rewritten = note.render();
+        assert!(rewritten.contains("source_id: 4821"), "{rewritten}");
+        assert!(rewritten.contains("starred: true"), "{rewritten}");
+        assert_eq!(Note::parse(&rewritten).unwrap(), note);
+    }
+
+    /// Their order relative to each other is kept. Their position relative to
+    /// `title` is not — noda's own fields come first once it has written the
+    /// file, which is a one-off reordering rather than a loss.
+    #[test]
+    fn unknown_fields_keep_their_sequence_but_move_below_the_known_ones() {
+        let note = Note::parse("---\nzebra: 1\ntitle: Alpha\nalpha: 2\n---\n\nbody\n").unwrap();
+        assert_eq!(note.extra, ["zebra: 1", "alpha: 2"]);
+        assert_eq!(
+            note.render(),
+            "---\ntitle: Alpha\nzebra: 1\nalpha: 2\n---\n\nbody\n"
+        );
+    }
+
+    /// A line noda cannot even split into a field is still somebody's, so it is
+    /// carried too rather than quietly dropped.
+    #[test]
+    fn a_frontmatter_line_without_a_colon_is_carried_as_well() {
+        let note = Note::parse("---\ntitle: Alpha\n# a comment\n---\n\nbody\n").unwrap();
+        assert_eq!(note.extra, ["# a comment"]);
+        assert_eq!(Note::parse(&note.render()).unwrap(), note);
     }
 
     #[test]

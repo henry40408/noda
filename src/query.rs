@@ -197,6 +197,7 @@ mod tests {
         Note {
             title: title.to_string(),
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
+            extra: Vec::new(),
             body: body.to_string(),
         }
     }
