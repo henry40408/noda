@@ -41,6 +41,16 @@ const FALLBACK_SLUG: &str = "note";
 pub struct Note {
     pub title: String,
     pub tags: Vec<String>,
+    /// When the note came into existence, and when it was last changed —
+    /// RFC 3339, as they were found in the file.
+    ///
+    /// Both are `Option` because a note may predate the fields or arrive without
+    /// them, and neither is ever rewritten into a different spelling: a note
+    /// imported with `2019-03-14T16:21:00+08:00` keeps that offset. noda writes
+    /// UTC when it writes them itself; it does not normalise what it reads,
+    /// because that would make `noda show` stop matching the file.
+    pub created: Option<String>,
+    pub updated: Option<String>,
     /// Frontmatter lines noda does not interpret, kept in the order they were
     /// read so that a write-back does not discard them. A note that arrived from
     /// somewhere else carries fields noda has never heard of, and losing them on
@@ -65,6 +75,12 @@ impl Note {
         if !self.tags.is_empty() {
             let _ = writeln!(out, "tags: [{}]", self.tags.join(", "));
         }
+        if let Some(created) = &self.created {
+            let _ = writeln!(out, "created: {created}");
+        }
+        if let Some(updated) = &self.updated {
+            let _ = writeln!(out, "updated: {updated}");
+        }
         // After the fields noda owns, never interleaved with them: their order
         // relative to each other is preserved, their position relative to
         // `title` is not. Somebody's own fields keep their sequence; noda's
@@ -86,6 +102,8 @@ impl Note {
 
         let mut title = None;
         let mut tags = Vec::new();
+        let mut created = None;
+        let mut updated = None;
         let mut extra = Vec::new();
         for line in frontmatter.lines() {
             // A line noda cannot even split into a field is still somebody's.
@@ -97,6 +115,12 @@ impl Note {
             match key.trim() {
                 "title" => title = Some(value.to_string()),
                 "tags" => tags = parse_tags(value),
+                // Kept as written. An unreadable value is still the value, and
+                // `doctor --times` is where it gets reported rather than here:
+                // refusing to read the note would put a typo between somebody
+                // and their own prose.
+                "created" => created = Some(value.to_string()),
+                "updated" => updated = Some(value.to_string()),
                 // Every other field belongs to whoever wrote it.
                 _ => extra.push(line.to_string()),
             }
@@ -105,6 +129,8 @@ impl Note {
         Ok(Note {
             title: title.unwrap_or_default(),
             tags,
+            created,
+            updated,
             extra,
             body: body.trim_start_matches('\n').to_string(),
         })
@@ -122,6 +148,52 @@ pub(crate) fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
         pos += line.len();
     }
     None
+}
+
+/// The moment a write is happening, spelled the way noda records it: RFC 3339,
+/// UTC, whole seconds.
+///
+/// UTC because a notebook is read on more than one machine and one note must not
+/// claim two different times depending on where it is opened. Whole seconds
+/// because nothing consumes anything finer. Both together make the string
+/// fixed-width, so it sorts as text and `ls --sort` never has to parse it.
+pub fn now() -> String {
+    jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// Sets one frontmatter field, leaving every other byte of the file alone.
+/// `None` when there is no frontmatter to set it in.
+///
+/// `render` would also set it, but it rebuilds the block from a parsed note and
+/// so moves fields noda does not interpret below the ones it does. That is
+/// acceptable in `tag` and `mv`, which are rewriting the frontmatter anyway. It
+/// is not acceptable in `edit`, where it would reorder a block somebody has just
+/// arranged by hand, in front of them, as the price of recording that they did.
+pub fn set_field(text: &str, key: &str, value: &str) -> Option<String> {
+    let (frontmatter, body) = split_frontmatter(text)?;
+
+    let mut out = String::from("---\n");
+    let mut written = false;
+    for line in frontmatter.lines() {
+        if line.split_once(':').is_some_and(|(k, _)| k.trim() == key) {
+            // The first occurrence keeps the field's position; a duplicate does
+            // not get a second value, because `parse` only ever reads one.
+            if !written {
+                let _ = writeln!(out, "{key}: {value}");
+                written = true;
+            }
+            continue;
+        }
+        let _ = writeln!(out, "{line}");
+    }
+    if !written {
+        let _ = writeln!(out, "{key}: {value}");
+    }
+    out.push_str("---\n");
+    out.push_str(body);
+    Some(out)
 }
 
 fn parse_tags(value: &str) -> Vec<String> {
@@ -357,11 +429,15 @@ mod tests {
         let note = Note {
             title: "Meeting notes".into(),
             tags: vec!["work".into(), "q3".into()],
+            created: Some("2019-03-14T08:21:00Z".into()),
+            updated: Some("2024-11-02T16:40:12Z".into()),
             extra: Vec::new(),
             body: "Body line one.\nBody line two.\n".into(),
         };
         let text = note.render();
-        assert!(text.starts_with("---\ntitle: Meeting notes\ntags: [work, q3]\n---\n\n"));
+        assert!(text.starts_with(
+            "---\ntitle: Meeting notes\ntags: [work, q3]\ncreated: 2019-03-14T08:21:00Z\nupdated: 2024-11-02T16:40:12Z\n---\n\n"
+        ));
         assert!(!text.contains("id:"), "the id is the filename: {text}");
         assert_eq!(Note::parse(&text).unwrap(), note);
     }
@@ -413,6 +489,64 @@ mod tests {
         assert_eq!(
             note.render(),
             "---\ntitle: Alpha\nzebra: 1\nalpha: 2\n---\n\nbody\n"
+        );
+    }
+
+    /// A note written elsewhere brings the offset its own system used. noda
+    /// records UTC when it writes a time itself, but it does not restate what it
+    /// reads — `noda show` has to keep matching the file byte for byte.
+    #[test]
+    fn a_time_written_somewhere_else_is_not_restated() {
+        let text = "---\ntitle: Imported\ncreated: 2019-03-14T16:21:00+08:00\n---\n\nbody\n";
+        let note = Note::parse(text).unwrap();
+        assert_eq!(note.created.as_deref(), Some("2019-03-14T16:21:00+08:00"));
+        assert!(note.render().contains("created: 2019-03-14T16:21:00+08:00"));
+    }
+
+    /// What noda writes: fixed width, so it sorts as text and nothing has to
+    /// parse it to put two notes in order.
+    #[test]
+    fn the_time_noda_writes_is_fixed_width_utc() {
+        let now = now();
+        assert_eq!(now.len(), 20, "{now}");
+        assert!(now.ends_with('Z'), "{now}");
+        assert!(now.parse::<jiff::Timestamp>().is_ok(), "{now}");
+    }
+
+    /// `set_field` exists so `edit` can record a change without rearranging the
+    /// block somebody just arranged. Every other line stays where it was.
+    #[test]
+    fn setting_a_field_moves_nothing_else() {
+        let text = "---\nzebra: 1\nupdated: old\ntitle: Alpha\n---\n\nbody\n";
+        assert_eq!(
+            set_field(text, "updated", "new").unwrap(),
+            "---\nzebra: 1\nupdated: new\ntitle: Alpha\n---\n\nbody\n"
+        );
+    }
+
+    #[test]
+    fn setting_a_field_that_is_not_there_yet_appends_it() {
+        let text = "---\ntitle: Alpha\n---\n\nbody\n";
+        assert_eq!(
+            set_field(text, "updated", "new").unwrap(),
+            "---\ntitle: Alpha\nupdated: new\n---\n\nbody\n"
+        );
+        // An empty block is still a block, and still gets the field.
+        assert_eq!(
+            set_field("---\n---\n\nbody\n", "updated", "new").unwrap(),
+            "---\nupdated: new\n---\n\nbody\n"
+        );
+        assert_eq!(set_field("no frontmatter\n", "updated", "new"), None);
+    }
+
+    /// `parse` reads one value for a field, so `set_field` must not leave a
+    /// second one behind for it to pick instead.
+    #[test]
+    fn setting_a_duplicated_field_collapses_it() {
+        let text = "---\nupdated: a\ntitle: Alpha\nupdated: b\n---\n\nbody\n";
+        assert_eq!(
+            set_field(text, "updated", "new").unwrap(),
+            "---\nupdated: new\ntitle: Alpha\n---\n\nbody\n"
         );
     }
 
