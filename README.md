@@ -463,6 +463,7 @@ and the editor is handed the file.
 | --- | --- |
 | `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note. |
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
+| `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
 | `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
 
 `noda log <note>` follows a note across renames, because every commit records the filenames
@@ -479,6 +480,47 @@ A restore is a new commit, never a rewrite, and a note keeps the name it has now
 contents travel back. It also works on a note you removed: `noda restore <slug> HEAD~1`
 brings it back with its id intact, which is the friendly face of "`noda rm` is a commit you
 can revert".
+
+`noda deleted` is how you find out what there is to bring back, most recently lost first:
+
+```
+$ noda deleted
+2kpas2d8  meeting-notes  2026-08-02 02:40  ff9062f  Meeting notes
+qzdt88kk  old-draft      2026-08-02 02:40  6918cec  Old draft
+`noda restore <note> <commit>` with the commit above brings one back
+```
+
+The revision in each row is not the commit that did the deleting — it is the one before it,
+the last that still held the note, so it is what `restore` takes as it stands. The slug and
+title are read from that commit too; there is no file left to read them from.
+
+It works by comparing trees, not by reading commit messages. A commit's tree is a complete
+list of filenames, and a note's identity *is* its filename — so the notes that existed at
+any commit are read straight off it without opening a single blob. Three things follow. A
+rename is not a deletion, because `noda mv` changes the slug and leaves the id alone. A note
+deleted and later restored is not listed, because the comparison is against what is on disk
+now. And a deletion made with plain `git rm` is found exactly like one made with `noda rm`,
+because nothing here cares what the commit message said.
+
+It walks all of history, which is why it is a command of its own rather than a flag on
+`noda ls` — that one reads a directory, and the two costs should not share a name.
+
+`--json` makes the whole thing scriptable, and carries the object ids in full because an
+abbreviation is a thing that can stop being unique later:
+
+```sh
+noda deleted --json | jq -r '.deleted[] | "noda restore \(.slug) \(.restore_from)"'
+```
+```
+noda restore old-draft 4953133a9f2e154d8bcc11672de7503c77862c71
+noda restore meeting-notes a40b843e5d29a008fe8a3124cd9a1b7b705570d2
+```
+
+`removed_at` is RFC 3339 UTC there, the same spelling a note's own `created` and `updated`
+use, so a script never meets two ways of writing a time. The table shows it in the zone the
+commit was made in, which is a question a person asks and a program should not have to.
+Unlike the table, `--json` prints a document even when nothing has been deleted — an empty
+list is an answer. `--notebook` looks at one you are not currently in.
 
 ### Remote sync (HTTPS / SSH)
 

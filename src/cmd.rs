@@ -1640,6 +1640,111 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
     Ok(out)
 }
 
+/// The notes history holds that the notebook no longer does, most recently lost
+/// first.
+///
+/// A command of its own rather than a flag on `ls`, for two reasons. `ls` reads
+/// a directory; this walks all of history, and one command should not carry two
+/// costs that far apart. And every column `ls` prints describes something that
+/// exists — a deleted note's slug and title are what they were the moment it
+/// went, which is a different claim under the same heading.
+///
+/// The revision printed is not the commit that did the deleting. It is that
+/// commit's parent, the last one that still held the note, because that is what
+/// `restore` has to be given. Naming the deletion and leaving the `~1` to be
+/// worked out would be reporting a problem without its remedy.
+pub fn deleted(paths: &Paths, notebook_name: Option<&str>, json: bool) -> Result<String> {
+    let name = match notebook_name {
+        Some(name) => name.to_string(),
+        None => notebook::active_name(paths)?,
+    };
+    let notebook = Notebook::open(paths, &name)?;
+    let gone = notebook.deleted()?;
+
+    // Before the empty check, as `ls` does it: a program asking for JSON gets a
+    // document either way, and an empty list is an answer.
+    if json {
+        return Ok(deleted_as_json(&name, &gone));
+    }
+    if gone.is_empty() {
+        return Ok(String::new());
+    }
+
+    let id_width = gone.iter().map(|d| display_width(&d.id)).max().unwrap_or(0);
+    let slug_width = gone
+        .iter()
+        .map(|d| display_width(&d.slug))
+        .max()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+    for note in &gone {
+        let line = format!(
+            "{}  {}  {}  {}  {}",
+            pad(&note.id, id_width),
+            pad(&note.slug, slug_width),
+            style::paint(
+                style::MUTED,
+                &format_time(note.removed_at, note.offset_minutes)
+            ),
+            style::paint(style::COMMIT, &note.restore_from_short()),
+            note.title
+        );
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+
+    let _ = write!(
+        out,
+        "{}",
+        style::paint(
+            style::MUTED,
+            "`noda restore <note> <commit>` with the commit above brings one back"
+        )
+    );
+    Ok(out)
+}
+
+/// The deletions as one JSON object, on one line. Hand-written, for the reason
+/// `as_json` gives.
+///
+/// Object ids are printed in full rather than abbreviated: `restore` takes
+/// either, and an abbreviation is a thing that can one day stop being unique.
+/// The times are UTC rather than the commit's own zone — the table shows a
+/// person the time they made the commit in, and a program should not have to
+/// take a position on whose clock it was.
+fn deleted_as_json(notebook: &str, gone: &[notebook::Deleted]) -> String {
+    let mut out = String::from("{\"notebook\":");
+    out.push_str(&json_string(notebook));
+    out.push_str(",\"deleted\":[");
+    for (index, note) in gone.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{},\"removed_at\":{},\"removed_in\":{},\"restore_from\":{}}}",
+            json_string(&note.id),
+            json_string(&note.slug),
+            json_string(&note::file_name(&note.id, &note.slug)),
+            json_string(&note.title),
+            json_string(&rfc3339(note.removed_at)),
+            json_string(&note.removed_in.to_string()),
+            json_string(&note.restore_from.to_string()),
+        );
+    }
+    out.push_str("]}\n");
+    out
+}
+
+/// A commit time as RFC 3339 UTC — the spelling noda uses everywhere it writes
+/// a time itself, so a script never meets two of them.
+fn rfc3339(seconds: i64) -> String {
+    jiff::Timestamp::from_second(seconds)
+        .map(|time| time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_default()
+}
+
 /// Uncommitted changes, or what the last commit changed. The output is a plain
 /// unified diff — no header, nothing wrapped around it — so it stays something
 /// `git apply` will take.

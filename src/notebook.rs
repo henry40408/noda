@@ -135,6 +135,30 @@ pub struct Audit {
     pub broken: Vec<(String, String)>,
 }
 
+/// A note the notebook used to hold, as it stood the moment before it went.
+///
+/// The name and title are read from the commit that still had it: there is no
+/// file left to read them from, which is the whole reason this exists.
+pub struct Deleted {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    /// The commit that removed it.
+    pub removed_in: git2::Oid,
+    /// Its parent: the last commit that still held the note, and so the one
+    /// `noda restore` has to be pointed at.
+    pub restore_from: git2::Oid,
+    pub removed_at: i64,
+    pub offset_minutes: i32,
+}
+
+impl Deleted {
+    /// The revision to hand `noda restore`, abbreviated as git prints it.
+    pub fn restore_from_short(&self) -> String {
+        short(self.restore_from)
+    }
+}
+
 impl Scan {
     /// Everything worth reporting, gathered by kind.
     pub fn problems(&self) -> Vec<(Problem, Vec<String>)> {
@@ -944,6 +968,73 @@ impl Notebook {
             }
         }
         Ok(last)
+    }
+
+    /// Notes history holds that the notebook no longer does.
+    ///
+    /// The tree of a commit is a complete list of filenames, not a diff, and a
+    /// note's identity is its filename — so which notes existed at a commit is
+    /// read straight off it, without opening a single blob. That is the whole
+    /// mechanism: the ids in a commit's tree, minus the ids in its parent's,
+    /// against the ids the notebook holds now.
+    ///
+    /// Three things fall out of using ids rather than filenames. A rename is not
+    /// a deletion, because `mv` changes the slug and leaves the id where it was.
+    /// A note deleted and later restored is not reported, because the check is
+    /// against what is on disk now rather than against what history did. And a
+    /// deletion made outside noda is found like any other, because nothing here
+    /// reads a commit message — `git rm` and `noda rm` leave the same trace in
+    /// the tree, which is the only place this looks.
+    ///
+    /// Newest first, so the first disappearance found for an id is its last one.
+    /// A full walk of history, reached only through `noda deleted`.
+    pub fn deleted(&self) -> Result<Vec<Deleted>> {
+        let present = self.taken_ids()?;
+        let mut walk = self.repo.revwalk()?;
+        walk.push_head()?;
+        walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+
+        let mut found = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for oid in walk {
+            let commit = self.repo.find_commit(oid?)?;
+            // Against the first parent, as `log` and `last_changed` both do. A
+            // root commit deletes nothing.
+            let Ok(parent) = commit.parent(0) else {
+                continue;
+            };
+            let now = note_blobs(&commit)?;
+            for id in note_blobs(&parent)?.keys() {
+                if now.contains_key(id) || present.contains(id) || !seen.insert(id.clone()) {
+                    continue;
+                }
+                // The parent still had it, which is both where the name comes
+                // from and what `restore` should be pointed at.
+                let Some((slug, text)) = self.note_at(&parent, id)? else {
+                    continue;
+                };
+                found.push(Deleted {
+                    id: id.clone(),
+                    slug,
+                    title: Note::parse(&text)
+                        .map(|note| note.title)
+                        .unwrap_or_default(),
+                    removed_in: commit.id(),
+                    restore_from: parent.id(),
+                    removed_at: commit.time().seconds(),
+                    offset_minutes: commit.time().offset_minutes(),
+                });
+            }
+        }
+
+        // Most recently lost first: the one you are looking for is nearly always
+        // the one you just lost.
+        found.sort_by(|a, b| {
+            b.removed_at
+                .cmp(&a.removed_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(found)
     }
 
     /// The uncommitted changes when there are any, and what the last commit
