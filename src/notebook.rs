@@ -6,7 +6,7 @@
 //! that each add a note write two different filenames, and git merges them
 //! without anyone being asked to resolve anything.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryInitOptions, Signature};
@@ -909,6 +909,43 @@ impl Notebook {
         Ok(entries)
     }
 
+    /// When each note last changed according to git, by id, as a Unix time.
+    ///
+    /// One walk for the whole notebook rather than one per note. `log` filters a
+    /// walk down to a single note, which is the right shape when the question is
+    /// about one; asking it once per note would multiply the walk by the size of
+    /// the notebook. Here every commit is asked what it changed instead, and the
+    /// answers are collected on the way past.
+    ///
+    /// Newest first, so the first commit that mentions a note is the last one
+    /// that touched it. A note git has never seen is simply absent.
+    ///
+    /// This is a full walk of history and is only reached through
+    /// `doctor --times`.
+    pub fn last_changed(&self) -> Result<HashMap<String, i64>> {
+        let mut walk = self.repo.revwalk()?;
+        walk.push_head()?;
+        walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+
+        let mut last: HashMap<String, i64> = HashMap::new();
+        for oid in walk {
+            let commit = self.repo.find_commit(oid?)?;
+            let now = note_blobs(&commit)?;
+            // Against the first parent, the same simplification `git log` makes
+            // for a merge — and the same one `touches` already makes.
+            let before = match commit.parent(0) {
+                Ok(parent) => note_blobs(&parent)?,
+                Err(_) => BTreeMap::new(),
+            };
+            for (id, entry) in &now {
+                if before.get(id) != Some(entry) {
+                    last.entry(id.clone()).or_insert(commit.time().seconds());
+                }
+            }
+        }
+        Ok(last)
+    }
+
     /// The uncommitted changes when there are any, and what the last commit
     /// changed when there are not — because noda commits as it goes, a clean
     /// notebook is the normal state and "what just happened" is the useful
@@ -1067,6 +1104,25 @@ fn note_blob(commit: &git2::Commit<'_>, id: &str) -> Result<Option<(String, git2
         }
     }
     Ok(None)
+}
+
+/// Every note a commit's tree holds, by id, with the path and blob that
+/// `note_blob` would have returned for it one note at a time.
+///
+/// Comparing the path as well as the content is what catches a rename, which
+/// moves a note without changing a byte of it.
+fn note_blobs(commit: &git2::Commit<'_>) -> Result<BTreeMap<String, (String, git2::Oid)>> {
+    let mut found = BTreeMap::new();
+    for entry in &commit.tree()? {
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        let Some((id, _)) = name.strip_suffix(".md").and_then(note::split_stem) else {
+            continue;
+        };
+        found.insert(note::normalize_id(id), (name.to_string(), entry.id()));
+    }
+    Ok(found)
 }
 
 /// Every `(id, slug)` a tree holds, read from its filenames.

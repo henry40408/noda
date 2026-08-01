@@ -148,7 +148,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda use <name>` | Set the active notebook. |
 | `noda notebook current` | Print the active notebook. |
 | `noda status` | Where the active notebook stands: notes, changes, drift from the remote. |
-| `noda doctor [--dry-run] [--links]` | Report what noda will not settle on its own, and adopt notes that only lack an id. |
+| `noda doctor [--dry-run] [--links] [--times]` | Report what noda will not settle on its own, and adopt notes that only lack an id. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
@@ -311,6 +311,24 @@ Both are reported and neither is repaired. A file nothing links to may be an att
 whose note was deleted, or a receipt you parked here on purpose — and the only repair
 available is deleting something git cannot regenerate from anything else. A link that names
 nothing may be a typo, or a file you have not added yet.
+
+`--times` is the other check that has to be asked for, and it exists because `updated` has
+one break it cannot avoid: a note edited outside noda changes without noda getting to
+record that it did. git is the only witness, and asking it means walking all of history.
+
+```
+$ noda doctor --times
+1 time cannot be read
+  k3f9m2p1-imported.md created: last tuesday
+1 note was changed outside noda
+  b60ccfw0-reading-log.md
+  git has a commit newer than the note's own `updated`
+```
+
+It also catches a note changed before it was created, and a value nothing can read — which
+is reported rather than refused, because a typo in a date must not come between you and
+your own prose. Nothing here is repaired: the only thing noda could do about a stale
+`updated` is overwrite your record of your own work with a guess.
 
 The links are read with a CommonMark parser rather than searched for as text, because the
 alternative reports files as unused when they are not: a reference-style link keeps its

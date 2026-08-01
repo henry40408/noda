@@ -1655,7 +1655,7 @@ fn doctor_adopts_a_note_that_only_lacks_an_id() {
     plant_unnamed(&notebook, "hand-written");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("adopted 1 note"), "{out}");
     assert!(
         !notebook.join("hand-written.md").exists(),
@@ -1689,9 +1689,91 @@ fn doctor_names_every_file_where_status_elides() {
     }
 
     // `status` shows three and a `…`; this is where the rest can be seen.
-    let out = plain(&cmd::doctor(&paths, true, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, true, false, false).unwrap());
     assert_eq!(out.matches(".md").count(), 12, "{out}");
     assert!(!out.contains('…'), "nothing elided here: {out}");
+}
+
+/// The break `updated` cannot avoid: a note edited outside noda changes without
+/// noda getting to record that it did. git is the only witness, which is why
+/// this check costs a walk of history and is asked for rather than assumed.
+#[test]
+fn doctor_times_reports_a_note_changed_outside_noda() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let path = notebook.join(note_file(&added));
+
+    // A note whose contents moved on while its own record of when did not.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let edited = note::set_field(
+        &text.replace("a\n", "edited elsewhere\n"),
+        "updated",
+        "2000-01-01T00:00:00Z",
+    )
+    .unwrap();
+    std::fs::write(&path, edited).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: by hand");
+
+    let quiet = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(
+        quiet.contains("in order"),
+        "not looked for unless asked for"
+    );
+
+    let commits = commit_count(&notebook);
+    let out = plain(&cmd::doctor(&paths, false, false, true).unwrap());
+    assert!(out.contains("1 note was changed outside noda"), "{out}");
+    assert!(out.contains(&note_file(&added)), "{out}");
+    assert_eq!(
+        commit_count(&notebook),
+        commits,
+        "the check reports and repairs nothing"
+    );
+}
+
+/// The cheap half of the same flag: what the two fields say about each other,
+/// without asking git anything.
+#[test]
+fn doctor_times_reports_what_cannot_be_read_and_what_runs_backwards() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-unreadable.md"),
+        "---\ntitle: Unreadable\ncreated: last tuesday\n---\n\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        notebook.join("k3f9m2p2-backwards.md"),
+        "---\ntitle: Backwards\ncreated: 2024-01-01T00:00:00Z\nupdated: 2020-01-01T00:00:00Z\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, false, true).unwrap());
+    assert!(out.contains("1 time cannot be read"), "{out}");
+    assert!(
+        out.contains("k3f9m2p1-unreadable.md created: last tuesday"),
+        "{out}"
+    );
+    assert!(out.contains("1 note changed before being created"), "{out}");
+    assert!(out.contains("k3f9m2p2-backwards.md"), "{out}");
+
+    // An unreadable value is reported, not refused: it must not come between
+    // somebody and their own prose.
+    assert!(cmd::show(&paths, "unreadable").unwrap().contains("body"));
+}
+
+/// A notebook noda wrote by itself has nothing to report, which is what makes
+/// the check worth running at all.
+#[test]
+fn doctor_times_is_quiet_about_notes_noda_wrote() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
+    cmd::mv(&paths, "alpha", "Renamed").unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, false, true).unwrap());
+    assert!(out.contains("in order"), "{out}");
 }
 
 #[test]
@@ -1701,7 +1783,7 @@ fn doctor_writes_nothing_on_a_dry_run() {
     plant_unnamed(&notebook, "hand-written");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::doctor(&paths, true, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, true, false, false).unwrap());
     assert!(out.contains("nothing was changed"), "{out}");
     assert!(
         notebook.join("hand-written.md").exists(),
@@ -1717,7 +1799,7 @@ fn doctor_says_so_when_there_is_nothing_to_do() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("in order"), "{out}");
     assert_eq!(
         commit_count(&notebook),
@@ -1736,7 +1818,7 @@ fn doctor_reports_but_does_not_settle_a_shared_id() {
     plant(&notebook, "K3F9M2P1", "beta");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("carried by more than one note"), "{out}");
     assert!(out.contains("rename one of the files"), "{out}");
     assert!(notebook.join("k3f9m2p1-alpha.md").exists());
@@ -1754,7 +1836,7 @@ fn doctor_reports_but_does_not_settle_a_file_that_claims_an_id() {
     std::fs::write(notebook.join("abcdefgh-hello.md"), "no frontmatter\n").unwrap();
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("abcdefgh-hello.md"), "{out}");
     assert!(out.contains("add a `---` block back"), "{out}");
     assert_eq!(
@@ -1776,7 +1858,7 @@ fn doctor_ignores_a_file_that_was_never_a_note() {
     std::fs::write(notebook.join("scratch.md"), "just some markdown\n").unwrap();
     plant_unnamed(&notebook, "hand-written");
 
-    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("adopted 1 note"), "{out}");
     assert!(!out.contains("scratch.md"), "{out}");
     assert!(notebook.join("scratch.md").exists(), "left where it was");
@@ -1796,7 +1878,7 @@ fn doctor_says_nothing_about_links_until_it_is_asked_to() {
     cmd::add(&paths, Some("Alpha"), Some("see ![d](missing.png)\n"), &[]).unwrap();
     plant_file(&notebook, "unreferenced.png");
 
-    let out = plain(&cmd::doctor(&paths, false, false).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("in order"), "{out}");
     assert!(!out.contains("unreferenced.png"), "{out}");
     assert!(!out.contains("missing.png"), "{out}");
@@ -1811,7 +1893,7 @@ fn doctor_links_reports_a_file_no_note_links_to() {
     plant_file(&notebook, "receipt.pdf");
     let commits = commit_count(&notebook);
 
-    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(out.contains("1 file no note links to"), "{out}");
     assert!(out.contains("receipt.pdf"), "{out}");
     assert!(
@@ -1830,7 +1912,7 @@ fn doctor_links_reports_a_link_that_names_nothing() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("see ![d](missing.png)\n"), &[]).unwrap();
 
-    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(out.contains("1 broken link"), "{out}");
     assert!(out.contains("missing.png"), "{out}");
     assert!(
@@ -1865,7 +1947,7 @@ fn only_a_real_link_counts_as_a_reference() {
     plant_file(&notebook, "quoted.png");
     plant_file(&notebook, "referenced.png");
 
-    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(
         out.contains("quoted.png"),
         "a link inside a fence references nothing: {out}"
@@ -1889,7 +1971,7 @@ fn a_destination_the_notebook_does_not_own_is_never_broken() {
     )
     .unwrap();
 
-    let out = plain(&cmd::doctor(&paths, false, true).unwrap());
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(out.contains("in order"), "{out}");
 }
 
@@ -2477,7 +2559,7 @@ fn file_mv_update_links_rewrites_both_spellings_and_leaves_it_in_order() {
     );
 
     assert!(
-        plain(&cmd::doctor(&paths, false, true).unwrap()).contains("in order"),
+        plain(&cmd::doctor(&paths, false, true, false).unwrap()).contains("in order"),
         "no orphan and no broken link is left behind"
     );
     assert_eq!(
