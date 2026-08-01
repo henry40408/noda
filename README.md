@@ -278,6 +278,23 @@ files
   receipt.txt
 ```
 
+`--time` adds the two timestamps, and `--sort created|updated|title` puts the listing in
+order — the times newest first, the title alphabetically. Both are cheap: `ls` has already
+read each note's frontmatter to get its title, so the times come with it.
+
+```
+$ noda ls --time --sort updated
+b60ccfw0  reading-log    2019-03-14T08:21:00Z  2024-11-02T16:40:12Z  Reading log
+jjvgqnrv  meeting-notes  2026-08-02T09:14:00Z  2026-08-02T09:14:00Z  Meeting notes
+k3f9m2p1  imported       -                     -                     Imported
+```
+
+Sorting reads the stamps rather than comparing them as text, so a note imported with
+`+08:00` lands where it belongs rather than where its digits fall. A note with no time to
+sort by sorts last. `--json` carries `created` and `updated` whether or not `--time` was
+passed — they are `null` when the note has neither — because what a program reads should
+not depend on a flag about what fits on a terminal.
+
 What is *not* free is the other question — which files are actually used, and which links
 actually resolve. Answering it means reading every note's prose rather than its filename, so
 it is a flag rather than the default:
@@ -327,7 +344,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | Command | Description |
 | --- | --- |
 | `noda add [title] [-c <content>] [--tag <t>]...` | Create a note. Opens `$EDITOR` if no `-c`. Auto-commits. |
-| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only]` | List what the notebook holds. |
+| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only] [--time] [--sort <field>]` | List what the notebook holds. |
 | `noda show <note>` | Print a note to stdout. |
 | `noda edit <note>` | Open a note in `$EDITOR`; auto-commits on save. |
 | `noda rm <note>` | Delete a note (as a revertible commit). |

@@ -1,8 +1,18 @@
 //! The `noda` binary: parse arguments, run one command, print its output.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use noda::{Paths, cmd};
+
+/// What `noda ls --sort` accepts. `cmd::Sort` has a fourth variant for the
+/// order a listing comes in when the flag is absent, which is not something to
+/// ask for by name.
+#[derive(Clone, Copy, ValueEnum)]
+enum SortField {
+    Created,
+    Updated,
+    Title,
+}
 
 #[derive(Parser)]
 #[command(
@@ -56,6 +66,14 @@ enum Command {
         /// Leave out the notes.
         #[arg(long)]
         files_only: bool,
+        /// Show when each note was created and last changed. `--json` carries
+        /// them either way.
+        #[arg(long)]
+        time: bool,
+        /// Order the notes. `created` and `updated` put the newest first;
+        /// `title` is alphabetical.
+        #[arg(long, value_name = "FIELD")]
+        sort: Option<SortField>,
     },
     /// Print a note to stdout, addressed by id or slug.
     Show {
@@ -304,11 +322,20 @@ fn run() -> noda::Result<()> {
             null,
             notes_only,
             files_only,
+            time,
+            sort,
         } => cmd::ls(
             &paths,
             &cmd::List {
                 notebook: notebook.as_deref(),
                 tag: tag.as_deref(),
+                time: *time,
+                sort: match sort {
+                    Some(SortField::Created) => cmd::Sort::Created,
+                    Some(SortField::Updated) => cmd::Sort::Updated,
+                    Some(SortField::Title) => cmd::Sort::Title,
+                    None => cmd::Sort::Slug,
+                },
                 format: match (json, quiet) {
                     (true, _) => cmd::Format::Json,
                     (_, true) => cmd::Format::Quiet,

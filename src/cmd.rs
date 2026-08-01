@@ -230,6 +230,29 @@ pub struct List<'a> {
     /// newline. A file's name may contain a space, and this is what makes
     /// `noda ls -q0 | xargs -0` correct rather than nearly correct.
     pub null: bool,
+    pub sort: Sort,
+    /// Show `created` and `updated` in the table. Off by default: the two of
+    /// them are forty columns wide, which is the whole reason this is a flag
+    /// rather than the default — reading them costs nothing, since `ls` has
+    /// already parsed the frontmatter to get the title.
+    ///
+    /// `--json` carries them either way. What a program reads should not depend
+    /// on a flag meant for what fits on a terminal.
+    pub time: bool,
+}
+
+/// What order the notes come out in.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Sort {
+    /// By slug, which is what a notebook walk already produces.
+    #[default]
+    Slug,
+    /// Newest first — the question put to a time is nearly always "what is
+    /// recent", so these run the opposite way to `Title`.
+    Created,
+    Updated,
+    /// Alphabetical.
+    Title,
 }
 
 /// How a listing is written out.
@@ -263,7 +286,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
     let (notes, files) = notebook.inventory()?;
     let tag = options.tag;
 
-    let notes: Vec<notebook::NoteFile> = if options.only == Only::Files {
+    let mut notes: Vec<notebook::NoteFile> = if options.only == Only::Files {
         Vec::new()
     } else {
         notes
@@ -271,6 +294,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
             .filter(|file| tag.is_none_or(|t| file.note.tags.iter().any(|nt| nt == t)))
             .collect()
     };
+    sort_notes(&mut notes, options.sort);
 
     // Asking for one tag is asking about notes, so the notebook's other files
     // are not an answer to it.
@@ -286,12 +310,17 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         Format::Table => {}
     }
 
-    let rows: Vec<(String, String, String, String)> = notes
+    // A note may have no times at all — nothing invents one, so the column says
+    // so rather than leaving a hole the eye has to measure.
+    let stamp = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
+    let rows: Vec<(String, String, String, String, String, String)> = notes
         .into_iter()
         .map(|file| {
             (
                 file.id,
                 file.slug,
+                stamp(file.note.created),
+                stamp(file.note.updated),
                 file.note.title,
                 file.note.tags.join(", "),
             )
@@ -304,13 +333,23 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
 
     let id_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
     let slug_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
+    let created_width = rows.iter().map(|r| display_width(&r.2)).max().unwrap_or(0);
+    let updated_width = rows.iter().map(|r| display_width(&r.3)).max().unwrap_or(0);
     let mut out = String::new();
-    for (id, slug, title, tags) in rows {
-        let mut line = format!(
-            "{}  {}  {title}",
-            pad(&id, id_width),
-            pad(&slug, slug_width)
-        );
+    for (id, slug, created, updated, title, tags) in rows {
+        // The fixed-width columns first, the ones that grow with the prose
+        // after: a title runs to whatever length it runs to, and putting a
+        // column behind it would leave nothing lined up.
+        let mut line = format!("{}  {}", pad(&id, id_width), pad(&slug, slug_width));
+        if options.time {
+            let _ = write!(
+                line,
+                "  {}  {}",
+                pad(&created, created_width),
+                pad(&updated, updated_width)
+            );
+        }
+        let _ = write!(line, "  {title}");
         if !tags.is_empty() {
             line.push_str("  [");
             line.push_str(&tags);
@@ -335,6 +374,44 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
     Ok(out)
 }
 
+/// The instant a stamp names, for ordering. `None` when the field is absent or
+/// cannot be read; both sort last.
+///
+/// Parsed rather than compared as text. noda's own stamps are fixed-width UTC
+/// and would sort correctly as strings, but an imported note carries the offset
+/// its own system used — and `2019-03-14T16:21:00+08:00` sorts after
+/// `2019-03-14T09:00:00Z` as text while coming before it in fact.
+fn instant(stamp: Option<&String>) -> Option<jiff::Timestamp> {
+    stamp?.parse().ok()
+}
+
+fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
+    match sort {
+        // Already in this order: the walk sorts by slug before returning.
+        Sort::Slug => {}
+        Sort::Title => notes.sort_by(|a, b| {
+            a.note
+                .title
+                .cmp(&b.note.title)
+                // Two notes may share a title. The id is what tells them apart,
+                // and using it keeps the order the same from one run to the next.
+                .then_with(|| a.id.cmp(&b.id))
+        }),
+        Sort::Created | Sort::Updated => notes.sort_by_cached_key(|file| {
+            let stamp = match sort {
+                Sort::Created => file.note.created.as_ref(),
+                _ => file.note.updated.as_ref(),
+            };
+            // Negated for newest-first, and `None` mapped beyond every real
+            // instant so a note with no time to sort by sorts last.
+            (
+                instant(stamp).map_or(i128::MAX, |t| -t.as_nanosecond()),
+                file.id.clone(),
+            )
+        }),
+    }
+}
+
 /// The listing as one JSON object, on one line.
 ///
 /// Hand-written rather than derived: noda has no serialization crate, and one
@@ -353,13 +430,21 @@ fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> St
         if index > 0 {
             out.push(',');
         }
+        // Always present, `null` when the note carries no such time. A key that
+        // came and went with the data would make every reader test for it.
+        let stamp = |value: Option<&String>| match value {
+            Some(text) => json_string(text),
+            None => "null".to_string(),
+        };
         let _ = write!(
             out,
-            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{},\"tags\":[",
+            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{},\"created\":{},\"updated\":{},\"tags\":[",
             json_string(&file.id),
             json_string(&file.slug),
             json_string(&note::file_name(&file.id, &file.slug)),
             json_string(&file.note.title),
+            stamp(file.note.created.as_ref()),
+            stamp(file.note.updated.as_ref()),
         );
         for (n, tag) in file.note.tags.iter().enumerate() {
             if n > 0 {
