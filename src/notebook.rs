@@ -672,7 +672,9 @@ impl Notebook {
         std::fs::create_dir_all(paths.notebooks_dir())?;
 
         let mut builder = git2::build::RepoBuilder::new();
-        builder.fetch_options(remote::fetch_options());
+        // No repository to read a config from yet, so the global and system
+        // files are all there is — which is what `git clone` itself works from.
+        builder.fetch_options(remote::fetch_options(git2::Config::open_default()?));
         let repo = builder.clone(url, &path).map_err(|e| {
             let _ = std::fs::remove_dir_all(&path);
             remote::explain(e, url)
@@ -768,7 +770,8 @@ impl Notebook {
         let url = remote.url().unwrap_or_default().to_string();
         let refspec = format!("+refs/heads/{branch}:refs/remotes/{REMOTE_NAME}/{branch}");
 
-        match remote.fetch(&[&refspec], Some(&mut remote::fetch_options()), None) {
+        let config = self.repo.config()?;
+        match remote.fetch(&[&refspec], Some(&mut remote::fetch_options(config)), None) {
             Ok(()) => {}
             Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(None),
             Err(e) => return Err(remote::explain(e, &url)),
@@ -868,7 +871,7 @@ impl Notebook {
         // can be read back — hence the block.
         let rejections = std::cell::RefCell::new(Vec::new());
         let pushed = {
-            let mut callbacks = remote::callbacks();
+            let mut callbacks = remote::callbacks(self.repo.config()?);
             callbacks.push_update_reference(|refname, status| {
                 if let Some(reason) = status {
                     rejections.borrow_mut().push(format!("{refname}: {reason}"));
