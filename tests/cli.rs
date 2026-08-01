@@ -1963,6 +1963,132 @@ fn ls_json_carries_the_filename_as_well_as_the_id() {
     assert!(out.contains("\"notebook\":\"default\""), "{out}");
 }
 
+/// The times are in `--json` whether or not `--time` was passed: `--time` is
+/// about what fits on a terminal, and a program is not reading a terminal.
+#[test]
+fn ls_json_always_carries_the_times() {
+    let (_root, paths, _) = listable();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-undated.md"),
+        "---\ntitle: Undated\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Json,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let created = out.match_indices("\"created\":").count();
+    assert_eq!(created, 2, "one per note, present or not: {out}");
+    assert!(
+        out.contains("\"created\":null,\"updated\":null"),
+        "a note with no times says so rather than dropping the keys: {out}"
+    );
+    assert!(out.contains("\"updated\":\"20"), "{out}");
+}
+
+/// Off by default because two RFC 3339 columns are forty characters wide, not
+/// because they cost anything to read — `ls` has already parsed the frontmatter
+/// to get the title.
+#[test]
+fn ls_time_adds_two_columns_and_says_when_there_is_nothing_to_put_in_them() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-undated.md"),
+        "---\ntitle: Undated\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let plain_out = cmd::ls(&paths, &cmd::List::default()).unwrap();
+    assert!(!plain_out.contains('Z'), "no times by default: {plain_out}");
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            time: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let alpha = out.lines().find(|l| l.contains("Alpha")).unwrap();
+    assert_eq!(
+        alpha.matches('Z').count(),
+        2,
+        "created and updated: {alpha}"
+    );
+    let undated = out.lines().find(|l| l.contains("Undated")).unwrap();
+    let columns: Vec<&str> = undated.split_whitespace().collect();
+    assert_eq!(
+        &columns[2..],
+        ["-", "-", "Undated"],
+        "a hole the eye would have to measure is filled in: {undated}"
+    );
+}
+
+/// Ordering parses the stamps rather than comparing them as text. noda's own
+/// are fixed-width UTC and would sort either way, but an imported note carries
+/// the offset its own system used — and that is exactly the case this exists
+/// for.
+#[test]
+fn ls_sorts_by_time_across_the_offsets_an_import_brings() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    // 08:21Z, written down as 16:21+08:00 — text order would put it last.
+    for (name, title, created) in [
+        ("k3f9m2p1-middle.md", "Middle", "2019-03-14T16:21:00+08:00"),
+        ("k3f9m2p2-oldest.md", "Oldest", "2019-03-14T07:00:00Z"),
+        ("k3f9m2p3-newest.md", "Newest", "2019-03-14T09:00:00Z"),
+    ] {
+        std::fs::write(
+            notebook.join(name),
+            format!("---\ntitle: {title}\ncreated: {created}\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        notebook.join("k3f9m2p4-undated.md"),
+        "---\ntitle: Undated\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let titles = |sort| {
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                sort,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(2).map(str::to_string))
+        .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        titles(cmd::Sort::Created),
+        ["Newest", "Middle", "Oldest", "Undated"],
+        "newest first, and a note with no time to sort by sorts last"
+    );
+    assert_eq!(
+        titles(cmd::Sort::Title),
+        ["Middle", "Newest", "Oldest", "Undated"]
+    );
+    assert_eq!(
+        titles(cmd::Sort::Slug),
+        ["Middle", "Newest", "Oldest", "Undated"],
+        "by slug, which is what the walk already produced"
+    );
+}
+
 #[test]
 fn ls_json_escapes_what_would_otherwise_break_the_document() {
     let (_root, paths) = initialized();
