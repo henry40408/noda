@@ -34,8 +34,24 @@ impl Drop for TempRoot {
 fn initialized() -> (TempRoot, Paths) {
     let root = TempRoot::new();
     let paths = root.paths();
+    unsigned(&paths);
     cmd::init(&paths).expect("init");
     (root, paths)
+}
+
+/// Turns signing off for a test notebook, before anything commits.
+///
+/// The XDG roots are per-test, but git's are not: libgit2 reads the real
+/// `~/.config/git/config`, and a developer who signs their own commits has
+/// `commit.gpgsign = true` there. Without this every test would shell out to gpg
+/// — slowly, and on a locked keyring not at all. noda's own setting outranks
+/// git's, which is exactly what makes one line here enough.
+///
+/// Tests that write `config.toml` wholesale have to say `sign = false` in it
+/// themselves; the signing tests turn it back on deliberately.
+fn unsigned(paths: &Paths) {
+    std::fs::create_dir_all(paths.config_dir()).expect("config dir");
+    std::fs::write(paths.config_dir().join("config.toml"), "sign = false\n").expect("config");
 }
 
 fn commit_count(notebook: &Path) -> usize {
@@ -3852,24 +3868,34 @@ fn config_file(paths: &Paths) -> PathBuf {
 
 #[test]
 fn init_leaves_a_starter_config_that_changes_nothing() {
-    let (_root, paths) = initialized();
+    let root = TempRoot::new();
+    let paths = root.paths();
+    // The template rather than `init`, because `initialized()` writes a config
+    // of its own to keep the tests away from the developer's signing key — and
+    // this is the same call `init` makes when there is no config yet.
+    assert!(noda::config::Config::write_template(&paths).expect("template written"));
 
     let text = std::fs::read_to_string(config_file(&paths)).expect("config written");
     assert!(text.contains("# editor ="), "{text}");
     assert!(text.contains("# author ="), "{text}");
     assert!(text.contains("# notebook ="), "{text}");
+    assert!(text.contains("# sign ="), "{text}");
     assert!(
         text.lines()
             .all(|line| line.trim().is_empty() || line.trim_start().starts_with('#')),
         "everything is commented out, so the defaults still apply: {text}"
     );
 
-    // Which means every setting still reports itself as a default.
+    // Which means no setting reports itself as coming from the file. Which
+    // value each has is the machine's business — `sign` follows git's
+    // `commit.gpgsign`, and the developer running this may well set it.
     let shown = plain(&cmd::config_show(&paths).unwrap());
-    assert_eq!(shown.lines().count(), 3, "{shown}");
+    assert_eq!(shown.lines().count(), 4, "{shown}");
     assert!(shown.contains("notebook  default"), "{shown}");
+    assert!(!shown.contains("(config.toml)"), "{shown}");
 
     // And a second init does not overwrite what the user has since written.
+    let (_root, paths) = initialized();
     std::fs::write(config_file(&paths), "editor = \"nvim\"\n").unwrap();
     cmd::init(&paths).unwrap();
     assert_eq!(
@@ -3909,7 +3935,11 @@ fn config_set_and_get_round_trip_and_report_their_source() {
 
 #[test]
 fn the_first_setting_written_lands_under_the_header_not_above_it() {
-    let (_root, paths) = initialized();
+    // The starter config, not `initialized()`'s: the header is what this is
+    // about, and the harness writes a config that has none.
+    let root = TempRoot::new();
+    let paths = root.paths();
+    noda::config::Config::write_template(&paths).expect("template");
     cmd::config_set(&paths, "editor", "helix").unwrap();
 
     let text = std::fs::read_to_string(config_file(&paths)).unwrap();
@@ -3986,7 +4016,7 @@ fn the_configured_notebook_is_what_init_creates_and_what_stands_in() {
     let root = TempRoot::new();
     let paths = root.paths();
     std::fs::create_dir_all(paths.config_dir()).unwrap();
-    std::fs::write(config_file(&paths), "notebook = \"work\"\n").unwrap();
+    std::fs::write(config_file(&paths), "notebook = \"work\"\nsign = false\n").unwrap();
 
     cmd::init(&paths).unwrap();
     assert!(paths.notebook_dir("work").join(".git").is_dir());
@@ -4967,4 +4997,206 @@ fn a_file_that_cannot_be_read_stops_the_import_before_it_writes() {
     assert!(err.contains("two.json"), "it says which file: {err}");
     assert_eq!(commit_count(&notebook), before, "and wrote nothing");
     assert!(cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty());
+}
+
+/// A stand-in for gpg: reads the commit on stdin and answers with a fixed
+/// armored block. The tests are about what noda does with a signature — builds
+/// the right text, attaches what comes back, moves the branch onto it — and a
+/// real key would test gpg instead, on a keyring that may well be locked.
+fn stub_gpg(root: &TempRoot, name: &str, script: &str) -> String {
+    let path = root.0.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{script}")).expect("write stub");
+    let mut perms = std::fs::metadata(&path).expect("stat stub").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&path, perms).expect("chmod stub");
+    path.to_str().expect("utf-8 path").to_string()
+}
+
+/// A stub that signs, and one that refuses to.
+const SIGNS: &str = "cat > /dev/null\n\
+     printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nc3R1Yg==\\n-----END PGP SIGNATURE-----\\n'\n";
+const FAILS: &str = "cat > /dev/null\nexit 1\n";
+
+/// Points a notebook's own git config at `program` and turns noda's signing on.
+///
+/// `gpg.openpgp.program` rather than `gpg.program`, and `gpg.format` pinned:
+/// both are what the resolution actually consults first, and a developer whose
+/// own `~/.config/git/config` sets them would otherwise have this test signing
+/// with their real key — which passes, and proves nothing about the stub.
+fn sign_with(paths: &Paths, notebook: &str, program: &str) {
+    let repo = git2::Repository::open(paths.notebook_dir(notebook)).expect("open repo");
+    let mut config = repo.config().expect("config");
+    config.set_str("gpg.format", "openpgp").expect("set format");
+    config
+        .set_str("gpg.openpgp.program", program)
+        .expect("set gpg.openpgp.program");
+    cmd::config_set(paths, "sign", "true").expect("sign on");
+}
+
+/// The signature on the commit `HEAD` points at, if it has one.
+fn head_signature(notebook: &Path) -> Option<String> {
+    let repo = git2::Repository::open(notebook).expect("open repo");
+    let head = repo.head().expect("head").peel_to_commit().expect("commit");
+    repo.extract_signature(&head.id(), None)
+        .ok()
+        .map(|(sig, _)| sig.as_str().expect("utf-8 signature").to_string())
+}
+
+#[test]
+fn signing_attaches_the_signature_and_still_moves_the_branch() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    assert_eq!(head_signature(&notebook), None, "unsigned by default");
+
+    let before = commit_count(&notebook);
+    sign_with(
+        &paths,
+        cmd::DEFAULT_NOTEBOOK,
+        &stub_gpg(&root, "gpg-ok", SIGNS),
+    );
+    let out = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let signature = head_signature(&notebook).expect("signed");
+    assert!(signature.contains("BEGIN PGP SIGNATURE"), "{signature}");
+
+    // `commit_signed` writes an object and nothing else, so the interesting
+    // half is that the branch came with it: one new commit, the note in it, and
+    // a working tree with nothing left over.
+    assert_eq!(commit_count(&notebook), before + 1);
+    assert!(
+        cmd::ls(&paths, &cmd::List::default())
+            .unwrap()
+            .contains("Alpha")
+    );
+    assert!(notebook.join(note_file(&out)).exists());
+    let repo = git2::Repository::open(&notebook).unwrap();
+    assert!(
+        repo.statuses(None).unwrap().is_empty(),
+        "nothing uncommitted"
+    );
+
+    // And the next commit builds on it rather than beside it.
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head.parent_count(), 1);
+    assert_eq!(commit_count(&notebook), before + 2);
+}
+
+#[test]
+fn a_gpg_that_fails_takes_the_commit_with_it() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    sign_with(
+        &paths,
+        cmd::DEFAULT_NOTEBOOK,
+        &stub_gpg(&root, "gpg-no", FAILS),
+    );
+    let before = commit_count(&notebook);
+
+    let err = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("could not sign"), "{err}");
+    assert_eq!(
+        commit_count(&notebook),
+        before,
+        "an unsigned commit is not the fallback"
+    );
+}
+
+#[test]
+fn a_gpg_that_is_not_gpg_is_not_taken_at_its_word() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    // Exits 0 and says nothing, the way a wrong `gpg.program` would.
+    let quiet = stub_gpg(&root, "gpg-quiet", "cat > /dev/null\n");
+    sign_with(&paths, cmd::DEFAULT_NOTEBOOK, &quiet);
+    let before = commit_count(&notebook);
+
+    let err = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no OpenPGP signature"), "{err}");
+    assert_eq!(commit_count(&notebook), before);
+}
+
+#[test]
+fn a_format_noda_cannot_sign_is_refused_at_the_commit() {
+    let (root, paths) = initialized();
+    sign_with(
+        &paths,
+        cmd::DEFAULT_NOTEBOOK,
+        &stub_gpg(&root, "gpg-ok2", SIGNS),
+    );
+    let repo = git2::Repository::open(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)).unwrap();
+    repo.config().unwrap().set_str("gpg.format", "ssh").unwrap();
+
+    let err = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("OpenPGP only"), "{err}");
+
+    // Reading is untouched by it: the notebook is only unsignable, not broken.
+    assert!(cmd::ls(&paths, &cmd::List::default()).is_ok());
+}
+
+#[test]
+fn the_merge_a_pull_makes_is_signed_too() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+    mirror(&paths, &url, "mirror");
+
+    cmd::add(&paths, Some("Laptop"), Some("l\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    // The mirror diverged and signs; the merge it makes is a commit like any
+    // other, so it carries a signature like any other.
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    sign_with(&paths, "mirror", &stub_gpg(&root, "gpg-merge", SIGNS));
+    cmd::add(&paths, Some("Desktop"), Some("d\n"), &[]).unwrap();
+    let out = cmd::sync(&paths).unwrap();
+    assert!(out.contains("merged"), "{out}");
+
+    let notebook = paths.notebook_dir("mirror");
+    let repo = git2::Repository::open(&notebook).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head.parent_count(), 2, "the merge is what HEAD points at");
+    assert!(
+        head_signature(&notebook)
+            .expect("signed merge")
+            .contains("BEGIN PGP SIGNATURE")
+    );
+    assert_eq!(repo.state(), git2::RepositoryState::Clean);
+}
+
+#[test]
+fn sign_is_a_setting_like_any_other() {
+    let (_root, paths) = initialized();
+
+    assert_eq!(cmd::config_get(&paths, "sign").unwrap(), "false");
+    cmd::config_set(&paths, "sign", "true").unwrap();
+    assert_eq!(cmd::config_get(&paths, "sign").unwrap(), "true");
+
+    // Written as a boolean, not as the string it arrived as.
+    let text = std::fs::read_to_string(config_file(&paths)).unwrap();
+    assert!(text.contains("sign = true"), "{text}");
+
+    let shown = plain(&cmd::config_show(&paths).unwrap());
+    assert!(shown.contains("sign      true"), "{shown}");
+    assert!(shown.contains("(config.toml)"), "{shown}");
+
+    // git's spellings are not TOML's, and are refused rather than read as false.
+    let err = cmd::config_set(&paths, "sign", "yes")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("`true` or `false`"), "{err}");
+    assert_eq!(cmd::config_get(&paths, "sign").unwrap(), "true");
+
+    // Unset hands the decision back to git.
+    let out = cmd::config_unset(&paths, "sign").unwrap();
+    assert!(out.contains("now from"), "{out}");
 }

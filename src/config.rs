@@ -1,4 +1,4 @@
-//! `config.toml`: the three settings noda keeps, and where each value comes from.
+//! `config.toml`: the four settings noda keeps, and where each value comes from.
 //!
 //! The file is edited by hand at least as often as by `noda config`, so it is
 //! parsed by a real TOML parser and written back through the same document —
@@ -13,7 +13,7 @@ use crate::{Error, Result};
 
 /// Everything that may be set. A typo silently doing nothing is worse than an
 /// error, so anything else is refused by name.
-pub const KEYS: [&str; 3] = ["editor", "author", "notebook"];
+pub const KEYS: [&str; 4] = ["editor", "author", "notebook", "sign"];
 
 /// The notebook `noda init` creates when config says nothing.
 pub const DEFAULT_NOTEBOOK: &str = "default";
@@ -33,6 +33,11 @@ const TEMPLATE: &str = "\
 # The notebook to fall back to when no notebook is active, and the one
 # `noda init` creates.
 # notebook = \"default\"
+
+# Whether commits are GPG-signed. Falls back to git's commit.gpgsign.
+# Set it here to sign your notes without signing everything else, or to
+# leave them unsigned when the rest of your commits are signed.
+# sign = true
 ";
 
 pub struct Config {
@@ -63,6 +68,14 @@ impl Config {
         self.document.get(key).and_then(|item| item.as_str())
     }
 
+    /// `sign`, or `None` when it is unset — in which case git's `commit.gpgsign`
+    /// decides. Written as a TOML boolean, but a hand-edited `sign = "true"` is
+    /// read too: the quotes are a slip, not a different answer.
+    pub fn sign(&self) -> Option<bool> {
+        let item = self.document.get("sign")?;
+        item.as_bool().or_else(|| parse_bool(item.as_str()?))
+    }
+
     pub fn set(&mut self, key: &str, text: &str) -> Result<()> {
         validate_key(key)?;
         if key == "author" && author_parts(text).is_none() {
@@ -71,6 +84,16 @@ impl Config {
             )));
         }
         let is_new = self.document.get(key).is_none();
+        if key == "sign" {
+            let on = parse_bool(text).ok_or_else(|| {
+                Error::msg(format!("sign must be `true` or `false`, not `{text}`"))
+            })?;
+            self.document[key] = value(on);
+            if is_new {
+                self.keep_the_header_on_top(key);
+            }
+            return self.save();
+        }
         self.document[key] = value(text);
         if is_new {
             self.keep_the_header_on_top(key);
@@ -188,6 +211,17 @@ pub fn editor(
     ("vi".to_string(), Source::Default)
 }
 
+/// `true` and `false`, and nothing else. `yes`/`on`/`1` are git's spellings, not
+/// TOML's, and accepting them here would make `config.toml` a file that two
+/// parsers read differently.
+fn parse_bool(text: &str) -> Option<bool> {
+    match text.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 /// Splits `Name <email>`. Both halves must be there and non-empty; anything else
 /// is refused rather than quietly committed under half an identity.
 pub fn author_parts(text: &str) -> Option<(String, String)> {
@@ -242,6 +276,30 @@ mod tests {
         assert_eq!(author_parts("no email"), None);
         assert_eq!(author_parts("<only@email>"), None);
         assert_eq!(author_parts("Name <unclosed"), None);
+    }
+
+    #[test]
+    fn sign_is_a_boolean_however_it_was_written() {
+        assert_eq!(parse_bool("true"), Some(true));
+        assert_eq!(parse_bool(" false "), Some(false));
+        // git's spellings are not TOML's.
+        assert_eq!(parse_bool("yes"), None);
+        assert_eq!(parse_bool("1"), None);
+
+        let read = |text: &str| {
+            Config {
+                path: PathBuf::new(),
+                document: text.parse::<DocumentMut>().unwrap(),
+            }
+            .sign()
+        };
+        assert_eq!(read("sign = true"), Some(true));
+        assert_eq!(read("sign = false"), Some(false));
+        // Quoted by a hand that meant the boolean.
+        assert_eq!(read("sign = \"true\""), Some(true));
+        // Unset is not "off": it is "ask git".
+        assert_eq!(read("editor = \"vi\""), None);
+        assert_eq!(read("sign = 3"), None);
     }
 
     #[test]
