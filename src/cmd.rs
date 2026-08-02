@@ -322,17 +322,29 @@ pub enum Only {
 /// The reading and the writing are separate on purpose: `import::tiddlywiki`
 /// knows what a tiddler is, `import::write` knows what a notebook is, and the
 /// next source noda learns is the first of those and none of the second.
-pub fn import_tiddlywiki(paths: &Paths, file: &Path, convert: bool) -> Result<String> {
-    let text = std::fs::read_to_string(file)
-        .map_err(|e| Error::msg(format!("{}: {e}", file.display())))?;
-    let export = import::tiddlywiki::read(&text)?;
+/// Several files are one import rather than several. A wiki exported in pieces
+/// has links running between the pieces, and a link can only be rewritten
+/// against notes that exist by the time it is — so every file is read before
+/// anything is written, and one that cannot be read stops the import before it
+/// has touched the notebook.
+pub fn import_tiddlywiki(paths: &Paths, files: &[PathBuf], convert: bool) -> Result<String> {
+    let mut notes = Vec::new();
+    let mut skipped = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| Error::msg(format!("{}: {e}", file.display())))?;
+        let export = import::tiddlywiki::read(&text)
+            .map_err(|e| Error::msg(format!("{}: {e}", file.display())))?;
+        notes.extend(export.notes);
+        skipped.extend(export.skipped);
+    }
     let converter =
         |body: &str, resolve: &import::wikitext::Resolve| import::wikitext::convert(body, resolve);
     import::write(
         paths,
         "tiddlywiki",
-        export.notes,
-        export.skipped,
+        notes,
+        skipped,
         convert.then_some(&converter),
     )
 }

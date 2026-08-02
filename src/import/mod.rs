@@ -94,12 +94,26 @@ pub fn write(
     let held = already_here(&notebook)?;
     let mut taken = notebook.taken_ids()?;
 
+    // Where every name the sources use will end up, so that a link between two
+    // notes can be rewritten. It starts from what the notebook already holds:
+    // a wiki imported in pieces has links running between the pieces, and the
+    // ones written today point at notes that arrived last week.
+    let mut by_key = held.clone();
+
     let mut named: Vec<(String, String, Incoming)> = Vec::new();
     for note in incoming {
         if let Some(file) = held.get(&note.key) {
             report
                 .skipped
                 .push((note.title, format!("already imported as {file}")));
+            continue;
+        }
+        // Two files given at once may hold the same note — exports overlap when
+        // they are taken in pieces. The first copy is the one that lands.
+        if by_key.contains_key(&note.key) {
+            report
+                .skipped
+                .push((note.title, "given twice in this import".to_string()));
             continue;
         }
         if let Err(e) = check(&note) {
@@ -109,6 +123,7 @@ pub fn write(
         let id = note::mint_id(&taken);
         taken.insert(note::normalize_id(&id));
         let slug = note::slugify(&note.title);
+        by_key.insert(note.key.clone(), note::file_name(&id, &slug));
         named.push((id, slug, note));
     }
 
@@ -135,10 +150,6 @@ pub fn write(
     let Some(convert) = convert else {
         return Ok(summary(&report, source, None));
     };
-    let by_key: HashMap<&str, String> = named
-        .iter()
-        .map(|(id, slug, note)| (note.key.as_str(), note::file_name(id, slug)))
-        .collect();
     let resolve = |key: &str| by_key.get(key).cloned();
 
     let mut changed: Vec<PathBuf> = Vec::new();

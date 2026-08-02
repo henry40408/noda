@@ -318,8 +318,10 @@ enum ImportCommand {
     /// single-file wiki. Writes two commits — the notes as the wiki held them,
     /// then the conversion — so the originals stay in history either way.
     Tiddlywiki {
-        /// The exported `.json`, or a saved `.html` wiki.
-        file: std::path::PathBuf,
+        /// The exported `.json`, or a saved `.html` wiki. Several are read as
+        /// one import, so the links between them resolve.
+        #[arg(required = true, num_args = 1.., value_name = "FILE")]
+        files: Vec<std::path::PathBuf>,
         /// Bring the `WikiText` in as it stands instead of converting it to
         /// Markdown.
         #[arg(long)]
@@ -519,8 +521,8 @@ fn run() -> noda::Result<()> {
         },
         Command::Use { name } => cmd::use_notebook(&paths, name)?,
         Command::Import { command } => match command {
-            ImportCommand::Tiddlywiki { file, no_convert } => {
-                cmd::import_tiddlywiki(&paths, file, !*no_convert)?
+            ImportCommand::Tiddlywiki { files, no_convert } => {
+                cmd::import_tiddlywiki(&paths, files, !*no_convert)?
             }
         },
         Command::File { command } => match command {
