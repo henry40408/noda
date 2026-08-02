@@ -7,6 +7,7 @@
 pub mod cmd;
 pub mod config;
 pub mod error;
+pub mod import;
 pub mod link;
 pub mod note;
 pub mod notebook;
