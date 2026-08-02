@@ -1351,6 +1351,11 @@ fn elide(subjects: &[String]) -> String {
 /// name: see `describe_audit`. It is a flag rather than the default because it
 /// is the only part of noda that costs a full read of the notebook.
 ///
+/// One check needs no flag and no notes at all: the hooks in `.git` that noda
+/// will never run. It is here rather than anywhere else because this is the
+/// command for the things noda cannot act on, and a hook is the purest example —
+/// noda cannot run it and will not delete it. See `describe_hooks`.
+///
 /// Where `status` elides, this names every file: it is the place people are
 /// sent to see the full list.
 pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<String> {
@@ -1374,13 +1379,21 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
             report.push_str(&found);
         }
     }
-    let link_report = report;
+
+    let hooks = describe_hooks(&notebook.hooks()?);
+    if !hooks.is_empty() {
+        if !report.is_empty() {
+            report.push('\n');
+        }
+        report.push_str(&hooks);
+    }
+    let extras = report;
 
     if problems.is_empty() {
-        return Ok(if link_report.is_empty() {
+        return Ok(if extras.is_empty() {
             "the notebook is in order".to_string()
         } else {
-            link_report
+            extras
         });
     }
 
@@ -1394,8 +1407,8 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
     for line in advice(&scan) {
         let _ = writeln!(out, "{line}");
     }
-    if !link_report.is_empty() {
-        let _ = writeln!(out, "{link_report}");
+    if !extras.is_empty() {
+        let _ = writeln!(out, "{extras}");
     }
 
     if scan.unnamed.is_empty() {
@@ -1564,6 +1577,40 @@ fn describe_times(notes: &[notebook::NoteFile], last: &HashMap<String, i64>) -> 
         );
     }
     out.trim_end().to_string()
+}
+
+/// The hooks that will never fire.
+///
+/// Not behind a flag, unlike `--links` and `--times`. Those are asked for
+/// because they are expensive — one reads every note, the other walks all of
+/// history — and this reads one directory, which `doctor` was going to do
+/// anyway. What makes a check opt-in here is its cost, not its novelty.
+///
+/// It stays out of `Problem`, and so out of `status`, for the opposite reason:
+/// a hook is not a problem with the notes. `status` summarises what the notebook
+/// holds, and a script somebody left in `.git` is not something it holds.
+fn describe_hooks(hooks: &[String]) -> String {
+    if hooks.is_empty() {
+        return String::new();
+    }
+    let count = hooks.len();
+    let noun = if count == 1 { "hook" } else { "hooks" };
+    let mut out = String::new();
+    let _ = writeln!(out, "{count} git {noun} will never run");
+    for hook in hooks {
+        let _ = writeln!(out, "  {hook}");
+    }
+    // The remedy is the reason: knowing *why* they are dead is what tells you
+    // that running the same command through git would have fired them.
+    let _ = write!(
+        out,
+        "{}",
+        style::paint(
+            style::MUTED,
+            "noda carries its own libgit2 and never calls git, which is what would run them"
+        )
+    );
+    out
 }
 
 /// What to do about each kind of problem, as lines ready to print. Detection

@@ -384,6 +384,54 @@ impl Notebook {
         Ok(Audit { orphans, broken })
     }
 
+    /// The hooks the repository holds that will never fire.
+    ///
+    /// noda carries its own libgit2 rather than calling `git`, and libgit2 runs
+    /// no hooks at all. The same `pre-commit` is therefore live under
+    /// `git commit` and dead under `noda add`, with nothing on screen to say
+    /// which — that silence is the only reason this is reported.
+    ///
+    /// Exactly the set git itself would reach for: `core.hooksPath` when it is
+    /// set, the executable bit because that is what git checks, and never the
+    /// `*.sample` files a fresh repository ships, which were not going to run
+    /// under either.
+    ///
+    /// A directory that cannot be read is not a finding. Nothing here is a
+    /// problem with the notebook, so an unreadable one has nothing to report.
+    pub fn hooks(&self) -> Result<Vec<String>> {
+        let dir = match self.repo.config()?.get_path("core.hooksPath") {
+            // A relative path is taken from the working tree, as git takes it.
+            // An absolute one replaces the join outright.
+            Ok(configured) => self.path.join(configured),
+            Err(_) => self.repo.path().join("hooks"),
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Ok(Vec::new());
+        };
+
+        let mut found = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            // Followed rather than skipped: a symlinked hook is a hook, and
+            // `metadata` resolves the link where `file_type` does not.
+            if file_type.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.ends_with(".sample") {
+                continue;
+            }
+            if entry.metadata().is_ok_and(|meta| is_executable(&meta)) {
+                found.push(name.to_string());
+            }
+        }
+        found.sort();
+        Ok(found)
+    }
+
     /// Every `(id, slug)` a filename in the notebook spells out, whether or not
     /// the file behind it can be read.
     ///
@@ -1253,6 +1301,21 @@ fn rejected(reasons: &[String]) -> Error {
         "push rejected — {}\nthe remote has commits you do not: run `noda pull` first",
         reasons.join("; ")
     ))
+}
+
+/// Whether git would run this file: the executable bit, which is the whole of
+/// what git looks at. Elsewhere there is no bit to look at, so the name is taken
+/// at its word rather than every hook being declared dead.
+#[cfg(unix)]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_: &std::fs::Metadata) -> bool {
+    true
 }
 
 /// An abbreviated object id, as git prints it.
