@@ -14,6 +14,7 @@ pub mod paths;
 pub mod query;
 pub mod remote;
 pub mod style;
+pub mod todo;
 
 pub use error::{Error, Result};
 pub use paths::Paths;

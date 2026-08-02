@@ -384,6 +384,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title>` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
+| `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 
 `<note>` accepts an id (`k3f9m2p1`, or any prefix naming exactly one note) or a slug
 (`meeting-notes`, matched whole). Two notes may share a slug — the id in front of it keeps
@@ -471,6 +472,53 @@ query language lives — one language in one command beats two commands nobody c
 the frontmatter — the file is left as you saved it so you can fix it or throw it away with
 `git checkout`. An edit cannot change *which* note it is editing: the id is in the filename,
 and the editor is handed the file.
+
+### Action items
+
+A todo is a GFM checkbox in a note's body — not a note, and not a file of its own:
+
+```markdown
+## Action items
+
+- [ ] send the revised contract due:2026-08-10
+- [x] confirm the legal contact
+- [ ] align on timing with Alice
+```
+
+That syntax was chosen for the same reason attachments are plain Markdown links: it renders
+as a checkbox in anything else that reads Markdown, and it stays readable in the file when
+nothing does. `due:2026-08-10` is todo.txt's `key:value` shape — plain text to every other
+parser, and the only thing noda reads out of an item's prose.
+
+```
+$ noda todo
+rgy2cwtw  q3-planning    2026-07-20  chase legal on the terms
+r571tmze  meeting-notes  2026-08-10  send the revised contract
+r571tmze  meeting-notes              align on timing with Alice
+v69raz2x  reading-log                sort out the chapter-three notes
+```
+
+Soonest first; items with no date come last, because a date is a claim about when something
+has to happen and an item without one has made no claim. **A date that has passed is
+coloured** — it is the one thing anybody scans a todo list for. "Passed" is measured in UTC:
+noda is built without a timezone database (the same choice that keeps the binary
+self-contained), so it cannot name your local midnight and does not pretend to.
+
+Ticked items are not listed, and nothing is ever truncated — a list that cuts the sentence
+off is a list you have to open the note to read anyway. `--json` carries `id`, `slug`,
+`file`, `text` and `due`, and prints a document even when there is nothing to do. It does
+not carry "overdue": a program has its own clock.
+
+The boxes are read with a CommonMark parser, not searched for as text, for the same reason
+`doctor --links` is — `- [ ]` inside a fenced code block is prose *about* a checkbox, and a
+list nested three deep is still a list.
+
+**There is no `noda done`.** Ticking a box needs an address noda does not have: a note is
+addressed by its id or its slug, and an item inside one by nothing. Line numbers move, text
+prefixes collide, and giving every item an id would turn the file into a format only noda
+can read — which is the one thing choosing checkboxes was meant to avoid. `noda edit <note>`
+types one `x` and auto-commits. Nor does noda ever move a finished item: a ticked line stays
+where its author wrote it.
 
 ### History (git-backed)
 

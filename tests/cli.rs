@@ -3624,6 +3624,174 @@ fn blame_says_nothing_is_committed_when_no_commit_holds_the_note() {
     assert_eq!(lines, vec![("0000000".to_string(), "body".to_string())]);
 }
 
+/// A fixed "today", so what counts as overdue is stated rather than read off
+/// the clock the test is running on.
+const TODAY: &str = "2026-08-02";
+
+/// A note of nothing but action items opens with `- `, which clap reads as an
+/// option unless told otherwise. Has to go through the real binary: every other
+/// test here calls `cmd::` directly and never meets the parser.
+#[test]
+fn add_takes_a_body_that_opens_with_a_list() {
+    let (root, paths) = initialized();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_noda"))
+        .args(["add", "Alpha", "-c", "- [ ] send the contract\n"])
+        .env("XDG_CONFIG_HOME", root.0.join("config"))
+        .env("XDG_DATA_HOME", root.0.join("data"))
+        .env("XDG_STATE_HOME", root.0.join("state"))
+        .env("XDG_CACHE_HOME", root.0.join("cache"))
+        .output()
+        .expect("run noda");
+
+    assert!(
+        output.status.success(),
+        "stderr was {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = plain(&cmd::todo_on(&paths, false, TODAY).unwrap());
+    assert!(out.contains("send the contract"), "{out}");
+}
+
+#[test]
+fn todo_lists_unticked_items_soonest_first() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Meeting notes"),
+        Some(
+            "- [ ] send the contract due:2026-08-10\n- [x] confirm legal\n- [ ] align with Alice\n",
+        ),
+        &[],
+    )
+    .unwrap();
+    cmd::add(
+        &paths,
+        Some("Q3 planning"),
+        Some("- [ ] check the terms due:2026-08-05\n"),
+        &[],
+    )
+    .unwrap();
+
+    let out = plain(&cmd::todo_on(&paths, false, TODAY).unwrap());
+    let rows: Vec<&str> = out.lines().collect();
+    assert_eq!(rows.len(), 3, "the ticked one is not listed: {out}");
+    assert!(rows[0].contains("2026-08-05"), "{out}");
+    assert!(rows[0].contains("check the terms"), "{out}");
+    assert!(rows[1].contains("2026-08-10"), "{out}");
+    assert!(
+        rows[2].contains("align with Alice"),
+        "an item with no due date sorts last: {out}"
+    );
+    assert!(
+        rows[0].contains("q3-planning") && rows[1].contains("meeting-notes"),
+        "each item names the note it is in: {out}"
+    );
+}
+
+/// The whole reason the palette gained an exception. The escapes have to be
+/// there before `plain` strips them, so this looks at the raw output.
+#[test]
+fn todo_marks_a_due_date_that_has_passed() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("- [ ] late one due:2026-07-01\n- [ ] later one due:2026-12-01\n"),
+        &[],
+    )
+    .unwrap();
+
+    let out = cmd::todo_on(&paths, false, TODAY).unwrap();
+    let late = out.lines().next().unwrap();
+    let later = out.lines().nth(1).unwrap();
+    assert!(late.contains("2026-07-01"), "{out}");
+    assert!(
+        late.contains("\u{1b}[31m"),
+        "a date in the past is coloured: {late:?}"
+    );
+    assert!(
+        !later.contains("\u{1b}[31m"),
+        "one still to come is not: {later:?}"
+    );
+}
+
+/// Today is not late. The comparison is `<`, and a test is the only place that
+/// distinction gets written down.
+#[test]
+fn todo_does_not_call_today_overdue() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("- [ ] due today due:2026-08-02\n"),
+        &[],
+    )
+    .unwrap();
+
+    let out = cmd::todo_on(&paths, false, TODAY).unwrap();
+    assert!(!out.contains("\u{1b}[31m"), "{out:?}");
+}
+
+#[test]
+fn todo_says_when_there_is_nothing_to_do() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("- [x] all done\n"), &[]).unwrap();
+
+    let out = plain(&cmd::todo_on(&paths, false, TODAY).unwrap());
+    assert!(out.contains("nothing to do"), "{out}");
+}
+
+/// Like `ls` and `deleted`: a program asking for JSON gets a document either
+/// way, and an empty list is an answer.
+#[test]
+fn todo_json_carries_the_fields_and_prints_even_when_empty() {
+    let (_root, paths) = initialized();
+    let empty = cmd::todo_on(&paths, true, TODAY).unwrap();
+    assert_eq!(empty.trim_end(), "{\"notebook\":\"default\",\"todo\":[]}");
+
+    let added = cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("- [ ] one due:2026-08-10\n- [ ] two\n"),
+        &[],
+    )
+    .unwrap();
+    let id = parts(&added).0;
+
+    let out = cmd::todo_on(&paths, true, TODAY).unwrap();
+    assert!(out.contains(&format!("\"id\":\"{id}\"")), "{out}");
+    assert!(out.contains("\"slug\":\"alpha\""), "{out}");
+    assert!(
+        out.contains(&format!("\"file\":\"{id}-alpha.md\"")),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"text\":\"one\",\"due\":\"2026-08-10\""),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"text\":\"two\",\"due\":null"),
+        "an item with no date says so rather than dropping the key: {out}"
+    );
+    assert!(
+        !out.contains("overdue"),
+        "a program has its own clock: {out}"
+    );
+}
+
+/// Long items are printed whole. A list that cuts the sentence off is a list you
+/// have to open the note to read.
+#[test]
+fn todo_does_not_truncate_an_item() {
+    let (_root, paths) = initialized();
+    let long = "chase the vendor about the revised statement of work and the indemnity clause";
+    cmd::add(&paths, Some("Alpha"), Some(&format!("- [ ] {long}\n")), &[]).unwrap();
+
+    let out = plain(&cmd::todo_on(&paths, false, TODAY).unwrap());
+    assert!(out.contains(long), "{out}");
+    assert!(!out.contains('…'), "{out}");
+}
+
 /// A `sync` merge carries a note across without changing it, and must not be
 /// credited with writing it.
 #[test]

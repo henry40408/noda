@@ -34,7 +34,12 @@ enum Command {
         /// Note title. Derived from the first line when omitted.
         title: Option<String>,
         /// Note body, instead of opening $EDITOR.
-        #[arg(short = 'c', long)]
+        ///
+        /// Hyphen values are allowed through so a body that opens with a list —
+        /// `- [ ] …`, which is what a note of nothing but action items looks
+        /// like — reaches the command as content rather than being read as an
+        /// option.
+        #[arg(short = 'c', long, allow_hyphen_values = true)]
         content: Option<String>,
         /// Tag to attach; repeat for several.
         #[arg(long = "tag", value_name = "TAG")]
@@ -147,6 +152,13 @@ enum Command {
         /// Show at most this many commits.
         #[arg(short = 'n', long = "max-count", value_name = "COUNT")]
         max: Option<usize>,
+    },
+    /// List every unticked `- [ ]` in the notebook, soonest due first. Reads
+    /// every note's body, so it costs what `search` costs.
+    Todo {
+        /// Print one JSON object instead of a table.
+        #[arg(long)]
+        json: bool,
     },
     /// Show which commit put each line of a note where it is.
     Blame {
@@ -393,6 +405,7 @@ fn run() -> noda::Result<()> {
         } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
+        Command::Todo { json } => cmd::todo(&paths, *json)?,
         Command::Blame { note } => cmd::blame(&paths, note)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
         Command::Deleted { notebook, json } => cmd::deleted(&paths, notebook.as_deref(), *json)?,
