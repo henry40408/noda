@@ -2624,6 +2624,98 @@ fn ls_sorts_by_time_across_the_offsets_an_import_brings() {
     );
 }
 
+/// `--reverse` is applied after the sort, so it turns whichever order was asked
+/// for — including the walk's own, which is why it does not require `--sort`.
+#[test]
+fn ls_reverse_turns_whichever_order_was_asked_for() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    for (name, title, created) in [
+        ("k3f9m2p1-alpha.md", "Alpha", "2019-03-14T07:00:00Z"),
+        ("k3f9m2p2-bravo.md", "Bravo", "2019-03-14T09:00:00Z"),
+    ] {
+        std::fs::write(
+            notebook.join(name),
+            format!("---\ntitle: {title}\ncreated: {created}\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        notebook.join("k3f9m2p3-undated.md"),
+        "---\ntitle: Undated\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let titles = |sort, reverse| {
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                sort,
+                reverse,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(2).map(str::to_string))
+        .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        titles(cmd::Sort::Created, true),
+        ["Undated", "Alpha", "Bravo"],
+        "oldest first, and the note with no time to sort by now leads"
+    );
+    assert_eq!(
+        titles(cmd::Sort::Title, true),
+        ["Undated", "Bravo", "Alpha"],
+        "Z to A"
+    );
+    assert_eq!(
+        titles(cmd::Sort::Slug, true),
+        ["Undated", "Bravo", "Alpha"],
+        "the default order turns too: that is what asking for it alone means"
+    );
+    assert_eq!(
+        titles(cmd::Sort::Created, false),
+        ["Bravo", "Alpha", "Undated"],
+        "and without the flag nothing moved"
+    );
+}
+
+/// One listing, one order. A table whose notes run Z-to-A while its files run
+/// A-to-Z is not an order anyone asked for.
+#[test]
+fn ls_reverse_turns_the_files_with_the_notes() {
+    let (root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    for name in ["one.txt", "two.txt", "three.txt"] {
+        let path = root.0.join(name);
+        std::fs::write(&path, "x").unwrap();
+        cmd::file_add(&paths, &[path], None).unwrap();
+    }
+
+    let files = |reverse| {
+        let out = cmd::ls(
+            &paths,
+            &cmd::List {
+                only: cmd::Only::Files,
+                reverse,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        plain(&out)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty() && l != "files")
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(files(false), ["one.txt", "three.txt", "two.txt"]);
+    assert_eq!(files(true), ["two.txt", "three.txt", "one.txt"]);
+}
+
 #[test]
 fn ls_json_escapes_what_would_otherwise_break_the_document() {
     let (_root, paths) = initialized();

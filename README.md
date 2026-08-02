@@ -326,9 +326,16 @@ jjvgqnrv  meeting-notes  2026-08-02T09:14:00Z  2026-08-02T09:14:00Z  Meeting not
 k3f9m2p1  imported       -                     -                     Imported
 ```
 
+`-r` runs the listing the other way. It is applied after the sort, so it turns whichever
+order was asked for — `--sort title -r` is Z to A, `--sort updated -r` is oldest first — and
+on its own it turns the default one, which is what `ls(1)` means by `-r` and why it does not
+require `--sort`. The notebook's files turn with the notes: it is one listing on one screen,
+and a table whose top half runs newest-first while its bottom half runs A-to-Z is not an
+order anyone asked for.
+
 Sorting reads the stamps rather than comparing them as text, so a note imported with
 `+08:00` lands where it belongs rather than where its digits fall. A note with no time to
-sort by sorts last. `--json` carries `created` and `updated` whether or not `--time` was
+sort by sorts last — and first under `-r`, since reversing an order reverses all of it. `--json` carries `created` and `updated` whether or not `--time` was
 passed — they are `null` when the note has neither — because what a program reads should
 not depend on a flag about what fits on a terminal.
 
@@ -414,7 +421,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | Command | Description |
 | --- | --- |
 | `noda add [title] [-c <content>] [--tag <t>]...` | Create a note. Opens `$EDITOR` if no `-c`. Auto-commits. |
-| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only] [--time] [--sort <field>]` | List what the notebook holds. |
+| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only] [--time] [--sort <field>] [-r]` | List what the notebook holds. |
 | `noda show <note>` | Print a note to stdout. |
 | `noda edit <note> [--no-touch]` | Open a note in `$EDITOR`; auto-commits on save. |
 | `noda rm <note>` | Delete a note (as a revertible commit). |

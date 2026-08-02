@@ -79,6 +79,10 @@ enum Command {
         /// `title` is alphabetical.
         #[arg(long, value_name = "FIELD")]
         sort: Option<SortField>,
+        /// Run the listing the other way. Reverses whatever `--sort` asked for,
+        /// or the default order when it was not passed.
+        #[arg(short, long)]
+        reverse: bool,
     },
     /// Print a note to stdout, addressed by id or slug.
     Show {
@@ -407,6 +411,7 @@ fn run() -> noda::Result<()> {
             files_only,
             time,
             sort,
+            reverse,
         } => cmd::ls(
             &paths,
             &cmd::List {
@@ -419,6 +424,7 @@ fn run() -> noda::Result<()> {
                     Some(SortField::Title) => cmd::Sort::Title,
                     None => cmd::Sort::Slug,
                 },
+                reverse: *reverse,
                 format: match (json, quiet) {
                     (true, _) => cmd::Format::Json,
                     (_, true) => cmd::Format::Quiet,
