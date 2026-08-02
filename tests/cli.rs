@@ -3484,3 +3484,185 @@ fn commands_refuse_to_run_before_init() {
     let err = cmd::ls(&paths, &cmd::List::default()).unwrap_err();
     assert!(err.to_string().contains("noda init"), "{err}");
 }
+
+/// Annotated, not lightweight: a snapshot records that somebody closed a chapter
+/// at a moment, and a bare pointer records neither the somebody nor the moment.
+#[test]
+fn snapshot_marks_the_current_commit_with_an_annotated_tag() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let out = cmd::snapshot(&paths, "2026-q3", Some("end of quarter")).unwrap();
+    assert!(out.contains("snapshot: 2026-q3 ->"), "{out}");
+
+    let repo = git2::Repository::open(&notebook).unwrap();
+    let reference = repo.find_reference("refs/tags/2026-q3").unwrap();
+    let tag = reference.peel_to_tag().expect("annotated, not lightweight");
+    assert_eq!(tag.message().unwrap(), Some("end of quarter"));
+    assert_eq!(
+        tag.target().unwrap().id(),
+        repo.head().unwrap().peel_to_commit().unwrap().id()
+    );
+
+    let listed = plain(&cmd::snapshot_ls(&paths).unwrap());
+    assert!(listed.contains("2026-q3"), "{listed}");
+    assert!(listed.contains("end of quarter"), "{listed}");
+}
+
+/// The point of the whole feature: `restore` already promised to take a tag, and
+/// until now nothing in noda could make one.
+#[test]
+fn a_note_restores_from_a_snapshot_by_name() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "before", None).unwrap();
+
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
+    let original = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(&note, original.replace("first\n", "second\n")).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
+
+    cmd::restore(&paths, "alpha", "before").unwrap();
+    assert!(std::fs::read_to_string(&note).unwrap().contains("first"));
+}
+
+/// `sync` already commits the whole working tree without a guard, and for the
+/// same reason: a snapshot that quietly left out what is on disk would be a
+/// snapshot of something nobody has.
+#[test]
+fn snapshot_commits_what_is_on_disk_first() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    std::fs::write(notebook.join("receipt.txt"), "uncommitted\n").unwrap();
+    let before = commit_count(&notebook);
+
+    let out = cmd::snapshot(&paths, "now", None).unwrap();
+    assert!(out.contains("commit: local changes"), "{out}");
+    assert_eq!(commit_count(&notebook), before + 1);
+
+    let repo = git2::Repository::open(&notebook).unwrap();
+    assert!(
+        repo.statuses(None).unwrap().is_empty(),
+        "the snapshot marks a commit that holds everything"
+    );
+
+    // And a clean notebook gains no empty commit.
+    let out = cmd::snapshot(&paths, "again", None).unwrap();
+    assert!(!out.contains("commit:"), "{out}");
+    assert_eq!(commit_count(&notebook), before + 1);
+}
+
+/// A name that can be reassigned cannot be cited, which is the whole use.
+#[test]
+fn snapshot_refuses_to_move_one_that_already_exists() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "q3", None).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+
+    let err = cmd::snapshot(&paths, "q3", None).unwrap_err().to_string();
+    assert!(err.contains("already exists"), "{err}");
+    assert!(err.contains("git tag -d q3"), "the way out is named: {err}");
+}
+
+#[test]
+fn snapshot_refuses_a_name_git_cannot_hold() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let err = cmd::snapshot(&paths, "not a name", None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("invalid snapshot name"), "{err}");
+}
+
+#[test]
+fn snapshot_says_when_there_are_none() {
+    let (_root, paths) = initialized();
+    let out = plain(&cmd::snapshot_ls(&paths).unwrap());
+    assert!(out.contains("no snapshots"), "{out}");
+    assert!(out.contains("noda snapshot <name>"), "{out}");
+}
+
+/// A snapshot that stayed on the machine it was taken on could not be cited from
+/// anywhere else, which is most of what a snapshot is for.
+#[test]
+fn snapshots_travel_with_the_notebook() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "q3", Some("end of quarter")).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    let remote = git2::Repository::open_bare(&url).unwrap();
+    assert!(
+        remote.find_reference("refs/tags/q3").is_ok(),
+        "the snapshot reached the remote"
+    );
+
+    // And comes back down on the other side.
+    mirror(&paths, &url, "mirror");
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    let listed = plain(&cmd::snapshot_ls(&paths).unwrap());
+    assert!(listed.contains("q3"), "{listed}");
+    assert!(listed.contains("end of quarter"), "{listed}");
+}
+
+/// Two machines that each made a `q3` must not overwrite each other in silence —
+/// and the clash must not take the notes down with it, which is what sending the
+/// tag anyway would do.
+#[test]
+fn a_snapshot_name_taken_on_the_remote_is_not_overwritten() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "q3", Some("theirs")).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    // A second notebook off the same remote, with a different `q3`.
+    mirror(&paths, &url, "mirror");
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    let repo = git2::Repository::open(paths.notebook_dir("mirror")).unwrap();
+    repo.tag_delete("q3").unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "q3", Some("ours")).unwrap();
+
+    let out = cmd::push(&paths).unwrap();
+    assert!(out.contains("snapshot `q3` was not sent"), "{out}");
+    assert!(out.contains("git tag -d q3"), "the way out is named: {out}");
+
+    let remote = git2::Repository::open_bare(&url).unwrap();
+    let tag = remote
+        .find_reference("refs/tags/q3")
+        .unwrap()
+        .peel_to_tag()
+        .unwrap();
+    assert_eq!(
+        tag.message().unwrap(),
+        Some("theirs"),
+        "the remote's snapshot still means what it meant"
+    );
+    // The notes went, which is the point: a name nobody can agree on must not
+    // hold up the prose.
+    let head = remote
+        .find_reference(&format!("refs/heads/{branch}"))
+        .unwrap()
+        .peel_to_commit()
+        .unwrap();
+    assert!(
+        head.tree()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry.name().ok().map(str::to_string))
+            .any(|name| name.contains("beta")),
+        "the branch reached the remote even though the snapshot did not"
+    );
+}

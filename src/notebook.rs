@@ -7,6 +7,7 @@
 //! without anyone being asked to resolve anything.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryInitOptions, Signature};
@@ -209,6 +210,25 @@ pub struct Entry {
 impl Entry {
     pub fn short_id(&self) -> String {
         short(self.id)
+    }
+}
+
+/// One snapshot — a git tag — as `noda snapshot` lists it.
+pub struct Snapshot {
+    pub name: String,
+    /// The commit it marks, not the tag object: what gets cited is the state of
+    /// the notebook, and that is what `restore` resolves a snapshot name to.
+    pub target: git2::Oid,
+    /// The marked commit's time and offset, as `Entry` carries them and for the
+    /// same reason.
+    pub seconds: i64,
+    pub offset_minutes: i32,
+    pub message: String,
+}
+
+impl Snapshot {
+    pub fn short_target(&self) -> String {
+        short(self.target)
     }
 }
 
@@ -791,6 +811,78 @@ impl Notebook {
         }
     }
 
+    /// Marks the current commit with an annotated tag.
+    ///
+    /// Annotated rather than lightweight because the point of a snapshot is that
+    /// somebody closed a chapter at a particular moment: a lightweight tag is a
+    /// bare pointer with nobody and no time attached, and would list as an empty
+    /// row.
+    ///
+    /// Never moves one that already exists. A snapshot whose meaning can be
+    /// reassigned is not something anything else can cite — and `restore` takes
+    /// a snapshot name precisely so it can be cited.
+    pub fn snapshot(&self, name: &str, message: &str) -> Result<git2::Oid> {
+        let refname = format!("refs/tags/{name}");
+        if !git2::Reference::is_valid_name(&refname) {
+            return Err(Error::msg(format!(
+                "invalid snapshot name: {name} — no spaces, no `..`, no `~^:?*[\\`"
+            )));
+        }
+        if self.repo.refname_to_id(&refname).is_ok() {
+            return Err(Error::msg(format!(
+                "snapshot already exists: {name} — pick another name, or remove it with \
+                 `git tag -d {name}` in {}",
+                self.path.display()
+            )));
+        }
+
+        let head = self.repo.head()?.peel_to_commit()?;
+        let signature = self.signature()?;
+        self.repo
+            .tag(name, head.as_object(), &signature, message, false)?;
+        Ok(head.id())
+    }
+
+    /// Every snapshot, newest first — by the time of the commit each marks
+    /// rather than the time it was taken, because that is the moment the
+    /// snapshot is *of*, and it is what `log` and `deleted` are ordered by.
+    ///
+    /// A lightweight tag made with git outside noda is listed too. noda does not
+    /// make them, but a notebook is a normal git repository and a tag somebody
+    /// else put there is still a place to restore from.
+    pub fn snapshots(&self) -> Result<Vec<Snapshot>> {
+        let mut found = Vec::new();
+        // A tag whose name is not UTF-8 is skipped rather than refused: it is
+        // not one noda made, and one unreadable name must not take the listing
+        // down with it.
+        let names = self.repo.tag_names(None)?;
+        for name in names.iter().filter_map(|name| name.ok().flatten()) {
+            let reference = self.repo.find_reference(&format!("refs/tags/{name}"))?;
+            let commit = reference.peel_to_commit()?;
+            // An annotated tag carries its own message; a lightweight one is
+            // only a pointer, so the commit it marks has to speak for it.
+            let message = match reference.peel_to_tag() {
+                Ok(tag) => tag
+                    .message()
+                    .ok()
+                    .flatten()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+                Err(_) => commit.summary().ok().flatten().unwrap_or("").to_string(),
+            };
+            found.push(Snapshot {
+                name: name.to_string(),
+                target: commit.id(),
+                seconds: commit.time().seconds(),
+                offset_minutes: commit.time().offset_minutes(),
+                message,
+            });
+        }
+        found.sort_by(|a, b| b.seconds.cmp(&a.seconds).then_with(|| a.name.cmp(&b.name)));
+        Ok(found)
+    }
+
     /// The branch `HEAD` points at.
     pub fn branch(&self) -> Result<String> {
         let head = self.repo.head()?;
@@ -819,7 +911,12 @@ impl Notebook {
         let refspec = format!("+refs/heads/{branch}:refs/remotes/{REMOTE_NAME}/{branch}");
 
         let config = self.repo.config()?;
-        match remote.fetch(&[&refspec], Some(&mut remote::fetch_options(config)), None) {
+        // Tags come down with the branch, or a snapshot taken on the other
+        // machine would be invisible here — and `noda restore <note> <snapshot>`
+        // would fail on a name the notebook is meant to share.
+        let mut options = remote::fetch_options(config);
+        options.download_tags(git2::AutotagOption::All);
+        match remote.fetch(&[&refspec], Some(&mut options), None) {
             Ok(()) => {}
             Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(None),
             Err(e) => return Err(remote::explain(e, &url)),
@@ -907,13 +1004,39 @@ impl Notebook {
         Ok(format!("pull: merged {REMOTE_NAME}/{branch}"))
     }
 
-    /// Pushes the current branch. A rejection is reported as advice to pull
-    /// rather than as a libgit2 error, because that is always the next step.
+    /// Pushes the current branch, and the snapshots the remote does not have. A
+    /// rejection is reported as advice to pull rather than as a libgit2 error,
+    /// because that is always the next step.
     pub fn push(&self) -> Result<String> {
         let branch = self.branch()?;
         let mut remote = self.remote()?;
         let url = remote.url().unwrap_or_default().to_string();
-        let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+        // Snapshots go with the branch. One that stayed on the machine it was
+        // taken on could not be cited from anywhere else, which is most of what
+        // a snapshot is for.
+        //
+        // Named one by one rather than as `refs/tags/*`: libgit2 refuses a
+        // wildcard on the push side, because it wants references it can resolve
+        // and a glob is not one.
+        let mut refspecs = vec![format!("refs/heads/{branch}:refs/heads/{branch}")];
+        let mut held_back = Vec::new();
+        let local = self.local_tags()?;
+        if !local.is_empty() {
+            let theirs = self.remote_tags(&mut remote, &url)?;
+            for (name, oid) in local {
+                match theirs.get(&name) {
+                    // Already there, and meaning the same thing.
+                    Some(other) if *other == oid => {}
+                    // Two machines that each made a `q3`. Sending it would
+                    // either overwrite theirs or — since libgit2 checks a tag
+                    // for fast-forward as if it were a branch — abort the whole
+                    // push, taking the notes down with it. Neither is a trade
+                    // worth making for a name, so the name is what gives way.
+                    Some(_) => held_back.push(name),
+                    None => refspecs.push(format!("refs/tags/{name}:refs/tags/{name}")),
+                }
+            }
+        }
 
         // The callbacks borrow `rejections`, so they have to be dropped before it
         // can be read back — hence the block.
@@ -928,7 +1051,8 @@ impl Notebook {
             });
             let mut options = git2::PushOptions::new();
             options.remote_callbacks(callbacks);
-            remote.push(&[&refspec], Some(&mut options))
+            let refspecs: Vec<&str> = refspecs.iter().map(String::as_str).collect();
+            remote.push(&refspecs, Some(&mut options))
         };
         if let Err(e) = pushed {
             // libgit2 refuses a non-fast-forward before sending anything; a
@@ -945,7 +1069,63 @@ impl Notebook {
         if !rejections.is_empty() {
             return Err(rejected(&rejections));
         }
-        Ok(format!("push: {branch} -> {url}"))
+
+        let mut out = format!("push: {branch} -> {url}");
+        // Said out loud rather than swallowed: the notebook now holds a snapshot
+        // name that means one thing here and another everywhere else, and only
+        // its author can decide which one keeps the name.
+        for name in held_back {
+            let _ = write!(
+                out,
+                "\nsnapshot `{name}` was not sent — the remote already has that name for another \
+                 commit; rename yours, or drop it with `git tag -d {name}`"
+            );
+        }
+        Ok(out)
+    }
+
+    /// Every tag the notebook holds, by name, pointing at whatever object the
+    /// ref names — the tag object for an annotated tag, so it compares against
+    /// what a remote advertises without peeling either side.
+    fn local_tags(&self) -> Result<Vec<(String, git2::Oid)>> {
+        let names = self.repo.tag_names(None)?;
+        let mut found = Vec::new();
+        for name in names.iter().filter_map(|name| name.ok().flatten()) {
+            if let Ok(oid) = self.repo.refname_to_id(&format!("refs/tags/{name}")) {
+                found.push((name.to_string(), oid));
+            }
+        }
+        Ok(found)
+    }
+
+    /// What the remote already carries under `refs/tags/`, from the reference
+    /// advertisement — one extra round trip, and only when the notebook has a
+    /// snapshot to send at all, so a notebook without any pushes exactly as it
+    /// did before.
+    fn remote_tags(
+        &self,
+        remote: &mut git2::Remote<'_>,
+        url: &str,
+    ) -> Result<HashMap<String, git2::Oid>> {
+        let callbacks = remote::callbacks(self.repo.config()?);
+        let connection = remote
+            .connect_auth(git2::Direction::Push, Some(callbacks), None)
+            .map_err(|e| remote::explain(e, url))?;
+
+        let mut found = HashMap::new();
+        for head in connection.list()? {
+            // `refs/tags/q3^{}` is the same tag with the commit it resolves to,
+            // advertised alongside the tag itself. It is not a name anything can
+            // be pushed to.
+            let Some(name) = head.name().strip_prefix("refs/tags/") else {
+                continue;
+            };
+            if name.ends_with("^{}") {
+                continue;
+            }
+            found.insert(name.to_string(), head.oid());
+        }
+        Ok(found)
     }
 
     /// Commits, newest first. With `note_id`, only the commits that changed that
@@ -1319,7 +1499,7 @@ fn is_executable(_: &std::fs::Metadata) -> bool {
 }
 
 /// An abbreviated object id, as git prints it.
-fn short(oid: git2::Oid) -> String {
+pub(crate) fn short(oid: git2::Oid) -> String {
     oid.to_string()[..7].to_string()
 }
 

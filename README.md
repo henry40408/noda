@@ -480,6 +480,7 @@ and the editor is handed the file.
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
 | `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
 | `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
+| `noda snapshot [<name>] [-m <text>]` | Name the notebook as it stands. Without a name, list what has been named. |
 
 `noda log <note>` follows a note across renames, because every commit records the filenames
 and the id is one of them — no rename guessing involved. Nothing is capped: `-n` is there
@@ -495,6 +496,36 @@ A restore is a new commit, never a rewrite, and a note keeps the name it has now
 contents travel back. It also works on a note you removed: `noda restore <slug> HEAD~1`
 brings it back with its id intact, which is the friendly face of "`noda rm` is a commit you
 can revert".
+
+`noda snapshot` is how you get a name worth passing to it. It marks the notebook as it
+stands, so a moment can be cited later instead of counted back to:
+
+```
+$ noda snapshot 2026-q3 -m 'end of quarter'
+snapshot: 2026-q3 -> 4953133
+$ noda snapshot
+2026-q3   2026-08-02 10:14  4953133  end of quarter
+$ noda restore meeting-notes 2026-q3
+```
+
+It is a git annotated tag, so it records who took it and when — a lightweight tag is a bare
+pointer and would list as an empty row. It commits the working tree first, on the same terms
+as `noda sync`: a snapshot that quietly left out what is on disk would be a snapshot of
+something nobody has. And it never moves one that already exists, because a name that can be
+reassigned is not one anything else can cite; `git tag -d <name>` in the notebook is there if
+you meant to.
+
+Snapshots travel with the notebook — `noda push` sends them, `noda pull` brings them down —
+so a name means the same thing on every machine. When it cannot, noda says so instead of
+choosing: if the remote already has that name for another commit, the snapshot is held back
+and the notes go anyway.
+
+```
+$ noda push
+push: main -> git@github.com:me/notes.git
+snapshot `q3` was not sent — the remote already has that name for another commit; rename
+yours, or drop it with `git tag -d q3`
+```
 
 `noda deleted` is how you find out what there is to bring back, most recently lost first:
 

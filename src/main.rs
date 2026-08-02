@@ -163,6 +163,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Mark the notebook as it stands, so `restore` can name that moment later.
+    /// Omit the name to list what has been marked.
+    Snapshot {
+        /// What to call it: `2026-q3`, `before-the-rewrite`.
+        name: Option<String>,
+        /// What it marks. Defaults to the name.
+        #[arg(short = 'm', long, requires = "name", value_name = "TEXT")]
+        message: Option<String>,
+    },
     /// Restore a note to an earlier version, as a new commit.
     Restore {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
@@ -381,6 +390,10 @@ fn run() -> noda::Result<()> {
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
         Command::Deleted { notebook, json } => cmd::deleted(&paths, notebook.as_deref(), *json)?,
+        Command::Snapshot { name, message } => match name {
+            Some(name) => cmd::snapshot(&paths, name, message.as_deref())?,
+            None => cmd::snapshot_ls(&paths)?,
+        },
         Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,
         Command::Config {
             key,
