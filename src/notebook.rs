@@ -232,6 +232,25 @@ impl Snapshot {
     }
 }
 
+/// One line of a note, and the commit that put it there.
+pub struct BlameLine {
+    /// `None` for a line that is on disk but not committed.
+    pub commit: Option<git2::Oid>,
+    /// The commit's time and offset, as `Entry` carries them. Both zero for a
+    /// line nobody has committed — there is no moment to report.
+    pub seconds: i64,
+    pub offset_minutes: i32,
+    pub text: String,
+}
+
+impl BlameLine {
+    /// The commit, abbreviated — or git's own spelling for a line that is not in
+    /// one yet.
+    pub fn short_commit(&self) -> String {
+        self.commit.map_or_else(|| "0".repeat(7), short)
+    }
+}
+
 impl Notebook {
     /// Creates the notebook repo with an empty root commit.
     ///
@@ -1164,6 +1183,111 @@ impl Notebook {
         Ok(entries)
     }
 
+    /// Which commit put each line of a note where it is.
+    ///
+    /// libgit2's own blame is not used, and could not be: every one of its
+    /// `GIT_BLAME_TRACK_COPIES_*` options is documented as "not yet implemented",
+    /// so it follows a path and stops dead at a rename. `noda mv` renames a note
+    /// whenever its title changes, which would make a wrong answer the normal one
+    /// — and wrong in the way that is hardest to notice, since every line before
+    /// the rename would be credited to the rename.
+    ///
+    /// So this is computed from the diffs instead, which costs nothing extra
+    /// here: the note is picked out of each commit *by id* rather than by path,
+    /// exactly as `deleted` and `last_changed` do it, and a rename simply never
+    /// comes up. What is followed backwards is a line, not a filename.
+    ///
+    /// The walk is the one `log` uses. A commit whose version of the note matches
+    /// any of its parents' changed nothing about it and is skipped, which is what
+    /// keeps a `sync` merge from being credited with the note it merely carried
+    /// across. Where a merge did change the note — which noda itself never
+    /// produces, because a conflicting pull is rolled back — the first parent is
+    /// compared against, the same simplification `log` and `last_changed` make.
+    ///
+    /// Only the body is reported. `updated` is rewritten on every edit, so every
+    /// frontmatter line would be credited to the latest commit and the first
+    /// thing on screen would be a block of noise that looks like a bug.
+    pub fn blame(&self, id: &str, slug: &str) -> Result<Vec<BlameLine>> {
+        let text = std::fs::read_to_string(self.note_path(id, slug))?;
+        let lines: Vec<&str> = text.lines().collect();
+        // Where each line still being traced sits in the version under
+        // examination; `None` once the line has been accounted for.
+        let mut origin: Vec<Option<usize>> = (0..lines.len()).map(Some).collect();
+        let mut found: Vec<Option<git2::Oid>> = vec![None; lines.len()];
+        let mut when: HashMap<git2::Oid, (i64, i32)> = HashMap::new();
+
+        // The working tree first. A line that is on disk and in no commit is
+        // nobody's yet, and saying so is nearly free once the machinery is here.
+        let head = self.repo.head()?.peel_to_commit()?;
+        match note_blob(&head, id)? {
+            Some((_, oid)) => {
+                let blob = self.repo.find_blob(oid)?;
+                let map = line_map(blob.content(), text.as_bytes())?;
+                attribute(&mut origin, &mut found, &map, None);
+            }
+            // The notebook holds the file and no commit does — a note written by
+            // hand, or one `doctor` has not adopted yet. Every line is somebody's
+            // and nobody's, and there is no history to walk for it.
+            None => origin.fill(None),
+        }
+
+        let mut walk = self.repo.revwalk()?;
+        walk.push_head()?;
+        walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+        for oid in walk {
+            if origin.iter().all(Option::is_none) {
+                break;
+            }
+            let commit = self.repo.find_commit(oid?)?;
+            let Some((_, now)) = note_blob(&commit, id)? else {
+                continue;
+            };
+            let parents: Vec<Option<git2::Oid>> = commit
+                .parents()
+                .map(|parent| note_blob(&parent, id).map(|blob| blob.map(|(_, oid)| oid)))
+                .collect::<Result<_>>()?;
+            if parents.contains(&Some(now)) {
+                continue;
+            }
+
+            let new = self.repo.find_blob(now)?;
+            let old = match parents.first().copied().flatten() {
+                Some(oid) => Some(self.repo.find_blob(oid)?),
+                // The commit that created the note: everything in it is new,
+                // which is what a diff against nothing says.
+                None => None,
+            };
+            let map = line_map(
+                old.as_ref().map_or(&[][..], git2::Blob::content),
+                new.content(),
+            )?;
+            attribute(&mut origin, &mut found, &map, Some(commit.id()));
+            when.insert(
+                commit.id(),
+                (commit.time().seconds(), commit.time().offset_minutes()),
+            );
+        }
+
+        let start = body_start(&text);
+        Ok(lines
+            .into_iter()
+            .enumerate()
+            .skip(start)
+            .map(|(line, text)| {
+                let commit = found[line];
+                let (seconds, offset_minutes) = commit
+                    .and_then(|oid| when.get(&oid).copied())
+                    .unwrap_or((0, 0));
+                BlameLine {
+                    commit,
+                    seconds,
+                    offset_minutes,
+                    text: text.to_string(),
+                }
+            })
+            .collect())
+    }
+
     /// When each note last changed according to git, by id, as a Unix time.
     ///
     /// One walk for the whole notebook rather than one per note. `log` filters a
@@ -1481,6 +1605,96 @@ fn rejected(reasons: &[String]) -> Error {
         "push rejected — {}\nthe remote has commits you do not: run `noda pull` first",
         reasons.join("; ")
     ))
+}
+
+/// Moves every line still being traced one version further back, and settles the
+/// ones that go no further.
+///
+/// A line with a counterpart in the older version was not written by this
+/// commit; it carries on with the number it had there. A line with none is where
+/// the search ends, and the commit under examination is the answer — `None` for
+/// the working tree, which is not a commit and belongs to nobody.
+fn attribute(
+    origin: &mut [Option<usize>],
+    found: &mut [Option<git2::Oid>],
+    map: &[Option<usize>],
+    commit: Option<git2::Oid>,
+) {
+    for (line, place) in origin.iter_mut().enumerate() {
+        let Some(at) = *place else { continue };
+        if let Some(earlier) = map.get(at).copied().flatten() {
+            *place = Some(earlier);
+        } else {
+            found[line] = commit;
+            *place = None;
+        }
+    }
+}
+
+/// For each line of `new`, the line of `old` it came from — `None` where it is
+/// new here.
+///
+/// The context is set past the length of both sides on purpose: it makes the
+/// whole file one hunk, so every unchanged line is reported rather than only
+/// those near a change, and the correspondence comes out complete. Diffing a few
+/// kilobytes of prose this way costs nothing worth saving.
+fn line_map(old: &[u8], new: &[u8]) -> Result<Vec<Option<usize>>> {
+    let count = line_count(new);
+    // libgit2 emits no hunks at all when the two sides are equal, which would
+    // read as "every line is new" — the one case the loop below cannot tell
+    // apart from a file created whole.
+    if old == new {
+        return Ok((0..count).map(Some).collect());
+    }
+
+    let mut options = git2::DiffOptions::new();
+    options
+        .context_lines(u32::try_from(count + line_count(old)).unwrap_or(u32::MAX))
+        // A note is prose. If a stray byte makes libgit2 call it binary there
+        // are no lines to map, and every line would be credited to whichever
+        // commit was being examined.
+        .force_text(true);
+    let path = Path::new("note");
+    let patch = git2::Patch::from_buffers(old, Some(path), new, Some(path), Some(&mut options))?;
+
+    let mut map = vec![None; count];
+    for hunk in 0..patch.num_hunks() {
+        for index in 0..patch.num_lines_in_hunk(hunk)? {
+            let line = patch.line_in_hunk(hunk, index)?;
+            // ` ` is context and `+` is an addition; everything else is either
+            // the old side or one of the "\ No newline" markers, and neither
+            // names a line of `new`.
+            if !matches!(line.origin(), ' ' | '+') {
+                continue;
+            }
+            let Some(number) = line.new_lineno() else {
+                continue;
+            };
+            if let Some(slot) = map.get_mut(number as usize - 1) {
+                *slot = line.old_lineno().map(|number| number as usize - 1);
+            }
+        }
+    }
+    Ok(map)
+}
+
+/// Lines the way git counts them: a trailing line without a newline still
+/// counts, and an empty file has none. Matches `str::lines`, which is what the
+/// text being reported is split with.
+fn line_count(bytes: &[u8]) -> usize {
+    bytes.split_inclusive(|byte| *byte == b'\n').count()
+}
+
+/// The line the body starts on, past the frontmatter and the blank line after
+/// it. Zero when there is no frontmatter to skip.
+fn body_start(text: &str) -> usize {
+    let Some((_, body)) = note::split_frontmatter(text) else {
+        return 0;
+    };
+    // `Note::parse` trims the same leading newlines, so "the body" means one
+    // thing across noda rather than one thing here and another there.
+    let body = body.trim_start_matches('\n');
+    text[..text.len() - body.len()].lines().count()
 }
 
 /// Whether git would run this file: the executable bit, which is the whole of
