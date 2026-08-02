@@ -1785,7 +1785,7 @@ fn body_start(text: &str) -> usize {
 /// A destination reaching into a subdirectory is some other file: only the
 /// notebook's root holds notes, which is the same boundary `audit_links` draws
 /// when it decides what can be an orphan.
-fn linked_note_id(target: &str) -> Option<String> {
+pub fn linked_note_id(target: &str) -> Option<String> {
     if target.contains('/') {
         return None;
     }

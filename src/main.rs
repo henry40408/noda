@@ -96,6 +96,10 @@ enum Command {
         note: String,
         /// The new title.
         new_title: String,
+        /// Rewrite the links that named its old filename, instead of reporting
+        /// them.
+        #[arg(long)]
+        update_links: bool,
     },
     /// Delete a note. The removal is a commit, so `git revert` undoes it.
     Rm {
@@ -407,7 +411,11 @@ fn run() -> noda::Result<()> {
         )?,
         Command::Show { note } => cmd::show(&paths, note)?,
         Command::Edit { note } => cmd::edit(&paths, note)?,
-        Command::Mv { note, new_title } => cmd::mv(&paths, note, new_title)?,
+        Command::Mv {
+            note,
+            new_title,
+            update_links,
+        } => cmd::mv(&paths, note, new_title, *update_links)?,
         Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,

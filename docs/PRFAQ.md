@@ -204,8 +204,8 @@ about unused files that cries wolf is a report nobody reads. The cost is a read 
 note — `search`'s cost, not `ls`'s — which is why it sits behind `--links` rather than
 running on every `status`.
 
-**Q: Why does `noda file mv` edit notes only when asked, when it knows exactly which links
-it just broke?**
+**Q: Why do `noda file mv` and `noda mv` edit notes only when asked, when they know exactly
+which links they just broke?**
 Because it would be the first time noda changed prose the command was not pointed at. Every
 other write is to the thing named on the command line: `tag` rewrites one note's
 frontmatter, `mv` renames one note's file. A rename that silently reached into three other
@@ -217,6 +217,11 @@ follows — say what is true, let the person decide — and it is what makes `--
 safe to offer at all: the rewrite is checked by re-reading the notes afterwards, so a
 destination written with backslash escapes, which cannot be located in the source, is
 reported as still pointing at the old name rather than assumed fixed.
+
+The two renames differ in what they match, and only in that. An attachment's name is the whole
+of its identity, so `file mv` looks for the name it just left. A note keeps its id across every
+retitle, so `mv` looks for that — which catches a destination written two renames ago, the one
+an exact-name match walks past while leaving it stale.
 
 **Q: Why does the search grammar have `OR` but no parentheses, and why does `OR` bind
 tighter than a space?**
