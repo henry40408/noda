@@ -49,6 +49,12 @@ git2 = { version = "0.21.0", default-features = false, features = [
 # it cannot tell that a link inside a code fence is not a link — and both of
 # those are how an attachment gets reported as an orphan when it is not one.
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# `noda import` reads a JSON export somebody else's program wrote. noda writes
+# its own JSON by hand — one object of five string fields does not justify a
+# crate — but reading is the other direction: a hand-written parser for a file
+# that may be tens of megabytes of arbitrary text is the kind of code that is
+# fine until it is not.
+serde_json = "1.0.151"
 toml_edit = "0.25.13"
 
 # Lints encoded in-manifest so `cargo build`/`cargo clippy` and IDEs apply them

@@ -240,6 +240,11 @@ enum Command {
         #[arg(long, conflicts_with_all = ["key", "unset"])]
         edit: bool,
     },
+    /// Bring a notebook in from somewhere else.
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
     /// Put files in the notebook, and take them out again.
     File {
         #[command(subcommand)]
@@ -302,6 +307,26 @@ fn touch(no_touch: bool) -> cmd::Touch {
     } else {
         cmd::Touch::Stamp
     }
+}
+
+/// One subcommand per source. A format is named rather than sniffed: guessing
+/// wrong would import somebody's notes as the wrong thing, quietly, which is
+/// the one failure an import must not have.
+#[derive(Subcommand)]
+enum ImportCommand {
+    /// Import a `TiddlyWiki` 5 export: the JSON `export all` writes, or a saved
+    /// single-file wiki. Writes two commits — the notes as the wiki held them,
+    /// then the conversion — so the originals stay in history either way.
+    Tiddlywiki {
+        /// The exported `.json`, or a saved `.html` wiki. Several are read as
+        /// one import, so the links between them resolve.
+        #[arg(required = true, num_args = 1.., value_name = "FILE")]
+        files: Vec<std::path::PathBuf>,
+        /// Bring the `WikiText` in as it stands instead of converting it to
+        /// Markdown.
+        #[arg(long)]
+        no_convert: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -495,6 +520,11 @@ fn run() -> noda::Result<()> {
             (_, None, ..) => cmd::config_show(&paths)?,
         },
         Command::Use { name } => cmd::use_notebook(&paths, name)?,
+        Command::Import { command } => match command {
+            ImportCommand::Tiddlywiki { files, no_convert } => {
+                cmd::import_tiddlywiki(&paths, files, !*no_convert)?
+            }
+        },
         Command::File { command } => match command {
             FileCommand::Add {
                 paths: sources,

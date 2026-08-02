@@ -4710,3 +4710,261 @@ fn a_snapshot_name_taken_on_the_remote_is_not_overwritten() {
         "the branch reached the remote even though the snapshot did not"
     );
 }
+
+/// A small export, written to a file the way a browser's "export all" would.
+fn export(root: &TempRoot, name: &str, tiddlers: &str) -> PathBuf {
+    let path = root.0.join(name);
+    std::fs::write(&path, tiddlers).unwrap();
+    path
+}
+
+const TIDDLERS: &str = r#"[
+  {"title":"Meeting Notes","text":"See [[Reading Log]] and ''this''.\n","tags":"work [[two words]]",
+   "created":"20190314082100000","modified":"20241102164012123","creator":"henry",
+   "type":"text/vnd.tiddlywiki"},
+  {"title":"Reading Log","text":"A {{Transclusion}} nobody can translate.\n","tags":"",
+   "created":"20200101000000000","modified":"20200101000000000"},
+  {"title":"$:/config/Something","text":"not a note"},
+  {"title":"A Picture","text":"aGk=","type":"image/png"}
+]"#;
+
+/// The whole promise of the two-commit import: whatever the conversion did, the
+/// text the export actually held is still in history and one command away.
+#[test]
+fn import_writes_the_originals_first_and_the_conversion_second() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    let out = plain(&cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap());
+    assert!(out.contains("imported  2 notes from tiddlywiki"), "{out}");
+    assert_eq!(
+        commit_count(&notebook),
+        before + 2,
+        "one commit for the notes as written, one for the conversion"
+    );
+
+    let converted = note_text(&paths, "meeting-notes");
+    assert!(converted.contains("**this**"), "converted: {converted}");
+    let original = cmd::restore(&paths, "meeting-notes", "HEAD~1", cmd::Touch::Keep).unwrap();
+    assert!(!original.contains("(no change)"), "{original}");
+    assert!(
+        note_text(&paths, "meeting-notes").contains("''this''"),
+        "the WikiText the export held is one restore away"
+    );
+}
+
+#[test]
+fn import_carries_the_times_and_fields_the_wiki_had() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap();
+
+    let text = note_text(&paths, "meeting-notes");
+    assert!(text.contains("created: 2019-03-14T08:21:00.000Z"), "{text}");
+    assert!(text.contains("updated: 2024-11-02T16:40:12.123Z"), "{text}");
+    assert!(text.contains("creator: henry"), "{text}");
+    assert!(text.contains("source_key: Meeting Notes"), "{text}");
+    assert_eq!(
+        times(&paths, "meeting-notes").0.as_deref(),
+        Some("2019-03-14T08:21:00.000Z"),
+        "noda reads back what the wiki wrote"
+    );
+    // A title list keeps the spaces inside its double brackets.
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            tag: Some("two words"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(out.contains("Meeting Notes"), "{out}");
+}
+
+/// The link is to a tiddler by title, and the file it becomes is not named
+/// until the id is minted — so the rewrite cannot happen until every note
+/// exists, which is what the second pass is for.
+#[test]
+fn import_points_links_at_the_files_the_notes_became() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap();
+
+    let reading = cmd::path(&paths, Some("reading-log")).unwrap();
+    let name = Path::new(reading.trim())
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let meeting = note_text(&paths, "meeting-notes");
+    assert!(
+        meeting.contains(&format!("[Reading Log]({name})")),
+        "the link names the file: {meeting}"
+    );
+    let out = plain(&cmd::backlinks(&paths, "reading-log", cmd::Format::Table).unwrap());
+    assert!(out.contains("Meeting Notes"), "and noda can see it: {out}");
+}
+
+#[test]
+fn what_is_not_a_note_is_reported_rather_than_imported() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    let out = plain(&cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap());
+    assert!(out.contains("1 system tiddler"), "{out}");
+    assert!(out.contains("1 not text (image/png)"), "{out}");
+}
+
+/// `--no-convert` is the whole first half and none of the second.
+#[test]
+fn import_can_leave_the_wikitext_as_it_stands() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), false).unwrap();
+    assert_eq!(
+        commit_count(&notebook),
+        before + 1,
+        "one commit, no conversion"
+    );
+    assert!(note_text(&paths, "meeting-notes").contains("''this''"));
+}
+
+/// Running the same import twice is not two notebooks.
+#[test]
+fn a_second_import_of_the_same_export_changes_nothing() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let after_first = commit_count(&notebook);
+
+    let out = plain(&cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap());
+    assert!(out.contains("imported  0 notes"), "{out}");
+    assert!(out.contains("already imported as"), "{out}");
+    assert_eq!(
+        commit_count(&notebook),
+        after_first,
+        "and nothing committed"
+    );
+}
+
+/// The marker is a frontmatter field rather than a tag, because tags belong to
+/// whoever writes the notes — and `doctor` is what makes a field findable.
+#[test]
+fn doctor_reports_the_notes_an_import_could_not_finish() {
+    let (root, paths) = initialized();
+    let file = export(&root, "wiki.json", TIDDLERS);
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap();
+
+    assert!(
+        note_text(&paths, "reading-log").contains("unconverted: transclusion"),
+        "the record is in the note"
+    );
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(
+        out.contains("1 note carries text an importer did not convert"),
+        "and doctor is the handle: {out}"
+    );
+    assert!(out.contains("1 note transclusion"), "{out}");
+}
+
+#[test]
+fn a_file_that_is_not_an_export_is_refused_by_name() {
+    let (root, paths) = initialized();
+    let file = export(&root, "notes.md", "# just some markdown\n");
+    let err = cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no tiddler store"), "{err}");
+}
+
+/// A wiki exported in pieces has links running between the pieces, so several
+/// files are one import rather than several.
+#[test]
+fn several_exports_are_read_as_one_import() {
+    let (root, paths) = initialized();
+    let first = export(
+        &root,
+        "one.json",
+        r#"[{"title":"Alpha","text":"points at [[Beta]]\n"}]"#,
+    );
+    let second = export(
+        &root,
+        "two.json",
+        r#"[{"title":"Beta","text":"and back at [[Alpha]]\n"}]"#,
+    );
+
+    let out = plain(&cmd::import_tiddlywiki(&paths, &[first, second], true).unwrap());
+    assert!(out.contains("imported  2 notes"), "{out}");
+    let alpha = note_text(&paths, "alpha");
+    assert!(
+        alpha.contains("](") && !alpha.contains("[[Beta]]"),
+        "a link across the two files resolves: {alpha}"
+    );
+    let out = plain(&cmd::backlinks(&paths, "alpha", cmd::Format::Table).unwrap());
+    assert!(out.contains("Beta"), "and in both directions: {out}");
+}
+
+/// Exports taken in pieces overlap. The first copy is the one that lands, and
+/// the second is reported rather than written twice.
+#[test]
+fn a_note_given_twice_in_one_import_arrives_once() {
+    let (root, paths) = initialized();
+    let first = export(&root, "one.json", r#"[{"title":"Alpha","text":"first\n"}]"#);
+    let second = export(&root, "two.json", r#"[{"title":"Alpha","text":"again\n"}]"#);
+
+    let out = plain(&cmd::import_tiddlywiki(&paths, &[first, second], true).unwrap());
+    assert!(out.contains("imported  1 note"), "{out}");
+    assert!(out.contains("given twice in this import"), "{out}");
+    assert!(
+        note_text(&paths, "alpha").contains("first"),
+        "the first one"
+    );
+}
+
+/// The gap this closes: a link written today pointing at a note that arrived
+/// last week. The resolver starts from what the notebook already holds, so a
+/// wiki can be brought in over several sittings.
+#[test]
+fn a_later_import_links_to_what_an_earlier_one_brought() {
+    let (root, paths) = initialized();
+    let first = export(&root, "one.json", r#"[{"title":"Alpha","text":"a\n"}]"#);
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&first), true).unwrap();
+
+    let second = export(
+        &root,
+        "two.json",
+        r#"[{"title":"Beta","text":"points at [[Alpha]]\n"}]"#,
+    );
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&second), true).unwrap();
+
+    let beta = note_text(&paths, "beta");
+    assert!(
+        !beta.contains("[[Alpha]]"),
+        "the link to last week's note resolves: {beta}"
+    );
+    let out = plain(&cmd::backlinks(&paths, "alpha", cmd::Format::Table).unwrap());
+    assert!(out.contains("Beta"), "{out}");
+}
+
+/// Every file is read before anything is written, so a bad one leaves no half
+/// an import behind.
+#[test]
+fn a_file_that_cannot_be_read_stops_the_import_before_it_writes() {
+    let (root, paths) = initialized();
+    let good = export(&root, "one.json", r#"[{"title":"Alpha","text":"a\n"}]"#);
+    let bad = export(&root, "two.json", "not an export at all\n");
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    let err = cmd::import_tiddlywiki(&paths, &[good, bad], true)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("two.json"), "it says which file: {err}");
+    assert_eq!(commit_count(&notebook), before, "and wrote nothing");
+    assert!(cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty());
+}

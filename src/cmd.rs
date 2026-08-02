@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::{self, Config};
+use crate::import;
 use crate::link;
 use crate::note::{self, Note};
 use crate::notebook::{self, Notebook, Problem};
@@ -314,6 +315,38 @@ pub enum Only {
     Everything,
     Notes,
     Files,
+}
+
+/// Reads a `TiddlyWiki` 5 export and writes it into the active notebook.
+///
+/// The reading and the writing are separate on purpose: `import::tiddlywiki`
+/// knows what a tiddler is, `import::write` knows what a notebook is, and the
+/// next source noda learns is the first of those and none of the second.
+/// Several files are one import rather than several. A wiki exported in pieces
+/// has links running between the pieces, and a link can only be rewritten
+/// against notes that exist by the time it is — so every file is read before
+/// anything is written, and one that cannot be read stops the import before it
+/// has touched the notebook.
+pub fn import_tiddlywiki(paths: &Paths, files: &[PathBuf], convert: bool) -> Result<String> {
+    let mut notes = Vec::new();
+    let mut skipped = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| Error::msg(format!("{}: {e}", file.display())))?;
+        let export = import::tiddlywiki::read(&text)
+            .map_err(|e| Error::msg(format!("{}: {e}", file.display())))?;
+        notes.extend(export.notes);
+        skipped.extend(export.skipped);
+    }
+    let converter =
+        |body: &str, resolve: &import::wikitext::Resolve| import::wikitext::convert(body, resolve);
+    import::write(
+        paths,
+        "tiddlywiki",
+        notes,
+        skipped,
+        convert.then_some(&converter),
+    )
 }
 
 /// Lists notes as `id  slug  title  tags`, aligned.
@@ -1579,6 +1612,16 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
         }
     }
 
+    // Free, so it is not behind a flag: `scan` has already parsed every note's
+    // frontmatter, and this is one field of it.
+    let unconverted = describe_unconverted(&notebook.notes()?);
+    if !unconverted.is_empty() {
+        if !report.is_empty() {
+            report.push('\n');
+        }
+        report.push_str(&unconverted);
+    }
+
     let hooks = describe_hooks(&notebook.hooks()?);
     if !hooks.is_empty() {
         if !report.is_empty() {
@@ -1810,6 +1853,86 @@ fn describe_times(notes: &[notebook::NoteFile], last: &HashMap<String, i64>) -> 
 /// It stays out of `Problem`, and so out of `status`, for the opposite reason:
 /// a hook is not a problem with the notes. `status` summarises what the notebook
 /// holds, and a script somebody left in `.git` is not something it holds.
+/// The notes an importer could not finish translating.
+///
+/// The `unconverted:` field is the record, and this is the handle: `search`
+/// reads a note's title, tags and body, so a frontmatter field it does not know
+/// about would otherwise be written down where nothing could find it again. A
+/// tag would have been findable, but tags belong to whoever writes the notes —
+/// putting `wikitext` among somebody's own would be noda filing its paperwork
+/// in their drawer.
+///
+/// Nothing here is repaired, for the reason nothing in `doctor` is: what the
+/// remaining `WikiText` should say is a question only its author can answer.
+fn describe_unconverted(notes: &[notebook::NoteFile]) -> String {
+    let prefix = format!("{}: ", import::UNCONVERTED);
+    let mut found: Vec<(String, String)> = notes
+        .iter()
+        .filter_map(|file| {
+            let what = file
+                .note
+                .extra
+                .iter()
+                .find_map(|line| line.strip_prefix(&prefix))?;
+            Some((
+                note::file_name(&file.id, &file.slug),
+                what.trim().to_string(),
+            ))
+        })
+        .collect();
+    if found.is_empty() {
+        return String::new();
+    }
+    found.sort();
+
+    let mut out = String::new();
+    let noun = |n: usize| if n == 1 { "note" } else { "notes" };
+    let _ = writeln!(
+        out,
+        "{} {} {} text an importer did not convert",
+        found.len(),
+        noun(found.len()),
+        if found.len() == 1 { "carries" } else { "carry" }
+    );
+
+    // What is left, rather than which notes have it: right after an import this
+    // can be most of the notebook, and a list that long buries every other
+    // check `doctor` just ran.
+    let mut kinds: HashMap<&str, usize> = HashMap::new();
+    for (_, what) in &found {
+        for kind in what.split(',') {
+            *kinds.entry(kind.trim()).or_default() += 1;
+        }
+    }
+    let mut kinds: Vec<(&str, usize)> = kinds.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    for (kind, count) in &kinds {
+        let _ = writeln!(out, "  {count} {} {kind}", noun(*count));
+    }
+
+    // Enough names to start on, and the count of the ones not printed — a cap
+    // nobody is told about reads as a complete list.
+    const NAMED: usize = 5;
+    let _ = writeln!(out, "  {}", style::paint(style::MUTED, "for example:"));
+    for (file, _) in found.iter().take(NAMED) {
+        let _ = writeln!(out, "    {file}");
+    }
+    if found.len() > NAMED {
+        let _ = writeln!(
+            out,
+            "    {}",
+            style::paint(
+                style::MUTED,
+                &format!(
+                    "and {} more, each with its own `unconverted:` field",
+                    found.len() - NAMED
+                )
+            )
+        );
+    }
+    out
+}
+
 fn describe_hooks(hooks: &[String]) -> String {
     if hooks.is_empty() {
         return String::new();
