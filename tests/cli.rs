@@ -1921,6 +1921,55 @@ fn doctor_links_reports_a_link_that_names_nothing() {
     );
 }
 
+/// The split the one "broken" category used to hide: a retitled note leaves the
+/// destination naming a path that is gone and an id that is not. noda knows what
+/// the link should say, and saying so is the whole point of separating them.
+#[test]
+fn doctor_links_tells_a_stale_link_from_a_broken_one() {
+    let (_root, paths) = initialized();
+    let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
+    cmd::mv(&paths, &target_id, "Weekly sync").unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
+    assert!(out.contains("1 stale link"), "{out}");
+    assert!(
+        out.contains(&format!("{source_slug}.md")),
+        "the note holding it is named: {out}"
+    );
+    assert!(
+        out.contains(&format!("{target_id}-meeting-notes.md")),
+        "the destination as written: {out}"
+    );
+    assert!(
+        out.contains(&format!("now {target_id}-weekly-sync.md")),
+        "and the name it should carry: {out}"
+    );
+    assert!(
+        !out.contains("broken link"),
+        "a link noda can resolve is not broken: {out}"
+    );
+}
+
+/// The other half of the split. A destination shaped like a note's filename but
+/// naming an id the notebook does not hold resolves to nothing, so it stays in
+/// the category only its author can settle.
+#[test]
+fn doctor_links_calls_a_link_to_no_note_at_all_broken() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("see [it](zzzzzzzz-never-here.md)\n"),
+        &[],
+    )
+    .unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
+    assert!(out.contains("1 broken link"), "{out}");
+    assert!(out.contains("zzzzzzzz-never-here.md"), "{out}");
+    assert!(!out.contains("stale"), "{out}");
+}
+
 /// Writes a file into the notebook's `.git/hooks`, executable or not.
 #[cfg(unix)]
 fn plant_hook(notebook: &Path, name: &str, executable: bool) {
@@ -3670,9 +3719,10 @@ fn backlinks_survive_a_retitle() {
     let ((_, target), (source_id, _)) = linked_pair(&paths);
     cmd::mv(&paths, &target, "Weekly sync").unwrap();
 
-    // The link is now broken as far as any Markdown reader is concerned.
+    // The link is now broken as far as any Markdown reader is concerned, and
+    // stale as far as noda is: the id in it still names exactly one note.
     let audit = plain(&cmd::doctor(&paths, false, true, false).unwrap());
-    assert!(audit.contains("broken link"), "{audit}");
+    assert!(audit.contains("stale link"), "{audit}");
 
     let out = plain(&cmd::backlinks(&paths, "weekly-sync", cmd::Format::Table).unwrap());
     assert!(

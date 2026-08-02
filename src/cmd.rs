@@ -1449,14 +1449,19 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
     Ok(out.trim_end().to_string())
 }
 
-/// The two ways a link and a file can fail to meet, as lines ready to print.
+/// The ways a link and a file can fail to meet, as lines ready to print.
 ///
-/// Both are reported and neither is repaired, for the same reason: noda cannot
-/// tell an accident from an intention here. A file nothing links to may be an
-/// attachment whose note was deleted, or it may be exactly where you meant to
-/// park it — and the only "repair" available is deleting something noda cannot
-/// regenerate. A link that names nothing may be a typo, or a file you have not
-/// copied in yet.
+/// Nothing here is repaired, for the same reason throughout: the repair would
+/// discard something only the author can weigh. A file nothing links to may be
+/// an attachment whose note was deleted, or exactly where you meant to park it —
+/// and the only "repair" available is deleting something noda cannot regenerate.
+/// A link that names nothing may be a typo, or a file you have not copied in
+/// yet.
+///
+/// A stale link is the one case where noda does know the answer, and it is
+/// reported all the same. Acting on it means editing the prose of notes this
+/// command was not pointed at, which noda does only when asked in so many words
+/// — `file mv --update-links` is the existing shape of that request.
 fn describe_audit(audit: &notebook::Audit) -> String {
     let mut out = String::new();
 
@@ -1468,6 +1473,23 @@ fn describe_audit(audit: &notebook::Audit) -> String {
         let _ = writeln!(out, "{count} {noun} no note links to");
         for file in &audit.orphans {
             let _ = writeln!(out, "  {file}");
+        }
+    }
+
+    if !audit.stale.is_empty() {
+        let count = audit.stale.len();
+        let noun = if count == 1 { "link" } else { "links" };
+        let _ = writeln!(out, "{count} stale {noun}");
+        for (note, target, now) in &audit.stale {
+            let arrow = style::paint(style::MUTED, "->");
+            let _ = writeln!(out, "  {note} {arrow} {target}");
+            // The name the destination should carry, indented under it: it is
+            // the answer, not another line of the report.
+            let _ = writeln!(
+                out,
+                "    {}",
+                style::paint(style::MUTED, &format!("now {now}"))
+            );
         }
     }
 
