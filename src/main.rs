@@ -227,7 +227,7 @@ enum Command {
         #[arg(long)]
         no_touch: bool,
     },
-    /// Show or change settings: editor, author, notebook.
+    /// Show or change settings: editor, author, notebook, sign.
     Config {
         /// Setting to read or write. Omit to show every setting.
         key: Option<String>,

@@ -789,6 +789,9 @@ notebook fires under `git commit` and does nothing under `noda add` — same fil
 repository, different outcome. `noda doctor` says so when it finds one, and if you want a
 hook to run, run the command through git: `cd "$(noda path)"` and commit there.
 
+GPG signing has the same root cause and is the one case noda makes up for itself, by
+calling gpg the way git would — see [Signing](#signing).
+
 A pull fast-forwards when only the remote moved, and makes a merge commit when both sides
 did. Two notebooks that each added a note produce two different filenames, so there is
 nothing to conflict over and nothing for noda to reconcile afterwards. A conflict inside a
@@ -809,7 +812,7 @@ everything would make a disagreement permanent and remote.
 | `noda config <key> --unset` | Remove it, going back to the default. |
 | `noda config --edit` | Open `config.toml` in the editor. |
 
-There are three settings, and `noda init` leaves a `config.toml` with all of them commented
+There are four settings, and `noda init` leaves a `config.toml` with all of them commented
 out so you can see what there is to change.
 
 | Setting | What it does | Where it looks first |
@@ -817,11 +820,34 @@ out so you can see what there is to change.
 | `editor` | Editor for `add` and `edit`. | `config.toml`, `$VISUAL`, `$EDITOR`, `vi` |
 | `author` | Who commits, as `Name <email>`. | `config.toml`, your git config, `noda <noda@localhost>` |
 | `notebook` | Which notebook `init` creates, and which one stands in when none is active. | `config.toml`, `default` |
+| `sign` | Whether commits are GPG-signed. | `config.toml`, git's `commit.gpgsign`, off |
 
 The config file beats `$VISUAL` and `$EDITOR`, the way git's `core.editor` does: the
 environment is a blanket default for every program you use, while `config.toml` is a
 decision about this one. `noda config <key> <value>` writes through a real TOML editor, so
 the comments and layout you put in the file survive it.
+
+### Signing
+
+If your git config says `commit.gpgsign = true`, noda signs too — `noda add`, `noda edit`,
+`noda mv`, the merge commit a `noda pull` makes, all of them. It reads the same settings
+`git commit` does: `user.signingkey` for the key, `gpg.openpgp.program` then `gpg.program`
+for the binary, and `gpg.format` to decide it is being asked for OpenPGP at all.
+
+```sh
+noda config sign true      # sign notes even if nothing else you commit is signed
+noda config sign false     # leave notes unsigned even though everything else is
+noda config sign --unset   # go back to whatever commit.gpgsign says
+```
+
+Two caveats. **OpenPGP only:** `gpg.format = ssh` or `x509` is refused by name at the
+commit rather than quietly producing an unsigned one — a commit that was asked to be signed
+and is not is indistinguishable afterwards from one nobody asked about. And **a commit that
+cannot be signed is not made**: if gpg fails or is not installed, the command stops and
+says so, leaving the note on disk and the history untouched.
+
+Signing runs gpg once per commit, so a notebook you write to constantly will want an
+unlocked agent — the same arrangement `git commit` needs.
 
 ### Output
 
@@ -953,7 +979,7 @@ variables always take precedence over the defaults shown below.
 
 ```
 $XDG_CONFIG_HOME/noda/          (default ~/.config/noda/)
-└── config.toml                 # editor, author, default notebook
+└── config.toml                 # editor, author, default notebook, signing
 
 $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 └── notebooks/

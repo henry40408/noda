@@ -14,6 +14,7 @@ pub mod notebook;
 pub mod paths;
 pub mod query;
 pub mod remote;
+pub mod sign;
 pub mod style;
 pub mod todo;
 

@@ -136,11 +136,28 @@ fn effective(paths: &Paths, config: &Config) -> Vec<(String, String, config::Sou
         Some(name) => (name.to_string(), config::Source::File),
         None => (DEFAULT_NOTEBOOK.to_string(), config::Source::Default),
     };
+    let (sign, sign_source) = sign(config);
     vec![
         ("editor".to_string(), editor, editor_source),
         ("author".to_string(), author, author_source),
         ("notebook".to_string(), notebook, notebook_source),
+        ("sign".to_string(), sign.to_string(), sign_source),
     ]
+}
+
+/// Whether commits are signed, and where that was decided. The git side is read
+/// from the user's own configuration rather than a notebook's, because this is
+/// the answer for the next notebook as much as the current one — and a notebook
+/// that overrode it in its own `.git/config` is a case `noda config` has never
+/// claimed to speak for.
+fn sign(config: &Config) -> (bool, config::Source) {
+    if let Some(on) = config.sign() {
+        return (on, config::Source::File);
+    }
+    match git2::Config::open_default().and_then(|git| git.get_bool("commit.gpgsign")) {
+        Ok(on) => (on, config::Source::Git),
+        Err(_) => (false, config::Source::Default),
+    }
 }
 
 /// The identity commits are made under, and where it came from.

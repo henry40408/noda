@@ -16,6 +16,7 @@ use crate::config::{self, Config};
 use crate::note::{self, Note};
 use crate::paths::Paths;
 use crate::remote;
+use crate::sign;
 use crate::{Error, Result};
 
 /// noda configures exactly one remote per notebook.
@@ -33,6 +34,11 @@ pub struct Notebook {
     /// Who to commit as, when `config.toml` says. Resolved on open, because a
     /// notebook is opened once per command and read many times.
     author: Option<(String, String)>,
+    /// Whether to sign, when `config.toml` says; `None` leaves the answer to
+    /// git's `commit.gpgsign`. Read on open like `author`, but *resolved* at the
+    /// commit — a misconfigured `gpg.format` is an error for `noda add` to
+    /// report, not something that should stop `noda ls` from listing.
+    sign: Option<bool>,
 }
 
 /// A note as it sits in the working tree: the identity its filename spells out,
@@ -274,11 +280,13 @@ impl Notebook {
             options.initial_head(&initial_branch(&config));
         }
         let repo = Repository::init_opts(&path, &options)?;
+        let (author, sign) = commit_settings(paths);
         let notebook = Notebook {
             name: name.to_string(),
             path,
             repo,
-            author: configured_author(paths),
+            author,
+            sign,
         };
         notebook.commit(&[], "chore: initialize notebook")?;
         Ok(notebook)
@@ -293,11 +301,13 @@ impl Notebook {
             )));
         }
         let repo = Repository::open(&path)?;
+        let (author, sign) = commit_settings(paths);
         Ok(Notebook {
             name: name.to_string(),
             path,
             repo,
-            author: configured_author(paths),
+            author,
+            sign,
         })
     }
 
@@ -813,20 +823,70 @@ impl Notebook {
     fn commit_index(&self, index: &mut git2::Index, message: &str) -> Result<()> {
         index.write()?;
         let tree = self.repo.find_tree(index.write_tree()?)?;
-        let signature = self.signature()?;
         let parent = match self.repo.head() {
             Ok(head) => Some(head.peel_to_commit()?),
             Err(_) => None,
         };
         let parents: Vec<&git2::Commit> = parent.iter().collect();
-        self.repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            message,
-            &tree,
-            &parents,
-        )?;
+        self.write_commit(message, &tree, &parents)?;
+        Ok(())
+    }
+
+    /// Writes the commit, GPG-signing it when the configuration asks, and moves
+    /// `HEAD` onto it.
+    ///
+    /// The unsigned path is libgit2's one-call `commit`. The signed one cannot
+    /// be: signing needs the commit's text *before* it is an object, so the
+    /// buffer is built, handed to gpg, and written back with the signature —
+    /// three steps where there was one, and the last of them does not move the
+    /// branch, which is why [`Self::move_head`] exists.
+    fn write_commit(
+        &self,
+        message: &str,
+        tree: &git2::Tree<'_>,
+        parents: &[&git2::Commit<'_>],
+    ) -> Result<git2::Oid> {
+        let who = self.signature()?;
+        let Some(signer) = sign::resolve(self.sign, &self.repo.config()?)? else {
+            return Ok(self
+                .repo
+                .commit(Some("HEAD"), &who, &who, message, tree, parents)?);
+        };
+
+        let buffer = self
+            .repo
+            .commit_create_buffer(&who, &who, message, tree, parents)?;
+        // A commit object is UTF-8 by the time noda has built it: the message is
+        // a Rust `&str` and so is every name and email in the signature.
+        let content = std::str::from_utf8(&buffer).map_err(|e| {
+            Error::msg(format!(
+                "the commit is not valid UTF-8 and cannot be signed: {e}"
+            ))
+        })?;
+        let oid = self
+            .repo
+            .commit_signed(content, &signer.sign(content)?, None)?;
+        self.move_head(oid, message)?;
+        Ok(oid)
+    }
+
+    /// Points whatever `HEAD` names at `oid`.
+    ///
+    /// `commit_signed` writes an object and stops there — unlike `commit`, which
+    /// also moves the branch. Without this the notebook would gain a commit that
+    /// nothing refers to, and the next `gc` would collect the note with it.
+    ///
+    /// Symbolic when there is a branch, direct when `HEAD` is detached; the
+    /// unborn `HEAD` of a just-created notebook is symbolic too, which is what
+    /// makes the root commit land on the branch `init.defaultBranch` named.
+    fn move_head(&self, oid: git2::Oid, message: &str) -> Result<()> {
+        let head = self.repo.find_reference("HEAD")?;
+        let target = head.symbolic_target()?.map(str::to_string);
+        let reflog = format!("commit: {}", message.lines().next().unwrap_or(message));
+        match target {
+            Some(branch) => self.repo.reference(&branch, oid, true, &reflog)?,
+            None => self.repo.reference("HEAD", oid, true, &reflog)?,
+        };
         Ok(())
     }
 
@@ -849,11 +909,13 @@ impl Notebook {
             remote::explain(e, url)
         })?;
 
+        let (author, sign) = commit_settings(paths);
         let notebook = Notebook {
             name: name.to_string(),
             path,
             repo,
-            author: configured_author(paths),
+            author,
+            sign,
         };
         if let Err(e) = notebook.adopt_remote_branch() {
             let path = notebook.path.clone();
@@ -1090,13 +1152,9 @@ impl Notebook {
 
         index.write()?;
         let tree = self.repo.find_tree(index.write_tree()?)?;
-        let signature = self.signature()?;
         let ours = self.repo.head()?.peel_to_commit()?;
         let theirs = self.repo.find_commit(incoming)?;
-        self.repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
+        self.write_commit(
             &format!("merge: {REMOTE_NAME}/{branch}"),
             &tree,
             &[&ours, &theirs],
@@ -1591,11 +1649,18 @@ pub fn active_name(paths: &Paths) -> Result<String> {
     }
 }
 
-/// The author `config.toml` asks for, if it holds a usable one. A malformed
-/// value is left to `noda config` to complain about — a commit is not the place
-/// to discover it.
-fn configured_author(paths: &Paths) -> Option<(String, String)> {
-    config::author_parts(Config::load(paths).ok()?.get("author")?)
+/// What `config.toml` has to say about committing: who as, and whether signed.
+/// Read together because a notebook is opened once per command and the file
+/// should be too.
+///
+/// A malformed author is left to `noda config` to complain about — a commit is
+/// not the place to discover it.
+fn commit_settings(paths: &Paths) -> (Option<(String, String)>, Option<bool>) {
+    let Ok(config) = Config::load(paths) else {
+        return (None, None);
+    };
+    let author = config.get("author").and_then(config::author_parts);
+    (author, config.sign())
 }
 
 /// Whether `commit` changed the note with this id, against its first parent —
