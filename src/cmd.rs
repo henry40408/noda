@@ -233,6 +233,15 @@ pub struct List<'a> {
     /// `noda ls -q0 | xargs -0` correct rather than nearly correct.
     pub null: bool,
     pub sort: Sort,
+    /// Run the listing the other way. Applied after `sort`, so it reverses
+    /// whichever order was asked for — and on its own it reverses the default
+    /// one, which is `ls(1)`'s bargain with `-r` and the reason it does not
+    /// require `--sort`.
+    ///
+    /// The notebook's files turn with the notes. They are one listing on one
+    /// screen, and a table whose top half runs newest-first while its bottom
+    /// half runs A-to-Z is not an order anyone asked for.
+    pub reverse: bool,
     /// Show `created` and `updated` in the table. Off by default: the two of
     /// them are forty columns wide, which is the whole reason this is a flag
     /// rather than the default — reading them costs nothing, since `ls` has
@@ -322,11 +331,18 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
 
     // Asking for one tag is asking about notes, so the notebook's other files
     // are not an answer to it.
-    let files = if tag.is_some() || options.only == Only::Notes {
+    let mut files = if tag.is_some() || options.only == Only::Notes {
         Vec::new()
     } else {
         files
     };
+
+    // After the sort rather than inside it: every order gets a reverse for free,
+    // including the walk's own, and `sort_notes` keeps having one job.
+    if options.reverse {
+        notes.reverse();
+        files.reverse();
+    }
 
     match options.format {
         Format::Json => return Ok(as_json(&name, &notes, &files)),
