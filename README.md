@@ -334,9 +334,9 @@ only you know which.
 A **stale** link is the one noda can answer. `noda mv` moves the slug half of a note's
 filename, so a destination written before the retitle names a path that is gone — and still
 names the id, which never moves, which is still exactly one note. The report says which note
-it now is, rather than filing it with the links nobody can resolve. Fixing one is `noda edit`
-on the note that holds it: rewriting the prose of notes you did not name is the one thing noda
-does not do unasked.
+it now is, rather than filing it with the links nobody can resolve. Repairing one is
+`noda mv <note> <its current title> --update-links`, which is where the rewrite lives — see
+below.
 
 `--times` is the other check that has to be asked for, and it exists because `updated` has
 one break it cannot avoid: a note edited outside noda changes without noda getting to
@@ -392,7 +392,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda show <note>` | Print a note to stdout. |
 | `noda edit <note>` | Open a note in `$EDITOR`; auto-commits on save. |
 | `noda rm <note>` | Delete a note (as a revertible commit). |
-| `noda mv <note> <new-title>` | Rename a note (updates slug; id is preserved). |
+| `noda mv <note> <new-title> [--update-links]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
@@ -404,6 +404,31 @@ their filenames apart — and then the slug alone is ambiguous and noda asks whi
 
 `noda tag` takes signed tags — `noda tag meeting-notes +q3 -work` adds `q3` and removes
 `work`. Adding a tag a note already has is not an error; it just leaves nothing to commit.
+
+`noda mv` retitles a note and the filename follows, so the notes that linked to it are left
+naming a path that is gone. It says which, and `--update-links` rewrites them instead:
+
+```
+$ noda mv meeting-notes "Weekly sync"
+jjvgqnrv  weekly-sync
+1 note links to jjvgqnrv by an older name
+  k3f9m2p1-imported.md
+
+$ noda mv weekly-sync "Weekly sync" --update-links
+jjvgqnrv  weekly-sync
+updated  1 note
+```
+
+The second command retitles nothing, which is the point: the flag means *make the links to
+this note say the name it has*, so it repairs what an earlier rename left behind as readily as
+what this one would. The match is on the id rather than on the filename just left, so a link
+two renames behind is caught too — the same fact `noda backlinks` is built on.
+
+It is opt-in for the reason `noda file mv --update-links` is: it edits the prose of notes the
+command was not pointed at, which nothing else in noda does. The rename and the rewrites land
+in one commit. Nothing is assumed fixed either — the notes are read back afterwards, and one
+whose link could not be rewritten is reported rather than counted. The retitled note is a note
+like any other here, so a link it makes to itself is rewritten too.
 
 A title has to fit on one line, and a tag cannot contain `,`, `[`, `]` or a line break —
 the frontmatter writes both verbatim, and a value carrying its punctuation would read back
@@ -544,13 +569,13 @@ mj8ajges  q3-budget    Q3 budget
 2bn13xn0  reading-log  Reading log
 ```
 
-**It survives a retitle.** `noda mv` moves the slug half of a note's filename and says nothing
-to the notes that linked to it, so `[the meeting](mj8ajges-meeting-notes.md)` is left naming a
-path that no longer exists. Every Markdown renderer calls that a broken link. noda does not
-have to: the destination still names `mj8ajges`, and the id is the half that never moves — the
-same fact `log`, `blame` and `deleted` are built on. Matching on the whole filename would have
-been the easier build and the wrong feature, because backlinks would go quiet after every
-retitle, which is exactly when you are looking for what points at a note.
+**It survives a retitle.** `noda mv` moves the slug half of a note's filename, so
+`[the meeting](mj8ajges-meeting-notes.md)` is left naming a path that no longer exists unless
+the rename was asked to rewrite it. Every Markdown renderer calls that a broken link. noda does
+not have to: the destination still names `mj8ajges`, and the id is the half that never moves —
+the same fact `log`, `blame`, `deleted` and `mv --update-links` are built on. Matching on the
+whole filename would have been the easier build and the wrong feature, because backlinks would
+go quiet after every retitle, which is exactly when you are looking for what points at a note.
 
 It takes a file as readily as a note, like `noda path` — "which notes use this diagram" and
 "which notes link to this note" are one question asked of two kinds of thing.

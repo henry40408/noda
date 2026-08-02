@@ -635,7 +635,18 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
 }
 
 /// Retitles a note. The slug follows the new title; the id never moves.
-pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
+///
+/// Which is why the links to it are stale rather than broken: the destination
+/// names a path that is gone and an id that is not, so `backlinks` still answers
+/// and `doctor --links` says what the link should have said. Every Markdown
+/// reader outside noda sees only the dead path, so a retitle says which notes
+/// are in that position, and `update_links` rewrites them.
+///
+/// Opt-in for the reason `file mv --update-links` is: it edits the prose of
+/// notes the command was not pointed at, which nothing else in noda does. The
+/// walk that finds them is skipped entirely when the slug does not move — a
+/// retitle that leaves the filename alone breaks nothing to report.
+pub fn mv(paths: &Paths, key: &str, new_title: &str, update_links: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let located = locate(&notebook, key)?;
     let mut note = located.note;
@@ -653,17 +664,56 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str) -> Result<String> {
     // Only the slug half of the filename moves. The id stays, so the note keeps
     // its identity and its history across the rename without anything having to
     // be told about it.
+    let was = note::file_name(&located.id, &located.slug);
     let file = note::file_name(&located.id, &slug);
     std::fs::write(notebook.path.join(&file), note.render())?;
-    let mut changed = vec![file];
+    let mut changed = vec![file.clone()];
+    let mut retarget = None;
     if slug != located.slug {
         std::fs::remove_file(&located.path)?;
-        changed.push(note::file_name(&located.id, &located.slug));
+        changed.push(was.clone());
     }
 
+    // A retitle that leaves the filename alone strands nothing, and finding that
+    // out costs a read of every note — so the walk is skipped unless the rename
+    // moved something or `--update-links` asked for it outright. Asking for it
+    // on a retitle that renames nothing is how links left stale by an earlier
+    // rename get repaired.
+    if slug != located.slug || update_links {
+        // The inventory is taken after the rename, so a note that links to
+        // itself is read under the name it has now and rewritten from what is on
+        // disk rather than from what was there a moment ago.
+        let (notes, _) = notebook.inventory()?;
+        let id = note::normalize_id(&located.id);
+        let found = retarget_links(
+            &notebook,
+            &notes,
+            |target| notebook::linked_note_id(target).as_deref() == Some(id.as_str()),
+            &file,
+            update_links,
+        )?;
+        changed.extend(found.rewritten.iter().cloned());
+        retarget = Some(found);
+    }
+
+    // A note that linked to itself is in the list twice: once as the file that
+    // was renamed, once as a body that was rewritten.
+    changed.sort();
+    changed.dedup();
     let files: Vec<&Path> = changed.iter().map(Path::new).collect();
     notebook.commit(&files, &format!("mv: {} -> {slug}", located.slug))?;
-    Ok(summary(&located.id, &slug, &note.tags))
+
+    // Named by id rather than by the filename this rename just left: a link can
+    // be two renames behind, and the id is the half of the name that never was.
+    let subject = format!("{} by an older name", located.id);
+    let mut out = summary(&located.id, &slug, &note.tags);
+    if let Some(lines) = retarget.map(|found| found.describe(&subject, update_links))
+        && !lines.is_empty()
+    {
+        out.push('\n');
+        out.push_str(lines.trim_end());
+    }
+    Ok(out)
 }
 
 /// Deletes a note. The file goes, but the commit that removed it does not, so
@@ -815,13 +865,98 @@ pub fn file_mv(paths: &Paths, old: &str, new: &str, update_links: bool) -> Resul
     std::fs::rename(notebook.path.join(old), notebook.path.join(new))?;
     let mut changed = vec![old.to_string(), new.to_string()];
 
-    // Every note is read either way: to rewrite the links, or to say which ones
-    // now name nothing.
-    let mut updated = Vec::new();
+    let retarget = retarget_links(&notebook, &notes, |target| target == old, new, update_links)?;
+    changed.extend(retarget.rewritten.iter().cloned());
+
+    let files: Vec<&Path> = changed
+        .iter()
+        .map(|name| Path::new(name.as_str()))
+        .collect();
+    notebook.commit(&files, &format!("file: mv {old} -> {new}"))?;
+
+    let mut out = format!("renamed  {old} -> {new}\n");
+    out.push_str(&retarget.describe(old, update_links));
+    Ok(out)
+}
+
+/// What a rename did to the links that named the thing renamed.
+struct Retarget {
+    /// The notes whose bodies were rewritten, by filename.
+    rewritten: Vec<String>,
+    /// The notes that name the old name still — because the rewrite was not
+    /// asked for, or because it could not reach them.
+    stranded: Vec<String>,
+}
+
+impl Retarget {
+    /// The lines a rename adds under its own, or nothing when no note ever
+    /// named the old name.
+    fn describe(&self, subject: &str, update_links: bool) -> String {
+        let mut out = String::new();
+        if !self.rewritten.is_empty() {
+            let count = self.rewritten.len();
+            let noun = if count == 1 { "note" } else { "notes" };
+            let _ = writeln!(out, "updated  {count} {noun}");
+        }
+        if !self.stranded.is_empty() {
+            let mut stranded = self.stranded.clone();
+            stranded.sort();
+            stranded.dedup();
+            let count = stranded.len();
+            let (noun, verb) = if count == 1 {
+                ("note", "links")
+            } else {
+                ("notes", "link")
+            };
+            let still = if update_links { "still " } else { "" };
+            let _ = writeln!(out, "{count} {noun} {still}{verb} to {subject}");
+            for name in &stranded {
+                let _ = writeln!(out, "  {name}");
+            }
+        }
+        out
+    }
+}
+
+/// Follows the links that `names` accepts now that the thing they name is
+/// called `new`: rewrites them when `update_links` says so, and reports them
+/// either way.
+///
+/// The predicate is what the two renames disagree about. An attachment's name is
+/// the whole of its identity, so `file mv` matches the name it just left. A note
+/// keeps its id across every retitle, so `mv` matches on that instead and
+/// catches a destination written two renames ago — the one an exact-name match
+/// silently walks past, leaving it stale with nothing having said so.
+///
+/// Every note is read whichever it is — to rewrite the links, or to say which
+/// ones still point at the old name. That is `doctor --links`' cost, paid here
+/// because a rename is rare and the damage it does is otherwise silent.
+///
+/// Nothing is assumed fixed. `link::rewrite` cannot locate a destination written
+/// with backslash escapes, so a note it touched is read back rather than trusted,
+/// and one it could not reach is reported like a note that was never rewritten.
+fn retarget_links(
+    notebook: &Notebook,
+    notes: &[notebook::NoteFile],
+    names: impl Fn(&str) -> bool,
+    new: &str,
+    update_links: bool,
+) -> Result<Retarget> {
+    // A destination that already reads as `new` names the thing correctly, so it
+    // is neither rewritten nor reported.
+    let outdated = |body: &str| -> Vec<String> {
+        link::targets(body)
+            .into_iter()
+            .filter(|target| target != new && names(target))
+            .collect()
+    };
+    let mut rewritten = Vec::new();
     let mut stranded = Vec::new();
-    for file in &notes {
+
+    for file in notes {
         let name = note::file_name(&file.id, &file.slug);
-        if !link::targets(&file.note.body).contains(old) {
+        let targets = outdated(&file.note.body);
+        if targets.is_empty() {
             continue;
         }
         if !update_links {
@@ -832,52 +967,36 @@ pub fn file_mv(paths: &Paths, old: &str, new: &str, update_links: bool) -> Resul
         let text = std::fs::read_to_string(&path)?;
         // Only the body is Markdown. The frontmatter is carried over byte for
         // byte rather than re-rendered, so a rename cannot reformat what
-        // somebody wrote by hand.
+        // somebody wrote by hand — nor move `updated` on a note whose prose is
+        // the same prose it always was, pointing somewhere it can be followed.
         let Some((_, body)) = note::split_frontmatter(&text) else {
             stranded.push(name);
             continue;
         };
-        let Some(rewritten) = link::rewrite(body, old, new) else {
+        // One pass per spelling: a note can name the same note by two names it
+        // has had, and each is a different string to find in the source.
+        let mut fixed = body.to_string();
+        for target in &targets {
+            if let Some(next) = link::rewrite(&fixed, target, new) {
+                fixed = next;
+            }
+        }
+        if fixed == body {
             stranded.push(name);
             continue;
-        };
+        }
         let prefix = &text[..text.len() - body.len()];
-        std::fs::write(&path, format!("{prefix}{rewritten}"))?;
-        if link::targets(&rewritten).contains(old) {
+        std::fs::write(&path, format!("{prefix}{fixed}"))?;
+        if !outdated(&fixed).is_empty() {
             stranded.push(name.clone());
         }
-        changed.push(name);
-        updated.push(());
+        rewritten.push(name);
     }
 
-    let files: Vec<&Path> = changed
-        .iter()
-        .map(|name| Path::new(name.as_str()))
-        .collect();
-    notebook.commit(&files, &format!("file: mv {old} -> {new}"))?;
-
-    let mut out = format!("renamed  {old} -> {new}\n");
-    if !updated.is_empty() {
-        let count = updated.len();
-        let noun = if count == 1 { "note" } else { "notes" };
-        let _ = writeln!(out, "updated  {count} {noun}");
-    }
-    if !stranded.is_empty() {
-        stranded.sort();
-        stranded.dedup();
-        let count = stranded.len();
-        let (noun, verb) = if count == 1 {
-            ("note", "links")
-        } else {
-            ("notes", "link")
-        };
-        let still = if update_links { "still " } else { "" };
-        let _ = writeln!(out, "{count} {noun} {still}{verb} to {old}");
-        for name in &stranded {
-            let _ = writeln!(out, "  {name}");
-        }
-    }
-    Ok(out)
+    Ok(Retarget {
+        rewritten,
+        stranded,
+    })
 }
 
 /// Prints where something lives, so the tools noda does not wrap can be pointed
