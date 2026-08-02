@@ -153,6 +153,18 @@ enum Command {
         #[arg(short = 'n', long = "max-count", value_name = "COUNT")]
         max: Option<usize>,
     },
+    /// List the notes that link to a note or a file. Reads every note's body,
+    /// so it costs what `doctor --links` costs.
+    Backlinks {
+        /// A note (id or slug), or one of the notebook's files by name.
+        key: String,
+        /// Print one JSON object instead of a table.
+        #[arg(long, conflicts_with = "quiet")]
+        json: bool,
+        /// Print one note id per line and nothing else.
+        #[arg(short, long)]
+        quiet: bool,
+    },
     /// List every unticked `- [ ]` in the notebook, soonest due first. Reads
     /// every note's body, so it costs what `search` costs.
     Todo {
@@ -405,6 +417,15 @@ fn run() -> noda::Result<()> {
         } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
+        Command::Backlinks { key, json, quiet } => cmd::backlinks(
+            &paths,
+            key,
+            match (json, quiet) {
+                (true, _) => cmd::Format::Json,
+                (_, true) => cmd::Format::Quiet,
+                _ => cmd::Format::Table,
+            },
+        )?,
         Command::Todo { json } => cmd::todo(&paths, *json)?,
         Command::Blame { note } => cmd::blame(&paths, note)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,

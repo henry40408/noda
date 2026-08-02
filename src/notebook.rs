@@ -423,6 +423,55 @@ impl Notebook {
         Ok(Audit { orphans, broken })
     }
 
+    /// The notes whose bodies link to the note `id` names.
+    ///
+    /// Matched on the id in the destination rather than on the whole filename,
+    /// which is what makes an answer survive a retitle. `noda mv` moves the slug
+    /// half of a note's filename and says nothing to the notes that linked to
+    /// it, so `[the meeting](v62b8rfa-meeting-notes.md)` is left naming a path
+    /// that no longer exists — and yet it still names `v62b8rfa`, which is still
+    /// exactly one note. Every Markdown renderer sees a broken link there; noda
+    /// sees an unambiguous one, because the id is the half that never moves.
+    ///
+    /// Matching on the filename instead would be the easier build and the wrong
+    /// feature: backlinks would go quiet after every retitle, which is precisely
+    /// when somebody is looking for what points at a note.
+    ///
+    /// A note that links to itself is listed. It is what the file says, and
+    /// leaving it out would be noda deciding the author did not mean it.
+    pub fn backlinks_to_note(&self, id: &str) -> Result<Vec<NoteFile>> {
+        let want = note::normalize_id(id);
+        self.linking_notes(|target| linked_note_id(target).as_deref() == Some(want.as_str()))
+    }
+
+    /// The notes whose bodies link to one of the notebook's files, by name.
+    ///
+    /// No id to fall back on here: an attachment's name is the whole of its
+    /// identity, which is why `file mv` has to offer `--update-links` at the
+    /// moment it renames one.
+    pub fn backlinks_to_file(&self, name: &str) -> Result<Vec<NoteFile>> {
+        self.linking_notes(|target| target == name)
+    }
+
+    /// Every note with a link `matches` accepts.
+    ///
+    /// The expensive walk, the same one `audit_links` pays for: every note's
+    /// body is read and parsed. Reached only when asked.
+    fn linking_notes(&self, matches: impl Fn(&str) -> bool) -> Result<Vec<NoteFile>> {
+        let mut found = Vec::new();
+        for file in self.notes()? {
+            // `targets` is a set, so a note that links to the same place three
+            // times is one backlink rather than three.
+            if crate::link::targets(&file.note.body)
+                .iter()
+                .any(|target| matches(target))
+            {
+                found.push(file);
+            }
+        }
+        Ok(found)
+    }
+
     /// The hooks the repository holds that will never fire.
     ///
     /// noda carries its own libgit2 rather than calling `git`, and libgit2 runs
@@ -1695,6 +1744,20 @@ fn body_start(text: &str) -> usize {
     // thing across noda rather than one thing here and another there.
     let body = body.trim_start_matches('\n');
     text[..text.len() - body.len()].lines().count()
+}
+
+/// The note a link destination names, if it names one — the id out of its
+/// filename, folded the way `resolve` folds one.
+///
+/// A destination reaching into a subdirectory is some other file: only the
+/// notebook's root holds notes, which is the same boundary `audit_links` draws
+/// when it decides what can be an orphan.
+fn linked_note_id(target: &str) -> Option<String> {
+    if target.contains('/') {
+        return None;
+    }
+    let (id, _) = note::split_stem(target.strip_suffix(".md")?)?;
+    Some(note::normalize_id(id))
 }
 
 /// Whether git would run this file: the executable bit, which is the whole of

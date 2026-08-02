@@ -3624,6 +3624,181 @@ fn blame_says_nothing_is_committed_when_no_commit_holds_the_note() {
     assert_eq!(lines, vec![("0000000".to_string(), "body".to_string())]);
 }
 
+/// Two notes, the second linking to the first. Returns `(id, slug)` of each.
+fn linked_pair(paths: &Paths) -> ((String, String), (String, String)) {
+    let target = cmd::add(paths, Some("Meeting notes"), Some("agenda\n"), &[]).unwrap();
+    let (target_id, target_slug) = parts(&target);
+    let source = cmd::add(
+        paths,
+        Some("Q3 budget"),
+        Some(&format!(
+            "see [the meeting]({target_id}-{target_slug}.md)\n"
+        )),
+        &[],
+    )
+    .unwrap();
+    let (source_id, source_slug) = parts(&source);
+    (
+        (target_id.to_string(), target_slug.to_string()),
+        (source_id.to_string(), source_slug.to_string()),
+    )
+}
+
+#[test]
+fn backlinks_name_the_notes_that_point_at_one() {
+    let (_root, paths) = initialized();
+    let ((_, target), (source_id, source_slug)) = linked_pair(&paths);
+
+    let out = plain(&cmd::backlinks(&paths, &target, cmd::Format::Table).unwrap());
+    assert!(out.contains(&source_id), "{out}");
+    assert!(out.contains(&source_slug), "{out}");
+    assert!(out.contains("Q3 budget"), "the title comes with it: {out}");
+
+    // The other direction is not this command's question: the note that does
+    // the linking has nothing pointing at it.
+    let out = plain(&cmd::backlinks(&paths, &source_slug, cmd::Format::Table).unwrap());
+    assert!(out.contains("nothing links to"), "{out}");
+}
+
+/// The reason the match is on the id and not on the filename. `noda mv` moves
+/// the slug half and says nothing to the notes that linked to the note, so the
+/// destination is left naming a path that no longer exists — and still naming
+/// exactly one note.
+#[test]
+fn backlinks_survive_a_retitle() {
+    let (_root, paths) = initialized();
+    let ((_, target), (source_id, _)) = linked_pair(&paths);
+    cmd::mv(&paths, &target, "Weekly sync").unwrap();
+
+    // The link is now broken as far as any Markdown reader is concerned.
+    let audit = plain(&cmd::doctor(&paths, false, true, false).unwrap());
+    assert!(audit.contains("broken link"), "{audit}");
+
+    let out = plain(&cmd::backlinks(&paths, "weekly-sync", cmd::Format::Table).unwrap());
+    assert!(
+        out.contains(&source_id),
+        "the id in the destination still names the note: {out}"
+    );
+}
+
+/// An attachment has no id to fall back on — its name is the whole of its
+/// identity — but the question is the same one.
+#[test]
+fn backlinks_answer_for_a_file_too() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant_file(&notebook, "diagram.png");
+    let added = cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("![the shape](diagram.png)\n"),
+        &[],
+    )
+    .unwrap();
+    cmd::add(&paths, Some("Beta"), Some("no links here\n"), &[]).unwrap();
+
+    let out = plain(&cmd::backlinks(&paths, "diagram.png", cmd::Format::Table).unwrap());
+    assert!(out.contains(parts(&added).0), "{out}");
+    assert!(!out.contains("beta"), "{out}");
+}
+
+/// Settled deliberately: it is what the file says, and leaving it out would be
+/// noda deciding the author did not mean it.
+#[test]
+fn a_note_that_links_to_itself_is_its_own_backlink() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("placeholder\n"), &[]).unwrap();
+    let (id, slug) = parts(&added);
+    let path = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replace("placeholder", &format!("see [me]({id}-{slug}.md)")),
+    )
+    .unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
+
+    let out = plain(&cmd::backlinks(&paths, slug, cmd::Format::Table).unwrap());
+    assert!(out.contains(id), "{out}");
+}
+
+/// Three links to one place is one backlink: `link::targets` is a set, and the
+/// question is which notes point here, not how many times.
+#[test]
+fn a_note_linking_three_times_is_one_backlink() {
+    let (_root, paths) = initialized();
+    let target = cmd::add(&paths, Some("Meeting notes"), Some("agenda\n"), &[]).unwrap();
+    let (id, slug) = parts(&target);
+    cmd::add(
+        &paths,
+        Some("Q3 budget"),
+        Some(&format!(
+            "[a]({id}-{slug}.md) and [b]({id}-{slug}.md) and [c]({id}-{slug}.md#x)\n"
+        )),
+        &[],
+    )
+    .unwrap();
+
+    let out = plain(&cmd::backlinks(&paths, slug, cmd::Format::Table).unwrap());
+    assert_eq!(out.lines().count(), 1, "{out}");
+}
+
+/// Only a real link counts — the same rule `doctor --links` follows, and the
+/// reason both read Markdown with a parser instead of searching for the name.
+#[test]
+fn a_mention_is_not_a_backlink() {
+    let (_root, paths) = initialized();
+    let target = cmd::add(&paths, Some("Meeting notes"), Some("agenda\n"), &[]).unwrap();
+    let (id, slug) = parts(&target);
+    cmd::add(
+        &paths,
+        Some("Q3 budget"),
+        Some(&format!(
+            "the file is {id}-{slug}.md, and [[{slug}]] is not a link\n\n```\n[q]({id}-{slug}.md)\n```\n"
+        )),
+        &[],
+    )
+    .unwrap();
+
+    let out = plain(&cmd::backlinks(&paths, slug, cmd::Format::Table).unwrap());
+    assert!(out.contains("nothing links to"), "{out}");
+}
+
+#[test]
+fn backlinks_print_json_and_ids_on_request() {
+    let (_root, paths) = initialized();
+    let ((target_id, target_slug), (source_id, source_slug)) = linked_pair(&paths);
+
+    let json = cmd::backlinks(&paths, &target_slug, cmd::Format::Json).unwrap();
+    assert!(
+        json.contains(&format!("\"target\":\"{target_id}-{target_slug}.md\"")),
+        "it names what was resolved: {json}"
+    );
+    assert!(json.contains(&format!("\"id\":\"{source_id}\"")), "{json}");
+    assert!(
+        json.contains(&format!("\"file\":\"{source_id}-{source_slug}.md\"")),
+        "{json}"
+    );
+
+    let quiet = cmd::backlinks(&paths, &target_slug, cmd::Format::Quiet).unwrap();
+    assert_eq!(quiet, format!("{source_id}\n"));
+
+    // A document either way, like every other listing.
+    let empty = cmd::backlinks(&paths, &source_slug, cmd::Format::Json).unwrap();
+    assert!(empty.contains("\"backlinks\":[]"), "{empty}");
+}
+
+#[test]
+fn backlinks_say_when_the_key_names_nothing() {
+    let (_root, paths) = initialized();
+    let err = cmd::backlinks(&paths, "ghost", cmd::Format::Table)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("nothing called `ghost`"), "{err}");
+}
+
 /// A fixed "today", so what counts as overdue is stated rather than read off
 /// the clock the test is running on.
 const TODAY: &str = "2026-08-02";
