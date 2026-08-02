@@ -21,6 +21,14 @@ pub const HUNK: Style = AnsiColor::Cyan.on_default();
 pub const HEADING: Style = Style::new().bold();
 /// The part of a search result that matched.
 pub const MATCH: Style = AnsiColor::Yellow.on_default().bold();
+/// A due date that has passed, in `todo`.
+///
+/// The one exception to the rule above, and it is worth naming as one: this
+/// colours a row for what it *means*, not for what it is. It earns the
+/// exception by being the only thing anybody scans a todo list for — a list
+/// that does not distinguish late from not-yet is a list you have to read
+/// rather than glance at. Nothing else may follow it without the same argument.
+pub const OVERDUE: Style = AnsiColor::Red.on_default();
 
 /// Wraps `text` in `style`. The `:#` form writes the reset sequence.
 pub fn paint(style: Style, text: &str) -> String {

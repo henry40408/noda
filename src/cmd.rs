@@ -14,6 +14,7 @@ use crate::paths::Paths;
 use crate::query::Query;
 use crate::remote;
 use crate::style;
+use crate::todo;
 use crate::{Error, Result};
 
 /// Name of the notebook `noda init` creates when config does not say otherwise.
@@ -1687,6 +1688,126 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
     Ok(out)
 }
 
+/// Every unticked checkbox in the notebook, soonest due first.
+///
+/// A command of its own rather than a flag on `ls` or a field in `search`, on
+/// the precedent `deleted` set: `ls` reads a directory and this parses every
+/// note's body, and one command must not carry two costs that far apart. `ls`
+/// has a standing no on new columns for the same reason, and the search grammar
+/// refuses fields that hide a tenfold difference in cost.
+///
+/// There is no `noda done`. Ticking a box needs an address noda does not have —
+/// a note is addressed by id or slug, an item inside one by nothing. Line
+/// numbers move and text prefixes collide, and giving each item an id would turn
+/// the file into a noda-only format, which is the one thing choosing GFM
+/// checkboxes was meant to avoid. `noda edit <note>` types one `x`.
+pub fn todo(paths: &Paths, json: bool) -> Result<String> {
+    let (seconds, offset_minutes) = notebook::local_now()?;
+    // The date half of a `YYYY-MM-DD HH:MM`, which is ASCII throughout.
+    todo_on(paths, json, &format_time(seconds, offset_minutes)[..10])
+}
+
+/// `todo`, with today given explicitly, so a test can say what "overdue" means
+/// without freezing the clock — the same shape `edit_with` uses.
+///
+/// `today` is the *local* date, which is the only kind a due date can be
+/// compared against: nobody writes `due:2026-08-10` meaning UTC. It comes from
+/// `notebook::local_now`, the same offset every timestamp noda prints is
+/// rendered with. Getting this wrong is not a rounding error — east of UTC an
+/// item that went overdue at midnight would stay unmarked until morning, which
+/// is exactly when a todo list is read.
+pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let mut items = Vec::new();
+    for file in notebook.notes()? {
+        for item in todo::items(&file.note.body) {
+            items.push((file.id.clone(), file.slug.clone(), item));
+        }
+    }
+
+    // Soonest first, and the undated last: a date is a claim about when
+    // something has to happen, and an item without one has made no claim. Ties
+    // fall back to the slug so a listing does not reshuffle between runs.
+    items.sort_by(|(_, left_slug, left), (_, right_slug, right)| {
+        match (&left.due, &right.due) {
+            (Some(left), Some(right)) => left.cmp(right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| left_slug.cmp(right_slug))
+    });
+
+    // Before the empty check, as `ls` and `deleted` do it: a program asking for
+    // JSON gets a document either way, and an empty list is an answer.
+    if json {
+        return Ok(todo_json(&notebook.name, &items));
+    }
+    if items.is_empty() {
+        return Ok(style::paint(style::MUTED, "nothing to do"));
+    }
+
+    let width = |pick: fn(&(String, String, todo::Item)) -> &str| {
+        items
+            .iter()
+            .map(|row| display_width(pick(row)))
+            .max()
+            .unwrap_or(0)
+    };
+    let ids = width(|(id, ..)| id.as_str());
+    let slugs = width(|(_, slug, _)| slug.as_str());
+
+    let mut out = String::new();
+    for (id, slug, item) in &items {
+        // Never truncated. A real action item is a sentence, and a list that
+        // cuts the sentence off is a list you have to open the note to read.
+        let due = match &item.due {
+            Some(due) if due.as_str() < today => style::paint(style::OVERDUE, due),
+            Some(due) => style::paint(style::MUTED, due),
+            None => " ".repeat(DATE_WIDTH),
+        };
+        let line = format!(
+            "{}  {}  {due}  {}",
+            pad(id, ids),
+            pad(slug, slugs),
+            item.text
+        );
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// The listing as one JSON object, on one line, like `ls` and `deleted`.
+///
+/// `due` is carried and `overdue` is not: a program has its own clock and its
+/// own idea of which day it is in, and the red in the table is noda answering a
+/// question nobody asked a script.
+fn todo_json(notebook: &str, items: &[(String, String, todo::Item)]) -> String {
+    let mut out = String::from("{\"notebook\":");
+    out.push_str(&json_string(notebook));
+    out.push_str(",\"todo\":[");
+    for (index, (id, slug, item)) in items.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"id\":{},\"slug\":{},\"file\":{},\"text\":{},\"due\":{}}}",
+            json_string(id),
+            json_string(slug),
+            json_string(&note::file_name(id, slug)),
+            json_string(&item.text),
+            match &item.due {
+                Some(due) => json_string(due),
+                None => "null".to_string(),
+            }
+        );
+    }
+    out.push_str("]}\n");
+    out
+}
+
 /// Who wrote each line of a note, and when.
 ///
 /// The columns `log` uses, in the order it uses them: commit, time, then the
@@ -2137,6 +2258,9 @@ fn summary(id: &str, slug: &str, tags: &[String]) -> String {
 /// else up against it.
 const TIME_WIDTH: usize = "0000-00-00 00:00".len();
 
+/// How wide a `due:` date prints, for the rows that have none.
+const DATE_WIDTH: usize = "0000-00-00".len();
+
 /// `YYYY-MM-DD HH:MM`, in the timezone the commit was made in — the same choice
 /// git makes by default. Absolute rather than "3 days ago": it is testable
 /// without freezing the clock, and it sorts.
@@ -2308,6 +2432,21 @@ pub fn print(output: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `todo` gets wrong if it asks UTC what day it is. At this instant it
+    /// is already the 3rd in Taipei and still the 2nd in London, and an item
+    /// due on the 2nd is overdue for one of them and not the other. The eight
+    /// hours between the two answers are the morning — which is when a todo
+    /// list is read.
+    #[test]
+    fn a_local_date_is_not_the_utc_one() {
+        // 2026-08-02T23:00:00Z.
+        let instant = 1_785_711_600;
+        assert_eq!(&format_time(instant, 480)[..10], "2026-08-03");
+        assert_eq!(&format_time(instant, 0)[..10], "2026-08-02");
+        // And west of UTC the error runs the other way: still the 2nd there.
+        assert_eq!(&format_time(instant, -300)[..10], "2026-08-02");
+    }
 
     #[test]
     fn wide_characters_count_as_two_columns() {
