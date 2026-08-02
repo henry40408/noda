@@ -71,10 +71,10 @@ enum Command {
         /// Leave out the notes.
         #[arg(long)]
         files_only: bool,
-        /// Show when each note was created and last changed. `--json` carries
-        /// them either way.
-        #[arg(long)]
-        time: bool,
+        /// Show the whole row: the slug and both timestamps as well as the
+        /// title. `--json` carries every field either way.
+        #[arg(short, long)]
+        long: bool,
         /// Order the notes. `created` and `updated` put the newest first;
         /// `title` is alphabetical.
         #[arg(long, value_name = "FIELD")]
@@ -409,7 +409,7 @@ fn run() -> noda::Result<()> {
             null,
             notes_only,
             files_only,
-            time,
+            long,
             sort,
             reverse,
         } => cmd::ls(
@@ -417,7 +417,7 @@ fn run() -> noda::Result<()> {
             &cmd::List {
                 notebook: notebook.as_deref(),
                 tag: tag.as_deref(),
-                time: *time,
+                long: *long,
                 sort: match sort {
                     Some(SortField::Created) => cmd::Sort::Created,
                     Some(SortField::Updated) => cmd::Sort::Updated,

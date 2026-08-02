@@ -173,7 +173,7 @@ fn a_tag_is_stored_the_way_it_reads_back() {
             }
         )
         .unwrap()
-        .contains("alpha")
+        .contains("Alpha")
     );
 
     let err = cmd::tag(
@@ -295,7 +295,7 @@ fn ls_lists_notes_and_filters_by_tag() {
 
     let all = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert_eq!(all.lines().count(), 2);
-    assert!(all.lines().next().unwrap().contains("alpha"), "{all}");
+    assert!(all.lines().next().unwrap().contains("Alpha"), "{all}");
     assert!(all.contains("[work]"), "{all}");
 
     let tagged = cmd::ls(
@@ -307,7 +307,7 @@ fn ls_lists_notes_and_filters_by_tag() {
     )
     .unwrap();
     assert_eq!(tagged.lines().count(), 1);
-    assert!(tagged.contains("alpha"), "{tagged}");
+    assert!(tagged.contains("Alpha"), "{tagged}");
 
     assert!(
         cmd::ls(
@@ -1220,7 +1220,7 @@ fn use_switches_which_notebook_the_note_commands_see() {
     assert!(
         cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("work-item")
+            .contains("Work Item")
     );
     assert!(
         cmd::ls(
@@ -1231,7 +1231,7 @@ fn use_switches_which_notebook_the_note_commands_see() {
             }
         )
         .unwrap()
-        .contains("alpha")
+        .contains("Alpha")
     );
 
     assert!(cmd::use_notebook(&paths, "missing").is_err());
@@ -1360,7 +1360,7 @@ fn push_and_clone_round_trip_a_notebook() {
     assert!(
         cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("meeting-notes")
+            .contains("Meeting Notes")
     );
     assert!(
         cmd::show(&paths, "meeting-notes")
@@ -1387,7 +1387,7 @@ fn clone_adopts_the_only_branch_when_the_remote_head_points_elsewhere() {
     assert!(
         cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("alpha"),
+            .contains("Alpha"),
         "a clone that checks out nothing reads as an empty notebook, not a broken one"
     );
     assert_eq!(
@@ -1469,7 +1469,7 @@ fn sync_fast_forwards_a_notebook_that_only_received() {
     assert!(
         cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("beta")
+            .contains("Beta")
     );
     assert_eq!(
         merge_commits(&paths.notebook_dir("mirror")),
@@ -1499,8 +1499,8 @@ fn sync_merges_notebooks_that_both_moved() {
     assert_eq!(merge_commits(&paths.notebook_dir("mirror")), 1);
 
     let listed = cmd::ls(&paths, &cmd::List::default()).unwrap();
-    assert!(listed.contains("laptop"), "{listed}");
-    assert!(listed.contains("desktop"), "{listed}");
+    assert!(listed.contains("Laptop"), "{listed}");
+    assert!(listed.contains("Desktop"), "{listed}");
 
     // Each side wrote its own filename, so there was nothing to conflict over:
     // the merge is clean without noda rebuilding anything.
@@ -1514,7 +1514,7 @@ fn sync_merges_notebooks_that_both_moved() {
     assert!(
         cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("desktop")
+            .contains("Desktop")
     );
 }
 
@@ -1758,7 +1758,7 @@ fn a_file_that_declares_nothing_is_listed_as_a_file() {
 
     let listed = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap());
     assert!(
-        listed.contains("alpha"),
+        listed.contains("Alpha"),
         "the note is still a note: {listed}"
     );
     assert!(
@@ -2450,7 +2450,7 @@ fn listing_by_tag_does_not_list_the_notebooks_files() {
     )
     .unwrap();
     assert!(!tagged.contains("receipt.pdf"), "{tagged}");
-    assert!(tagged.contains("alpha"), "{tagged}");
+    assert!(tagged.contains("Alpha"), "{tagged}");
 }
 
 /// A notebook holding one tagged note and one file, for the listing tests.
@@ -2528,13 +2528,15 @@ fn ls_json_always_carries_the_times() {
     assert!(out.contains("\"updated\":\"20"), "{out}");
 }
 
-/// Off by default because two RFC 3339 columns are forty characters wide, not
-/// because they cost anything to read — `ls` has already parsed the frontmatter
-/// to get the title.
+/// The default listing answers "which note is this", and the title is the
+/// answer. The slug says the same words with the spaces taken out, and two
+/// RFC 3339 columns are forty characters of a question nobody asked — none of
+/// which costs anything to read, which is why this is about width and not cost.
 #[test]
-fn ls_time_adds_two_columns_and_says_when_there_is_nothing_to_put_in_them() {
+fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     let (_root, paths) = initialized();
-    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let (id, slug) = parts(&added);
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     std::fs::write(
         notebook.join("k3f9m2p1-undated.md"),
@@ -2544,16 +2546,24 @@ fn ls_time_adds_two_columns_and_says_when_there_is_nothing_to_put_in_them() {
 
     let plain_out = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert!(!plain_out.contains('Z'), "no times by default: {plain_out}");
+    let alpha = plain_out.lines().find(|l| l.contains("Alpha")).unwrap();
+    assert_eq!(
+        alpha.split_whitespace().collect::<Vec<_>>(),
+        [id, "Alpha"],
+        "the id and the title, and nothing that repeats the title: {alpha}"
+    );
 
     let out = cmd::ls(
         &paths,
         &cmd::List {
-            time: true,
+            long: true,
             ..Default::default()
         },
     )
     .unwrap();
     let alpha = out.lines().find(|l| l.contains("Alpha")).unwrap();
+    let columns: Vec<&str> = alpha.split_whitespace().collect();
+    assert_eq!(columns[2], slug, "the slug comes back: {alpha}");
     assert_eq!(
         alpha.matches('Z').count(),
         2,
@@ -2562,9 +2572,55 @@ fn ls_time_adds_two_columns_and_says_when_there_is_nothing_to_put_in_them() {
     let undated = out.lines().find(|l| l.contains("Undated")).unwrap();
     let columns: Vec<&str> = undated.split_whitespace().collect();
     assert_eq!(
-        &columns[2..],
-        ["-", "-", "Undated"],
+        columns,
+        ["k3f9m2p1", "Undated", "undated", "-", "-"],
         "a hole the eye would have to measure is filled in: {undated}"
+    );
+}
+
+/// `-l` extends the default row rather than rearranging it. A script that cuts
+/// the first two fields off the front reads the same thing either way, and the
+/// one field a note may not have stays at the end of both, where its absence
+/// moves nothing.
+#[test]
+fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
+    cmd::add(&paths, Some("Bravo"), Some("b\n"), &[]).unwrap();
+
+    let head = |long| {
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                long,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .lines()
+        .map(|l| l.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(head(false), head(true), "the id and the title, either way");
+
+    let long = cmd::ls(
+        &paths,
+        &cmd::List {
+            long: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let alpha = long.lines().find(|l| l.contains("Alpha")).unwrap();
+    assert!(
+        alpha.trim_end().ends_with("[work]"),
+        "tags stay at the end: {alpha}"
+    );
+    let bravo = long.lines().find(|l| l.contains("Bravo")).unwrap();
+    assert_eq!(
+        bravo.split_whitespace().count(),
+        5,
+        "and a note without them ends one column earlier, not one column over: {bravo}"
     );
 }
 
@@ -2604,7 +2660,7 @@ fn ls_sorts_by_time_across_the_offsets_an_import_brings() {
         )
         .unwrap()
         .lines()
-        .filter_map(|l| l.split_whitespace().nth(2).map(str::to_string))
+        .filter_map(|l| l.split_whitespace().nth(1).map(str::to_string))
         .collect::<Vec<_>>()
     };
 
@@ -2657,7 +2713,7 @@ fn ls_reverse_turns_whichever_order_was_asked_for() {
         )
         .unwrap()
         .lines()
-        .filter_map(|l| l.split_whitespace().nth(2).map(str::to_string))
+        .filter_map(|l| l.split_whitespace().nth(1).map(str::to_string))
         .collect::<Vec<_>>()
     };
 
@@ -3253,7 +3309,7 @@ fn search_matches_the_body_the_title_and_the_tags() {
     let out = plain(&search(&paths, "Q3 BUDGET").unwrap());
     assert_eq!(out.lines().count(), 2, "one result and its excerpt: {out}");
     assert!(
-        out.lines().next().unwrap().contains("meeting-notes"),
+        out.lines().next().unwrap().contains("Meeting Notes"),
         "{out}"
     );
     assert!(
@@ -3288,7 +3344,7 @@ fn search_requires_every_term_but_not_their_order() {
     cmd::add(&paths, Some("Beta"), Some("budget only\n"), &[]).unwrap();
 
     let out = plain(&search(&paths, "offsite budget").unwrap());
-    assert!(out.contains("alpha"), "{out}");
+    assert!(out.contains("Alpha"), "{out}");
     assert!(!out.contains("beta"), "both terms are required: {out}");
 
     assert!(search(&paths, "   ").is_err(), "a query is required");
@@ -3331,7 +3387,7 @@ fn search_only_looks_at_the_note_not_the_file_around_it() {
     assert!(
         search(&paths, &format!("id:{}", &id[..4]))
             .unwrap()
-            .contains("alpha")
+            .contains("Alpha")
     );
 }
 
@@ -3376,7 +3432,7 @@ fn log_for_a_note_follows_it_across_a_rename() {
     let id = cmd::ls(&paths, &cmd::List::default())
         .unwrap()
         .lines()
-        .find(|line| line.contains("renamed"))
+        .find(|line| line.contains("Renamed"))
         .and_then(|line| line.split_whitespace().next())
         .expect("id")
         .to_string();
@@ -3556,7 +3612,7 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
             }
         )
         .unwrap()
-        .contains("alpha")
+        .contains("Alpha")
     );
     assert!(
         paths
@@ -3945,7 +4001,7 @@ fn the_configured_notebook_is_what_init_creates_and_what_stands_in() {
     assert!(
         cmd::ls(&paths, &cmd::List::default())
             .unwrap()
-            .contains("alpha")
+            .contains("Alpha")
     );
 }
 
@@ -4123,7 +4179,10 @@ fn backlinks_name_the_notes_that_point_at_one() {
 
     let out = plain(&cmd::backlinks(&paths, &target, cmd::Format::Table).unwrap());
     assert!(out.contains(&source_id), "{out}");
-    assert!(out.contains(&source_slug), "{out}");
+    assert!(
+        !out.contains(&source_slug),
+        "the slug would say the title twice: {out}"
+    );
     assert!(out.contains("Q3 budget"), "the title comes with it: {out}");
 
     // The other direction is not this command's question: the note that does
