@@ -2563,7 +2563,7 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     .unwrap();
     let alpha = out.lines().find(|l| l.contains("Alpha")).unwrap();
     let columns: Vec<&str> = alpha.split_whitespace().collect();
-    assert_eq!(columns[1], slug, "the slug comes back: {alpha}");
+    assert_eq!(columns[2], slug, "the slug comes back: {alpha}");
     assert_eq!(
         alpha.matches('Z').count(),
         2,
@@ -2572,9 +2572,55 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     let undated = out.lines().find(|l| l.contains("Undated")).unwrap();
     let columns: Vec<&str> = undated.split_whitespace().collect();
     assert_eq!(
-        &columns[2..],
-        ["-", "-", "Undated"],
+        columns,
+        ["k3f9m2p1", "Undated", "undated", "-", "-"],
         "a hole the eye would have to measure is filled in: {undated}"
+    );
+}
+
+/// `-l` extends the default row rather than rearranging it. A script that cuts
+/// the first two fields off the front reads the same thing either way, and the
+/// one field a note may not have stays at the end of both, where its absence
+/// moves nothing.
+#[test]
+fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
+    cmd::add(&paths, Some("Bravo"), Some("b\n"), &[]).unwrap();
+
+    let head = |long| {
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                long,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .lines()
+        .map(|l| l.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(head(false), head(true), "the id and the title, either way");
+
+    let long = cmd::ls(
+        &paths,
+        &cmd::List {
+            long: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let alpha = long.lines().find(|l| l.contains("Alpha")).unwrap();
+    assert!(
+        alpha.trim_end().ends_with("[work]"),
+        "tags stay at the end: {alpha}"
+    );
+    let bravo = long.lines().find(|l| l.contains("Bravo")).unwrap();
+    assert_eq!(
+        bravo.split_whitespace().count(),
+        5,
+        "and a note without them ends one column earlier, not one column over: {bravo}"
     );
 }
 
@@ -3263,7 +3309,7 @@ fn search_matches_the_body_the_title_and_the_tags() {
     let out = plain(&search(&paths, "Q3 BUDGET").unwrap());
     assert_eq!(out.lines().count(), 2, "one result and its excerpt: {out}");
     assert!(
-        out.lines().next().unwrap().contains("meeting-notes"),
+        out.lines().next().unwrap().contains("Meeting Notes"),
         "{out}"
     );
     assert!(
@@ -3298,7 +3344,7 @@ fn search_requires_every_term_but_not_their_order() {
     cmd::add(&paths, Some("Beta"), Some("budget only\n"), &[]).unwrap();
 
     let out = plain(&search(&paths, "offsite budget").unwrap());
-    assert!(out.contains("alpha"), "{out}");
+    assert!(out.contains("Alpha"), "{out}");
     assert!(!out.contains("beta"), "both terms are required: {out}");
 
     assert!(search(&paths, "   ").is_err(), "a query is required");
@@ -3341,7 +3387,7 @@ fn search_only_looks_at_the_note_not_the_file_around_it() {
     assert!(
         search(&paths, &format!("id:{}", &id[..4]))
             .unwrap()
-            .contains("alpha")
+            .contains("Alpha")
     );
 }
 
@@ -4133,7 +4179,10 @@ fn backlinks_name_the_notes_that_point_at_one() {
 
     let out = plain(&cmd::backlinks(&paths, &target, cmd::Format::Table).unwrap());
     assert!(out.contains(&source_id), "{out}");
-    assert!(out.contains(&source_slug), "{out}");
+    assert!(
+        !out.contains(&source_slug),
+        "the slug would say the title twice: {out}"
+    );
     assert!(out.contains("Q3 budget"), "the title comes with it: {out}");
 
     // The other direction is not this command's question: the note that does

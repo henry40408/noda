@@ -382,22 +382,32 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
     let slug_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
     let created_width = rows.iter().map(|r| display_width(&r.2)).max().unwrap_or(0);
     let updated_width = rows.iter().map(|r| display_width(&r.3)).max().unwrap_or(0);
+    let title_width = rows.iter().map(|r| display_width(&r.4)).max().unwrap_or(0);
     let mut out = String::new();
     for (id, slug, created, updated, title, tags) in rows {
-        // The fixed-width columns first, the ones that grow with the prose
-        // after: a title runs to whatever length it runs to, and putting a
-        // column behind it would leave nothing lined up.
+        // `-l` extends the default row rather than rearranging it: the id and
+        // the title are the first two columns in both, so a script that cuts
+        // fields off the front reads the same thing either way. The columns
+        // `-l` adds go after them, and the title is padded to make room —
+        // whatever a long title costs the table, it costs less than a listing
+        // whose second column means something different depending on a flag.
+        //
+        // Tags are last in both, and for the same reason: they are the one
+        // thing a note may not have, so anywhere but the end and their absence
+        // would shift every column behind them.
         let mut line = pad(&id, id_width);
         if options.long {
             let _ = write!(
                 line,
-                "  {}  {}  {}",
+                "  {}  {}  {}  {}",
+                pad(&title, title_width),
                 pad(&slug, slug_width),
                 pad(&created, created_width),
                 pad(&updated, updated_width)
             );
+        } else {
+            let _ = write!(line, "  {title}");
         }
-        let _ = write!(line, "  {title}");
         if !tags.is_empty() {
             line.push_str("  [");
             line.push_str(&tags);
@@ -1327,15 +1337,12 @@ pub fn search(paths: &Paths, tokens: &[String]) -> Result<String> {
         return Ok(String::new());
     }
 
+    // Same row as `ls`: the id, the title, and the tags at the end. A hit is a
+    // note, and the listing that names a note settled what a note looks like.
     let id_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
-    let slug_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
     let mut out = String::new();
-    for (id, slug, title, tags, excerpt) in rows {
-        let mut line = format!(
-            "{}  {}  {title}",
-            pad(&id, id_width),
-            pad(&slug, slug_width)
-        );
+    for (id, _slug, title, tags, excerpt) in rows {
+        let mut line = format!("{}  {title}", pad(&id, id_width));
         if !tags.is_empty() {
             line.push_str("  [");
             line.push_str(&tags);
@@ -1968,24 +1975,16 @@ pub fn backlinks(paths: &Paths, key: &str, format: Format) -> Result<String> {
         ));
     }
 
+    // Same row as `ls`, for the same reason `search` prints one: what comes back
+    // is a note, and there is one shape for naming a note.
     let ids = found
         .iter()
         .map(|f| display_width(&f.id))
         .max()
         .unwrap_or(0);
-    let slugs = found
-        .iter()
-        .map(|f| display_width(&f.slug))
-        .max()
-        .unwrap_or(0);
     let mut out = String::new();
     for file in &found {
-        let line = format!(
-            "{}  {}  {}",
-            pad(&file.id, ids),
-            pad(&file.slug, slugs),
-            file.note.title
-        );
+        let line = format!("{}  {}", pad(&file.id, ids), file.note.title);
         out.push_str(line.trim_end());
         out.push('\n');
     }

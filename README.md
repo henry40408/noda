@@ -317,7 +317,8 @@ files
 
 The id and the title, because the title is the answer to "which note is this". The slug is
 the same words with the spaces taken out, so a column of it beside the title says everything
-twice.
+twice. `search` and `backlinks` name a note the same way, for the same reason — there is one
+shape for naming a note.
 
 `-l` shows the whole row: the slug and both timestamps as well. One flag rather than one per
 column — `ls(1)` settled that a long format is a density, not a selection, and there is no
@@ -326,10 +327,16 @@ frontmatter to get the title, and the slug is in the filename.
 
 ```
 $ noda ls -l --sort updated
-b60ccfw0  reading-log    2019-03-14T08:21:00Z  2024-11-02T16:40:12Z  Reading log
-jjvgqnrv  meeting-notes  2026-08-02T09:14:00Z  2026-08-02T09:14:00Z  Meeting notes
-k3f9m2p1  imported       -                     -                     Imported
+b60ccfw0  Reading log    reading-log    2019-03-14T08:21:00Z  2024-11-02T16:40:12Z
+jjvgqnrv  Meeting notes  meeting-notes  2026-08-02T09:14:00Z  2026-08-02T09:14:00Z  [work, q3]
+k3f9m2p1  Imported       imported       -                     -
 ```
+
+**`-l` extends the row, it does not rearrange it.** The id and the title are the first two
+columns either way, so `noda ls | cut -c1-8` and anything else that reads off the front says
+the same thing with the flag as without it. Tags are last in both, and for the reason they
+have to be: they are the one thing a note may not have, so anywhere but the end and their
+absence would shift every column behind them.
 
 `--sort created|updated|title` puts the listing in order — the times newest first, the title
 alphabetically.
@@ -487,7 +494,7 @@ out with a leading `-`:
 
 ```
 $ noda search budget tag:work OR tag:q3 -tag:archived
-s33wpe5y  q3-planning  Q3 planning  [work, q3]
+s33wpe5y  Q3 planning  [work, q3]
           the budget and the hiring plan
 ```
 
@@ -607,8 +614,8 @@ renders it. What points at the note is the half nothing could tell you:
 
 ```
 $ noda backlinks meeting-notes
-mj8ajges  q3-budget    Q3 budget
-2bn13xn0  reading-log  Reading log
+mj8ajges  Q3 budget
+2bn13xn0  Reading log
 ```
 
 **It survives a retitle.** `noda mv` moves the slug half of a note's filename, so
