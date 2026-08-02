@@ -131,8 +131,12 @@ pub struct Scan {
 pub struct Audit {
     /// Files in the notebook that no note links to.
     pub orphans: Vec<String>,
+    /// `(note filename, destination, the note that destination still names)`
+    /// where the file is gone but its id is one the notebook still holds — a
+    /// note that was retitled after something linked to it.
+    pub stale: Vec<(String, String, String)>,
     /// `(note filename, destination)` where the destination names nothing the
-    /// notebook holds.
+    /// notebook holds, and nothing says what it was meant to name.
     pub broken: Vec<(String, String)>,
 }
 
@@ -398,18 +402,42 @@ impl Notebook {
     /// a destination reaching into a subdirectory resolves. The reverse does not
     /// hold — only files at the notebook's root can be reported as orphans,
     /// because the root is the whole of the notebook noda models.
+    ///
+    /// A destination that resolves to nothing on disk is split in two, because
+    /// only one of the halves is a question for the author. `noda mv` moves the
+    /// slug half of a filename, so `[the meeting](v62b8rfa-meeting-notes.md)`
+    /// can name a path that is gone and still name `v62b8rfa`, which is still
+    /// exactly one note: **stale**, and noda knows what it should have said. A
+    /// destination naming no id the notebook holds is **broken**, and only its
+    /// author knows whether it is a typo or a file not copied in yet. The same
+    /// distinction `backlinks_to_note` is built on, reported rather than acted
+    /// on.
     pub fn audit_links(&self) -> Result<Audit> {
         let (notes, files) = self.inventory()?;
         let mut referenced: HashSet<String> = HashSet::new();
+        let mut stale = Vec::new();
         let mut broken = Vec::new();
 
-        for file in notes {
+        let current: HashMap<String, String> = notes
+            .iter()
+            .map(|file| {
+                (
+                    note::normalize_id(&file.id),
+                    note::file_name(&file.id, &file.slug),
+                )
+            })
+            .collect();
+
+        for file in &notes {
             let name = note::file_name(&file.id, &file.slug);
             for target in crate::link::targets(&file.note.body) {
                 if self.path.join(&target).exists() {
                     referenced.insert(target);
-                } else {
-                    broken.push((name.clone(), target));
+                    continue;
+                }
+                match linked_note_id(&target).and_then(|id| current.get(&id)) {
+                    Some(now) => stale.push((name.clone(), target, now.clone())),
+                    None => broken.push((name.clone(), target)),
                 }
             }
         }
@@ -419,8 +447,13 @@ impl Notebook {
             .filter(|file| !referenced.contains(file))
             .collect();
 
+        stale.sort();
         broken.sort();
-        Ok(Audit { orphans, broken })
+        Ok(Audit {
+            orphans,
+            stale,
+            broken,
+        })
     }
 
     /// The notes whose bodies link to the note `id` names.

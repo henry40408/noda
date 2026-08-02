@@ -318,14 +318,25 @@ it is a flag rather than the default:
 $ noda doctor --links
 1 file no note links to
   receipt.txt
+1 stale link
+  k3f9m2p1-imported.md -> jjvgqnrv-meeting-notes.md
+    now jjvgqnrv-weekly-sync.md
 1 broken link
   b60ccfw0-reading-log.md -> cover.jpg
 ```
 
-Both are reported and neither is repaired. A file nothing links to may be an attachment
-whose note was deleted, or a receipt you parked here on purpose — and the only repair
-available is deleting something git cannot regenerate from anything else. A link that names
-nothing may be a typo, or a file you have not added yet.
+Nothing here is repaired, and the three lines are three different questions. A file nothing
+links to may be an attachment whose note was deleted, or a receipt you parked here on purpose
+— and the only repair available is deleting something git cannot regenerate from anything
+else. A **broken** link names nothing at all: a typo, or a file you have not added yet, and
+only you know which.
+
+A **stale** link is the one noda can answer. `noda mv` moves the slug half of a note's
+filename, so a destination written before the retitle names a path that is gone — and still
+names the id, which never moves, which is still exactly one note. The report says which note
+it now is, rather than filing it with the links nobody can resolve. Fixing one is `noda edit`
+on the note that holds it: rewriting the prose of notes you did not name is the one thing noda
+does not do unasked.
 
 `--times` is the other check that has to be asked for, and it exists because `updated` has
 one break it cannot avoid: a note edited outside noda changes without noda getting to

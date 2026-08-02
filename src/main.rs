@@ -111,8 +111,9 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
         /// Also follow every link in every note: report the files no note links
-        /// to, and the links that name nothing. Reads the whole notebook, so it
-        /// is asked for rather than assumed.
+        /// to, the links whose note was retitled, and the links that name
+        /// nothing. Reads the whole notebook, so it is asked for rather than
+        /// assumed.
         #[arg(long)]
         links: bool,
         /// Also check the timestamps: values that cannot be read, notes changed
