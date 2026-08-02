@@ -99,7 +99,8 @@ enum Command {
     },
     /// Where the active notebook stands: notes, changes, drift from the remote.
     Status,
-    /// Diagnose the notebook, and adopt the notes that only lack an id.
+    /// Diagnose the notebook, and adopt the notes that only lack an id. Always
+    /// reports the git hooks noda will never run.
     Doctor {
         /// Report what would change without writing or committing anything.
         #[arg(long)]

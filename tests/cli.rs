@@ -1921,6 +1921,112 @@ fn doctor_links_reports_a_link_that_names_nothing() {
     );
 }
 
+/// Writes a file into the notebook's `.git/hooks`, executable or not.
+#[cfg(unix)]
+fn plant_hook(notebook: &Path, name: &str, executable: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = notebook.join(".git/hooks");
+    std::fs::create_dir_all(&dir).expect("create hooks dir");
+    let path = dir.join(name);
+    std::fs::write(&path, "#!/bin/sh\nexit 0\n").expect("write hook");
+    let mode = if executable { 0o755 } else { 0o644 };
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("set mode");
+}
+
+/// The gap this closes: the same hook fires under `git commit` and is dead under
+/// `noda add`, and nothing said so.
+#[cfg(unix)]
+#[test]
+fn doctor_reports_the_hooks_that_will_never_run() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant_hook(&notebook, "pre-commit", true);
+    plant_hook(&notebook, "post-commit", true);
+
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(out.contains("2 git hooks will never run"), "{out}");
+    assert!(out.contains("pre-commit"), "{out}");
+    assert!(out.contains("post-commit"), "{out}");
+    assert!(
+        out.contains("never calls git"),
+        "the reason is the remedy: {out}"
+    );
+}
+
+/// Neither is a hook git would have run either, so neither is noda's doing.
+#[cfg(unix)]
+#[test]
+fn doctor_ignores_hooks_git_would_not_run() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant_hook(&notebook, "pre-commit.sample", true);
+    plant_hook(&notebook, "post-commit", false);
+
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(out.contains("in order"), "{out}");
+}
+
+/// Costs one `read_dir`, so it is not behind a flag — but a notebook with no
+/// hooks must not gain a line saying so.
+#[test]
+fn doctor_says_nothing_about_hooks_when_there_are_none() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(out.contains("in order"), "{out}");
+    assert!(!out.contains("hook"), "{out}");
+}
+
+/// A hook is not a problem with the notes, so it must not reach the summary that
+/// counts them.
+#[cfg(unix)]
+#[test]
+fn status_says_nothing_about_hooks() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    plant_hook(&notebook, "pre-commit", true);
+
+    let out = plain(&cmd::status(&paths).unwrap());
+    assert!(!out.contains("hook"), "{out}");
+    assert!(!out.contains("problems"), "{out}");
+}
+
+/// `core.hooksPath` is where git looks, so it is where noda has to look: hooks
+/// left behind in `.git/hooks` are dead under git too, and blaming noda for them
+/// would be a false report.
+#[cfg(unix)]
+#[test]
+fn doctor_follows_core_hookspath() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant_hook(&notebook, "pre-commit", true);
+
+    let elsewhere = notebook.join("my-hooks");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let path = elsewhere.join("post-commit");
+    std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let repo = git2::Repository::open(&notebook).unwrap();
+    repo.config()
+        .unwrap()
+        .set_str("core.hooksPath", "my-hooks")
+        .unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(out.contains("1 git hook will never run"), "{out}");
+    assert!(out.contains("post-commit"), "{out}");
+    assert!(
+        !out.contains("pre-commit"),
+        "git would not run it either: {out}"
+    );
+}
+
 /// The reason this reads Markdown with a parser instead of searching for the
 /// filename: both of these are how a correct answer differs from a plausible
 /// one, and both would otherwise be wrong.

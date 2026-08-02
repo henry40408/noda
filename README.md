@@ -211,6 +211,21 @@ to settle it. **A name that claims an id over a file with no frontmatter** might
 that lost its frontmatter or a file that was never one: add the `---` block back, or rename
 it so it no longer starts with an id. Only their author knows which.
 
+It also reports the **git hooks that will never run**, which needs no flag because it costs
+one directory read:
+
+```
+$ noda doctor
+1 git hook will never run
+  pre-commit
+noda carries its own libgit2 and never calls git, which is what would run them
+```
+
+Exactly the hooks git itself would reach for: `core.hooksPath` when it is set, the
+executable bit, and never the `*.sample` files a fresh repository ships. A hook that git
+would not run either is not noda's doing and is not reported. This stays out of `noda
+status` on purpose — a script left in `.git` is not something the notebook holds.
+
 A file that will not parse does not lock you out of the commands that do not read it.
 `restore`, `rm`, `log` and `diff` identify a note by its filename alone, so they work on one
 whose frontmatter has gone — which is exactly when they are wanted. `mv` and `tag` rewrite
@@ -539,6 +554,12 @@ from the rest. Those four are the whole list: noda carries its own libgit2 rathe
 calling `git`, so a helper your `git` reads from its installation's own `etc/gitconfig` —
 where a packaged build may well have put `credential.helper = osxkeychain` for you — is
 invisible to noda and has to be repeated in one of the files above.
+
+Carrying its own libgit2 has a second consequence, and it is the one that surprises people:
+**noda runs no git hooks.** libgit2 does not run them at all, so a `pre-commit` in your
+notebook fires under `git commit` and does nothing under `noda add` — same file, same
+repository, different outcome. `noda doctor` says so when it finds one, and if you want a
+hook to run, run the command through git: `cd "$(noda path)"` and commit there.
 
 A pull fast-forwards when only the remote moved, and makes a merge commit when both sides
 did. Two notebooks that each added a note produce two different filenames, so there is
