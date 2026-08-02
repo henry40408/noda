@@ -1712,6 +1712,27 @@ fn is_executable(_: &std::fs::Metadata) -> bool {
     true
 }
 
+/// Now, and how far the machine's clock sits from UTC — `(seconds, offset)`,
+/// the same pair every commit carries.
+///
+/// Asked of libgit2 rather than worked out here, because noda has no timezone
+/// database: jiff is compiled without one on purpose, and bundling one to answer
+/// "what day is it here" would be a large dependency for a small question.
+/// libgit2 gets the offset from the C library, which is where `git commit` gets
+/// the one it stamps on every commit.
+///
+/// So this is not a workaround — it is the *same* source every timestamp noda
+/// prints already comes from. `format_time` renders a commit in the zone it was
+/// made in; a date compared against today has to mean the same "here", or the
+/// two would disagree on screen.
+///
+/// The identity is thrown away. `Signature::now` needs one and the clock does
+/// not care which.
+pub fn local_now() -> Result<(i64, i32)> {
+    let when = Signature::now("noda", "noda@localhost")?.when();
+    Ok((when.seconds(), when.offset_minutes()))
+}
+
 /// An abbreviated object id, as git prints it.
 pub(crate) fn short(oid: git2::Oid) -> String {
     oid.to_string()[..7].to_string()

@@ -500,9 +500,10 @@ v69raz2x  reading-log                sort out the chapter-three notes
 
 Soonest first; items with no date come last, because a date is a claim about when something
 has to happen and an item without one has made no claim. **A date that has passed is
-coloured** — it is the one thing anybody scans a todo list for. "Passed" is measured in UTC:
-noda is built without a timezone database (the same choice that keeps the binary
-self-contained), so it cannot name your local midnight and does not pretend to.
+coloured** — it is the one thing anybody scans a todo list for. "Passed" means passed where
+you are: nobody writes `due:2026-08-10` meaning UTC. noda carries no timezone database, so
+it asks git for the offset instead — the same one stamped on every commit, and the same one
+every time noda prints is rendered in. In a container, set `TZ` as you would for `git`.
 
 Ticked items are not listed, and nothing is ever truncated — a list that cuts the sentence
 off is a list you have to open the note to read anyway. `--json` carries `id`, `slug`,

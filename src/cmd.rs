@@ -1702,17 +1702,20 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
 /// the file into a noda-only format, which is the one thing choosing GFM
 /// checkboxes was meant to avoid. `noda edit <note>` types one `x`.
 pub fn todo(paths: &Paths, json: bool) -> Result<String> {
-    todo_on(paths, json, &note::now()[..10])
+    let (seconds, offset_minutes) = notebook::local_now()?;
+    // The date half of a `YYYY-MM-DD HH:MM`, which is ASCII throughout.
+    todo_on(paths, json, &format_time(seconds, offset_minutes)[..10])
 }
 
 /// `todo`, with today given explicitly, so a test can say what "overdue" means
 /// without freezing the clock — the same shape `edit_with` uses.
 ///
-/// `today` is UTC, because it is the only day noda can name: jiff is compiled
-/// without a timezone database on purpose, so the system's zone is not readable
-/// from here. A due date within a few hours of midnight can therefore turn red
-/// on one side of the world before the other, which is a smaller lie than
-/// guessing at a zone.
+/// `today` is the *local* date, which is the only kind a due date can be
+/// compared against: nobody writes `due:2026-08-10` meaning UTC. It comes from
+/// `notebook::local_now`, the same offset every timestamp noda prints is
+/// rendered with. Getting this wrong is not a rounding error — east of UTC an
+/// item that went overdue at midnight would stay unmarked until morning, which
+/// is exactly when a todo list is read.
 pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let mut items = Vec::new();
@@ -2429,6 +2432,21 @@ pub fn print(output: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `todo` gets wrong if it asks UTC what day it is. At this instant it
+    /// is already the 3rd in Taipei and still the 2nd in London, and an item
+    /// due on the 2nd is overdue for one of them and not the other. The eight
+    /// hours between the two answers are the morning — which is when a todo
+    /// list is read.
+    #[test]
+    fn a_local_date_is_not_the_utc_one() {
+        // 2026-08-02T23:00:00Z.
+        let instant = 1_785_711_600;
+        assert_eq!(&format_time(instant, 480)[..10], "2026-08-03");
+        assert_eq!(&format_time(instant, 0)[..10], "2026-08-02");
+        // And west of UTC the error runs the other way: still the 2nd there.
+        assert_eq!(&format_time(instant, -300)[..10], "2026-08-02");
+    }
 
     #[test]
     fn wide_characters_count_as_two_columns() {
