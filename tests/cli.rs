@@ -176,13 +176,26 @@ fn a_tag_is_stored_the_way_it_reads_back() {
         .contains("alpha")
     );
 
-    let err = cmd::tag(&paths, "alpha", &["+q3, urgent".to_string()])
-        .unwrap_err()
-        .to_string();
+    let err = cmd::tag(
+        &paths,
+        "alpha",
+        &["+q3, urgent".to_string()],
+        cmd::Touch::Stamp,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains('`'), "{err}");
     // Removal stays permissive: a tag that got in before the check must still
     // have a way out.
-    assert!(cmd::tag(&paths, "alpha", &["-q3, urgent".to_string()]).is_ok());
+    assert!(
+        cmd::tag(
+            &paths,
+            "alpha",
+            &["-q3, urgent".to_string()],
+            cmd::Touch::Stamp
+        )
+        .is_ok()
+    );
 }
 
 /// Two notes may share a slug: the id in front of it keeps the filenames apart.
@@ -345,7 +358,13 @@ fn tag_adds_and_removes_and_commits_once() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
 
-    let out = cmd::tag(&paths, "alpha", &["+q3".to_string(), "-work".to_string()]).unwrap();
+    let out = cmd::tag(
+        &paths,
+        "alpha",
+        &["+q3".to_string(), "-work".to_string()],
+        cmd::Touch::Stamp,
+    )
+    .unwrap();
     assert!(out.ends_with("  [q3]"), "{out}");
     assert_eq!(commit_count(&notebook), before + 1);
 
@@ -405,7 +424,7 @@ fn changing_a_note_moves_updated_and_leaves_created_alone() {
     .unwrap();
     std::fs::write(&path, backdated).unwrap();
 
-    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
     let (after_created, after_updated) = times(&paths, "alpha");
     assert_eq!(after_created, created, "created does not move");
     assert_ne!(
@@ -414,12 +433,123 @@ fn changing_a_note_moves_updated_and_leaves_created_alone() {
         "a tag change is a change"
     );
 
-    cmd::mv(&paths, "alpha", "Beta", false).unwrap();
+    cmd::mv(&paths, "alpha", "Beta", false, cmd::Touch::Stamp).unwrap();
     assert_eq!(
         times(&paths, "beta").0,
         created,
         "a retitle is not a rebirth"
     );
+}
+
+/// Backdates `updated` on a note already on disk, so a change to it is visible
+/// however fast the test runs.
+fn backdate(paths: &Paths, summary: &str) -> PathBuf {
+    let path = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(summary));
+    let text = note::set_field(
+        &std::fs::read_to_string(&path).unwrap(),
+        "updated",
+        "2000-01-01T00:00:00Z",
+    )
+    .unwrap();
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+/// `--no-touch` is for the changes that are not the note being rewritten: a
+/// typo, a tag, a title that was wrong from the start. The commit still records
+/// that something happened — it is `updated`, the note's own claim about itself,
+/// that is left alone.
+#[test]
+fn no_touch_leaves_updated_where_it_stands() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    backdate(&paths, &added);
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Keep).unwrap();
+    assert_eq!(
+        times(&paths, "alpha").1.as_deref(),
+        Some("2000-01-01T00:00:00Z"),
+        "the tag went on without redating the note"
+    );
+
+    cmd::mv(&paths, "alpha", "Beta", false, cmd::Touch::Keep).unwrap();
+    let (created, updated) = times(&paths, "beta");
+    assert_eq!(
+        updated.as_deref(),
+        Some("2000-01-01T00:00:00Z"),
+        "and so did the new title"
+    );
+    assert!(created.is_some(), "created was never the field in question");
+
+    assert_eq!(
+        commit_count(&notebook),
+        before + 2,
+        "both changes are still commits: the file did change"
+    );
+    assert!(
+        cmd::show(&paths, "beta").unwrap().contains("work"),
+        "and the change itself landed"
+    );
+}
+
+/// `tag` takes hyphen values, so a flag written after the tags arrives as one
+/// more tag. `--no-touch` would strip to `-no-touch` and remove a tag nobody
+/// has: a command that reports success and did nothing it was asked to.
+#[test]
+fn tag_says_where_a_flag_goes_rather_than_swallowing_it() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    let err = cmd::tag(
+        &paths,
+        "alpha",
+        &["+work".to_string(), "--no-touch".to_string()],
+        cmd::Touch::Stamp,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--no-touch"), "{err}");
+    assert!(err.contains("before"), "it says where the flag goes: {err}");
+    assert_eq!(
+        commit_count(&notebook),
+        before,
+        "and nothing was committed on the way to finding out"
+    );
+}
+
+/// The case the flag exists for: a note that arrived with the dates its old
+/// system gave it. Editing it must not overwrite them with today.
+#[cfg(unix)]
+#[test]
+fn no_touch_keeps_an_imported_notes_own_dates_through_an_edit() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-imported.md"),
+        "---\ntitle: Imported\ncreated: 2019-03-14T08:21:00Z\nupdated: 2019-03-14T16:21:00+08:00\n---\n\nbody\n",
+    )
+    .unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "add: imported");
+
+    let editor = editor_script(
+        &root,
+        "append",
+        r#"printf -- 'and one more line\n' >> "$1""#,
+    );
+    cmd::edit_with(&paths, "imported", &editor, cmd::Touch::Keep).unwrap();
+
+    let text = note_text(&paths, "imported");
+    assert!(
+        text.contains("updated: 2019-03-14T16:21:00+08:00"),
+        "the offset it was written with is still the offset it carries: {text}"
+    );
+    assert!(text.contains("and one more line"), "{text}");
 }
 
 /// Notes that predate the fields, or arrived without them, are left as they are.
@@ -439,7 +569,13 @@ fn a_note_without_times_does_not_get_them_invented() {
 
     // A change noda makes is a change noda can date. It still does not backfill
     // the one it was never told.
-    cmd::tag(&paths, "imported", &["+work".to_string()]).unwrap();
+    cmd::tag(
+        &paths,
+        "imported",
+        &["+work".to_string()],
+        cmd::Touch::Stamp,
+    )
+    .unwrap();
     let (created, updated) = times(&paths, "imported");
     assert_eq!(created, None, "noda does not know when this was written");
     assert!(updated.is_some(), "it does know when it just touched it");
@@ -458,7 +594,13 @@ fn a_write_back_keeps_the_fields_noda_does_not_understand() {
     )
     .unwrap();
 
-    cmd::tag(&paths, "imported", &["+work".to_string()]).unwrap();
+    cmd::tag(
+        &paths,
+        "imported",
+        &["+work".to_string()],
+        cmd::Touch::Stamp,
+    )
+    .unwrap();
 
     let text = cmd::show(&paths, "imported").unwrap();
     assert!(text.contains("source_id: 4821"), "{text}");
@@ -472,7 +614,7 @@ fn tag_drops_the_tags_line_when_the_last_tag_goes() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
 
-    cmd::tag(&paths, "alpha", &["-work".to_string()]).unwrap();
+    cmd::tag(&paths, "alpha", &["-work".to_string()], cmd::Touch::Stamp).unwrap();
     let text = cmd::show(&paths, "alpha").unwrap();
     assert!(!text.contains("tags:"), "{text}");
     assert!(
@@ -495,11 +637,17 @@ fn tag_requires_a_sign_and_commits_nothing_when_there_is_no_change() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
 
-    let err = cmd::tag(&paths, "alpha", &["work".to_string()]).unwrap_err();
+    let err = cmd::tag(&paths, "alpha", &["work".to_string()], cmd::Touch::Stamp).unwrap_err();
     assert!(err.to_string().contains("+work"), "{err}");
 
     // Re-adding a tag it already has, and dropping one it never had.
-    let out = cmd::tag(&paths, "alpha", &["+work".to_string(), "-q3".to_string()]).unwrap();
+    let out = cmd::tag(
+        &paths,
+        "alpha",
+        &["+work".to_string(), "-q3".to_string()],
+        cmd::Touch::Stamp,
+    )
+    .unwrap();
     assert!(out.contains("no change"), "{out}");
     assert_eq!(commit_count(&notebook), before, "nothing to commit");
 }
@@ -510,7 +658,7 @@ fn tag_resolves_by_id_too() {
     let out = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let id = out.split_once("  ").unwrap().0.to_string();
 
-    cmd::tag(&paths, &id, &["+work".to_string()]).unwrap();
+    cmd::tag(&paths, &id, &["+work".to_string()], cmd::Touch::Stamp).unwrap();
     assert!(cmd::show(&paths, "alpha").unwrap().contains("tags: [work]"));
 }
 
@@ -522,7 +670,7 @@ fn mv_renames_the_slug_and_keeps_the_id() {
     let id = id.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
-    let out = cmd::mv(&paths, "alpha", "Beta Notes", false).unwrap();
+    let out = cmd::mv(&paths, "alpha", "Beta Notes", false, cmd::Touch::Stamp).unwrap();
     assert_eq!(out, format!("{id}  beta-notes  [work]"));
 
     assert!(
@@ -553,7 +701,7 @@ fn mv_retitles_without_moving_when_the_slug_is_unchanged() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    cmd::mv(&paths, "alpha", "  ALPHA  ", false).unwrap();
+    cmd::mv(&paths, "alpha", "  ALPHA  ", false, cmd::Touch::Stamp).unwrap();
     let text = cmd::show(&paths, "alpha").unwrap();
     assert!(text.contains("title: ALPHA"), "{text}");
 }
@@ -566,7 +714,7 @@ fn mv_says_which_notes_linked_to_the_name_it_left() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
 
-    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", false).unwrap());
+    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap());
     assert!(
         out.contains(&format!("1 note links to {target_id} by an older name")),
         "{out}"
@@ -591,7 +739,7 @@ fn mv_update_links_rewrites_the_notes_that_pointed_at_the_old_name() {
     let commits = commit_count(&notebook);
     let before = times(&paths, &source_slug);
 
-    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", true).unwrap());
+    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", true, cmd::Touch::Stamp).unwrap());
     assert!(out.contains("updated  1 note"), "{out}");
     assert!(
         !out.contains("links to"),
@@ -631,8 +779,8 @@ fn mv_update_links_catches_a_link_two_renames_behind() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
 
-    cmd::mv(&paths, &target_id, "Weekly sync", false).unwrap();
-    let out = plain(&cmd::mv(&paths, &target_id, "Team sync", true).unwrap());
+    cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
+    let out = plain(&cmd::mv(&paths, &target_id, "Team sync", true, cmd::Touch::Stamp).unwrap());
 
     assert!(out.contains("updated  1 note"), "{out}");
     let text = note_text(&paths, &source_slug);
@@ -651,9 +799,9 @@ fn mv_update_links_catches_a_link_two_renames_behind() {
 fn mv_update_links_repairs_without_having_to_retitle_again() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
-    cmd::mv(&paths, &target_id, "Weekly sync", false).unwrap();
+    cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
 
-    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", true).unwrap());
+    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", true, cmd::Touch::Stamp).unwrap());
     assert!(out.contains("updated  1 note"), "{out}");
     assert!(
         note_text(&paths, &source_slug).contains(&format!("{target_id}-weekly-sync.md")),
@@ -676,7 +824,7 @@ fn mv_update_links_reaches_a_note_that_links_to_itself() {
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, format!("{text}\nand [me]({id}-alpha.md)\n")).unwrap();
 
-    cmd::mv(&paths, &id, "Beta", true).unwrap();
+    cmd::mv(&paths, &id, "Beta", true, cmd::Touch::Stamp).unwrap();
     let text = note_text(&paths, "beta");
     assert!(text.contains(&format!("[me]({id}-beta.md)")), "{text}");
 }
@@ -689,7 +837,16 @@ fn a_retitle_that_keeps_the_slug_says_nothing_about_links() {
     let (_root, paths) = initialized();
     let ((target_id, _), _) = linked_pair(&paths);
 
-    let out = plain(&cmd::mv(&paths, &target_id, "  MEETING NOTES  ", false).unwrap());
+    let out = plain(
+        &cmd::mv(
+            &paths,
+            &target_id,
+            "  MEETING NOTES  ",
+            false,
+            cmd::Touch::Stamp,
+        )
+        .unwrap(),
+    );
     assert_eq!(out, format!("{target_id}  meeting-notes"), "{out}");
 }
 
@@ -703,9 +860,9 @@ fn mv_may_land_on_a_slug_another_note_already_uses() {
     let (alpha_id, _) = parts(&alpha);
     let (beta_id, _) = parts(&beta);
 
-    assert!(cmd::mv(&paths, "alpha", "   ", false).is_err());
+    assert!(cmd::mv(&paths, "alpha", "   ", false, cmd::Touch::Stamp).is_err());
 
-    let out = cmd::mv(&paths, alpha_id, "Beta", false).unwrap();
+    let out = cmd::mv(&paths, alpha_id, "Beta", false, cmd::Touch::Stamp).unwrap();
     assert!(out.ends_with("  beta"), "no `-2` invented: {out}");
     assert!(
         cmd::show(&paths, beta_id).unwrap().ends_with("b\n"),
@@ -725,9 +882,15 @@ fn mv_refuses_a_title_the_frontmatter_cannot_carry() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    let err = cmd::mv(&paths, "alpha", "Renamed\ntitle: hijacked", false)
-        .unwrap_err()
-        .to_string();
+    let err = cmd::mv(
+        &paths,
+        "alpha",
+        "Renamed\ntitle: hijacked",
+        false,
+        cmd::Touch::Stamp,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("one line"), "{err}");
     assert!(
         cmd::show(&paths, "alpha").unwrap().contains("title: Alpha"),
@@ -759,7 +922,7 @@ fn edit_commits_what_was_saved() {
     let before = commit_count(&notebook);
 
     let editor = editor_script(&root, "append", r#"printf 'appended\n' >> "$1""#);
-    let out = cmd::edit_with(&paths, "alpha", &editor).unwrap();
+    let out = cmd::edit_with(&paths, "alpha", &editor, cmd::Touch::Stamp).unwrap();
     assert_eq!(out, format!("{id}  alpha"));
     assert_eq!(commit_count(&notebook), before + 1);
     assert!(cmd::show(&paths, "alpha").unwrap().contains("appended"));
@@ -782,7 +945,7 @@ fn edit_records_the_change_without_rearranging_the_block() {
         "rewrite",
         r#"printf -- '---\nzebra: 1\ntitle: Alpha\nupdated: 2000-01-01T00:00:00Z\n---\n\nsaved\n' > "$1""#,
     );
-    cmd::edit_with(&paths, "alpha", &editor).unwrap();
+    cmd::edit_with(&paths, "alpha", &editor, cmd::Touch::Stamp).unwrap();
 
     let text = note_text(&paths, "alpha");
     let (block, _) = text.split_once("\n---\n").unwrap();
@@ -812,7 +975,7 @@ fn edit_commits_nothing_when_the_file_is_untouched() {
     let before = commit_count(&notebook);
 
     let editor = editor_script(&root, "noop", "true");
-    let out = cmd::edit_with(&paths, "alpha", &editor).unwrap();
+    let out = cmd::edit_with(&paths, "alpha", &editor, cmd::Touch::Stamp).unwrap();
     assert!(out.contains("unchanged"), "{out}");
     assert_eq!(commit_count(&notebook), before);
 }
@@ -827,7 +990,7 @@ fn edit_refuses_to_commit_a_broken_note() {
     let before = commit_count(&notebook);
 
     let wiped = editor_script(&root, "wipe", r#"printf 'no frontmatter\n' > "$1""#);
-    let err = cmd::edit_with(&paths, "alpha", &wiped).unwrap_err();
+    let err = cmd::edit_with(&paths, "alpha", &wiped, cmd::Touch::Stamp).unwrap_err();
     assert!(err.to_string().contains("not committed"), "{err}");
     assert_eq!(commit_count(&notebook), before);
     assert!(
@@ -854,7 +1017,7 @@ fn an_edit_cannot_change_a_notes_identity() {
         "reid",
         r#"printf -- '---\ntitle: Alpha\nid: zzzz\n---\n\nbody\n' > "$1""#,
     );
-    let out = cmd::edit_with(&paths, "alpha", &reid).unwrap();
+    let out = cmd::edit_with(&paths, "alpha", &reid, cmd::Touch::Stamp).unwrap();
     assert!(out.starts_with(&id), "the id is unmoved: {out}");
     assert!(cmd::show(&paths, &id).unwrap().contains("body"));
 }
@@ -866,7 +1029,7 @@ fn edit_reports_an_aborted_editor() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
     let editor = editor_script(&root, "abort", "exit 1");
-    let err = cmd::edit_with(&paths, "alpha", &editor).unwrap_err();
+    let err = cmd::edit_with(&paths, "alpha", &editor, cmd::Touch::Stamp).unwrap_err();
     assert!(err.to_string().contains("exited with"), "{err}");
 }
 
@@ -930,7 +1093,7 @@ fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
 
     // And the one that undoes the damage. It writes over the file, so reading it
     // first was never necessary.
-    cmd::restore(&paths, &id, "HEAD").unwrap();
+    cmd::restore(&paths, &id, "HEAD", cmd::Touch::Stamp).unwrap();
     let back = cmd::show(&paths, &id).unwrap();
     assert!(back.contains("the original body"), "{back}");
     assert_eq!(
@@ -969,8 +1132,8 @@ fn the_commands_that_read_a_note_still_refuse_one_that_cannot_be_read() {
     // The line is drawn at whether the command uses the note's contents. These
     // rewrite the frontmatter, so they have to be able to read it first.
     for err in [
-        cmd::mv(&paths, &id, "Renamed", false).unwrap_err(),
-        cmd::tag(&paths, &id, &["+work".to_string()]).unwrap_err(),
+        cmd::mv(&paths, &id, "Renamed", false, cmd::Touch::Stamp).unwrap_err(),
+        cmd::tag(&paths, &id, &["+work".to_string()], cmd::Touch::Stamp).unwrap_err(),
     ] {
         assert!(err.to_string().contains("frontmatter"), "{err}");
     }
@@ -1904,8 +2067,8 @@ fn doctor_times_reports_what_cannot_be_read_and_what_runs_backwards() {
 fn doctor_times_is_quiet_about_notes_noda_wrote() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
-    cmd::mv(&paths, "alpha", "Renamed", false).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
+    cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
 
     let out = plain(&cmd::doctor(&paths, false, false, true).unwrap());
     assert!(out.contains("in order"), "{out}");
@@ -2063,7 +2226,7 @@ fn doctor_links_reports_a_link_that_names_nothing() {
 fn doctor_links_tells_a_stale_link_from_a_broken_one() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
-    cmd::mv(&paths, &target_id, "Weekly sync", false).unwrap();
+    cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
 
     let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(out.contains("1 stale link"), "{out}");
@@ -3104,8 +3267,8 @@ fn log_reports_the_notebook_history_newest_first() {
 fn log_for_a_note_follows_it_across_a_rename() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
-    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
-    cmd::mv(&paths, "alpha", "Renamed", false).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
+    cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
     // A second note's history must not leak into the first note's.
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
 
@@ -3179,7 +3342,7 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
     commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
     let before = commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK));
 
-    cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
+    cmd::restore(&paths, "alpha", "HEAD~1", cmd::Touch::Stamp).unwrap();
     // Everything but `updated` comes back exactly: that one records when the
     // file changed, and it changed just now. It has its own test below.
     let held_aside = |text: &str| note::set_field(text, "updated", "-").unwrap();
@@ -3199,7 +3362,7 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
     );
 
     // Restoring what is already there is not a commit.
-    let out = cmd::restore(&paths, "alpha", "HEAD").unwrap();
+    let out = cmd::restore(&paths, "alpha", "HEAD", cmd::Touch::Stamp).unwrap();
     assert!(out.contains("(no change)"), "{out}");
     assert_eq!(
         commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)),
@@ -3229,7 +3392,7 @@ fn restore_dates_the_note_now_rather_than_then() {
     std::fs::write(&path, long_ago.replace("first\n", "second\n")).unwrap();
     commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha again");
 
-    cmd::restore(&paths, "alpha", "HEAD~1").unwrap();
+    cmd::restore(&paths, "alpha", "HEAD~1", cmd::Touch::Stamp).unwrap();
     let after = std::fs::read_to_string(&path).unwrap();
     assert!(after.contains("first\n"), "the contents came back: {after}");
     assert!(
@@ -3241,7 +3404,40 @@ fn restore_dates_the_note_now_rather_than_then() {
     // forward. Asking for it again is not a change: its contents are already on
     // disk, and the only thing that differs is the timestamp the restore itself
     // wrote — which is not what is being compared.
-    let out = cmd::restore(&paths, "alpha", "HEAD~2").unwrap();
+    let out = cmd::restore(&paths, "alpha", "HEAD~2", cmd::Touch::Stamp).unwrap();
+    assert!(out.contains("(no change)"), "{out}");
+}
+
+/// `--no-touch` turns a restore into the whole version coming back, `updated`
+/// included — and with nothing written over the copy in history, "no change"
+/// becomes an exact answer rather than one with a field held aside.
+#[test]
+fn restore_no_touch_brings_the_old_date_back_with_the_contents() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+    let path = backdate(&paths, &added);
+    let long_ago = std::fs::read_to_string(&path).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
+
+    let later = note::set_field(
+        &long_ago.replace("first\n", "second\n"),
+        "updated",
+        "2024-01-01T00:00:00Z",
+    )
+    .unwrap();
+    std::fs::write(&path, later).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha again");
+
+    cmd::restore(&paths, "alpha", "HEAD~1", cmd::Touch::Keep).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        long_ago,
+        "byte for byte the version that was asked for"
+    );
+
+    // Asking for that same revision again compares in full rather than around
+    // `updated`, and still says nothing changed.
+    let out = cmd::restore(&paths, "alpha", "HEAD~2", cmd::Touch::Keep).unwrap();
     assert!(out.contains("(no change)"), "{out}");
 }
 
@@ -3256,7 +3452,7 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
 
     // Addressed by an id nothing on disk carries any more: the answer is in
     // history, where every commit records the filenames.
-    let out = cmd::restore(&paths, &id, "HEAD~1").unwrap();
+    let out = cmd::restore(&paths, &id, "HEAD~1", cmd::Touch::Stamp).unwrap();
     assert!(out.starts_with(&id), "the id comes back unchanged: {out}");
     assert!(cmd::show(&paths, &id).unwrap().contains("a\n"));
     assert!(
@@ -3290,7 +3486,7 @@ fn restore_brings_back_a_note_deleted_outside_noda() {
 
     std::fs::remove_file(notebook.join(note_file(&added))).unwrap();
 
-    cmd::restore(&paths, &id, "HEAD").unwrap();
+    cmd::restore(&paths, &id, "HEAD", cmd::Touch::Stamp).unwrap();
     assert!(cmd::show(&paths, &id).unwrap().ends_with("a\n"));
     assert_eq!(
         status_row(&plain(&cmd::status(&paths).unwrap()), "problems"),
@@ -3321,7 +3517,7 @@ fn deleted_names_the_commit_that_brings_a_note_back() {
 
     // The revision in the row is enough on its own.
     let commit = row.split_whitespace().nth(4).unwrap().to_string();
-    cmd::restore(&paths, &slug, &commit).unwrap();
+    cmd::restore(&paths, &slug, &commit, cmd::Touch::Stamp).unwrap();
     assert!(cmd::show(&paths, &id).unwrap().ends_with("g\n"));
 
     assert_eq!(
@@ -3338,7 +3534,7 @@ fn deleted_names_the_commit_that_brings_a_note_back() {
 fn deleted_does_not_count_a_rename() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
-    cmd::mv(&paths, "beta", "Beta Renamed", false).unwrap();
+    cmd::mv(&paths, "beta", "Beta Renamed", false, cmd::Touch::Stamp).unwrap();
 
     assert_eq!(cmd::deleted(&paths, None, false).unwrap(), "");
 }
@@ -3377,11 +3573,11 @@ fn deleted_reports_the_most_recent_disappearance() {
         .nth(4)
         .unwrap()
         .to_string();
-    cmd::restore(&paths, &slug, &commit).unwrap();
+    cmd::restore(&paths, &slug, &commit, cmd::Touch::Stamp).unwrap();
 
     // Change it, then lose it again. The older commit would bring back the
     // wrong contents.
-    cmd::tag(&paths, &slug, &["+work".to_string()]).unwrap();
+    cmd::tag(&paths, &slug, &["+work".to_string()], cmd::Touch::Stamp).unwrap();
     cmd::rm(&paths, &slug).unwrap();
 
     let out = plain(&cmd::deleted(&paths, None, false).unwrap());
@@ -3396,7 +3592,7 @@ fn deleted_reports_the_most_recent_disappearance() {
         .to_string();
     assert_ne!(latest, commit, "not the first deletion");
 
-    cmd::restore(&paths, &slug, &latest).unwrap();
+    cmd::restore(&paths, &slug, &latest, cmd::Touch::Stamp).unwrap();
     assert!(
         cmd::show(&paths, &slug).unwrap().contains("tags: [work]"),
         "the version that was actually lost came back"
@@ -3436,7 +3632,7 @@ fn deleted_json_carries_what_a_script_needs_to_restore() {
         .unwrap()
         .to_string();
     assert_eq!(restore_from.len(), 40, "a full object id: {restore_from}");
-    cmd::restore(&paths, &slug, &restore_from).unwrap();
+    cmd::restore(&paths, &slug, &restore_from, cmd::Touch::Stamp).unwrap();
     assert!(cmd::show(&paths, &id).unwrap().ends_with("g\n"));
 }
 
@@ -3488,18 +3684,18 @@ fn restore_reports_what_it_cannot_find() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    let err = cmd::restore(&paths, "alpha", "nonsense")
+    let err = cmd::restore(&paths, "alpha", "nonsense", cmd::Touch::Stamp)
         .unwrap_err()
         .to_string();
     assert!(err.contains("unknown revision"), "{err}");
 
     // The note exists now, but not that far back.
-    let err = cmd::restore(&paths, "alpha", "HEAD~1")
+    let err = cmd::restore(&paths, "alpha", "HEAD~1", cmd::Touch::Stamp)
         .unwrap_err()
         .to_string();
     assert!(err.contains("did not exist"), "{err}");
 
-    assert!(cmd::restore(&paths, "missing", "HEAD").is_err());
+    assert!(cmd::restore(&paths, "missing", "HEAD", cmd::Touch::Stamp).is_err());
 }
 
 fn config_file(paths: &Paths) -> PathBuf {
@@ -3729,7 +3925,7 @@ fn blame_reaches_past_a_rename() {
     let added = cmd::add(&paths, Some("Alpha"), Some("written before\n"), &[]).unwrap();
     let created = head_commit(&paths);
 
-    cmd::mv(&paths, "alpha", "Renamed", false).unwrap();
+    cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
     let renamed = head_commit(&paths);
     assert_ne!(created, renamed, "the rename is its own commit");
 
@@ -3763,7 +3959,7 @@ fn blame_reaches_past_a_rename() {
 fn blame_reports_the_body_and_not_the_frontmatter() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
-    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
 
     let out = plain(&cmd::blame(&paths, "alpha").unwrap());
     assert!(!out.contains("---"), "{out}");
@@ -3852,7 +4048,7 @@ fn backlinks_name_the_notes_that_point_at_one() {
 fn backlinks_survive_a_retitle() {
     let (_root, paths) = initialized();
     let ((_, target), (source_id, _)) = linked_pair(&paths);
-    cmd::mv(&paths, &target, "Weekly sync", false).unwrap();
+    cmd::mv(&paths, &target, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
 
     // The link is now broken as far as any Markdown reader is concerned, and
     // stale as far as noda is: the id in it still names exactly one note.
@@ -4222,7 +4418,7 @@ fn a_note_restores_from_a_snapshot_by_name() {
     std::fs::write(&note, original.replace("first\n", "second\n")).unwrap();
     commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
 
-    cmd::restore(&paths, "alpha", "before").unwrap();
+    cmd::restore(&paths, "alpha", "before", cmd::Touch::Stamp).unwrap();
     assert!(std::fs::read_to_string(&note).unwrap().contains("first"));
 }
 

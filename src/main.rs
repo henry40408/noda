@@ -89,6 +89,9 @@ enum Command {
     Edit {
         /// Note id (`k3f9`) or slug (`meeting-notes`).
         note: String,
+        /// Leave `updated` as it stands instead of setting it to now.
+        #[arg(long)]
+        no_touch: bool,
     },
     /// Retitle a note. The slug follows the title; the id is preserved.
     Mv {
@@ -100,6 +103,9 @@ enum Command {
         /// them.
         #[arg(long)]
         update_links: bool,
+        /// Leave `updated` as it stands instead of setting it to now.
+        #[arg(long)]
+        no_touch: bool,
     },
     /// Delete a note. The removal is a commit, so `git revert` undoes it.
     Rm {
@@ -212,6 +218,10 @@ enum Command {
         note: String,
         /// Anything git accepts: an id, an abbreviated id, `HEAD~3`, a tag.
         commit: String,
+        /// Restore `updated` along with the rest of the note, instead of setting
+        /// it to now.
+        #[arg(long)]
+        no_touch: bool,
     },
     /// Show or change settings: editor, author, notebook.
     Config {
@@ -274,7 +284,20 @@ enum Command {
             value_name = "+TAG|-TAG"
         )]
         changes: Vec<String>,
+        /// Leave `updated` as it stands instead of setting it to now. Goes
+        /// before the tags, which take every argument after them.
+        #[arg(long)]
+        no_touch: bool,
     },
+}
+
+/// `--no-touch` on the commands that change a note, as `cmd` wants it.
+fn touch(no_touch: bool) -> cmd::Touch {
+    if no_touch {
+        cmd::Touch::Keep
+    } else {
+        cmd::Touch::Stamp
+    }
 }
 
 #[derive(Subcommand)]
@@ -410,13 +433,18 @@ fn run() -> noda::Result<()> {
             },
         )?,
         Command::Show { note } => cmd::show(&paths, note)?,
-        Command::Edit { note } => cmd::edit(&paths, note)?,
+        Command::Edit { note, no_touch } => cmd::edit(&paths, note, touch(*no_touch))?,
         Command::Mv {
             note,
             new_title,
             update_links,
-        } => cmd::mv(&paths, note, new_title, *update_links)?,
-        Command::Tag { note, changes } => cmd::tag(&paths, note, changes)?,
+            no_touch,
+        } => cmd::mv(&paths, note, new_title, *update_links, touch(*no_touch))?,
+        Command::Tag {
+            note,
+            changes,
+            no_touch,
+        } => cmd::tag(&paths, note, changes, touch(*no_touch))?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,
         Command::Doctor {
@@ -443,7 +471,11 @@ fn run() -> noda::Result<()> {
             Some(name) => cmd::snapshot(&paths, name, message.as_deref())?,
             None => cmd::snapshot_ls(&paths)?,
         },
-        Command::Restore { note, commit } => cmd::restore(&paths, note, commit)?,
+        Command::Restore {
+            note,
+            commit,
+            no_touch,
+        } => cmd::restore(&paths, note, commit, touch(*no_touch))?,
         Command::Config {
             key,
             value,
