@@ -108,6 +108,28 @@ updated: 2024-11-02T16:40:12Z
 rewrites links in notes you did not point the command at, and dating them all today would
 flatten the order you read them in.
 
+`--no-touch` opts one command out of it, on `edit`, `tag`, `mv` and `restore`. The change
+still lands and still commits; only the note's own claim about itself is left alone. It is
+for the changes that are not the note being rewritten — a typo, a tag, a title that was
+wrong from the start — and, above all, for a note that arrived carrying dates from
+somewhere else:
+
+```
+$ noda edit imported --no-touch          # the 2019 date it came with is still the date it has
+$ noda tag imported --no-touch +archived
+```
+
+On `tag` the flag goes *before* the tags, which take every argument after them so that
+`-q3` reads as a tag to remove rather than an option. Written after them it would arrive as
+one more tag, so noda says where it belongs rather than accepting a command that did
+nothing.
+
+On `restore` it means something slightly stronger: `updated` comes back with the rest of
+the version rather than being held aside, so the note ends up byte for byte the copy that
+was asked for. `add` has no such flag — `created` and `updated` are both written the moment
+a note is made, and a note nobody has changed was last changed when it was made. Write the
+block yourself if it should say otherwise.
+
 They live in the file because that is the only place that survives a `clone`. The
 filesystem's own timestamps do not: git does not record them, so a fresh checkout stamps
 every note with the moment you cloned it. git's history does survive, but it only knows
@@ -356,6 +378,10 @@ is reported rather than refused, because a typo in a date must not come between 
 your own prose. Nothing here is repaired: the only thing noda could do about a stale
 `updated` is overwrite your record of your own work with a guess.
 
+A note you changed with `--no-touch` is reported here too, and correctly: git does have a
+commit newer than what the note claims. That is the flag working, not a fault — the check
+says what git knows, and you are the one who decided the note's own date should not move.
+
 The links are read with a CommonMark parser rather than searched for as text, because the
 alternative reports files as unused when they are not: a reference-style link keeps its
 destination at the bottom of the file, so the paragraph using it never contains the
@@ -390,10 +416,10 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda add [title] [-c <content>] [--tag <t>]...` | Create a note. Opens `$EDITOR` if no `-c`. Auto-commits. |
 | `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only] [--time] [--sort <field>]` | List what the notebook holds. |
 | `noda show <note>` | Print a note to stdout. |
-| `noda edit <note>` | Open a note in `$EDITOR`; auto-commits on save. |
+| `noda edit <note> [--no-touch]` | Open a note in `$EDITOR`; auto-commits on save. |
 | `noda rm <note>` | Delete a note (as a revertible commit). |
-| `noda mv <note> <new-title> [--update-links]` | Rename a note (updates slug; id is preserved). |
-| `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
+| `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
+| `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
@@ -597,7 +623,7 @@ that links to itself is listed — that is what the file says.
 | `noda blame <note>` | Show which commit put each line of a note where it is. |
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
 | `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
-| `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
+| `noda restore <note> <commit> [--no-touch]` | Restore a note to an earlier version (new commit). |
 | `noda snapshot [<name>] [-m <text>]` | Name the notebook as it stands. Without a name, list what has been named. |
 
 `noda log <note>` follows a note across renames, because every commit records the filenames

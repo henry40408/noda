@@ -269,6 +269,28 @@ pub enum Format {
     Quiet,
 }
 
+/// Whether a command that changes a note moves its `updated`.
+///
+/// `Stamp` is the default, and the honest reading of what just happened: the
+/// file changed, so noda's record of when it last changed follows. `Keep` is
+/// what `--no-touch` asks for, and it exists because `updated` is a field you
+/// are allowed to own — a typo fixed, a tag added, a note restored, none of
+/// which is the note being rewritten. An imported note that carries the dates
+/// its old system gave it keeps them through an edit rather than losing them to
+/// the first command that touches the file.
+///
+/// `add` has no say in this: `created` and `updated` are both written the moment
+/// a note is made, and a note that has never been changed has been changed as
+/// recently as it was made. Write the block yourself if it should say otherwise.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Touch {
+    /// Set `updated` to now.
+    #[default]
+    Stamp,
+    /// Leave `updated` exactly as it was found.
+    Keep,
+}
+
 /// Which half of the notebook to list.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Only {
@@ -540,13 +562,23 @@ fn dim_frontmatter(text: &str) -> String {
 /// Applies `+tag` / `-tag` changes to a note and commits the result.
 /// Adding a tag a note already carries, or removing one it lacks, is not an
 /// error — it just leaves nothing to commit.
-pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
+pub fn tag(paths: &Paths, key: &str, changes: &[String], touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let located = locate(&notebook, key)?;
     let mut note = located.note;
     let before = note.tags.clone();
 
     for change in changes {
+        // The tag list takes hyphen values, so that `-q3` reads as a tag to
+        // remove rather than an option — which means a flag written after the
+        // tags is handed over as one more change. `--no-touch` would strip to
+        // `-no-touch` and quietly remove a tag nobody has, leaving a command
+        // that looks like it worked and did not. Say where the flag goes.
+        if change.starts_with("--") {
+            return Err(Error::msg(format!(
+                "`{change}` is being read as a tag: the tags take everything after them, so a flag has to come before them — `noda tag {key} {change} +tag`"
+            )));
+        }
         if let Some(name) = change.strip_prefix('+') {
             let name = name.trim();
             if name.is_empty() {
@@ -576,7 +608,9 @@ pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
         ));
     }
 
-    note.updated = Some(note::now());
+    if touch == Touch::Stamp {
+        note.updated = Some(note::now());
+    }
     std::fs::write(&located.path, note.render())?;
     notebook.commit(
         &[Path::new(&note::file_name(&located.id, &located.slug))],
@@ -586,13 +620,13 @@ pub fn tag(paths: &Paths, key: &str, changes: &[String]) -> Result<String> {
 }
 
 /// Opens a note in `$EDITOR` and commits whatever was saved.
-pub fn edit(paths: &Paths, key: &str) -> Result<String> {
-    edit_with(paths, key, &configured_editor(paths))
+pub fn edit(paths: &Paths, key: &str, touch: Touch) -> Result<String> {
+    edit_with(paths, key, &configured_editor(paths), touch)
 }
 
 /// `edit`, with the editor given explicitly. Exists so tests can drive the
 /// command without mutating process-wide environment variables.
-pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
+pub fn edit_with(paths: &Paths, key: &str, editor: &str, touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let located = locate(&notebook, key)?;
     let before = std::fs::read_to_string(&located.path)?;
@@ -621,10 +655,16 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
     // most often be wrong if noda left it alone. One field is set in place —
     // everything else is committed exactly as it was saved, including the order
     // the block was just arranged in.
-    let stamped = note::set_field(&after, "updated", &note::now())
-        .expect("the note parsed, so it has a frontmatter block");
-    if stamped != after {
-        std::fs::write(&located.path, &stamped)?;
+    //
+    // Under `--no-touch` the file is committed precisely as the editor left it,
+    // which includes an `updated` the editor itself just changed: nothing is
+    // written back over what was saved.
+    if touch == Touch::Stamp {
+        let stamped = note::set_field(&after, "updated", &note::now())
+            .expect("the note parsed, so it has a frontmatter block");
+        if stamped != after {
+            std::fs::write(&located.path, &stamped)?;
+        }
     }
 
     notebook.commit(
@@ -646,7 +686,13 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str) -> Result<String> {
 /// notes the command was not pointed at, which nothing else in noda does. The
 /// walk that finds them is skipped entirely when the slug does not move — a
 /// retitle that leaves the filename alone breaks nothing to report.
-pub fn mv(paths: &Paths, key: &str, new_title: &str, update_links: bool) -> Result<String> {
+pub fn mv(
+    paths: &Paths,
+    key: &str,
+    new_title: &str,
+    update_links: bool,
+    touch: Touch,
+) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let located = locate(&notebook, key)?;
     let mut note = located.note;
@@ -659,7 +705,9 @@ pub fn mv(paths: &Paths, key: &str, new_title: &str, update_links: bool) -> Resu
 
     let slug = note::slugify(title);
     note.title = title.to_string();
-    note.updated = Some(note::now());
+    if touch == Touch::Stamp {
+        note.updated = Some(note::now());
+    }
 
     // Only the slug half of the filename moves. The id stays, so the note keeps
     // its identity and its history across the rename without anything having to
@@ -2244,7 +2292,7 @@ pub fn diff(paths: &Paths, key: Option<&str>) -> Result<String> {
 
 /// Puts a note back the way it was at `rev`, as a new commit. Nothing is
 /// rewritten: the restore moves history forward like every other change.
-pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
+pub fn restore(paths: &Paths, key: &str, rev: &str, touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let commit = notebook.revision(rev)?;
 
@@ -2287,12 +2335,19 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // is being restored, so it is held aside for the comparison. Otherwise
     // restoring the same revision twice would never say "no change": the first
     // restore writes a timestamp the copy in history cannot have.
+    //
+    // `--no-touch` removes that reason, and with it the exception: nothing is
+    // written over the copy in history, so `updated` travels back with the rest
+    // of the block and a note that already matches it matches it exactly.
     let ignoring_updated =
         |text: &str| note::set_field(text, "updated", "").unwrap_or_else(|| text.to_string());
     if current
         .as_ref()
         .and_then(|found| std::fs::read_to_string(&found.path).ok())
-        .is_some_and(|on_disk| ignoring_updated(&on_disk) == ignoring_updated(&text))
+        .is_some_and(|on_disk| match touch {
+            Touch::Stamp => ignoring_updated(&on_disk) == ignoring_updated(&text),
+            Touch::Keep => on_disk == text,
+        })
     {
         return Ok(format!(
             "{}  (no change)",
@@ -2304,8 +2359,11 @@ pub fn restore(paths: &Paths, key: &str, rev: &str) -> Result<String> {
     // file changed just now, whatever the copy in history says about itself.
     // `created` is left as it was found: it belongs to the note, and the note is
     // the same one it always was.
-    let text = note::set_field(&text, "updated", &note::now())
-        .expect("the copy at this revision parsed, so it has a frontmatter block");
+    let text = match touch {
+        Touch::Stamp => note::set_field(&text, "updated", &note::now())
+            .expect("the copy at this revision parsed, so it has a frontmatter block"),
+        Touch::Keep => text,
+    };
     std::fs::write(&path, &text)?;
     notebook.commit(
         &[Path::new(&note::file_name(&id, &slug))],
