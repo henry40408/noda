@@ -242,14 +242,21 @@ pub struct List<'a> {
     /// screen, and a table whose top half runs newest-first while its bottom
     /// half runs A-to-Z is not an order anyone asked for.
     pub reverse: bool,
-    /// Show `created` and `updated` in the table. Off by default: the two of
-    /// them are forty columns wide, which is the whole reason this is a flag
-    /// rather than the default — reading them costs nothing, since `ls` has
-    /// already parsed the frontmatter to get the title.
+    /// Show the whole row: the slug and both timestamps as well as the title.
     ///
-    /// `--json` carries them either way. What a program reads should not depend
-    /// on a flag meant for what fits on a terminal.
-    pub time: bool,
+    /// Off by default because the default listing answers "which note is this",
+    /// and the title is the answer — the slug is the same words with the spaces
+    /// taken out, so a column of it beside the title says everything twice, and
+    /// the timestamps are forty columns of a question nobody asked. None of them
+    /// costs anything to read: `ls` has already parsed the frontmatter to get
+    /// the title, and the slug is in the filename.
+    ///
+    /// One flag rather than one per column. `ls(1)` settled this: a long format
+    /// is a density, not a selection, and there is no syntax to invent.
+    ///
+    /// `--json` carries every field either way. What a program reads should not
+    /// depend on a flag meant for what fits on a terminal.
+    pub long: bool,
 }
 
 /// What order the notes come out in.
@@ -380,11 +387,12 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         // The fixed-width columns first, the ones that grow with the prose
         // after: a title runs to whatever length it runs to, and putting a
         // column behind it would leave nothing lined up.
-        let mut line = format!("{}  {}", pad(&id, id_width), pad(&slug, slug_width));
-        if options.time {
+        let mut line = pad(&id, id_width);
+        if options.long {
             let _ = write!(
                 line,
-                "  {}  {}",
+                "  {}  {}  {}",
+                pad(&slug, slug_width),
                 pad(&created, created_width),
                 pad(&updated, updated_width)
             );

@@ -307,24 +307,32 @@ row. Both are free: the walk that finds the notes passes them anyway.
 
 ```
 $ noda ls
-jjvgqnrv  meeting-notes  Meeting notes
-b60ccfw0  reading-log    Reading log
+jjvgqnrv  Meeting notes  [work, q3]
+b60ccfw0  Reading log
 
 files
   diagram.png
   receipt.txt
 ```
 
-`--time` adds the two timestamps, and `--sort created|updated|title` puts the listing in
-order — the times newest first, the title alphabetically. Both are cheap: `ls` has already
-read each note's frontmatter to get its title, so the times come with it.
+The id and the title, because the title is the answer to "which note is this". The slug is
+the same words with the spaces taken out, so a column of it beside the title says everything
+twice.
+
+`-l` shows the whole row: the slug and both timestamps as well. One flag rather than one per
+column — `ls(1)` settled that a long format is a density, not a selection, and there is no
+syntax to invent. Nothing here costs anything to read: `ls` has already parsed the
+frontmatter to get the title, and the slug is in the filename.
 
 ```
-$ noda ls --time --sort updated
+$ noda ls -l --sort updated
 b60ccfw0  reading-log    2019-03-14T08:21:00Z  2024-11-02T16:40:12Z  Reading log
 jjvgqnrv  meeting-notes  2026-08-02T09:14:00Z  2026-08-02T09:14:00Z  Meeting notes
 k3f9m2p1  imported       -                     -                     Imported
 ```
+
+`--sort created|updated|title` puts the listing in order — the times newest first, the title
+alphabetically.
 
 `-r` runs the listing the other way. It is applied after the sort, so it turns whichever
 order was asked for — `--sort title -r` is Z to A, `--sort updated -r` is oldest first — and
@@ -335,9 +343,10 @@ order anyone asked for.
 
 Sorting reads the stamps rather than comparing them as text, so a note imported with
 `+08:00` lands where it belongs rather than where its digits fall. A note with no time to
-sort by sorts last — and first under `-r`, since reversing an order reverses all of it. `--json` carries `created` and `updated` whether or not `--time` was
-passed — they are `null` when the note has neither — because what a program reads should
-not depend on a flag about what fits on a terminal.
+sort by sorts last — and first under `-r`, since reversing an order reverses all of it.
+`--json` carries every field whether or not `-l` was passed — `created` and `updated` are
+`null` when the note has neither — because what a program reads should not depend on a flag
+about what fits on a terminal.
 
 What is *not* free is the other question — which files are actually used, and which links
 actually resolve. Answering it means reading every note's prose rather than its filename, so
@@ -421,7 +430,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | Command | Description |
 | --- | --- |
 | `noda add [title] [-c <content>] [--tag <t>]...` | Create a note. Opens `$EDITOR` if no `-c`. Auto-commits. |
-| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only] [--time] [--sort <field>] [-r]` | List what the notebook holds. |
+| `noda ls [--tag <t>] [--notebook <name>] [--json\|-q [-0]] [--notes-only\|--files-only] [-l] [--sort <field>] [-r]` | List what the notebook holds. |
 | `noda show <note>` | Print a note to stdout. |
 | `noda edit <note> [--no-touch]` | Open a note in `$EDITOR`; auto-commits on save. |
 | `noda rm <note>` | Delete a note (as a revertible commit). |
