@@ -1687,6 +1687,42 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
     Ok(out)
 }
 
+/// Who wrote each line of a note, and when.
+///
+/// The columns `log` uses, in the order it uses them: commit, time, then the
+/// thing itself. No line numbers — nothing else in noda prints one, and in prose
+/// the unit somebody is looking for is a paragraph, not a row.
+///
+/// Only the body, and `blame` says why.
+pub fn blame(paths: &Paths, key: &str) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    // The filename is enough, as it is for `log` and `diff`: a note whose
+    // frontmatter has gone is a good candidate for asking what happened to it.
+    let found = find(&notebook, key)?;
+    let lines = notebook.blame(&found.id, &found.slug)?;
+
+    let mut out = String::new();
+    for line in lines {
+        let when = if line.commit.is_some() {
+            style::paint(
+                style::MUTED,
+                &format_time(line.seconds, line.offset_minutes),
+            )
+        } else {
+            // Padded to the width of a time so the prose stays in one column.
+            style::paint(style::MUTED, &pad("not committed", TIME_WIDTH))
+        };
+        let rendered = format!(
+            "{}  {when}  {}",
+            style::paint(style::COMMIT, &line.short_commit()),
+            line.text
+        );
+        out.push_str(rendered.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 /// The notes history holds that the notebook no longer does, most recently lost
 /// first.
 ///
@@ -2096,6 +2132,10 @@ fn summary(id: &str, slug: &str, tags: &[String]) -> String {
         format!("{id}  {slug}  [{}]", tags.join(", "))
     }
 }
+
+/// How wide `format_time` prints, for the one caller that has to line something
+/// else up against it.
+const TIME_WIDTH: usize = "0000-00-00 00:00".len();
 
 /// `YYYY-MM-DD HH:MM`, in the timezone the commit was made in — the same choice
 /// git makes by default. Absolute rather than "3 days ago": it is testable

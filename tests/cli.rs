@@ -3485,6 +3485,175 @@ fn commands_refuse_to_run_before_init() {
     assert!(err.to_string().contains("noda init"), "{err}");
 }
 
+/// The commit the active notebook is on, in full.
+fn head_commit(paths: &Paths) -> String {
+    let name = noda::notebook::active_name(paths).expect("active notebook");
+    git2::Repository::open(paths.notebook_dir(&name))
+        .expect("open repo")
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("commit")
+        .id()
+        .to_string()
+}
+
+/// The `commit` column of every line of a `noda blame`.
+fn blamed(paths: &Paths, key: &str) -> Vec<(String, String)> {
+    plain(&cmd::blame(paths, key).unwrap())
+        .lines()
+        .map(|line| {
+            let (commit, rest) = line.split_once("  ").expect("commit and the rest");
+            let text = rest.split_at(18).1;
+            (commit.to_string(), text.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn blame_credits_each_line_to_the_commit_that_wrote_it() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("first\n"), &[]).unwrap();
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
+
+    let created = head_commit(&paths);
+    let text = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(&note, text.replace("first\n", "first\nsecond\n")).unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: alpha");
+    let edited = head_commit(&paths);
+
+    let lines = blamed(&paths, "alpha");
+    assert_eq!(
+        lines,
+        vec![
+            (created[..7].to_string(), "first".to_string()),
+            (edited[..7].to_string(), "second".to_string()),
+        ]
+    );
+}
+
+/// The reason this is not libgit2's blame. Every one of its `TRACK_COPIES`
+/// options is documented as not implemented, so it stops at a rename — and
+/// `noda mv` renames a note whenever its title changes, which would make the
+/// wrong answer the normal one. Picking the note out of each commit by id
+/// instead means a rename never comes up.
+#[test]
+fn blame_reaches_past_a_rename() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("written before\n"), &[]).unwrap();
+    let created = head_commit(&paths);
+
+    cmd::mv(&paths, "alpha", "Renamed").unwrap();
+    let renamed = head_commit(&paths);
+    assert_ne!(created, renamed, "the rename is its own commit");
+
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(format!("{}-renamed.md", parts(&added).0));
+    let text = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(
+        &note,
+        text.replace("written before\n", "written before\nafter\n"),
+    )
+    .unwrap();
+    commit_working_tree(&paths, cmd::DEFAULT_NOTEBOOK, "edit: renamed");
+    let after = head_commit(&paths);
+
+    let lines = blamed(&paths, "renamed");
+    assert_eq!(
+        lines,
+        vec![
+            (created[..7].to_string(), "written before".to_string()),
+            (after[..7].to_string(), "after".to_string()),
+        ],
+        "the line predates the rename and must not be credited to it"
+    );
+}
+
+/// `updated` is rewritten on every edit, so blaming the frontmatter would put a
+/// block of same-coloured noise above the prose and make every note look like it
+/// was written all at once.
+#[test]
+fn blame_reports_the_body_and_not_the_frontmatter() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
+    cmd::tag(&paths, "alpha", &["+work".to_string()]).unwrap();
+
+    let out = plain(&cmd::blame(&paths, "alpha").unwrap());
+    assert!(!out.contains("---"), "{out}");
+    assert!(!out.contains("title:"), "{out}");
+    assert!(!out.contains("updated:"), "{out}");
+    assert!(out.contains("body"), "{out}");
+}
+
+/// A note edited outside noda has lines nobody has committed. They belong to no
+/// commit, and saying so is the honest answer.
+#[test]
+fn blame_marks_the_lines_that_are_not_committed() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("committed\n"), &[]).unwrap();
+    let created = head_commit(&paths);
+
+    let note = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(note_file(&added));
+    let text = std::fs::read_to_string(&note).unwrap();
+    std::fs::write(&note, text.replace("committed\n", "committed\nfresh\n")).unwrap();
+
+    let lines = blamed(&paths, "alpha");
+    assert_eq!(
+        lines,
+        vec![
+            (created[..7].to_string(), "committed".to_string()),
+            ("0000000".to_string(), "fresh".to_string()),
+        ]
+    );
+}
+
+/// A note the notebook holds and no commit does. There is nothing to walk, and
+/// crediting a line to a commit that never saw it would be worse than saying so.
+#[test]
+fn blame_says_nothing_is_committed_when_no_commit_holds_the_note() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant(&notebook, "k3f9m2p1", "planted");
+
+    let lines = blamed(&paths, "planted");
+    assert_eq!(lines, vec![("0000000".to_string(), "body".to_string())]);
+}
+
+/// A `sync` merge carries a note across without changing it, and must not be
+/// credited with writing it.
+#[test]
+fn blame_looks_past_a_merge_that_only_carried_the_note() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+    mirror(&paths, &url, "mirror");
+
+    // Two machines, each writing its own note before either syncs.
+    cmd::add(&paths, Some("Laptop"), Some("from the laptop\n"), &[]).unwrap();
+    let wrote_it = head_commit(&paths);
+    cmd::sync(&paths).unwrap();
+
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    cmd::add(&paths, Some("Desktop"), Some("from the desktop\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+    assert_eq!(merge_commits(&paths.notebook_dir("mirror")), 1);
+
+    let lines = blamed(&paths, "laptop");
+    assert_eq!(
+        lines,
+        vec![(wrote_it[..7].to_string(), "from the laptop".to_string())],
+        "the merge carried the note, it did not write it"
+    );
+}
+
 /// Annotated, not lightweight: a snapshot records that somebody closed a chapter
 /// at a moment, and a bare pointer records neither the somebody nor the moment.
 #[test]

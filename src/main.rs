@@ -148,6 +148,11 @@ enum Command {
         #[arg(short = 'n', long = "max-count", value_name = "COUNT")]
         max: Option<usize>,
     },
+    /// Show which commit put each line of a note where it is.
+    Blame {
+        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        note: String,
+    },
     /// Show uncommitted changes, or what the last commit changed.
     Diff {
         /// Note id (`k3f9`) or slug (`meeting-notes`). Omit for the notebook.
@@ -388,6 +393,7 @@ fn run() -> noda::Result<()> {
         } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
+        Command::Blame { note } => cmd::blame(&paths, note)?,
         Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
         Command::Deleted { notebook, json } => cmd::deleted(&paths, notebook.as_deref(), *json)?,
         Command::Snapshot { name, message } => match name {

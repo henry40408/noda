@@ -477,6 +477,7 @@ and the editor is handed the file.
 | Command | Description |
 | --- | --- |
 | `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note. |
+| `noda blame <note>` | Show which commit put each line of a note where it is. |
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
 | `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
 | `noda restore <note> <commit>` | Restore a note to an earlier version (new commit). |
@@ -485,6 +486,36 @@ and the editor is handed the file.
 `noda log <note>` follows a note across renames, because every commit records the filenames
 and the id is one of them — no rename guessing involved. Nothing is capped: `-n` is there
 when you want less.
+
+`noda blame <note>` answers the other question about a note's past — not "what happened to
+it" but "when did I write *this*":
+
+```
+$ noda blame q3-planning
+8abf00e  2026-08-02 11:47  # Meeting notes
+8abf00e  2026-08-02 11:47
+8abf00e  2026-08-02 11:47  - Q3 budget signed off
+89bb210  2026-08-02 11:47  - hire two engineers
+0000000  not committed     - draft still open
+```
+
+Two things it does that `git blame` on the same file will not.
+
+**It reaches past a rename.** The note above was called `meeting-notes` when its first lines
+were written, and `noda mv` renamed the file when the title changed — yet those lines are
+still credited to the commit that wrote them, not to the rename. git's own blame can follow
+a rename by guessing at content similarity; libgit2's cannot at all, since every one of its
+rename-tracking options is documented as not implemented. noda needs neither: the note is
+picked out of each commit **by id** rather than by path, so a rename never comes up. Line
+history is followed through the diffs, and a filename is never part of the question.
+
+**It says which lines are not committed yet**, marking them `0000000` — what a note edited
+outside noda looks like before anything picks the change up.
+
+Only the body is blamed. `updated` is rewritten on every edit, so blaming the frontmatter
+would put a block of identical commits above the prose and make every note look as though it
+was written all at once. There are no line numbers: nothing else in noda prints one, and in
+prose the unit you are looking for is a paragraph.
 
 `noda diff` shows uncommitted changes when there are any, and otherwise what the last
 commit changed — noda commits as it goes, so a clean notebook is the normal state and
