@@ -385,6 +385,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda tag <note> [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
+| `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
 `<note>` accepts an id (`k3f9m2p1`, or any prefix naming exactly one note) or a slug
 (`meeting-notes`, matched whole). Two notes may share a slug — the id in front of it keeps
@@ -520,6 +521,37 @@ prefixes collide, and giving every item an id would turn the file into a format 
 can read — which is the one thing choosing checkboxes was meant to avoid. `noda edit <note>`
 types one `x` and auto-commits. Nor does noda ever move a finished item: a ticked line stays
 where its author wrote it.
+
+### Backlinks
+
+What a note points *at* is in the note — `noda show` prints it, and every Markdown reader
+renders it. What points at the note is the half nothing could tell you:
+
+```
+$ noda backlinks meeting-notes
+mj8ajges  q3-budget    Q3 budget
+2bn13xn0  reading-log  Reading log
+```
+
+**It survives a retitle.** `noda mv` moves the slug half of a note's filename and says nothing
+to the notes that linked to it, so `[the meeting](mj8ajges-meeting-notes.md)` is left naming a
+path that no longer exists. Every Markdown renderer calls that a broken link. noda does not
+have to: the destination still names `mj8ajges`, and the id is the half that never moves — the
+same fact `log`, `blame` and `deleted` are built on. Matching on the whole filename would have
+been the easier build and the wrong feature, because backlinks would go quiet after every
+retitle, which is exactly when you are looking for what points at a note.
+
+It takes a file as readily as a note, like `noda path` — "which notes use this diagram" and
+"which notes link to this note" are one question asked of two kinds of thing.
+
+A link is a link as CommonMark understands one: inline, reference-style, image, and anchors
+trimmed off. A `[[wiki-link]]` is not one (noda has no such syntax, and it would not render
+anywhere else either), a filename written in prose is not one, and neither is a link inside a
+fenced code block. A note that links to the same place three times is one backlink, and a note
+that links to itself is listed — that is what the file says.
+
+`-q` prints one note id per line, for `noda backlinks x -q | xargs -n1 noda show`. There is no
+`--null` beside it: what it prints is an id, and an id has no spaces to protect.
 
 ### History (git-backed)
 
@@ -760,7 +792,7 @@ pointer, and the editor's scratch buffer are kept out of your synced data on pur
 
 - **Web UI** — `noda web` serves the active notebook in the browser, reading the same
   git-backed files. (v1 is CLI-only.)
-- Note linking/backlinks and encrypted notebooks are under consideration.
+- Encrypted notebooks are under consideration.
 
 ## Building from source
 

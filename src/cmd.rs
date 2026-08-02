@@ -1688,6 +1688,124 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
     Ok(out)
 }
 
+/// The notes that link to something — a note, or one of the notebook's files.
+///
+/// Inbound only, which is why it is not called `links`. What a note points *at*
+/// is in the note: `noda show` prints it, and every Markdown reader renders it.
+/// What points at the note is the half nothing could tell you.
+///
+/// A command of its own rather than a flag on `ls`, on the standing rule: `ls`
+/// reads a directory, and this reads and parses every note's body — the cost
+/// `doctor --links` is a flag for.
+///
+/// It takes a file as readily as a note, as `noda path` does. "Which notes use
+/// this diagram" and "which notes link to this note" are one question asked of
+/// two kinds of thing, and the walk that answers either answers both.
+pub fn backlinks(paths: &Paths, key: &str, format: Format) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+
+    // Resolved exactly as `path` resolves it, and for the same reason: one key
+    // can in principle name both, and the command was asked about a file just as
+    // much as about a note.
+    let as_note = notebook.resolve(key);
+    let as_file = notebook.path.join(key);
+    let is_file = !key.contains('/') && !key.contains('\\') && as_file.is_file();
+
+    let (subject, found) = match (as_note, is_file) {
+        (Ok((id, slug)), false) => (
+            note::file_name(&id, &slug),
+            notebook.backlinks_to_note(&id)?,
+        ),
+        (Err(_), true) => (key.to_string(), notebook.backlinks_to_file(key)?),
+        (Ok((id, slug)), true) => {
+            return Err(Error::msg(format!(
+                "`{key}` names both a note and a file — say which:\n  {}\n  {}",
+                note::file_name(&id, &slug),
+                key
+            )));
+        }
+        (Err(Error::Msg(said)), false) if said.starts_with(notebook::NOT_FOUND) => {
+            return Err(Error::msg(format!(
+                "nothing called `{key}` — the notebook holds no note and no file by that name"
+            )));
+        }
+        (Err(other), false) => return Err(other),
+    };
+
+    match format {
+        // Before the empty check, as every other listing does it: a program
+        // asking for JSON gets a document either way.
+        Format::Json => return Ok(backlinks_json(&notebook.name, &subject, &found)),
+        // One id per line. No `--null` beside it: what this prints is a note's
+        // id, and an id has no spaces to protect.
+        Format::Quiet => {
+            let mut out = String::new();
+            for file in &found {
+                let _ = writeln!(out, "{}", file.id);
+            }
+            return Ok(out);
+        }
+        Format::Table => {}
+    }
+
+    if found.is_empty() {
+        return Ok(style::paint(
+            style::MUTED,
+            &format!("nothing links to {subject}"),
+        ));
+    }
+
+    let ids = found
+        .iter()
+        .map(|f| display_width(&f.id))
+        .max()
+        .unwrap_or(0);
+    let slugs = found
+        .iter()
+        .map(|f| display_width(&f.slug))
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for file in &found {
+        let line = format!(
+            "{}  {}  {}",
+            pad(&file.id, ids),
+            pad(&file.slug, slugs),
+            file.note.title
+        );
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// The backlinks as one JSON object, on one line, like every other listing.
+///
+/// It names its subject: a script that asked about `meeting-notes` gets back the
+/// filename that was actually resolved, which is the thing a retitle moves.
+fn backlinks_json(notebook: &str, subject: &str, found: &[notebook::NoteFile]) -> String {
+    let mut out = String::from("{\"notebook\":");
+    out.push_str(&json_string(notebook));
+    out.push_str(",\"target\":");
+    out.push_str(&json_string(subject));
+    out.push_str(",\"backlinks\":[");
+    for (index, file) in found.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{}}}",
+            json_string(&file.id),
+            json_string(&file.slug),
+            json_string(&note::file_name(&file.id, &file.slug)),
+            json_string(&file.note.title),
+        );
+    }
+    out.push_str("]}\n");
+    out
+}
+
 /// Every unticked checkbox in the notebook, soonest due first.
 ///
 /// A command of its own rather than a flag on `ls` or a field in `search`, on
