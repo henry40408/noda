@@ -1949,6 +1949,63 @@ pub fn sync(paths: &Paths) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
+/// Marks the notebook as it stands, so that moment can be named later.
+///
+/// Commits the working tree first, on the same terms as `sync`: noda commits as
+/// it goes, so a clean notebook is the normal state, and a snapshot that quietly
+/// left out what is on disk would be a snapshot of something nobody has.
+///
+/// The message defaults to the name. A tag needs one to be annotated, and
+/// inventing prose on somebody's behalf is worse than repeating what they said.
+pub fn snapshot(paths: &Paths, name: &str, message: Option<&str>) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let mut lines = Vec::new();
+    if notebook.commit_all(&format!("snapshot: {name}"))? {
+        lines.push("commit: local changes".to_string());
+    }
+    let target = notebook.snapshot(name, message.unwrap_or(name))?;
+    lines.push(format!("snapshot: {name} -> {}", notebook::short(target)));
+    Ok(lines.join("\n"))
+}
+
+/// Every snapshot, newest first.
+///
+/// The same three columns `deleted` leads with — name, when, which commit — in
+/// the same order, because they answer the same question about a different kind
+/// of thing.
+pub fn snapshot_ls(paths: &Paths) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let snapshots = notebook.snapshots()?;
+    if snapshots.is_empty() {
+        return Ok(style::paint(
+            style::MUTED,
+            "no snapshots — take one with `noda snapshot <name>`",
+        ));
+    }
+
+    let width = snapshots
+        .iter()
+        .map(|snapshot| display_width(&snapshot.name))
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for snapshot in &snapshots {
+        let line = format!(
+            "{}  {}  {}  {}",
+            pad(&snapshot.name, width),
+            style::paint(
+                style::MUTED,
+                &format_time(snapshot.seconds, snapshot.offset_minutes)
+            ),
+            style::paint(style::COMMIT, &snapshot.short_target()),
+            snapshot.message
+        );
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 /// Clones a remote notebook. The name defaults to the repository's own.
 pub fn clone(paths: &Paths, url: &str, name: Option<&str>) -> Result<String> {
     let name = match name {
