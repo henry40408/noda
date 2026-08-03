@@ -45,7 +45,7 @@ enum Command {
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
     },
-    /// List notes: id, slug, title, tags.
+    /// List what the notebook holds: notes as `id  title  [tags]`, then its files.
     Ls {
         /// Only notes carrying this tag. Anything more selective is `noda
         /// search`, which is where the query language lives.
@@ -86,12 +86,14 @@ enum Command {
     },
     /// Print a note to stdout, addressed by id or slug.
     Show {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
     },
     /// Open a note in $EDITOR; auto-commits on save.
     Edit {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
         /// Leave `updated` as it stands instead of setting it to now.
         #[arg(long)]
@@ -99,12 +101,14 @@ enum Command {
     },
     /// Retitle a note. The slug follows the title; the id is preserved.
     Mv {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
         /// The new title.
         new_title: String,
-        /// Rewrite the links that named its old filename, instead of reporting
-        /// them.
+        /// Rewrite the links that point at this note, instead of reporting them.
+        /// Matched on its id, so a link written before an earlier retitle is
+        /// caught too.
         #[arg(long)]
         update_links: bool,
         /// Leave `updated` as it stands instead of setting it to now.
@@ -113,13 +117,14 @@ enum Command {
     },
     /// Delete a note. The removal is a commit, so `git revert` undoes it.
     Rm {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
     },
     /// Where the active notebook stands: notes, changes, drift from the remote.
     Status,
-    /// Diagnose the notebook, and adopt the notes that only lack an id. Always
-    /// reports the git hooks noda will never run.
+    /// Diagnose the notebook, and adopt the notes that only lack an id. Names any
+    /// git hooks noda will never run, which needs no flag.
     Doctor {
         /// Report what would change without writing or committing anything.
         #[arg(long)]
@@ -162,7 +167,8 @@ enum Command {
     },
     /// Show commit history for the notebook, or for one note.
     Log {
-        /// Note id (`k3f9`) or slug (`meeting-notes`). Omit for the notebook.
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`). Omit for the notebook.
         note: Option<String>,
         /// Show at most this many commits.
         #[arg(short = 'n', long = "max-count", value_name = "COUNT")]
@@ -182,6 +188,10 @@ enum Command {
     },
     /// List every unticked `- [ ]` in the notebook, soonest due first. Reads
     /// every note's body, so it costs what `search` costs.
+    ///
+    /// A due date is written into the item itself as `due:2026-08-10`; items
+    /// without one come last, and anything else — `due:tomorrow` included —
+    /// stays part of the text.
     Todo {
         /// Print one JSON object instead of a table.
         #[arg(long)]
@@ -189,12 +199,14 @@ enum Command {
     },
     /// Show which commit put each line of a note where it is.
     Blame {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
     },
     /// Show uncommitted changes, or what the last commit changed.
     Diff {
-        /// Note id (`k3f9`) or slug (`meeting-notes`). Omit for the notebook.
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`). Omit for the notebook.
         note: Option<String>,
     },
     /// List notes the notebook no longer holds, with the commit to restore each
@@ -218,7 +230,8 @@ enum Command {
     },
     /// Restore a note to an earlier version, as a new commit.
     Restore {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
         /// Anything git accepts: an id, an abbreviated id, `HEAD~3`, a tag.
         commit: String,
@@ -280,7 +293,8 @@ enum Command {
     },
     /// Add and remove tags: `noda tag meeting-notes +work -q3`.
     Tag {
-        /// Note id (`k3f9`) or slug (`meeting-notes`).
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
         note: String,
         /// `+tag` to add, `-tag` to remove; repeat as needed.
         ///

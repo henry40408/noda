@@ -366,7 +366,8 @@ pub fn import_tiddlywiki(paths: &Paths, files: &[PathBuf], convert: bool) -> Res
     )
 }
 
-/// Lists notes as `id  slug  title  tags`, aligned.
+/// Lists notes as `id  title  [tags]`, aligned, then the notebook's files under
+/// their own heading. `-l` adds the slug and both timestamps.
 pub fn ls(paths: &Paths, options: &List) -> Result<String> {
     let name = match options.notebook {
         Some(name) => name.to_string(),
