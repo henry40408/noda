@@ -9,6 +9,16 @@ use anstyle::{AnsiColor, Style};
 
 /// Commit ids, in `log`.
 pub const COMMIT: Style = AnsiColor::Yellow.on_default();
+/// A note's id, in `ls`. The same yellow as a commit id on purpose: both are
+/// the short string you copy out of a listing and hand to the next command.
+pub const ID: Style = COMMIT;
+/// A note's slug, in `ls -l`. [`ID`]'s colour a step down, because the two
+/// columns side by side are the note's filename — `<id>-<slug>.md` — and
+/// reading them as one thing is the point.
+pub const SLUG: Style = AnsiColor::Yellow.on_default().dimmed();
+/// A note's tags, in `ls`. The one column that groups notes rather than
+/// naming one, so it gets a hue of its own.
+pub const TAGS: Style = AnsiColor::Cyan.on_default();
 /// Timestamps and other supporting detail.
 pub const MUTED: Style = Style::new().dimmed();
 /// The `+` side of a diff.

@@ -446,23 +446,29 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         // Tags are last in both, and for the same reason: they are the one
         // thing a note may not have, so anywhere but the end and their absence
         // would shift every column behind them.
-        let mut line = pad(&id, id_width);
+        //
+        // The title is the one column left uncoloured, which is what makes it
+        // the one the eye lands on — and it is the note's own words, which noda
+        // does not paint anywhere else either.
+        let mut line = column(style::ID, &id, id_width);
         if options.long {
             let _ = write!(
                 line,
                 "  {}  {}  {}  {}",
                 pad(&title, title_width),
-                pad(&slug, slug_width),
-                pad(&created, created_width),
-                pad(&updated, updated_width)
+                column(style::SLUG, &slug, slug_width),
+                column(style::MUTED, &created, created_width),
+                column(style::MUTED, &updated, updated_width)
             );
         } else {
             let _ = write!(line, "  {title}");
         }
         if !tags.is_empty() {
-            line.push_str("  [");
-            line.push_str(&tags);
-            line.push(']');
+            let _ = write!(
+                line,
+                "  {}",
+                style::paint(style::TAGS, &format!("[{tags}]"))
+            );
         }
         out.push_str(line.trim_end());
         out.push('\n');
@@ -2813,6 +2819,18 @@ fn display_width(text: &str) -> usize {
 fn pad(text: &str, width: usize) -> String {
     let spaces = width.saturating_sub(display_width(text));
     format!("{text}{}", " ".repeat(spaces))
+}
+
+/// One padded, coloured table cell.
+///
+/// The padding goes *outside* the escape sequences, for two reasons that both
+/// bite. [`display_width`] counts characters, so colouring before padding would
+/// have it measure the escapes and every column after this one would sit wrong;
+/// and the caller trims each row's tail, which cannot reach spaces parked
+/// before a reset sequence.
+fn column(style: anstyle::Style, text: &str, width: usize) -> String {
+    let spaces = width.saturating_sub(display_width(text));
+    format!("{}{}", style::paint(style, text), " ".repeat(spaces))
 }
 
 /// First non-empty line, with any Markdown heading marker stripped.

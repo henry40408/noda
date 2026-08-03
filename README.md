@@ -338,6 +338,15 @@ the same thing with the flag as without it. Tags are last in both, and for the r
 have to be: they are the one thing a note may not have, so anywhere but the end and their
 absence would shift every column behind them.
 
+Each column is coloured, so a row can be told apart without counting fields. The id takes the
+same yellow `log` gives a commit id — both are the short string you copy out of a listing and
+hand to the next command — and the slug takes that colour a step down, because the two side
+by side are the note's filename. The timestamps are grey, as they are everywhere else in
+noda; the tags, the one column that groups notes rather than naming one, get a hue of their
+own. The title is left uncoloured, which is what makes it the column the eye lands on — and
+it is the note's own words, which noda does not paint anywhere. `NO_COLOR=1` turns all of it
+off, and a pipe has none of it to begin with.
+
 `--sort created|updated|title` puts the listing in order — the times newest first, the title
 alphabetically.
 
@@ -854,8 +863,8 @@ unlocked agent — the same arrangement `git commit` needs.
 Colour appears on a terminal and nowhere else: redirect or pipe any command and the escape
 sequences are gone, so `noda show meeting-notes > backup.md` writes the file byte for byte.
 `NO_COLOR=1` turns it off everywhere, `CLICOLOR_FORCE=1` keeps it through a pipe. Colour
-marks structure — commit ids, timestamps, diff signs, a note's frontmatter — and never the
-text of a note itself.
+marks structure — commit ids, timestamps, diff signs, a listing's columns, a note's
+frontmatter — and never the text of a note itself.
 
 There is no built-in pager. `noda log | less -R` is a pager, and quitting it early is
 handled quietly rather than reported as a broken pipe.
