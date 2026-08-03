@@ -2560,7 +2560,7 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     )
     .unwrap();
 
-    let plain_out = cmd::ls(&paths, &cmd::List::default()).unwrap();
+    let plain_out = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap());
     assert!(!plain_out.contains('Z'), "no times by default: {plain_out}");
     let alpha = plain_out.lines().find(|l| l.contains("Alpha")).unwrap();
     assert_eq!(
@@ -2569,14 +2569,16 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
         "the id and the title, and nothing that repeats the title: {alpha}"
     );
 
-    let out = cmd::ls(
-        &paths,
-        &cmd::List {
-            long: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let out = plain(
+        &cmd::ls(
+            &paths,
+            &cmd::List {
+                long: true,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     let alpha = out.lines().find(|l| l.contains("Alpha")).unwrap();
     let columns: Vec<&str> = alpha.split_whitespace().collect();
     assert_eq!(columns[2], slug, "the slug comes back: {alpha}");
@@ -2594,6 +2596,61 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     );
 }
 
+/// Colour is painted per column, and the padding stays outside the escape
+/// sequences. Both halves of that are easy to break at once: a cell measured
+/// with its escapes in it would push every column after it out of line, and
+/// spaces parked before a reset sequence are past the reach of the row's own
+/// `trim_end`.
+#[test]
+fn ls_colours_the_columns_without_moving_them() {
+    let (_root, paths) = initialized();
+    let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &["work".to_string()]).unwrap();
+    let short = parts(&added).1.to_string();
+    let added = cmd::add(&paths, Some("A Much Longer Title"), Some("b\n"), &[]).unwrap();
+    let long_slug = parts(&added).1.to_string();
+    // No times at all, so the last column is one character on this row and a
+    // full stamp on the others — which is the only way to get any padding to
+    // the right of the rightmost cell.
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(
+        notebook.join("k3f9m2p1-undated.md"),
+        "---\ntitle: Undated\n---\n\nbody\n",
+    )
+    .unwrap();
+
+    let out = cmd::ls(
+        &paths,
+        &cmd::List {
+            long: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(out.contains('\u{1b}'), "the listing is coloured: {out:?}");
+
+    for line in out.lines() {
+        assert!(
+            !plain(line).ends_with(' '),
+            "a row ends where its content ends: {line:?}"
+        );
+    }
+
+    let stripped = plain(&out);
+    let slug_at = |slug: &str| {
+        stripped
+            .lines()
+            .find(|line| line.contains(slug))
+            .and_then(|line| line.find(slug))
+            .expect("the slug column")
+    };
+    assert_eq!(
+        slug_at(&short),
+        slug_at(&long_slug),
+        "the slug column holds its place: {stripped}"
+    );
+    assert_eq!(slug_at(&short), slug_at("undated"), "{stripped}");
+}
+
 /// `-l` extends the default row rather than rearranging it. A script that cuts
 /// the first two fields off the front reads the same thing either way, and the
 /// one field a note may not have stays at the end of both, where its absence
@@ -2605,28 +2662,32 @@ fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
     cmd::add(&paths, Some("Bravo"), Some("b\n"), &[]).unwrap();
 
     let head = |long| {
-        cmd::ls(
-            &paths,
-            &cmd::List {
-                long,
-                ..Default::default()
-            },
+        plain(
+            &cmd::ls(
+                &paths,
+                &cmd::List {
+                    long,
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
         )
-        .unwrap()
         .lines()
         .map(|l| l.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
         .collect::<Vec<_>>()
     };
     assert_eq!(head(false), head(true), "the id and the title, either way");
 
-    let long = cmd::ls(
-        &paths,
-        &cmd::List {
-            long: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let long = plain(
+        &cmd::ls(
+            &paths,
+            &cmd::List {
+                long: true,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     let alpha = long.lines().find(|l| l.contains("Alpha")).unwrap();
     assert!(
         alpha.trim_end().ends_with("[work]"),
@@ -3445,8 +3506,7 @@ fn log_for_a_note_follows_it_across_a_rename() {
     assert!(!out.contains("beta"), "{out}");
 
     // The id addresses the same history as the current slug does.
-    let id = cmd::ls(&paths, &cmd::List::default())
-        .unwrap()
+    let id = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap())
         .lines()
         .find(|line| line.contains("Renamed"))
         .and_then(|line| line.split_whitespace().next())
