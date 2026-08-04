@@ -31,6 +31,13 @@ pub const HUNK: Style = AnsiColor::Cyan.on_default();
 pub const HEADING: Style = Style::new().bold();
 /// The part of a search result that matched.
 pub const MATCH: Style = AnsiColor::Yellow.on_default().bold();
+/// Why what has been typed is not a query yet, in `noda tui`'s search line.
+///
+/// No command needs this: a query the CLI cannot parse ends the command, and
+/// `main` prints the reason as `noda: …`. Filtering as you type has no such
+/// moment — half a query is what every query looks like on the way to being one
+/// — so the reason has to sit somewhere on the screen instead.
+pub const INVALID: Style = AnsiColor::Red.on_default();
 /// A due date that has passed, in `todo`.
 ///
 /// The one exception to the rule above, and it is worth naming as one: this

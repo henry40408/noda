@@ -1440,7 +1440,10 @@ fn excerpt(body: &str, terms: &[String]) -> Option<String> {
 /// Case-insensitive `find`, as byte offsets into `haystack`. Lowercasing can
 /// change how many bytes a character takes, so the way back to the original is
 /// recorded rather than assumed — every offset returned is a char boundary.
-fn find_ignoring_case(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+///
+/// Shared with the browser, which picks the same match out of the same prose:
+/// what `search` quotes back on one line, `tui` highlights where it sits.
+pub(crate) fn find_ignoring_case(haystack: &str, needle: &str) -> Option<(usize, usize)> {
     let mut lowered = String::with_capacity(haystack.len());
     let mut origin = Vec::with_capacity(haystack.len());
     for (index, ch) in haystack.char_indices() {

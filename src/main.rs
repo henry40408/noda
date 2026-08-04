@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use noda::{Paths, cmd};
+use noda::{Paths, cmd, tui};
 
 /// What `noda ls --sort` accepts. `cmd::Sort` has a fourth variant for the
 /// order a listing comes in when the flag is absent, which is not something to
@@ -165,6 +165,12 @@ enum Command {
         )]
         query: Vec<String>,
     },
+    /// Browse the notebook on one screen: the listing, the note under the
+    /// cursor, and the same query language `noda search` takes.
+    ///
+    /// Reading only — every key that would change a note is a command of its
+    /// own, so that what a change means is written down in exactly one place.
+    Tui,
     /// Show commit history for the notebook, or for one note.
     Log {
         /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
@@ -498,6 +504,7 @@ fn run() -> noda::Result<()> {
             times,
         } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
+        Command::Tui => tui::run(&paths)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Backlinks { key, json, quiet } => cmd::backlinks(
             &paths,

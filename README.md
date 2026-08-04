@@ -49,7 +49,8 @@ alias noda='docker run --rm -it -v noda:/data ghcr.io/henry40408/noda:main'
 Two things to know. `noda add` and `noda edit` open an editor, which the image does not
 carry — write notes with `-c`, or mount one in. And `noda sync` over SSH needs a key: pass
 your agent through with `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent`, or use
-an HTTPS remote with a token.
+an HTTPS remote with a token. `noda tui` needs the `-it` the alias above already carries;
+without it there is no terminal on the other end and the command says so.
 
 Otherwise, build it:
 
@@ -67,6 +68,7 @@ noda add "Meeting notes"        # opens $EDITOR; auto-commits on save
 noda ls                         # list notes in the current notebook
 noda show k3f9                  # or: noda show meeting-notes
 noda edit meeting-notes         # re-open in $EDITOR, auto-commits the change
+noda tui                        # or browse the lot on one screen: list, preview, search
 
 noda notebook add work --remote git@github.com:me/work-notes.git
 noda use work                   # switch active notebook
@@ -453,6 +455,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
+| `noda tui` | Browse the notebook on one screen: the listing, the note under the cursor, and that same query filtering as you type. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -567,6 +570,56 @@ query language lives — one language in one command beats two commands nobody c
 the frontmatter — the file is left as you saved it so you can fix it or throw it away with
 `git checkout`. An edit cannot change *which* note it is editing: the id is in the filename,
 and the editor is handed the file.
+
+### Browsing
+
+`noda tui` puts the notebook on one screen. Reading a notebook from the shell is `ls`, then
+`show`, then `ls` again to find your place; here the listing does not go away while the note
+is read, and a query narrows it as you type rather than once you have finished typing it.
+
+```
+$ noda tui
+personal  (main)  128 notes  2 uncommitted  ↑1 ↓0
+k3f9m2p1  Budget review          [work]      │ ---
+7bqx4t20  Meeting notes          [work, q3]  │ title: Meeting notes
+9m2p1k3f  Reading list                       │ tags: [work, q3]
+x4t207bq  Trip planning          [travel]    │ ---
+                                             │
+                                             │ # Agenda
+                                             │ - [ ] budget due:2026-08-10
+/tag:work budget                                                              2/128
+```
+
+The left column is the row every other listing prints — the id, the title, then the tags —
+because a note is named the same way wherever noda names it. The right pane is `noda show`:
+the frontmatter dimmed, your own text left alone. The one thing painted over your prose is
+the search match, which is the exception `noda search` already makes when it quotes a hit.
+
+| Key | |
+| --- | --- |
+| `j` / `k`, `↓` / `↑` | move |
+| `Ctrl-d` / `Ctrl-u`, `g` / `G` | half a screen, first / last |
+| `Tab`, `h` / `l` | move between the list and the preview (the preview scrolls with the same keys) |
+| `/` | search, in the language `noda search` takes |
+| `Enter` | read the note under the cursor; while a query is being typed, keep it and put the keyboard back on the list |
+| `Esc` | drop the query |
+| `r` | read the notebook again |
+| `?`, `q` / `Ctrl-C` | keys, quit |
+
+Two things it deliberately does not do. **It does not write.** Every command that changes a
+note validates it, stamps its `updated` and commits it, and there must not be a second
+implementation of what a change means — so the keys that would change one are not bound, and
+`noda edit` is still how a note is edited. And **it does not watch the filesystem**: a note
+written from another window arrives when you press `r`, rather than rearranging the list
+under a reader mid-sentence.
+
+It needs a terminal at both ends and says so rather than filling a pipe with escape
+sequences:
+
+```
+$ noda tui | less
+noda: noda tui needs a terminal at both ends; `noda ls`, `noda search` and `noda show` are the ones to redirect
+```
 
 ### Action items
 
