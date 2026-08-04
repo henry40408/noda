@@ -247,6 +247,20 @@ impl App {
     }
 
     fn searching(&mut self, key: KeyEvent) -> Option<Action> {
+        // A chord is not a character. `KeyCode::Char('d')` is what arrives for
+        // Ctrl-D as much as for `d`, so without this every control key anyone
+        // reaches for out of habit would type its own letter into the query —
+        // silently, and into a query that is being read as it is typed.
+        //
+        // Shift is not one of these: `G` arrives as `Char('G')` with the shift
+        // bit set, and a query with no capital letters in it would be a strange
+        // thing to ship.
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return None;
+        }
         match key.code {
             // The list is already narrowed, so there is nothing left to run:
             // this only hands the keyboard back to the list.
@@ -657,6 +671,24 @@ mod tests {
         app.on_key(key(KeyCode::Char('/')));
         typing(&mut app, "budget");
         assert_eq!(app.on_key(ctrl('c')), Some(Action::Quit));
+    }
+
+    #[test]
+    fn a_chord_does_not_type_its_own_letter_into_a_query() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "budget");
+
+        // Ctrl-D arrives as `Char('d')` with a modifier, and a query field that
+        // took it at face value would quietly become `budgetd`.
+        app.on_key(ctrl('d'));
+        app.on_key(ctrl('w'));
+        app.on_key(ctrl('a'));
+        assert_eq!(app.search, "budget");
+
+        // A capital is still a capital, though: shift is not a chord.
+        app.on_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT));
+        assert_eq!(app.search, "budgetQ");
     }
 
     #[test]
