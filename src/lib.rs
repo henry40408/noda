@@ -17,6 +17,7 @@ pub mod remote;
 pub mod sign;
 pub mod style;
 pub mod todo;
+pub mod tui;
 
 pub use error::{Error, Result};
 pub use paths::Paths;

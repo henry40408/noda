@@ -25,6 +25,10 @@ version = 2
 allow = [
     "Apache-2.0",
     "MIT",
+    # foldhash, which arrives under hashbrown when ratatui's layout solver pulls
+    # it in. Permissive in the same way the three above are — attribution, no
+    # conditions on distributing a binary — and OSI approved.
+    "Zlib",
     "Unicode-3.0",
 ]
 confidence-threshold = 0.8

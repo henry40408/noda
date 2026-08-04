@@ -56,6 +56,19 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 # fine until it is not.
 serde_json = "1.0.151"
 toml_edit = "0.25.13"
+# The one screen noda draws, for `noda tui`. Every other command prints a string
+# and stops; a browser has to keep a terminal in raw mode, survive a resize,
+# measure a wide character before laying a column out and redraw only what
+# changed — which is a library, not an afternoon.
+#
+# One dependency and not two: ratatui re-exports crossterm (`ratatui::crossterm`),
+# so the backend, the terminal control and the key events all arrive through the
+# crate that is already here.
+#
+# The default features are off because they are for other people's programs: a
+# calendar widget, a macro crate, and a colour-space conversion library. What is
+# left is the widgets, the layout solver and the crossterm backend.
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 
 # Lints encoded in-manifest so `cargo build`/`cargo clippy` and IDEs apply them
 # without extra flags (CI additionally runs `clippy --all-targets -- -D warnings`,

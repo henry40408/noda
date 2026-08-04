@@ -100,6 +100,13 @@ so rather than growing a verb per tool it tells you the one thing those tools ne
 argument is resolved as a note first — by id prefix or slug — and then as a file by name; a
 key that means both is an error naming both.
 
+**Q: Is there anything more interactive than one command at a time?**
+`noda tui` opens the notebook on one screen: the listing on the left, the note under the
+cursor on the right, and the same query language `noda search` takes narrowing the list as
+you type. It reads and does not write — the keys that would change a note are not bound, so
+that what a change means (validate, stamp `updated`, commit) has exactly one implementation
+and it is the one every command already uses. `noda edit` is still how a note is edited.
+
 **Q: What about a web UI?**
 Planned. The v1 focus is the CLI. A `noda web` local server that serves the same notebook
 over a browser is on the roadmap; because storage is just git, the web UI reads the exact
@@ -245,6 +252,22 @@ derive macro on the dependency path of a tool whose whole distribution story is 
 static binary. The part that has to be right is the escaping, and that is thirty lines with
 tests rather than a judgement call. This is the same trade the project already made for
 percent-decoding and for having no error-handling crate.
+
+**Q: If serde was too much dependency for five string fields, why is a whole UI library not
+too much for one screen?**
+Because the two are not the same size of problem. The JSON was thirty lines whose hard part
+was escaping; a browser has to hold a terminal in raw mode, put it back on the way out
+*including* when the process panics, survive a resize, measure a wide character before it can
+lay a column out, and redraw only the cells that changed. Hand-writing that is not an
+afternoon, and getting it subtly wrong leaves somebody's terminal unusable.
+
+The cost was measured rather than assumed, on the same harness the cold-start numbers come
+from: the release binary grows 243 KiB (6069 → 6312 KiB) and `noda ls` grows 0.10 ms
+(1.95 → 2.05 ms of its own time, both binaries in one run so the floor is shared). It is one
+dependency and not two — ratatui re-exports crossterm, so the backend, the terminal control
+and the key events all arrive through it — and its default features are off, which drops a
+calendar widget, a macro crate and a colour-space converter that a two-pane reader has no use
+for.
 
 **Q: Why does `noda ls -0` exist when `-q` already prints one record per line?**
 Because `noda file add` allows a space in a filename, so newline-separated output is not
