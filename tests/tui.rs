@@ -257,10 +257,236 @@ fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
         } => cmd::tag(paths, &key, &changes, touch),
         tui::Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
         tui::Action::Remove(key) => cmd::rm(paths, &key),
+        tui::Action::Send(steps) => {
+            let sent = cmd::bulk(paths, &steps);
+            if sent.is_ok() {
+                app.sent();
+            }
+            sent
+        }
         other => panic!("{other:?} wants a terminal of its own"),
     };
     app.report(outcome);
     tui::reload(paths, app).expect("reload");
+}
+
+/// How many commits the notebook has. One line per commit is what `log` prints.
+fn commits(paths: &Paths) -> usize {
+    cmd::log(paths, None, None).expect("log").lines().count()
+}
+
+/// Marks the note under the cursor and every one after it, `Space` by `Space`.
+fn mark_all_shown(app: &mut App) {
+    app.on_key(key(KeyCode::Char('*')));
+}
+
+#[test]
+fn a_queue_arrives_in_the_history_as_one_commit() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let before = commits(&paths);
+
+    mark_all_shown(&mut app);
+    assert!(has_line_with(&screen(&mut app)[..1], &["3 marked"]));
+
+    for tags in ["+archive", "-work"] {
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, tags);
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            None,
+            "a queued change is not run"
+        );
+    }
+    assert_eq!(app.queue.len(), 2);
+    assert!(has_line_with(&screen(&mut app)[..1], &["2 queued"]));
+
+    app.on_key(key(KeyCode::Char('Q')));
+    let queued = screen(&mut app);
+    // The queue reads in the words the commit message will use.
+    assert!(has_line_with(&queued, &["tag: +archive (3 notes)"]));
+    assert!(has_line_with(&queued, &["tag: -work (3 notes)"]));
+
+    let action = app.on_key(key(KeyCode::Enter)).expect("a queue to send");
+    perform(&paths, &mut app, action);
+
+    assert_eq!(
+        commits(&paths) - before,
+        1,
+        "two changes over three notes, and one thing was done"
+    );
+    let after = screen(&mut app);
+    assert!(has_line_with(&after, &["2 changes over 3 notes"]));
+    // In the pane that shows the file, because the listing's title column gives
+    // way to the tags when they grow.
+    assert!(has_line_with(&after, &["tags: [archive]"]));
+    assert!(
+        has_line_with(&after, &["[q3, archive]"]),
+        "and the other two"
+    );
+    // Spent: the queue was carried out and the notes are no longer picked out.
+    assert!(app.queue.is_empty());
+    assert!(app.marks.is_empty());
+}
+
+#[test]
+fn marks_made_under_one_query_survive_the_next() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // One note from one search, marked under a query that the next search will
+    // not show.
+    app.on_key(key(KeyCode::Char('/')));
+    typing(&mut app, "tag:q3");
+    app.on_key(key(KeyCode::Enter));
+    mark_all_shown(&mut app);
+    let first = app.selected().expect("a note").id.clone();
+
+    app.on_key(key(KeyCode::Esc));
+    app.on_key(key(KeyCode::Char('/')));
+    typing(&mut app, "book");
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(app.shown(), 1);
+    assert_ne!(
+        app.selected().map(|f| f.id.clone()),
+        Some(first.clone()),
+        "the first note is not in this result"
+    );
+    mark_all_shown(&mut app);
+
+    // One from each search, and the first was never in sight for the second.
+    assert_eq!(app.marks.len(), 2);
+
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+seen");
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Char('Q')));
+    let action = app.on_key(key(KeyCode::Enter)).expect("a queue to send");
+    perform(&paths, &mut app, action);
+
+    app.on_key(key(KeyCode::Esc));
+    // Read out of the notebook rather than off the screen: which notes were
+    // changed is what this is about, and the listing's columns give way to each
+    // other at whatever width the terminal happens to be.
+    let seen: Vec<&str> = app
+        .rows()
+        .filter(|file| file.note.tags.iter().any(|tag| tag == "seen"))
+        .map(|file| file.note.title.as_str())
+        .collect();
+    // One from each search, and nothing else: a mark is a note picked out, not
+    // a query re-run at the moment of sending.
+    assert_eq!(seen, vec!["Meeting notes", "Reading list"]);
+}
+
+#[test]
+fn a_tag_long_enough_to_fill_the_pane_does_not_take_the_title_with_it() {
+    let (_root, paths) = a_notebook();
+    // The shape an import leaves behind, and wide enough to swallow a narrow
+    // listing whole.
+    cmd::add(
+        &paths,
+        Some("Ubuntu notes"),
+        Some("body"),
+        &["24.04 Dark patterns".to_string()],
+    )
+    .expect("add");
+    let mut app = tui::load(&paths).expect("load");
+    let screen = screen(&mut app);
+
+    // Before the cap, a tag list this long took the whole pane and left the
+    // title column nothing at all. Now the title keeps its floor — enough to
+    // tell the notes apart — and the tags are what gets cut.
+    for title in ["Budget rev", "Meeting no", "Reading li"] {
+        assert!(has_line_with(&screen, &[title]), "{title}");
+    }
+    assert!(
+        has_line_with(&screen, &["[24.04 Dark"]),
+        "and the long tag list still says it is there"
+    );
+}
+
+#[test]
+fn a_tag_with_a_space_can_be_filtered_for_from_the_screen_it_is_on() {
+    let (_root, paths) = a_notebook();
+    cmd::add(
+        &paths,
+        Some("Ubuntu notes"),
+        Some("body"),
+        &["24.04 Dark patterns".to_string()],
+    )
+    .expect("add");
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('/')));
+    // The shell would keep this in one piece, and so does the field.
+    typing(&mut app, "tag:\"24.04 Dark patterns\"");
+    let screen = screen(&mut app);
+    assert!(has_line_with(&screen, &["1/4"]));
+    assert_eq!(
+        app.selected().map(|f| f.note.title.clone()),
+        Some("Ubuntu notes".to_string())
+    );
+}
+
+#[test]
+fn leaving_with_a_queue_in_hand_is_asked_about() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('*')));
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+archive");
+    app.on_key(key(KeyCode::Enter));
+
+    assert_eq!(app.on_key(key(KeyCode::Char('q'))), None, "not yet");
+    let asked = screen(&mut app);
+    assert!(has_line_with(&asked, &["leave the queue behind?"]));
+    assert!(has_line_with(&asked, &["1 change over 3 notes"]));
+    assert!(has_line_with(&asked, &["written down anywhere"]));
+
+    // Staying keeps it, and it can still be sent.
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.queue.len(), 1);
+    app.on_key(key(KeyCode::Char('Q')));
+    assert!(matches!(
+        app.on_key(key(KeyCode::Enter)),
+        Some(tui::Action::Send(_))
+    ));
+}
+
+#[test]
+fn a_queued_delete_takes_every_note_it_was_aimed_at() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let before = commits(&paths);
+
+    app.on_key(key(KeyCode::Char('/')));
+    typing(&mut app, "tag:work");
+    app.on_key(key(KeyCode::Enter));
+    mark_all_shown(&mut app);
+    app.on_key(key(KeyCode::Char('d')));
+
+    app.on_key(key(KeyCode::Char('Q')));
+    let queued = screen(&mut app);
+    assert!(has_line_with(&queued, &["rm: 2 notes"]));
+
+    // The send is where the question is asked, and only because of the delete.
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+    let asked = screen(&mut app);
+    assert!(has_line_with(&asked, &["send the queue?"]));
+    assert!(has_line_with(&asked, &["2 notes to be deleted"]));
+
+    let action = app
+        .on_key(key(KeyCode::Char('y')))
+        .expect("a queue to send");
+    perform(&paths, &mut app, action);
+
+    app.on_key(key(KeyCode::Esc));
+    let after = screen(&mut app);
+    assert_eq!(app.total(), 1);
+    assert!(has_line_with(&after, &["Reading list"]));
+    assert!(!has_line_with(&after, &["Budget review"]));
+    assert_eq!(commits(&paths) - before, 1);
 }
 
 #[test]

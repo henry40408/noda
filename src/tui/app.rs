@@ -18,13 +18,14 @@
 //! instead of once per query — which is the whole point of typing into a filter
 //! rather than into a shell.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use crate::Result;
-use crate::cmd::Touch;
+use crate::cmd::{self, Change, Step, Touch};
 use crate::note;
 use crate::notebook::{NoteFile, Status};
 use crate::query::Query;
@@ -73,6 +74,11 @@ pub enum Action {
     },
     /// `noda rm`, once the confirmation has been given. Nothing is left to stamp.
     Remove(String),
+    /// The queue, sent: every change in it, over the notes each was aimed at, in
+    /// one commit. `cmd::bulk` is what carries it out — the same code writing the
+    /// same files as the keys above, with the commit boundary moved out one
+    /// level so that a queue arrives in the history as the one thing it was.
+    Send(Vec<Step>),
 }
 
 /// What a command said when it was asked to change something.
@@ -84,6 +90,13 @@ pub struct Message {
     /// Failures get a card and successes get the footer: an acknowledgement is
     /// read in passing, a reason has to be read.
     pub failed: bool,
+}
+
+impl Message {
+    /// As much of it as one line of footer can hold.
+    pub fn line(&self) -> &str {
+        self.text.lines().next().unwrap_or_default()
+    }
 }
 
 /// Which half of the screen the arrow keys are steering.
@@ -103,14 +116,33 @@ pub enum Mode {
     Help,
     /// Typing the one thing a change needs said in words.
     Ask(Ask),
-    /// Waiting for a `y` before a note is deleted. The confirmation `noda rm`
-    /// does not ask for at the prompt is asked for here, and asked for on the
-    /// screen: the terminal is in raw mode, so a command that read a line from
-    /// stdin would be reading keystrokes out from under the browser.
-    Confirm,
-    /// A command said why it would not do something. Dismissed like the help
-    /// card, by anything at all.
+    /// Waiting for a `y` before something that cannot be taken back. The
+    /// confirmation `noda rm` does not ask for at the prompt is asked for here,
+    /// and asked for on the screen: the terminal is in raw mode, so a command
+    /// that read a line from stdin would be reading keystrokes out from under
+    /// the browser.
+    Confirm(What),
+    /// Reading the queue: what is waiting to be sent, and what to drop from it.
+    Queue,
+    /// A command said why it would not do something, or said more than a line.
+    /// Dismissed like the help card, by anything at all.
     Alert,
+}
+
+/// What a `y` would agree to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum What {
+    /// Delete the note under the cursor, now.
+    Delete,
+    /// Send the queue. Asked once, at the point where nothing can be taken back
+    /// — which is the send, not the queueing: a delete sitting in the queue has
+    /// not happened and can still be dropped from it.
+    Send,
+    /// Leave with a queue still in it. The queue is the one thing a session
+    /// holds that is not written down anywhere: a query can be retyped and a
+    /// mark remade, but an afternoon's worth of queued changes goes with the
+    /// process.
+    Quit,
 }
 
 /// The one thing a change needs said in words before it can be asked for.
@@ -192,6 +224,27 @@ pub struct App {
     pub input: String,
     /// What the last command that changed something had to say.
     pub message: Option<Message>,
+    /// The notes picked out to be changed together, by id.
+    ///
+    /// Kept apart from the query, deliberately. `/` narrows what can be seen and
+    /// marking says what is meant to change, and neither undoes the other: a
+    /// note the query is currently hiding is still marked and still gets
+    /// changed. Otherwise "mark these, then search for the next lot" would
+    /// quietly drop the first lot, and the two would be one feature wearing two
+    /// keys.
+    ///
+    /// Ordered, so the queue reads the same way twice and a commit message does
+    /// not depend on the order a hash happened to produce.
+    pub marks: BTreeSet<String>,
+    /// The changes waiting to be sent, in the order they were added.
+    ///
+    /// Each is a `cmd::Step` — a change and the notes it is aimed at — because
+    /// that is what will be handed to `cmd::bulk` unaltered. A queue that held
+    /// something else would have to be translated at the end, and a translation
+    /// is where a second account of what a change means gets in.
+    pub queue: Vec<Step>,
+    /// Where the cursor is in the queue view.
+    queue_at: usize,
     /// Whether the changes made from here move a note's `updated`.
     ///
     /// A session-long setting rather than something said per keystroke. At a
@@ -227,6 +280,9 @@ impl App {
             error: None,
             input: String::new(),
             message: None,
+            marks: BTreeSet::new(),
+            queue: Vec::new(),
+            queue_at: 0,
             touch: Touch::Stamp,
             preview: None,
             scroll: 0,
@@ -257,6 +313,24 @@ impl App {
         // Dropped rather than kept: the file on disk is what changed, and this
         // copy of it is what the reload was pressed to get rid of.
         self.preview = None;
+        // A mark on a note that is no longer there is a change aimed at nothing.
+        // The queue keeps its own copy of the ids on purpose — an entry is a
+        // record of what was asked for, and `bulk` is what says so if one of
+        // them has since gone.
+        let ids: BTreeSet<&str> = self.notes.iter().map(|file| file.id.as_str()).collect();
+        self.marks.retain(|id| ids.contains(id.as_str()));
+    }
+
+    /// Whether the note is one of the ones picked out.
+    pub fn marked(&self, id: &str) -> bool {
+        self.marks.contains(id)
+    }
+
+    /// The marked notes, in listing order, for a change about to be aimed at
+    /// them. Ids, because that is what a command takes and what survives a
+    /// rename.
+    fn marked_keys(&self) -> Vec<String> {
+        self.marks.iter().cloned().collect()
     }
 
     /// The note under the cursor.
@@ -313,7 +387,10 @@ impl App {
         }
         // Ctrl-C leaves from wherever you are, including mid-query. It is the
         // one key that means the same thing in every mode, because it is what
-        // the terminal itself would have meant by it.
+        // the terminal itself would have meant by it — and the one that does not
+        // stop to ask about an unsent queue, for the same reason. A program that
+        // argues with Ctrl-C is a program you end up killing from another
+        // window; `q` is the key that can afford to ask.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(Action::Quit);
         }
@@ -326,7 +403,8 @@ impl App {
             }
             Mode::Search => self.searching(key),
             Mode::Ask(what) => self.asking(what, key),
-            Mode::Confirm => self.confirming(key),
+            Mode::Confirm(what) => self.confirming(what, key),
+            Mode::Queue => self.queueing(key),
             Mode::Browse => self.browsing(key),
         }
     }
@@ -347,7 +425,12 @@ impl App {
             return None;
         }
         match key.code {
-            KeyCode::Char('q') => return Some(Action::Quit),
+            KeyCode::Char('q') => {
+                if self.queue.is_empty() {
+                    return Some(Action::Quit);
+                }
+                self.mode = Mode::Confirm(What::Quit);
+            }
             KeyCode::Char('r') => return Some(Action::Reload),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('/') => self.mode = Mode::Search,
@@ -371,15 +454,47 @@ impl App {
                 let title = self.selected()?.note.title.clone();
                 self.ask(Ask::Retitle, title);
             }
+            // With notes marked these two aim at the marked set and go into the
+            // queue; with none marked they are what they have always been, and
+            // act on the note under the cursor at once. One key, one meaning —
+            // "do this to what is picked out" — and what is picked out is the
+            // cursor until you say otherwise. The header says which it will be.
             KeyCode::Char('#') => {
                 // Nothing to tag is nothing to ask about — the same reason `m`
                 // and `d` do nothing over an empty list.
-                self.selected()?;
+                if self.marks.is_empty() {
+                    self.selected()?;
+                }
                 self.ask(Ask::Tags, String::new());
             }
             KeyCode::Char('d') => {
-                self.selected()?;
-                self.mode = Mode::Confirm;
+                if self.marks.is_empty() {
+                    self.selected()?;
+                    self.mode = Mode::Confirm(What::Delete);
+                } else {
+                    // Not asked about here: queueing a delete deletes nothing,
+                    // and the question belongs at the send, where it is the last
+                    // moment it can still be answered no.
+                    let keys = self.marked_keys();
+                    self.enqueue(Step {
+                        keys,
+                        change: Change::Remove,
+                    });
+                }
+            }
+            // Marking. `Space` is the one under the cursor; `*` is everything
+            // the query is showing, which is what makes a search and a selection
+            // compose: narrow to what you mean, take the lot, search again.
+            KeyCode::Char(' ') => {
+                let id = self.selected()?.id.clone();
+                if !self.marks.remove(&id) {
+                    self.marks.insert(id);
+                }
+            }
+            KeyCode::Char('*') => self.mark_shown(),
+            KeyCode::Char('Q') => {
+                self.mode = Mode::Queue;
+                self.queue_at = self.queue_at.min(self.queue.len().saturating_sub(1));
             }
             KeyCode::Char('j') | KeyCode::Down => self.step(1),
             KeyCode::Char('k') | KeyCode::Up => self.step(-1),
@@ -395,16 +510,128 @@ impl App {
             }
             KeyCode::Char('h') | KeyCode::Left => self.focus = Focus::List,
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => self.focus = Focus::Preview,
-            // Whatever the query narrowed the notebook to, this is the way back
-            // out — the same key that would have abandoned the typing.
+            // The way back out of whatever narrowing is in force, one layer at a
+            // time: the query first, and once there is no query, the marks. Two
+            // things that both make the notebook smaller than it is, undone by
+            // the key that already meant "never mind" — and in that order,
+            // because a query is cheap to retype and a selection is not.
+            //
+            // The queue is not in this chain. Dropping work by pressing Escape
+            // once too often is the sort of thing a queue exists to prevent.
             KeyCode::Esc => {
-                self.search.clear();
-                self.refilter();
+                if self.search.is_empty() {
+                    self.marks.clear();
+                } else {
+                    self.search.clear();
+                    self.refilter();
+                }
                 self.focus = Focus::List;
             }
             _ => {}
         }
         None
+    }
+
+    /// Marks everything the query is showing, or takes the marks off it when it
+    /// is all marked already — one key for both, because the answer to "what
+    /// does this do now" is on the screen in front of you.
+    ///
+    /// What it does not touch: a marked note the query is hiding. `*` says
+    /// something about what is shown, and nothing about what is not.
+    fn mark_shown(&mut self) {
+        let shown: Vec<String> = self.rows().map(|file| file.id.clone()).collect();
+        if shown.iter().all(|id| self.marks.contains(id)) {
+            for id in &shown {
+                self.marks.remove(id);
+            }
+        } else {
+            self.marks.extend(shown);
+        }
+    }
+
+    /// Puts a change in the queue, or says why it cannot be one.
+    ///
+    /// Checked here rather than at the send, so a tag that cannot be written
+    /// down is refused where it was typed — at the end of a sitting is too late
+    /// to remember what was meant by it.
+    fn enqueue(&mut self, step: Step) {
+        if let Err(e) = cmd::check(&step.change) {
+            self.report(Err(e));
+            return;
+        }
+        self.queue.push(step);
+    }
+
+    fn queueing(&mut self, key: KeyEvent) -> Option<Action> {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.queue_at = (self.queue_at + 1).min(self.queue.len().saturating_sub(1));
+            }
+            KeyCode::Char('k') | KeyCode::Up => self.queue_at = self.queue_at.saturating_sub(1),
+            // Dropping an entry is the queue's whole point: what is waiting can
+            // be reconsidered, which is what makes queueing safe to do quickly.
+            KeyCode::Char('d' | 'x') | KeyCode::Backspace => {
+                if self.queue_at < self.queue.len() {
+                    self.queue.remove(self.queue_at);
+                    self.queue_at = self.queue_at.min(self.queue.len().saturating_sub(1));
+                }
+            }
+            KeyCode::Enter => return self.send(),
+            KeyCode::Esc | KeyCode::Char('q' | 'Q') => self.mode = Mode::Browse,
+            _ => {}
+        }
+        None
+    }
+
+    /// Sends the queue, once anything irreversible in it has been agreed to.
+    fn send(&mut self) -> Option<Action> {
+        if self.queue.is_empty() {
+            self.mode = Mode::Browse;
+            return None;
+        }
+        // A tag can be put back; a note that has been removed comes back only
+        // through git. So the question is asked when there is a deletion in the
+        // queue, and not otherwise — a confirmation that appears every time is
+        // one nobody reads.
+        if self.queue.iter().any(|step| step.change == Change::Remove) {
+            self.mode = Mode::Confirm(What::Send);
+            return None;
+        }
+        self.mode = Mode::Browse;
+        Some(Action::Send(self.queue.clone()))
+    }
+
+    /// What the queue is aimed at altogether, for the confirmation to say.
+    pub fn queued_notes(&self) -> usize {
+        let notes: BTreeSet<&str> = self
+            .queue
+            .iter()
+            .flat_map(|step| step.keys.iter().map(String::as_str))
+            .collect();
+        notes.len()
+    }
+
+    /// How many of the queued changes would delete something.
+    pub fn queued_deletions(&self) -> usize {
+        self.queue
+            .iter()
+            .filter(|step| step.change == Change::Remove)
+            .map(|step| step.keys.len())
+            .sum()
+    }
+
+    /// Which entry the queue view has its cursor on.
+    pub fn queue_at(&self) -> usize {
+        self.queue_at
+    }
+
+    /// Everything the send changed is now somebody else's business: the queue
+    /// has been carried out and the notes it was aimed at are no longer picked
+    /// out for anything.
+    pub fn sent(&mut self) {
+        self.queue.clear();
+        self.queue_at = 0;
+        self.marks.clear();
     }
 
     fn searching(&mut self, key: KeyEvent) -> Option<Action> {
@@ -505,6 +732,20 @@ impl App {
                 title: answer,
                 touch: self.touch,
             }),
+            // The one prompt that answers to the marks: with a set picked out,
+            // the tags it was given are queued against that set rather than run
+            // against the note the cursor happens to be on.
+            Ask::Tags if !self.marks.is_empty() => {
+                let keys = self.marked_keys();
+                self.enqueue(Step {
+                    keys,
+                    change: Change::Tag {
+                        changes: split_quoted(&answer),
+                        touch: self.touch,
+                    },
+                });
+                None
+            }
             Ask::Tags => Some(Action::Tag {
                 key: self.selected()?.id.clone(),
                 touch: self.touch,
@@ -513,13 +754,17 @@ impl App {
         }
     }
 
-    /// `y` deletes; anything else is a way out. Not `n` alone — the key that
+    /// `y` agrees; anything else is a way out. Not `n` alone — the key that
     /// cancels a destructive question should be every key but one.
-    fn confirming(&mut self, key: KeyEvent) -> Option<Action> {
+    fn confirming(&mut self, what: What, key: KeyEvent) -> Option<Action> {
         self.mode = Mode::Browse;
-        match key.code {
-            KeyCode::Char('y' | 'Y') => Some(Action::Remove(self.selected()?.id.clone())),
-            _ => None,
+        if !matches!(key.code, KeyCode::Char('y' | 'Y')) {
+            return None;
+        }
+        match what {
+            What::Delete => Some(Action::Remove(self.selected()?.id.clone())),
+            What::Send => Some(Action::Send(self.queue.clone())),
+            What::Quit => Some(Action::Quit),
         }
     }
 
@@ -529,13 +774,20 @@ impl App {
     /// it and has no way of finding out how it went.
     pub fn report(&mut self, outcome: Result<String>) {
         self.message = Some(match outcome {
-            // One line, because the footer is one line. Nothing these commands
-            // print runs to two — `mv`'s report of rewritten links is the one
-            // that could, and the browser does not ask it to rewrite any.
-            Ok(text) => Message {
-                text: first_line(&text),
-                failed: false,
-            },
+            Ok(text) => {
+                let text = text.trim_end().to_string();
+                // A line is an acknowledgement and lives in the footer. More
+                // than a line has to be read, so it gets the card: `bulk` puts
+                // what it could not do underneath what it did, and that second
+                // part is the whole reason it is worth printing.
+                if text.lines().count() > 1 {
+                    self.mode = Mode::Alert;
+                }
+                Message {
+                    text,
+                    failed: false,
+                }
+            }
             Err(e) => {
                 // A card, and the whole of it: an editor that saved a broken
                 // frontmatter block is told where the file was left, and losing
@@ -623,12 +875,16 @@ impl App {
     /// narrow it (a backspace, or an `OR` completed), so there is no subset to
     /// refine. At `noda ls` speeds the notebook is walked in memory in well
     /// under a frame.
+    ///
+    /// Split the way the shell would split it, quotes and all. `Query::parse`
+    /// takes one token per argument precisely so that the shell's quoting is the
+    /// only quoting there is — and there is no shell in front of this field, so
+    /// it does that part itself. Without it `tag:"12.34 foo bar"` has no
+    /// spelling here at all: a value with a space in it becomes three terms
+    /// and-ed together, and a tag you can read in the listing is one you cannot
+    /// filter by on the screen it is on. Same reasoning as the tags prompt.
     fn refilter(&mut self) {
-        let tokens: Vec<String> = self
-            .search
-            .split_whitespace()
-            .map(std::string::ToString::to_string)
-            .collect();
+        let tokens = split_quoted(&self.search);
 
         if tokens.is_empty() {
             self.error = None;
@@ -702,12 +958,6 @@ fn split_quoted(text: &str) -> Vec<String> {
         pieces.push(piece);
     }
     pieces
-}
-
-/// The first line of what a command printed, which for the commands the browser
-/// runs is all of it.
-fn first_line(text: &str) -> String {
-    text.lines().next().unwrap_or_default().to_string()
 }
 
 /// A scroll offset moved by `delta` and kept inside `[0, max]`.
@@ -1202,6 +1452,84 @@ mod tests {
     }
 
     #[test]
+    fn a_tag_with_a_space_in_it_can_be_searched_for() {
+        let mut app = App::new(
+            "personal".to_string(),
+            PathBuf::from("/notebook"),
+            a_status(),
+            vec![
+                a_note(
+                    "aaaa1111",
+                    "ubuntu-notes",
+                    "Ubuntu notes",
+                    &["12.34 foo bar"],
+                    "body",
+                ),
+                a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
+            ],
+        );
+
+        app.on_key(key(KeyCode::Char('/')));
+        // Unquoted it is three terms ANDed, which is the same reading the shell
+        // would give it, and it finds nothing.
+        typing(&mut app, "tag:12.34 foo bar");
+        assert_eq!(app.shown(), 0);
+
+        app.on_key(key(KeyCode::Esc));
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:\"12.34 foo bar\"");
+        assert_eq!(app.shown(), 1);
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
+    }
+
+    #[test]
+    fn quoting_leaves_an_ordinary_query_exactly_as_it_was() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work OR tag:q3");
+        assert_eq!(app.shown(), 2);
+        assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn a_queue_is_not_left_behind_without_being_asked_about() {
+        let mut app = an_app();
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), Some(Action::Quit));
+
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), None);
+        assert_eq!(app.mode, Mode::Confirm(What::Quit));
+        // Anything but `y` stays, and the queue is still there to be sent.
+        assert_eq!(app.on_key(key(KeyCode::Char('n'))), None);
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.queue.len(), 1);
+
+        app.on_key(key(KeyCode::Char('q')));
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('y'))),
+            Some(Action::Quit),
+            "and saying so leaves"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_still_means_now() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        // The one key that does not argue: a program that talks back to Ctrl-C
+        // is one you end up killing from another window.
+        assert_eq!(app.on_key(ctrl('c')), Some(Action::Quit));
+    }
+
+    #[test]
     fn the_prompt_splits_the_way_a_shell_does() {
         assert_eq!(split_quoted("+work -q3"), vec!["+work", "-q3"]);
         assert_eq!(split_quoted("  +work   "), vec!["+work"]);
@@ -1306,7 +1634,7 @@ mod tests {
     fn a_delete_is_asked_about_first() {
         let mut app = an_app();
         assert_eq!(app.on_key(key(KeyCode::Char('d'))), None);
-        assert_eq!(app.mode, Mode::Confirm);
+        assert_eq!(app.mode, Mode::Confirm(What::Delete));
 
         // Anything but `y` keeps the note — including the key that would have
         // deleted the next one.
@@ -1407,6 +1735,216 @@ mod tests {
             Some("cccc3333"),
             "the row is kept, so the next note is the one under the cursor"
         );
+    }
+
+    /// Marks the notes the ids name, the way `Space` would with the cursor on
+    /// each of them.
+    fn mark(app: &mut App, ids: &[&str]) {
+        for id in ids {
+            app.select_id(id);
+            app.on_key(key(KeyCode::Char(' ')));
+        }
+    }
+
+    #[test]
+    fn a_mark_and_a_query_do_not_touch_each_other() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        assert!(app.marked("aaaa1111"));
+
+        // Searching does not unmark, and the mark does not narrow the search.
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:q3");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.shown(), 1, "the query answers to itself alone");
+        assert!(
+            app.marked("aaaa1111"),
+            "a note the query is hiding is still marked"
+        );
+
+        // And marking while a query is on adds to what was marked before it.
+        app.on_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.marks.len(), 2);
+    }
+
+    #[test]
+    fn the_star_takes_what_the_query_shows_and_leaves_the_rest() {
+        let mut app = an_app();
+        mark(&mut app, &["cccc3333"]);
+
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.shown(), 2);
+
+        app.on_key(key(KeyCode::Char('*')));
+        assert_eq!(app.marks.len(), 3, "the two shown, and the one from before");
+
+        // Again, and the two it marked come off — the one it never touched stays.
+        app.on_key(key(KeyCode::Char('*')));
+        assert_eq!(app.marks.len(), 1);
+        assert!(app.marked("cccc3333"));
+    }
+
+    #[test]
+    fn escape_drops_the_query_first_and_the_marks_after() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:q3");
+        app.on_key(key(KeyCode::Enter));
+
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.search.is_empty(), "the query goes first");
+        assert_eq!(app.marks.len(), 1, "and the marks are still there");
+
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.marks.is_empty());
+    }
+
+    #[test]
+    fn with_notes_marked_a_tag_is_queued_over_all_of_them() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111", "bbbb2222"]);
+
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "-work +archive");
+        // Nothing to run: the change is now waiting rather than done.
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        assert_eq!(
+            app.queue,
+            vec![Step {
+                keys: vec!["aaaa1111".to_string(), "bbbb2222".to_string()],
+                change: Change::Tag {
+                    changes: vec!["-work".to_string(), "+archive".to_string()],
+                    touch: Touch::Stamp,
+                },
+            }]
+        );
+        // The marks are not spent by queueing — the next change can be aimed at
+        // the same set.
+        assert_eq!(app.marks.len(), 2);
+    }
+
+    #[test]
+    fn with_nothing_marked_the_same_key_still_acts_at_once() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Tag { .. })
+        ));
+        assert!(app.queue.is_empty());
+    }
+
+    #[test]
+    fn a_queued_delete_asks_nothing_until_it_is_sent() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111", "cccc3333"]);
+
+        assert_eq!(app.on_key(key(KeyCode::Char('d'))), None);
+        assert_eq!(app.mode, Mode::Browse, "queueing a delete deletes nothing");
+        assert_eq!(app.queued_deletions(), 2);
+
+        // The question comes at the send, which is the last moment it can still
+        // be answered no.
+        app.on_key(key(KeyCode::Char('Q')));
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        assert_eq!(app.mode, Mode::Confirm(What::Send));
+
+        let sent = app.on_key(key(KeyCode::Char('y')));
+        assert!(matches!(sent, Some(Action::Send(steps)) if steps.len() == 1));
+    }
+
+    #[test]
+    fn a_queue_of_tags_goes_without_being_asked_about() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        app.on_key(key(KeyCode::Char('Q')));
+        // A tag can be put back; a confirmation nobody needs is one nobody reads.
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Send(_))
+        ));
+    }
+
+    #[test]
+    fn an_entry_can_be_dropped_from_the_queue() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        for tag in ["+one", "+two", "+three"] {
+            app.on_key(key(KeyCode::Char('#')));
+            typing(&mut app, tag);
+            app.on_key(key(KeyCode::Enter));
+        }
+        assert_eq!(app.queue.len(), 3);
+
+        app.on_key(key(KeyCode::Char('Q')));
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Char('d')));
+        assert_eq!(app.queue.len(), 2);
+        assert!(
+            app.queue
+                .iter()
+                .all(|step| step.describe() != "tag: +two (1 note)")
+        );
+        assert_eq!(app.mode, Mode::Queue, "dropping one is not leaving");
+
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn a_tag_that_cannot_be_written_down_never_reaches_the_queue() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        // Refused where it was typed rather than at the end of a sitting.
+        typing(&mut app, "+q3,urgent");
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        assert!(app.queue.is_empty());
+        assert_eq!(app.mode, Mode::Alert);
+        assert!(
+            app.message
+                .as_ref()
+                .is_some_and(|said| said.text.contains("cannot contain"))
+        );
+    }
+
+    #[test]
+    fn sending_spends_the_queue_and_the_marks() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        app.sent();
+        assert!(app.queue.is_empty());
+        assert!(app.marks.is_empty());
+    }
+
+    #[test]
+    fn a_mark_on_a_note_that_has_gone_goes_with_it() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111", "bbbb2222"]);
+        app.replace(
+            a_status(),
+            vec![a_note(
+                "bbbb2222",
+                "meeting-notes",
+                "Meeting notes",
+                &["work"],
+                "agenda",
+            )],
+        );
+        assert_eq!(app.marks.len(), 1);
+        assert!(app.marked("bbbb2222"));
     }
 
     #[test]

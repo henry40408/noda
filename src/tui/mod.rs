@@ -165,6 +165,19 @@ fn perform(
             touch,
         } => cmd::tag(paths, &key, &changes, touch),
         Action::Remove(key) => cmd::rm(paths, &key),
+        // The whole queue, in one commit. Nothing is decided here about what any
+        // of it means — `bulk` runs the same code the keys above run, and the
+        // only thing that moved is where the commit falls.
+        Action::Send(steps) => {
+            let sent = cmd::bulk(paths, &steps);
+            // Only when it went through: a queue that was refused is a queue you
+            // still have, which is the difference between an error you can fix
+            // and an afternoon's work you have to remember.
+            if sent.is_ok() {
+                app.sent();
+            }
+            sent
+        }
     };
     app.report(outcome);
 
