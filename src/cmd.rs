@@ -316,7 +316,7 @@ pub enum Format {
 /// `add` has no say in this: `created` and `updated` are both written the moment
 /// a note is made, and a note that has never been changed has been changed as
 /// recently as it was made. Write the block yourself if it should say otherwise.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Touch {
     /// Set `updated` to now.
     #[default]

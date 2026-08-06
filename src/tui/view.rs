@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
 
 use super::app::{App, Focus, Mode};
 use super::theme;
-use crate::cmd::find_ignoring_case;
+use crate::cmd::{Touch, find_ignoring_case};
 use crate::style as palette;
 
 /// What the footer says there is to press. Ordered by how soon somebody needs
@@ -27,13 +27,13 @@ use crate::style as palette;
 /// terminal eighty columns wide.
 const HINTS: &str = "j/k move   / search   Tab preview   e edit   a new   ? keys   q quit";
 
-/// How wide the key column on the help card is, so the descriptions line up.
-const KEY_COLUMN: usize = 16;
+/// How wide the key column on the help card is, so the descriptions line up: the
+/// longest set of keys on one row, which is what the column is for.
+const KEY_COLUMN: usize = 22;
 
 const KEYS: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "move"),
-    ("Ctrl-d / Ctrl-u", "half a screen"),
-    ("g / G", "first / last"),
+    ("Ctrl-d / Ctrl-u, g / G", "half a screen · first / last"),
     ("Tab, h / l", "list ↔ preview"),
     ("/", "search: tag:work OR tag:q3 budget"),
     ("Enter", "read the note · in a query, keep it"),
@@ -44,6 +44,7 @@ const KEYS: &[(&str, &str)] = &[
     ("e, a", "edit in $EDITOR · new note"),
     ("m, #", "retitle · tags: +work -q3"),
     ("d", "delete, once you have said y"),
+    ("T", "leave updated alone: --no-touch"),
     ("r", "read the notebook again"),
     ("q, Ctrl-C", "quit"),
 ];
@@ -122,6 +123,15 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         && (ahead > 0 || behind > 0)
     {
         spans.push(Span::styled(format!("  ↑{ahead} ↓{behind}"), muted));
+    }
+    // Said only while it is on, and said in the strip that is always there: the
+    // default needs no announcement, and a setting that changes what the next
+    // change records is one you have to be able to see you left on.
+    if app.touch == Touch::Keep {
+        spans.push(Span::styled(
+            "  keeping updated",
+            theme::from(palette::MATCH),
+        ));
     }
     frame.render_widget(Line::from(spans), area);
 }

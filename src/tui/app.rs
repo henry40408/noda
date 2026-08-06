@@ -24,6 +24,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use crate::Result;
+use crate::cmd::Touch;
 use crate::note;
 use crate::notebook::{NoteFile, Status};
 use crate::query::Query;
@@ -48,21 +49,29 @@ pub enum Action {
     Reload,
     /// `noda edit` — the one action that needs the terminal handed back for the
     /// length of it, because `$EDITOR` is a full-screen program too.
-    Edit(String),
+    Edit {
+        key: String,
+        touch: Touch,
+    },
     /// `noda add`, with the title as typed. `None` is a title left to the body,
     /// which is what `add` does when it is given none.
+    ///
+    /// No `touch`: `add` has none either. A note that has never been changed has
+    /// been changed as recently as it was made.
     Add(Option<String>),
     /// `noda mv`: a new title, and the slug follows it.
     Retitle {
         key: String,
         title: String,
+        touch: Touch,
     },
     /// `noda tag`, with the `+tag` / `-tag` changes as typed.
     Tag {
         key: String,
         changes: Vec<String>,
+        touch: Touch,
     },
-    /// `noda rm`, once the confirmation has been given.
+    /// `noda rm`, once the confirmation has been given. Nothing is left to stamp.
     Remove(String),
 }
 
@@ -181,6 +190,16 @@ pub struct App {
     pub input: String,
     /// What the last command that changed something had to say.
     pub message: Option<Message>,
+    /// Whether the changes made from here move a note's `updated`.
+    ///
+    /// A session-long setting rather than something said per keystroke. At a
+    /// prompt `--no-touch` is written on the one command it applies to; here
+    /// there is no room to qualify a single key, and the reason for wanting it —
+    /// a sitting of small corrections to notes whose dates came from somewhere
+    /// else — lasts longer than one keystroke anyway. It says so in the header
+    /// for as long as it is on, because a setting you cannot see is one you
+    /// forget you left on.
+    pub touch: Touch,
     pub preview: Option<Preview>,
     pub scroll: u16,
     /// How many rows the list last had room for, written back by the drawing
@@ -206,6 +225,7 @@ impl App {
             error: None,
             input: String::new(),
             message: None,
+            touch: Touch::Stamp,
             preview: None,
             scroll: 0,
             page: 10,
@@ -329,9 +349,21 @@ impl App {
             KeyCode::Char('r') => return Some(Action::Reload),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('/') => self.mode = Mode::Search,
+            // Not a change of its own — a change to what the next one records.
+            KeyCode::Char('T') => {
+                self.touch = match self.touch {
+                    Touch::Stamp => Touch::Keep,
+                    Touch::Keep => Touch::Stamp,
+                };
+            }
             // The keys that change a note. Each asks a command for it, and the
             // three that need something said first open the prompt instead.
-            KeyCode::Char('e') => return Some(Action::Edit(self.selected()?.id.clone())),
+            KeyCode::Char('e') => {
+                return Some(Action::Edit {
+                    key: self.selected()?.id.clone(),
+                    touch: self.touch,
+                });
+            }
             KeyCode::Char('a') => self.ask(Ask::Title, String::new()),
             KeyCode::Char('m') => {
                 let title = self.selected()?.note.title.clone();
@@ -469,9 +501,11 @@ impl App {
             Ask::Retitle => Some(Action::Retitle {
                 key: self.selected()?.id.clone(),
                 title: answer,
+                touch: self.touch,
             }),
             Ask::Tags => Some(Action::Tag {
                 key: self.selected()?.id.clone(),
+                touch: self.touch,
                 // The shell's job again, done by the space bar: one token per
                 // argument, exactly as `noda tag` is written at a prompt.
                 changes: answer
@@ -1044,7 +1078,10 @@ mod tests {
         app.on_key(key(KeyCode::Char('j')));
         assert_eq!(
             app.on_key(key(KeyCode::Char('e'))),
-            Some(Action::Edit("bbbb2222".to_string()))
+            Some(Action::Edit {
+                key: "bbbb2222".to_string(),
+                touch: Touch::Stamp,
+            })
         );
         // And the browser has not moved: the command is the runtime's to run.
         assert_eq!(app.mode, Mode::Browse);
@@ -1090,6 +1127,7 @@ mod tests {
             Some(Action::Retitle {
                 key: "aaaa1111".to_string(),
                 title: "Budget revision".to_string(),
+                touch: Touch::Stamp,
             })
         );
     }
@@ -1106,8 +1144,65 @@ mod tests {
             Some(Action::Tag {
                 key: "aaaa1111".to_string(),
                 changes: vec!["+urgent".to_string(), "-work".to_string()],
+                touch: Touch::Stamp,
             })
         );
+    }
+
+    #[test]
+    fn t_leaves_updated_alone_for_as_long_as_it_is_on() {
+        let mut app = an_app();
+        assert_eq!(app.touch, Touch::Stamp, "stamping is what a change means");
+
+        assert_eq!(app.on_key(key(KeyCode::Char('T'))), None);
+        assert_eq!(app.touch, Touch::Keep);
+
+        // Every change made while it is on carries it, and it is the command's
+        // own `--no-touch` that is being asked for rather than anything the
+        // browser does to the file itself.
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('e'))),
+            Some(Action::Edit {
+                key: "aaaa1111".to_string(),
+                touch: Touch::Keep,
+            })
+        );
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+urgent");
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Tag {
+                key: "aaaa1111".to_string(),
+                changes: vec!["+urgent".to_string()],
+                touch: Touch::Keep,
+            })
+        );
+
+        // And it is a toggle: the same key puts the stamping back.
+        app.on_key(key(KeyCode::Char('T')));
+        assert_eq!(app.touch, Touch::Stamp);
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('e'))),
+            Some(Action::Edit {
+                key: "aaaa1111".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn t_is_a_letter_while_a_query_or_a_prompt_is_being_typed() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "T");
+        assert_eq!(app.search, "T");
+        assert_eq!(app.touch, Touch::Stamp);
+
+        app.on_key(key(KeyCode::Esc));
+        app.on_key(key(KeyCode::Char('m')));
+        typing(&mut app, "T");
+        assert!(app.input.ends_with('T'));
+        assert_eq!(app.touch, Touch::Stamp);
     }
 
     #[test]

@@ -608,6 +608,7 @@ the search match, which is the exception `noda search` already makes when it quo
 | `m` | retitle, starting from the title it has |
 | `#` | tags, written the way `noda tag` takes them: `+work -q3` |
 | `d` | delete, once you have said `y` |
+| `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The header says `keeping updated` for as long as it is on |
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
 
@@ -619,6 +620,12 @@ is the whole reason the keys are wired this way rather than to a writer of their
 consequences worth knowing: `$EDITOR` gets the terminal to itself while it runs, as it would
 from the shell; and a command that refuses says why on a card, because the reason — where an
 edit with a broken frontmatter block was left, say — is the part worth reading.
+
+`--no-touch` is a setting here rather than something said per change. At a prompt you write it
+on the one command it applies to; on a screen there is nowhere to qualify a single keystroke,
+and the reason for wanting it — a sitting of small corrections to notes whose dates came from
+somewhere else — outlasts one keystroke anyway. `T` turns it on for the session, `e`, `m` and
+`#` follow it, and the header carries `keeping updated` until you turn it off.
 
 It deliberately **does not watch the filesystem**: a note written from another window arrives
 when you press `r`, rather than rearranging the list under a reader mid-sentence.

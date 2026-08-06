@@ -33,7 +33,7 @@ use ratatui::crossterm::terminal::{
 use ratatui::crossterm::{cursor, execute};
 use ratatui::{DefaultTerminal, Terminal};
 
-use crate::cmd::{self, Touch};
+use crate::cmd;
 use crate::notebook::{NoteFile, Notebook, Status};
 use crate::paths::Paths;
 use crate::{Error, Result};
@@ -149,15 +149,21 @@ fn perform(
         // Both are the caller's, and named rather than left to a wildcard so
         // that an action added later cannot be quietly swallowed here.
         Action::Quit | Action::Reload => return Ok(()),
-        Action::Edit(key) => in_the_foreground(terminal, || cmd::edit(paths, &key, Touch::Stamp))?,
+        Action::Edit { key, touch } => {
+            in_the_foreground(terminal, || cmd::edit(paths, &key, touch))?
+        }
         Action::Add(title) => {
             in_the_foreground(terminal, || cmd::add(paths, title.as_deref(), None, &[]))?
         }
         // Links are left alone: `--update-links` edits the prose of notes the
         // command was not pointed at, and a browser is not the place to do that
         // to a note nobody is looking at. `noda mv --update-links` still is.
-        Action::Retitle { key, title } => cmd::mv(paths, &key, &title, false, Touch::Stamp),
-        Action::Tag { key, changes } => cmd::tag(paths, &key, &changes, Touch::Stamp),
+        Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
+        Action::Tag {
+            key,
+            changes,
+            touch,
+        } => cmd::tag(paths, &key, &changes, touch),
         Action::Remove(key) => cmd::rm(paths, &key),
     };
     app.report(outcome);

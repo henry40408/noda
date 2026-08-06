@@ -250,10 +250,12 @@ fn a_reload_picks_up_a_note_written_from_somewhere_else() {
 /// terminal to `$EDITOR`, and there is no terminal here to hand over.
 fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
     let outcome = match action {
-        tui::Action::Tag { key, changes } => cmd::tag(paths, &key, &changes, cmd::Touch::Stamp),
-        tui::Action::Retitle { key, title } => {
-            cmd::mv(paths, &key, &title, false, cmd::Touch::Stamp)
-        }
+        tui::Action::Tag {
+            key,
+            changes,
+            touch,
+        } => cmd::tag(paths, &key, &changes, touch),
+        tui::Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
         tui::Action::Remove(key) => cmd::rm(paths, &key),
         other => panic!("{other:?} wants a terminal of its own"),
     };
@@ -336,6 +338,81 @@ fn a_delete_is_asked_about_and_then_carried_out() {
         app.selected().map(|f| f.note.title.clone()),
         Some("Meeting notes".to_string())
     );
+}
+
+/// The `updated:` line of the note under the cursor, as it stands on disk.
+fn updated(paths: &Paths, app: &App) -> String {
+    let id = app.selected().expect("a note").id.clone();
+    let file = cmd::path(paths, Some(&id)).expect("the note's path");
+    let text = std::fs::read_to_string(file.trim()).expect("read the note");
+    text.lines()
+        .find(|line| line.starts_with("updated:"))
+        .expect("an updated field")
+        .to_string()
+}
+
+/// Puts a date on the note that no clock will produce, so that "it did not move"
+/// is a claim about the flag rather than about how fast the test ran.
+fn backdate(paths: &Paths, app: &App) {
+    let id = app.selected().expect("a note").id.clone();
+    let file = cmd::path(paths, Some(&id)).expect("the note's path");
+    let file = file.trim().to_string();
+    let text = std::fs::read_to_string(&file).expect("read the note");
+    let older: String = text
+        .lines()
+        .map(|line| {
+            if line.starts_with("updated:") {
+                "updated: 2019-03-04T05:06:07Z".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file, format!("{older}\n")).expect("write the note back");
+}
+
+#[test]
+fn t_holds_a_notes_own_updated_through_a_change() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    backdate(&paths, &app);
+    assert_eq!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
+
+    // Off, and the header says nothing about it.
+    assert!(!has_line_with(&screen(&mut app)[..1], &["keeping updated"]));
+
+    app.on_key(key(KeyCode::Char('T')));
+    let with_flag = screen(&mut app);
+    assert!(
+        has_line_with(&with_flag[..1], &["keeping updated"]),
+        "a setting you cannot see is one you forget you left on"
+    );
+
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+urgent");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(
+        has_line_with(&after, &["tags: [work, urgent]"]),
+        "the change went in"
+    );
+    assert_eq!(
+        updated(&paths, &app),
+        "updated: 2019-03-04T05:06:07Z",
+        "the date the note came with is still the date it carries"
+    );
+
+    // Off again, and the next change records itself as every other one does.
+    app.on_key(key(KeyCode::Char('T')));
+    assert!(!has_line_with(&screen(&mut app)[..1], &["keeping updated"]));
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "-urgent");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    perform(&paths, &mut app, action);
+    assert_ne!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
 }
 
 #[test]
