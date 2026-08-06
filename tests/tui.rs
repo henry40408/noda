@@ -406,6 +406,55 @@ fn a_tag_long_enough_to_fill_the_pane_does_not_take_the_title_with_it() {
 }
 
 #[test]
+fn a_tag_with_a_space_can_be_filtered_for_from_the_screen_it_is_on() {
+    let (_root, paths) = a_notebook();
+    cmd::add(
+        &paths,
+        Some("Ubuntu notes"),
+        Some("body"),
+        &["24.04 Dark patterns".to_string()],
+    )
+    .expect("add");
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('/')));
+    // The shell would keep this in one piece, and so does the field.
+    typing(&mut app, "tag:\"24.04 Dark patterns\"");
+    let screen = screen(&mut app);
+    assert!(has_line_with(&screen, &["1/4"]));
+    assert_eq!(
+        app.selected().map(|f| f.note.title.clone()),
+        Some("Ubuntu notes".to_string())
+    );
+}
+
+#[test]
+fn leaving_with_a_queue_in_hand_is_asked_about() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('*')));
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+archive");
+    app.on_key(key(KeyCode::Enter));
+
+    assert_eq!(app.on_key(key(KeyCode::Char('q'))), None, "not yet");
+    let asked = screen(&mut app);
+    assert!(has_line_with(&asked, &["leave the queue behind?"]));
+    assert!(has_line_with(&asked, &["1 change over 3 notes"]));
+    assert!(has_line_with(&asked, &["written down anywhere"]));
+
+    // Staying keeps it, and it can still be sent.
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.queue.len(), 1);
+    app.on_key(key(KeyCode::Char('Q')));
+    assert!(matches!(
+        app.on_key(key(KeyCode::Enter)),
+        Some(tui::Action::Send(_))
+    ));
+}
+
+#[test]
 fn a_queued_delete_takes_every_note_it_was_aimed_at() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
@@ -425,7 +474,7 @@ fn a_queued_delete_takes_every_note_it_was_aimed_at() {
     assert_eq!(app.on_key(key(KeyCode::Enter)), None);
     let asked = screen(&mut app);
     assert!(has_line_with(&asked, &["send the queue?"]));
-    assert!(has_line_with(&asked, &["2 of them deleted"]));
+    assert!(has_line_with(&asked, &["2 notes to be deleted"]));
 
     let action = app
         .on_key(key(KeyCode::Char('y')))

@@ -367,7 +367,16 @@ fn draw_help(frame: &mut Frame, area: Rect) {
 /// stdin would be reading the keystrokes out from under the browser.
 fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, what: What) {
     let muted = theme::from(palette::MUTED);
-    let (title, subject) = match what {
+    let queued = || {
+        // The queue is described by what it will do, not by how many keys were
+        // pressed to build it.
+        Line::from(format!(
+            "{} over {}",
+            plural(app.queue.len(), "change"),
+            plural(app.queued_notes(), "note")
+        ))
+    };
+    let (title, subject, aside, keys) = match what {
         What::Delete => {
             let Some(file) = app.selected() else {
                 return;
@@ -379,33 +388,36 @@ fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, what: What) {
                     Span::raw("  "),
                     Span::raw(file.note.title.as_str()),
                 ]),
+                "the commit that removes it stays, so git revert brings it back".to_string(),
+                "y  delete       any other key  keep it",
             )
         }
-        // The queue is described by what it will do, not by how many keys were
-        // pressed to build it — and the deletions are counted out separately,
-        // because they are the reason the question is being asked at all.
+        // The deletions are counted out on their own, because they are the
+        // reason the question is being asked at all.
         What::Send => (
             " send the queue? ",
-            Line::from(format!(
-                "{} over {}, {} of them deleted",
-                plural(app.queue.len(), "change"),
-                plural(app.queued_notes(), "note"),
-                app.queued_deletions()
-            )),
+            queued(),
+            format!(
+                "{} to be deleted — the commit stays, so git revert brings them back",
+                plural(app.queued_deletions(), "note")
+            ),
+            "y  send it       any other key  back to the queue",
+        ),
+        // Not a warning about a change: a warning about work that has not been
+        // written down anywhere and will not survive the process.
+        What::Quit => (
+            " leave the queue behind? ",
+            queued(),
+            "none of it has happened, and none of it is written down anywhere".to_string(),
+            "y  quit anyway       any other key  stay",
         ),
     };
     let lines = vec![
         subject,
         Line::default(),
-        Line::from(Span::styled(
-            "the commit that removes a note stays, so git revert brings it back",
-            muted,
-        )),
+        Line::from(Span::styled(aside, muted)),
         Line::default(),
-        Line::from(Span::styled(
-            "y  go ahead       any other key  leave it alone",
-            muted,
-        )),
+        Line::from(Span::styled(keys, muted)),
     ];
     card(frame, area, title, lines, muted);
 }

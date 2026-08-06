@@ -138,6 +138,11 @@ pub enum What {
     /// — which is the send, not the queueing: a delete sitting in the queue has
     /// not happened and can still be dropped from it.
     Send,
+    /// Leave with a queue still in it. The queue is the one thing a session
+    /// holds that is not written down anywhere: a query can be retyped and a
+    /// mark remade, but an afternoon's worth of queued changes goes with the
+    /// process.
+    Quit,
 }
 
 /// The one thing a change needs said in words before it can be asked for.
@@ -382,7 +387,10 @@ impl App {
         }
         // Ctrl-C leaves from wherever you are, including mid-query. It is the
         // one key that means the same thing in every mode, because it is what
-        // the terminal itself would have meant by it.
+        // the terminal itself would have meant by it — and the one that does not
+        // stop to ask about an unsent queue, for the same reason. A program that
+        // argues with Ctrl-C is a program you end up killing from another
+        // window; `q` is the key that can afford to ask.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(Action::Quit);
         }
@@ -417,7 +425,12 @@ impl App {
             return None;
         }
         match key.code {
-            KeyCode::Char('q') => return Some(Action::Quit),
+            KeyCode::Char('q') => {
+                if self.queue.is_empty() {
+                    return Some(Action::Quit);
+                }
+                self.mode = Mode::Confirm(What::Quit);
+            }
             KeyCode::Char('r') => return Some(Action::Reload),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('/') => self.mode = Mode::Search,
@@ -751,6 +764,7 @@ impl App {
         match what {
             What::Delete => Some(Action::Remove(self.selected()?.id.clone())),
             What::Send => Some(Action::Send(self.queue.clone())),
+            What::Quit => Some(Action::Quit),
         }
     }
 
@@ -861,12 +875,16 @@ impl App {
     /// narrow it (a backspace, or an `OR` completed), so there is no subset to
     /// refine. At `noda ls` speeds the notebook is walked in memory in well
     /// under a frame.
+    ///
+    /// Split the way the shell would split it, quotes and all. `Query::parse`
+    /// takes one token per argument precisely so that the shell's quoting is the
+    /// only quoting there is — and there is no shell in front of this field, so
+    /// it does that part itself. Without it `tag:"12.34 foo bar"` has no
+    /// spelling here at all: a value with a space in it becomes three terms
+    /// and-ed together, and a tag you can read in the listing is one you cannot
+    /// filter by on the screen it is on. Same reasoning as the tags prompt.
     fn refilter(&mut self) {
-        let tokens: Vec<String> = self
-            .search
-            .split_whitespace()
-            .map(std::string::ToString::to_string)
-            .collect();
+        let tokens = split_quoted(&self.search);
 
         if tokens.is_empty() {
             self.error = None;
@@ -1431,6 +1449,84 @@ mod tests {
                 touch: Touch::Stamp,
             })
         );
+    }
+
+    #[test]
+    fn a_tag_with_a_space_in_it_can_be_searched_for() {
+        let mut app = App::new(
+            "personal".to_string(),
+            PathBuf::from("/notebook"),
+            a_status(),
+            vec![
+                a_note(
+                    "aaaa1111",
+                    "ubuntu-notes",
+                    "Ubuntu notes",
+                    &["12.34 foo bar"],
+                    "body",
+                ),
+                a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
+            ],
+        );
+
+        app.on_key(key(KeyCode::Char('/')));
+        // Unquoted it is three terms ANDed, which is the same reading the shell
+        // would give it, and it finds nothing.
+        typing(&mut app, "tag:12.34 foo bar");
+        assert_eq!(app.shown(), 0);
+
+        app.on_key(key(KeyCode::Esc));
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:\"12.34 foo bar\"");
+        assert_eq!(app.shown(), 1);
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
+    }
+
+    #[test]
+    fn quoting_leaves_an_ordinary_query_exactly_as_it_was() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work OR tag:q3");
+        assert_eq!(app.shown(), 2);
+        assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn a_queue_is_not_left_behind_without_being_asked_about() {
+        let mut app = an_app();
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), Some(Action::Quit));
+
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), None);
+        assert_eq!(app.mode, Mode::Confirm(What::Quit));
+        // Anything but `y` stays, and the queue is still there to be sent.
+        assert_eq!(app.on_key(key(KeyCode::Char('n'))), None);
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.queue.len(), 1);
+
+        app.on_key(key(KeyCode::Char('q')));
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('y'))),
+            Some(Action::Quit),
+            "and saying so leaves"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_still_means_now() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        // The one key that does not argue: a program that talks back to Ctrl-C
+        // is one you end up killing from another window.
+        assert_eq!(app.on_key(ctrl('c')), Some(Action::Quit));
     }
 
     #[test]

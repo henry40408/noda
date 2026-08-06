@@ -600,7 +600,7 @@ the search match, which is the exception `noda search` already makes when it quo
 | `j` / `k`, `↓` / `↑` | move |
 | `Ctrl-d` / `Ctrl-u`, `g` / `G` | half a screen, first / last |
 | `Tab`, `h` / `l` | move between the list and the preview (the preview scrolls with the same keys) |
-| `/` | search, in the language `noda search` takes |
+| `/` | search, in the language `noda search` takes. There is no shell in front of the field, so it quotes like one: `tag:"12.34 foo bar"` |
 | `Enter` | read the note under the cursor; while a query is being typed, keep it and put the keyboard back on the list |
 | `Esc` | leave a prompt; otherwise drop the query, and once there is no query, the marks |
 | `Space`, `*` | mark the note under the cursor; mark everything the query is showing (or take the marks off it) |
@@ -672,6 +672,11 @@ notebook untouched; a note that disappeared from another window while the queue 
 built is reported underneath what did go through. Nothing is asked before sending unless the
 queue deletes something, and then it is asked once — queueing a delete deletes nothing, so
 the question belongs at the last moment it can still be answered no.
+
+`q` asks before leaving with a queue still in it. The queue is the one thing a session holds
+that is written down nowhere: a query can be retyped and a mark remade, but an afternoon of
+queued changes goes with the process. `Ctrl-C` is the exception and leaves without asking —
+a program that argues with `Ctrl-C` is one you end up killing from another window.
 
 It deliberately **does not watch the filesystem**: a note written from another window arrives
 when you press `r`, rather than rearranging the list under a reader mid-sentence.
