@@ -244,6 +244,229 @@ fn a_reload_picks_up_a_note_written_from_somewhere_else() {
     assert!(has_line_with(&screen, &["Trip plan"]));
 }
 
+/// What the runtime does with an action, for the ones that do not want a
+/// terminal of their own: run the command it names, take down what it said, and
+/// read the notebook again. `Edit` and `Add` are left out — both hand the
+/// terminal to `$EDITOR`, and there is no terminal here to hand over.
+fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
+    let outcome = match action {
+        tui::Action::Tag {
+            key,
+            changes,
+            touch,
+        } => cmd::tag(paths, &key, &changes, touch),
+        tui::Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
+        tui::Action::Remove(key) => cmd::rm(paths, &key),
+        other => panic!("{other:?} wants a terminal of its own"),
+    };
+    app.report(outcome);
+    tui::reload(paths, app).expect("reload");
+}
+
+#[test]
+fn a_tag_typed_at_the_prompt_is_on_the_note_afterwards() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+urgent");
+    // The prompt is on the same line the query uses, and says which it is.
+    let prompt = screen(&mut app);
+    assert!(has_line_with(&prompt, &["tags", "+urgent"]));
+    assert!(
+        has_line_with(&prompt, &["+work -q3"]),
+        "the syntax is shown"
+    );
+
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    // Read out of the file the command wrote, in the pane that shows the file.
+    assert!(has_line_with(&after, &["tags: [work, urgent]"]));
+    // And the footer is `noda tag`'s own answer, not a sentence noda wrote
+    // twice.
+    let id = app.selected().expect("a note").id.clone();
+    assert!(has_line_with(&after, &[&id, "budget-review", "urgent"]));
+}
+
+#[test]
+fn a_tag_with_a_space_in_it_can_be_removed_from_the_screen_it_is_on() {
+    let (_root, paths) = a_notebook();
+    // The shape an import leaves behind: a tag is allowed a space, and the one
+    // that has one is the one you most want to be rid of.
+    cmd::add(
+        &paths,
+        Some("Ubuntu notes"),
+        Some("body"),
+        &["24.04 Dark patterns".to_string(), "work".to_string()],
+    )
+    .expect("add");
+    let mut app = tui::load(&paths).expect("load");
+    app.on_key(key(KeyCode::Char('G')));
+    assert_eq!(
+        app.selected().map(|f| f.note.title.clone()),
+        Some("Ubuntu notes".to_string())
+    );
+
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "-\"24.04 Dark patterns\"");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to remove");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(
+        has_line_with(&after, &["tags: [work]"]),
+        "the spaced tag is gone and the other one is not"
+    );
+    assert!(!has_line_with(&after, &["Dark patterns"]));
+}
+
+#[test]
+fn a_retitle_renames_the_note_and_keeps_the_cursor_on_it() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let id = app.selected().expect("a note").id.clone();
+
+    app.on_key(key(KeyCode::Char('m')));
+    for _ in 0.."Budget review".len() {
+        app.on_key(key(KeyCode::Backspace));
+    }
+    typing(&mut app, "Quarterly plan");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a retitle");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(has_line_with(&after, &["Quarterly plan"]));
+    assert!(!has_line_with(&after, &["Budget review"]));
+    // The slug moved it down the listing; the id is what the cursor followed.
+    assert_eq!(app.selected().map(|f| f.id.clone()), Some(id));
+    assert!(
+        has_line_with(&after, &["title: Quarterly plan"]),
+        "the preview was read again from the file it is now in"
+    );
+}
+
+#[test]
+fn a_delete_is_asked_about_and_then_carried_out() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('d')));
+    let asked = screen(&mut app);
+    assert!(has_line_with(&asked, &["delete this note?"]));
+    assert!(has_line_with(&asked, &["Budget review"]));
+    assert!(has_line_with(&asked, &["git revert brings it back"]));
+
+    let action = app.on_key(key(KeyCode::Char('y'))).expect("a delete");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(!has_line_with(&after, &["Budget review"]));
+    assert_eq!(app.total(), 2);
+    // The row is kept rather than the id, so the cursor lands on the note that
+    // has taken its place.
+    assert_eq!(
+        app.selected().map(|f| f.note.title.clone()),
+        Some("Meeting notes".to_string())
+    );
+}
+
+/// The `updated:` line of the note under the cursor, as it stands on disk.
+fn updated(paths: &Paths, app: &App) -> String {
+    let id = app.selected().expect("a note").id.clone();
+    let file = cmd::path(paths, Some(&id)).expect("the note's path");
+    let text = std::fs::read_to_string(file.trim()).expect("read the note");
+    text.lines()
+        .find(|line| line.starts_with("updated:"))
+        .expect("an updated field")
+        .to_string()
+}
+
+/// Puts a date on the note that no clock will produce, so that "it did not move"
+/// is a claim about the flag rather than about how fast the test ran.
+fn backdate(paths: &Paths, app: &App) {
+    let id = app.selected().expect("a note").id.clone();
+    let file = cmd::path(paths, Some(&id)).expect("the note's path");
+    let file = file.trim().to_string();
+    let text = std::fs::read_to_string(&file).expect("read the note");
+    let older: String = text
+        .lines()
+        .map(|line| {
+            if line.starts_with("updated:") {
+                "updated: 2019-03-04T05:06:07Z".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file, format!("{older}\n")).expect("write the note back");
+}
+
+#[test]
+fn t_holds_a_notes_own_updated_through_a_change() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    backdate(&paths, &app);
+    assert_eq!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
+
+    // Off, and the header says nothing about it.
+    assert!(!has_line_with(&screen(&mut app)[..1], &["keeping updated"]));
+
+    app.on_key(key(KeyCode::Char('T')));
+    let with_flag = screen(&mut app);
+    assert!(
+        has_line_with(&with_flag[..1], &["keeping updated"]),
+        "a setting you cannot see is one you forget you left on"
+    );
+
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+urgent");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(
+        has_line_with(&after, &["tags: [work, urgent]"]),
+        "the change went in"
+    );
+    assert_eq!(
+        updated(&paths, &app),
+        "updated: 2019-03-04T05:06:07Z",
+        "the date the note came with is still the date it carries"
+    );
+
+    // Off again, and the next change records itself as every other one does.
+    app.on_key(key(KeyCode::Char('T')));
+    assert!(!has_line_with(&screen(&mut app)[..1], &["keeping updated"]));
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "-urgent");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    perform(&paths, &mut app, action);
+    assert_ne!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
+}
+
+#[test]
+fn a_change_the_command_refuses_is_reported_in_its_own_words() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('#')));
+    // Tags written the way the listing prints them, which is the way the
+    // frontmatter cannot hold them.
+    typing(&mut app, "+q3,urgent");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(has_line_with(&after, &["a tag cannot contain `,`"]));
+    assert!(
+        has_line_with(&after, &["Budget review", "[work]"]),
+        "the note is as it was"
+    );
+}
+
 #[test]
 fn it_refuses_to_run_where_there_is_no_terminal() {
     let (_root, paths) = a_notebook();

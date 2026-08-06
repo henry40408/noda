@@ -19,24 +19,32 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
 
 use super::app::{App, Focus, Mode};
 use super::theme;
-use crate::cmd::find_ignoring_case;
+use crate::cmd::{Touch, find_ignoring_case};
 use crate::style as palette;
 
 /// What the footer says there is to press. Ordered by how soon somebody needs
-/// it, not alphabetically.
-const HINTS: &str = "j/k move   / search   Tab preview   r reload   ? keys   q quit";
+/// it, not alphabetically, and short enough to leave the count its corner on a
+/// terminal eighty columns wide.
+const HINTS: &str = "j/k move   / search   Tab preview   e edit   a new   ? keys   q quit";
 
-/// How wide the key column on the help card is, so the descriptions line up.
-const KEY_COLUMN: usize = 16;
+/// How wide the key column on the help card is, so the descriptions line up: the
+/// longest set of keys on one row, which is what the column is for.
+const KEY_COLUMN: usize = 22;
 
 const KEYS: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "move"),
-    ("Ctrl-d / Ctrl-u", "half a screen"),
-    ("g / G", "first / last"),
+    ("Ctrl-d / Ctrl-u, g / G", "half a screen · first / last"),
     ("Tab, h / l", "list ↔ preview"),
     ("/", "search: tag:work OR tag:q3 budget"),
     ("Enter", "read the note · in a query, keep it"),
-    ("Esc", "drop the query"),
+    ("Esc", "drop the query · leave a prompt"),
+    // Paired, the way the movement keys are: the card has to fit on a short
+    // terminal, and a key list whose last line is cut off is a key list that
+    // has stopped saying how to quit.
+    ("e, a", "edit in $EDITOR · new note"),
+    ("m, #", "retitle · tags: +work -\"two words\""),
+    ("d", "delete, once you have said y"),
+    ("T", "leave updated alone: --no-touch"),
     ("r", "read the notebook again"),
     ("q, Ctrl-C", "quit"),
 ];
@@ -58,8 +66,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_list(frame, left, app);
     draw_preview(frame, right, app);
     draw_footer(frame, footer, app);
-    if app.mode == Mode::Help {
-        draw_help(frame, frame.area());
+    // Over the top of all of it, and only ever one of them: a card is what the
+    // keyboard is doing, so there is nothing else it could be doing at the time.
+    match app.mode {
+        Mode::Help => draw_help(frame, frame.area()),
+        Mode::Confirm => draw_confirm(frame, frame.area(), app),
+        Mode::Alert => draw_alert(frame, frame.area(), app),
+        _ => {}
     }
 }
 
@@ -110,6 +123,15 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         && (ahead > 0 || behind > 0)
     {
         spans.push(Span::styled(format!("  ↑{ahead} ↓{behind}"), muted));
+    }
+    // Said only while it is on, and said in the strip that is always there: the
+    // default needs no announcement, and a setting that changes what the next
+    // change records is one you have to be able to see you left on.
+    if app.touch == Touch::Keep {
+        spans.push(Span::styled(
+            "  keeping updated",
+            theme::from(palette::MATCH),
+        ));
     }
     frame.render_widget(Line::from(spans), area);
 }
@@ -208,8 +230,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let count = format!("{}/{}", app.shown(), app.total());
 
-    let (left, cursor) = match app.mode {
-        Mode::Search => {
+    let (left, cursor) = match (&app.message, app.mode) {
+        (_, Mode::Search) => {
             let typed = Span::raw(app.search.as_str());
             let width = 1 + typed.width() as u16;
             (
@@ -217,6 +239,19 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Some(area.x + width),
             )
         }
+        // The prompt takes the line the query would have had. Both are one
+        // field along the bottom of the same screen, and a browser with two
+        // places to type would be a browser you had to look at to find out
+        // where your keystrokes were going.
+        (_, Mode::Ask(what)) => {
+            let label = Span::styled(format!("{}  ", what.prompt()), muted);
+            let typed = Span::raw(app.input.as_str());
+            let width = label.width() as u16 + typed.width() as u16;
+            (Line::from(vec![label, typed]), Some(area.x + width))
+        }
+        // What the last command said, in place of the hints. It is the answer to
+        // the key that was just pressed, and the next key takes it away again.
+        (Some(said), _) => (Line::from(Span::raw(said.text.as_str())), None),
         _ if app.error.is_some() || !app.search.is_empty() => (
             Line::from(vec![
                 Span::styled("/", muted),
@@ -229,10 +264,16 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
 
     // The right-hand end says how much of the notebook is on the left; a query
     // that is not one yet says why instead, because that is the more urgent
-    // answer and there is only the one line.
-    let right = match &app.error {
-        Some(message) => Line::from(Span::styled(message.clone(), theme::from(palette::INVALID))),
-        None => Line::from(Span::styled(count, muted)),
+    // answer and there is only the one line. A prompt puts the part of the
+    // answer that cannot be guessed from its name there, for the same reason.
+    let right = match (&app.error, app.mode) {
+        (Some(message), _) => {
+            Line::from(Span::styled(message.clone(), theme::from(palette::INVALID)))
+        }
+        (None, Mode::Ask(what)) if !what.hint().is_empty() => {
+            Line::from(Span::styled(what.hint(), muted))
+        }
+        _ => Line::from(Span::styled(count, muted)),
     };
 
     let [left_area, right_area] = Layout::horizontal([
@@ -257,14 +298,79 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             ])
         })
         .collect();
+    card(frame, area, " keys ", keys, theme::from(palette::MUTED));
+}
 
-    // Measured rather than guessed, and measured after the lines are built: a
-    // card that cut the search example off would be teaching the one thing on
-    // it that cannot be worked out from the key alone. `Line::width` counts
-    // what a terminal will show, so the arrows in the key column count once
-    // each and not three times.
-    let width = 2 + keys.iter().map(Line::width).max().unwrap_or(0) as u16;
-    let height = keys.len() as u16 + 2;
+/// The question `noda rm` does not ask.
+///
+/// At a prompt a delete is a command you typed on purpose; here it is one key
+/// next to another, so it is asked for. It cannot be asked for the way the rest
+/// of noda asks — the terminal is in raw mode, and a command reading a line from
+/// stdin would be reading the keystrokes out from under the browser.
+fn draw_confirm(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(file) = app.selected() else {
+        return;
+    };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(file.id.as_str(), theme::from(palette::ID)),
+            Span::raw("  "),
+            Span::raw(file.note.title.as_str()),
+        ]),
+        Line::default(),
+        Line::from(Span::styled(
+            "the commit that removes it stays, so git revert brings it back",
+            theme::from(palette::MUTED),
+        )),
+        Line::default(),
+        Line::from(Span::styled(
+            "y  delete       any other key  keep it",
+            theme::from(palette::MUTED),
+        )),
+    ];
+    card(
+        frame,
+        area,
+        " delete this note? ",
+        lines,
+        theme::from(palette::MUTED),
+    );
+}
+
+/// Why a command would not do what it was asked.
+///
+/// A card rather than the footer, because the reason is the part worth reading:
+/// `edit` says where it left a file whose frontmatter no longer parses, and that
+/// sentence does not survive being cut to the width of a status line.
+fn draw_alert(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(said) = &app.message else {
+        return;
+    };
+    let lines: Vec<Line> = said.text.lines().map(Line::raw).collect();
+    card(frame, area, " no ", lines, theme::from(palette::INVALID));
+}
+
+/// A card in the middle of the screen, as wide as what is on it.
+///
+/// Measured rather than guessed, and measured after the lines are built: a card
+/// that cut the help's search example off would be losing the one thing on it
+/// that cannot be worked out from the key beside it. `Line::width` counts what a
+/// terminal will show, so an arrow counts once and not three times.
+///
+/// Clamped to the screen, and what does not fit is wrapped rather than cut — the
+/// same bargain the preview makes, and for the same reason: it is prose.
+fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border: Style) {
+    let width = (2 + lines.iter().map(Line::width).max().unwrap_or(0) as u16)
+        .max(title.chars().count() as u16 + 2)
+        .min(area.width);
+    // Counted after the clamp, so a line the screen was too narrow to hold is
+    // given the rows it will wrap onto rather than being pushed off the bottom.
+    let inner = width.saturating_sub(2).max(1);
+    let rows: u16 = lines
+        .iter()
+        .map(|line| (line.width() as u16).div_ceil(inner).max(1))
+        .sum();
+    let height = (rows + 2).min(area.height);
     let [area] = Layout::horizontal([Constraint::Length(width)])
         .flex(Flex::Center)
         .areas(area);
@@ -274,11 +380,9 @@ fn draw_help(frame: &mut Frame, area: Rect) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(keys).block(
-            Block::bordered()
-                .title(" keys ")
-                .border_style(theme::from(palette::MUTED)),
-        ),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(title).border_style(border)),
         area,
     );
 }

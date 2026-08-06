@@ -7,25 +7,33 @@
 //! the listing does not go away while the note is read, and a query narrows it
 //! as it is typed rather than once it is finished.
 //!
-//! Read-only, deliberately. Every command that changes a note validates it,
-//! stamps it and commits it, and there must not be a second implementation of
-//! what a change means — so nothing in here writes, and the keys that would are
-//! not bound.
+//! It changes notes by asking the commands to. Every command that changes a
+//! note validates it, stamps it and commits it, and there must not be a second
+//! implementation of what a change means — so `e` runs `noda edit`, `d` runs
+//! `noda rm`, and what comes back is the line that command would have printed.
+//! Nothing in this module writes a note itself.
 //!
 //! The three parts are kept apart so that most of this can be tested with no
 //! terminal in the room: [`app`] is the state and takes no input but keystrokes,
 //! [`view`] turns that state into a frame, and this module is the only place
-//! that opens a repository, reads a file or touches a terminal.
+//! that opens a repository, reads a file, runs a command or touches a terminal.
 
 pub mod app;
 mod theme;
 pub mod view;
 
+use std::collections::HashSet;
 use std::io::IsTerminal;
 
-use ratatui::DefaultTerminal;
+use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::terminal::{
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::crossterm::{cursor, execute};
+use ratatui::{DefaultTerminal, Terminal};
 
+use crate::cmd;
 use crate::notebook::{NoteFile, Notebook, Status};
 use crate::paths::Paths;
 use crate::{Error, Result};
@@ -111,10 +119,106 @@ fn browse(paths: &Paths, terminal: &mut DefaultTerminal, app: &mut App) -> Resul
             match app.on_key(key) {
                 Some(Action::Quit) => return Ok(()),
                 Some(Action::Reload) => reload(paths, app)?,
+                Some(action) => perform(paths, terminal, app, action)?,
                 None => {}
             }
         }
     }
+}
+
+/// Runs the command a keystroke asked for, and puts the screen back in step with
+/// the notebook afterwards.
+///
+/// The command is the same one the shell would have run, called the same way.
+/// Nothing is decided here about what the change means — only which command
+/// means it, and where its answer goes.
+fn perform(
+    paths: &Paths,
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    action: Action,
+) -> Result<()> {
+    // Taken before the command runs, so a note that `a` has just made can be
+    // told apart from the ones that were already there. The alternative is
+    // reading it out of `add`'s answer, and that answer is a sentence written
+    // for a person.
+    let before: Option<HashSet<String>> =
+        matches!(action, Action::Add(_)).then(|| app.ids().map(str::to_string).collect());
+
+    let outcome = match action {
+        // Both are the caller's, and named rather than left to a wildcard so
+        // that an action added later cannot be quietly swallowed here.
+        Action::Quit | Action::Reload => return Ok(()),
+        Action::Edit { key, touch } => {
+            in_the_foreground(terminal, || cmd::edit(paths, &key, touch))?
+        }
+        Action::Add(title) => {
+            in_the_foreground(terminal, || cmd::add(paths, title.as_deref(), None, &[]))?
+        }
+        // Links are left alone: `--update-links` edits the prose of notes the
+        // command was not pointed at, and a browser is not the place to do that
+        // to a note nobody is looking at. `noda mv --update-links` still is.
+        Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
+        Action::Tag {
+            key,
+            changes,
+            touch,
+        } => cmd::tag(paths, &key, &changes, touch),
+        Action::Remove(key) => cmd::rm(paths, &key),
+    };
+    app.report(outcome);
+
+    // Whatever happened, the notebook on screen is now a guess: a change that
+    // was committed, an edit that was rejected and left on disk, or a file
+    // another window wrote while the editor had the terminal.
+    reload(paths, app)?;
+
+    // The one note the reader is certainly looking for is the one they have just
+    // made. Anything else keeps the cursor `reload` already kept.
+    let made = before.and_then(|ids| app.ids().find(|id| !ids.contains(*id)).map(str::to_string));
+    if let Some(id) = made {
+        app.select_id(&id);
+    }
+    Ok(())
+}
+
+/// Hands the terminal back for the length of a command that wants one of its
+/// own — which means `$EDITOR`, the only kind noda runs.
+///
+/// The alternate screen goes away and raw mode with it, so the editor starts on
+/// a terminal in the state it would have found had it been run from the shell.
+/// Coming back the screen is cleared rather than redrawn from what was there:
+/// the alternate screen is a fresh buffer, and ratatui's record of what is on it
+/// describes a frame that has been gone for as long as the edit took.
+///
+/// Done with crossterm's own calls rather than by `ratatui::try_init` and
+/// `try_restore`, for two reasons. `try_init` installs a panic hook around the
+/// one already there, and an editor opened twenty times would leave twenty of
+/// them. And the terminal is replaced rather than cleared: `Terminal::clear`
+/// asks the terminal where its cursor is and waits for the reply, which is a
+/// question the alternate screen has just made pointless and which some
+/// terminals answer slowly or not at all — under a pty with nothing to answer
+/// it, that wait ends the session with "the cursor position could not be read".
+/// A terminal built fresh has two empty buffers, which is exactly what a screen
+/// that has just been switched back to needs anyway.
+fn in_the_foreground<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T) -> Result<T> {
+    disable_raw_mode()?;
+    execute!(std::io::stdout(), LeaveAlternateScreen, cursor::Show)?;
+
+    let out = run();
+
+    enable_raw_mode()?;
+    // Cleared as well as entered. Switching to the alternate screen is specified
+    // to clear it, but the fresh terminal below believes the screen is blank,
+    // and that belief is cheap to make true rather than to rely on.
+    execute!(
+        std::io::stdout(),
+        EnterAlternateScreen,
+        Clear(ClearType::All),
+        cursor::Hide
+    )?;
+    *terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+    Ok(out)
 }
 
 /// Brings the preview into step with the cursor.

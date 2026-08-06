@@ -455,7 +455,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook on one screen: the listing, the note under the cursor, and that same query filtering as you type. |
+| `noda tui` | Browse the notebook on one screen: the listing, the note under the cursor, and that same query filtering as you type. `e`, `a`, `m`, `#` and `d` run `edit`, `add`, `mv`, `tag` and `rm` on the note under the cursor. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -602,16 +602,33 @@ the search match, which is the exception `noda search` already makes when it quo
 | `Tab`, `h` / `l` | move between the list and the preview (the preview scrolls with the same keys) |
 | `/` | search, in the language `noda search` takes |
 | `Enter` | read the note under the cursor; while a query is being typed, keep it and put the keyboard back on the list |
-| `Esc` | drop the query |
+| `Esc` | drop the query, or leave a prompt without answering it |
+| `e` | edit the note in `$EDITOR` |
+| `a` | new note: a title along the bottom, then `$EDITOR` for the body (`Enter` on an empty title takes it from the body, as `noda add` does) |
+| `m` | retitle, starting from the title it has |
+| `#` | tags, written the way `noda tag` takes them: `+work -q3`. A tag may contain a space, so the prompt quotes like a shell: `-"24.04 Dark patterns"` |
+| `d` | delete, once you have said `y` |
+| `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The header says `keeping updated` for as long as it is on |
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
 
-Two things it deliberately does not do. **It does not write.** Every command that changes a
-note validates it, stamps its `updated` and commits it, and there must not be a second
-implementation of what a change means — so the keys that would change one are not bound, and
-`noda edit` is still how a note is edited. And **it does not watch the filesystem**: a note
-written from another window arrives when you press `r`, rather than rearranging the list
-under a reader mid-sentence.
+**Every key that changes a note runs the command that changes it.** `e` is `noda edit`, `#`
+is `noda tag`, `d` is `noda rm` — so a change made here is validated, stamped and committed
+exactly as one made at the prompt, and the line along the bottom afterwards is the line that
+command would have printed. There is no second implementation of what a change means, which
+is the whole reason the keys are wired this way rather than to a writer of their own. Two
+consequences worth knowing: `$EDITOR` gets the terminal to itself while it runs, as it would
+from the shell; and a command that refuses says why on a card, because the reason — where an
+edit with a broken frontmatter block was left, say — is the part worth reading.
+
+`--no-touch` is a setting here rather than something said per change. At a prompt you write it
+on the one command it applies to; on a screen there is nowhere to qualify a single keystroke,
+and the reason for wanting it — a sitting of small corrections to notes whose dates came from
+somewhere else — outlasts one keystroke anyway. `T` turns it on for the session, `e`, `m` and
+`#` follow it, and the header carries `keeping updated` until you turn it off.
+
+It deliberately **does not watch the filesystem**: a note written from another window arrives
+when you press `r`, rather than rearranging the list under a reader mid-sentence.
 
 It needs a terminal at both ends and says so rather than filling a pipe with escape
 sequences:
