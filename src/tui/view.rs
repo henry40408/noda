@@ -42,7 +42,7 @@ const KEYS: &[(&str, &str)] = &[
     // terminal, and a key list whose last line is cut off is a key list that
     // has stopped saying how to quit.
     ("e, a", "edit in $EDITOR · new note"),
-    ("m, #", "retitle · tags: +work -q3"),
+    ("m, #", "retitle · tags: +work -\"two words\""),
     ("d", "delete, once you have said y"),
     ("T", "leave updated alone: --no-touch"),
     ("r", "read the notebook again"),

@@ -140,7 +140,9 @@ impl Ask {
         match self {
             Ask::Title => "Enter alone takes the title from the body",
             Ask::Retitle => "",
-            Ask::Tags => "+work -q3",
+            // The quotes are in the example because a tag with a space in it is
+            // the one case the syntax does not survive being guessed at.
+            Ask::Tags => "+work -q3 -\"two words\"",
         }
     }
 }
@@ -506,12 +508,7 @@ impl App {
             Ask::Tags => Some(Action::Tag {
                 key: self.selected()?.id.clone(),
                 touch: self.touch,
-                // The shell's job again, done by the space bar: one token per
-                // argument, exactly as `noda tag` is written at a prompt.
-                changes: answer
-                    .split_whitespace()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
+                changes: split_quoted(&answer),
             }),
         }
     }
@@ -667,6 +664,44 @@ impl App {
 enum Edge {
     First,
     Last,
+}
+
+/// A prompt's answer split the way a shell would split it: on whitespace, but
+/// not inside quotes.
+///
+/// The space bar does the shell's job here, and this is the part of that job the
+/// space bar cannot do. A tag is allowed to contain a space — `24.04 Dark
+/// patterns` is the sort of thing a `TiddlyWiki` import leaves behind — and at a
+/// prompt it is the shell's quoting that keeps it in one piece. Without this,
+/// `-24.04 Dark patterns` arrives as three changes and the command rejects the
+/// second, so a tag you can see in the listing is one you cannot remove from the
+/// screen it is on.
+///
+/// Either quote character, because both are what the hands reach for. An
+/// unclosed quote runs to the end rather than being an error: the line is being
+/// typed, and the character that would close it is usually the next one.
+fn split_quoted(text: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(open) if c == open => quote = None,
+            None if c == '"' || c == '\'' => quote = Some(c),
+            // Only outside the quotes does a space end a piece. Inside them it
+            // is part of the tag, which is the whole point.
+            None if c.is_whitespace() => {
+                if !piece.is_empty() {
+                    pieces.push(std::mem::take(&mut piece));
+                }
+            }
+            _ => piece.push(c),
+        }
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+    pieces
 }
 
 /// The first line of what a command printed, which for the commands the browser
@@ -1147,6 +1182,39 @@ mod tests {
                 touch: Touch::Stamp,
             })
         );
+    }
+
+    #[test]
+    fn a_tag_with_a_space_in_it_survives_the_prompt() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        // What the listing shows for a note imported from TiddlyWiki, and what
+        // you would type at a prompt to be rid of it.
+        typing(&mut app, "-\"24.04 Dark patterns\" +work");
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Tag {
+                key: "aaaa1111".to_string(),
+                changes: vec!["-24.04 Dark patterns".to_string(), "+work".to_string()],
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn the_prompt_splits_the_way_a_shell_does() {
+        assert_eq!(split_quoted("+work -q3"), vec!["+work", "-q3"]);
+        assert_eq!(split_quoted("  +work   "), vec!["+work"]);
+        assert!(split_quoted("   ").is_empty());
+        // Either quote, and the quotes around the name rather than around the
+        // whole piece — the `-` in front of them is what says remove.
+        assert_eq!(split_quoted("-'a b' +c"), vec!["-a b", "+c"]);
+        assert_eq!(split_quoted("-\"a b\""), vec!["-a b"]);
+        // Quoted whole, which is what a hand used to a shell may well type.
+        assert_eq!(split_quoted("\"-a b\""), vec!["-a b"]);
+        // Half-typed: the line is still being written, so the quote that has not
+        // been closed yet takes the rest rather than failing.
+        assert_eq!(split_quoted("-\"a b"), vec!["-a b"]);
     }
 
     #[test]

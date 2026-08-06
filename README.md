@@ -606,7 +606,7 @@ the search match, which is the exception `noda search` already makes when it quo
 | `e` | edit the note in `$EDITOR` |
 | `a` | new note: a title along the bottom, then `$EDITOR` for the body (`Enter` on an empty title takes it from the body, as `noda add` does) |
 | `m` | retitle, starting from the title it has |
-| `#` | tags, written the way `noda tag` takes them: `+work -q3` |
+| `#` | tags, written the way `noda tag` takes them: `+work -q3`. A tag may contain a space, so the prompt quotes like a shell: `-"24.04 Dark patterns"` |
 | `d` | delete, once you have said `y` |
 | `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The header says `keeping updated` for as long as it is on |
 | `r` | read the notebook again |

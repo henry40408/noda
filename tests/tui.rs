@@ -291,6 +291,38 @@ fn a_tag_typed_at_the_prompt_is_on_the_note_afterwards() {
 }
 
 #[test]
+fn a_tag_with_a_space_in_it_can_be_removed_from_the_screen_it_is_on() {
+    let (_root, paths) = a_notebook();
+    // The shape an import leaves behind: a tag is allowed a space, and the one
+    // that has one is the one you most want to be rid of.
+    cmd::add(
+        &paths,
+        Some("Ubuntu notes"),
+        Some("body"),
+        &["24.04 Dark patterns".to_string(), "work".to_string()],
+    )
+    .expect("add");
+    let mut app = tui::load(&paths).expect("load");
+    app.on_key(key(KeyCode::Char('G')));
+    assert_eq!(
+        app.selected().map(|f| f.note.title.clone()),
+        Some("Ubuntu notes".to_string())
+    );
+
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "-\"24.04 Dark patterns\"");
+    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to remove");
+    perform(&paths, &mut app, action);
+
+    let after = screen(&mut app);
+    assert!(
+        has_line_with(&after, &["tags: [work]"]),
+        "the spaced tag is gone and the other one is not"
+    );
+    assert!(!has_line_with(&after, &["Dark patterns"]));
+}
+
+#[test]
 fn a_retitle_renames_the_note_and_keeps_the_cursor_on_it() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
