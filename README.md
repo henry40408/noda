@@ -455,7 +455,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook on one screen: the listing, the note under the cursor, and that same query filtering as you type. `e`, `a`, `m`, `#` and `d` run `edit`, `add`, `mv`, `tag` and `rm` on the note under the cursor. |
+| `noda tui` | Browse the notebook on one screen: the listing, the note under the cursor, and that same query filtering as you type. `e`, `a`, `m`, `#` and `d` run `edit`, `add`, `mv`, `tag` and `rm` on the note under the cursor; mark several and the tag and delete keys queue up instead, to be sent as one commit. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -602,12 +602,14 @@ the search match, which is the exception `noda search` already makes when it quo
 | `Tab`, `h` / `l` | move between the list and the preview (the preview scrolls with the same keys) |
 | `/` | search, in the language `noda search` takes |
 | `Enter` | read the note under the cursor; while a query is being typed, keep it and put the keyboard back on the list |
-| `Esc` | drop the query, or leave a prompt without answering it |
+| `Esc` | leave a prompt; otherwise drop the query, and once there is no query, the marks |
+| `Space`, `*` | mark the note under the cursor; mark everything the query is showing (or take the marks off it) |
+| `Q` | the queue: what is waiting to be sent, `d` to drop an entry, `Enter` to send |
 | `e` | edit the note in `$EDITOR` |
 | `a` | new note: a title along the bottom, then `$EDITOR` for the body (`Enter` on an empty title takes it from the body, as `noda add` does) |
 | `m` | retitle, starting from the title it has |
 | `#` | tags, written the way `noda tag` takes them: `+work -q3`. A tag may contain a space, so the prompt quotes like a shell: `-"24.04 Dark patterns"` |
-| `d` | delete, once you have said `y` |
+| `d` | delete, once you have said `y`. With notes marked, `#` and `d` are aimed at the marked set and go into the queue instead |
 | `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The header says `keeping updated` for as long as it is on |
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
@@ -626,6 +628,50 @@ on the one command it applies to; on a screen there is nowhere to qualify a sing
 and the reason for wanting it — a sitting of small corrections to notes whose dates came from
 somewhere else — outlasts one keystroke anyway. `T` turns it on for the session, `e`, `m` and
 `#` follow it, and the header carries `keeping updated` until you turn it off.
+
+#### Changing several notes at once
+
+Marking and searching are separate, and neither undoes the other. `Space` marks the note under
+the cursor and `*` marks everything the query is showing, so "narrow to what I mean, take the
+lot, search again" builds a selection out of several searches. A note the query is currently
+hiding is still marked and still gets changed — otherwise marking would only ever mean "what
+is on screen right now", which is what the query already means.
+
+With notes marked, `#` and `d` stop acting on the note under the cursor and start filling a
+queue: one entry per change, each aimed at the notes that were marked when it was added. The
+header counts both, because a key that means two things has to say which one it means.
+
+```
+personal  (main)  128 notes  12 marked  2 queued
+```
+
+`Q` reads the queue back, `d` drops an entry, and `Enter` sends it:
+
+```
+┌ queued ─────────────────────────────────────────────────────────┐
+│tag: -q3 (12 notes)                                              │
+│tag: +archive (12 notes)                                         │
+│                                                                 │
+│Enter  send, in one commit       d  drop this one       Esc  back│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**A queue arrives in the history as one commit**, because a queue is one intention: "these
+twelve notes are no longer q3" is a thing you did, and twelve commits saying so is a history
+that buries the fact under the work of carrying it out.
+
+```
+$ noda log -n 1
+8f2a1c9  2026-08-06 22:31  bulk: 2 changes over 12 notes
+```
+
+What a change *means* is not restated to make that possible — `noda tui` hands the queue to
+the same code `noda tag` and `noda rm` use, with the commit boundary moved out one level. Every
+tag is parsed before anything is written, so a queue with one bad change in it leaves the
+notebook untouched; a note that disappeared from another window while the queue was being
+built is reported underneath what did go through. Nothing is asked before sending unless the
+queue deletes something, and then it is asked once — queueing a delete deletes nothing, so
+the question belongs at the last moment it can still be answered no.
 
 It deliberately **does not watch the filesystem**: a note written from another window arrives
 when you press `r`, rather than rearranging the list under a reader mid-sentence.

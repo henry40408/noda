@@ -1,7 +1,7 @@
 //! Command implementations. Each one takes `Paths` explicitly so tests can run
 //! against a throwaway root without touching the real environment.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -655,59 +655,131 @@ fn dim_frontmatter(text: &str) -> String {
 /// error — it just leaves nothing to commit.
 pub fn tag(paths: &Paths, key: &str, changes: &[String], touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    let located = locate(&notebook, key)?;
+    let edits = parse_tags(changes, Some(key))?;
+    let done = apply_tags(&notebook, key, &edits, touch)?;
+    if done.changed {
+        notebook.commit(&done.paths(), &format!("tag: {}", done.slug))?;
+    }
+    Ok(done.summary)
+}
+
+/// One `+tag` / `-tag` as written, once it is known to be one.
+///
+/// Parsed away from the notes it applies to, so that a run of changes aimed at
+/// forty of them is refused before the first is opened rather than halfway
+/// through — the difference between nothing having happened and no way to tell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TagEdit {
+    Add(String),
+    Remove(String),
+}
+
+fn parse_tags(changes: &[String], key: Option<&str>) -> Result<Vec<TagEdit>> {
+    changes
+        .iter()
+        .map(|change| {
+            // The tag list takes hyphen values, so that `-q3` reads as a tag to
+            // remove rather than an option — which means a flag written after
+            // the tags is handed over as one more change. `--no-touch` would
+            // strip to `-no-touch` and quietly remove a tag nobody has, leaving
+            // a command that looks like it worked and did not. Say where the
+            // flag goes, when there is a command to say it about.
+            if change.starts_with("--") {
+                let goes = match key {
+                    Some(key) => format!(" — `noda tag {key} {change} +tag`"),
+                    None => String::new(),
+                };
+                return Err(Error::msg(format!(
+                    "`{change}` is being read as a tag: the tags take everything after them, so a flag has to come before them{goes}"
+                )));
+            }
+            if let Some(name) = change.strip_prefix('+') {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(Error::msg("`+` needs a tag name after it"));
+                }
+                note::validate_tag(name)?;
+                Ok(TagEdit::Add(name.to_string()))
+            } else if let Some(name) = change.strip_prefix('-') {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(Error::msg("`-` needs a tag name after it"));
+                }
+                Ok(TagEdit::Remove(name.to_string()))
+            } else {
+                Err(Error::msg(format!(
+                    "tags must be given as `+{change}` to add or `-{change}` to remove"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// What a change did to one note, with nothing committed.
+///
+/// The commit is the caller's business. One command is one commit, but a queue
+/// sent from the browser is one commit for the lot, and that difference must not
+/// become a second account of what the change itself *means* — so the meaning
+/// lives here and the boundary lives above.
+struct Applied {
+    id: String,
+    slug: String,
+    /// What git has to be told about, relative to the notebook.
+    files: Vec<String>,
+    /// The line the command prints for this note.
+    summary: String,
+    /// False when the note already said what it was asked to say.
+    changed: bool,
+}
+
+impl Applied {
+    fn paths(&self) -> Vec<&Path> {
+        self.files.iter().map(Path::new).collect()
+    }
+}
+
+/// Writes the tag changes into one note's file. Nothing is committed.
+fn apply_tags(notebook: &Notebook, key: &str, edits: &[TagEdit], touch: Touch) -> Result<Applied> {
+    let located = locate(notebook, key)?;
     let mut note = located.note;
     let before = note.tags.clone();
 
-    for change in changes {
-        // The tag list takes hyphen values, so that `-q3` reads as a tag to
-        // remove rather than an option — which means a flag written after the
-        // tags is handed over as one more change. `--no-touch` would strip to
-        // `-no-touch` and quietly remove a tag nobody has, leaving a command
-        // that looks like it worked and did not. Say where the flag goes.
-        if change.starts_with("--") {
-            return Err(Error::msg(format!(
-                "`{change}` is being read as a tag: the tags take everything after them, so a flag has to come before them — `noda tag {key} {change} +tag`"
-            )));
-        }
-        if let Some(name) = change.strip_prefix('+') {
-            let name = name.trim();
-            if name.is_empty() {
-                return Err(Error::msg("`+` needs a tag name after it"));
+    for edit in edits {
+        match edit {
+            TagEdit::Add(name) => {
+                if !note.tags.iter().any(|t| t == name) {
+                    note.tags.push(name.clone());
+                }
             }
-            note::validate_tag(name)?;
-            if !note.tags.iter().any(|t| t == name) {
-                note.tags.push(name.to_string());
-            }
-        } else if let Some(name) = change.strip_prefix('-') {
-            let name = name.trim();
-            if name.is_empty() {
-                return Err(Error::msg("`-` needs a tag name after it"));
-            }
-            note.tags.retain(|t| t != name);
-        } else {
-            return Err(Error::msg(format!(
-                "tags must be given as `+{change}` to add or `-{change}` to remove"
-            )));
+            TagEdit::Remove(name) => note.tags.retain(|t| t != name),
         }
     }
 
+    let file = note::file_name(&located.id, &located.slug);
     if note.tags == before {
-        return Ok(format!(
-            "{}  (no change)",
-            summary(&located.id, &located.slug, &note.tags)
-        ));
+        return Ok(Applied {
+            summary: format!(
+                "{}  (no change)",
+                summary(&located.id, &located.slug, &note.tags)
+            ),
+            id: located.id,
+            slug: located.slug,
+            files: vec![file],
+            changed: false,
+        });
     }
 
     if touch == Touch::Stamp {
         note.updated = Some(note::now());
     }
     std::fs::write(&located.path, note.render())?;
-    notebook.commit(
-        &[Path::new(&note::file_name(&located.id, &located.slug))],
-        &format!("tag: {}", located.slug),
-    )?;
-    Ok(summary(&located.id, &located.slug, &note.tags))
+    Ok(Applied {
+        summary: summary(&located.id, &located.slug, &note.tags),
+        id: located.id,
+        slug: located.slug,
+        files: vec![file],
+        changed: true,
+    })
 }
 
 /// Opens a note in `$EDITOR` and commits whatever was saved.
@@ -859,26 +931,198 @@ pub fn mv(
 /// `git revert` brings the note back with its id intact.
 pub fn rm(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
+    let done = apply_remove(&notebook, key)?;
+    notebook.commit(&done.paths(), &format!("rm: {}", done.slug))?;
+    Ok(done.summary)
+}
+
+/// Removes one note's file. Nothing is committed.
+fn apply_remove(notebook: &Notebook, key: &str) -> Result<Applied> {
     // Deleting a file does not require understanding it. Refusing to remove a
     // note whose frontmatter is gone leaves the one command that could clear it
     // up unusable exactly when it is wanted.
-    let found = find(&notebook, key)?;
+    let found = find(notebook, key)?;
 
     std::fs::remove_file(&found.path)?;
-    notebook.commit(
-        &[Path::new(&note::file_name(&found.id, &found.slug))],
-        &format!("rm: {}", found.slug),
-    )?;
 
     let tags = found
         .note
         .as_ref()
         .map(|note| note.tags.clone())
         .unwrap_or_default();
-    Ok(format!(
-        "removed  {}",
-        summary(&found.id, &found.slug, &tags)
-    ))
+    Ok(Applied {
+        summary: format!("removed  {}", summary(&found.id, &found.slug, &tags)),
+        files: vec![note::file_name(&found.id, &found.slug)],
+        id: found.id,
+        slug: found.slug,
+        changed: true,
+    })
+}
+
+/// What a queued change does, whichever notes it is aimed at.
+///
+/// The two that mean something said about a set of notes. A retitle does not —
+/// every note would need its own — and `add` has no set to be aimed at, so
+/// neither is here: what cannot be said about several notes is not offered for
+/// several.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    Tag { changes: Vec<String>, touch: Touch },
+    Remove,
+}
+
+/// One change and the notes it is aimed at, by id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    pub keys: Vec<String>,
+    pub change: Change,
+}
+
+impl Step {
+    /// The line this step contributes to the commit message, and the line the
+    /// browser shows for it in the queue. One wording, so what you read before
+    /// sending is what the history says afterwards.
+    pub fn describe(&self) -> String {
+        let notes = count(self.keys.len(), "note");
+        match &self.change {
+            Change::Tag { changes, touch } => {
+                let kept = if *touch == Touch::Keep {
+                    ", keeping updated"
+                } else {
+                    ""
+                };
+                format!("tag: {} ({notes}{kept})", changes.join(" "))
+            }
+            Change::Remove => format!("rm: {notes}"),
+        }
+    }
+}
+
+/// `1 note` / `3 notes`, for the several places that have to say how many.
+fn count(n: usize, thing: &str) -> String {
+    if n == 1 {
+        format!("1 {thing}")
+    } else {
+        format!("{n} {thing}s")
+    }
+}
+
+/// Whether a change could be carried out at all, without opening anything.
+///
+/// What the browser asks before it will put one in its queue: a tag that cannot
+/// be written down should be refused where it was typed, not at the end of a
+/// sitting when the whole queue is sent.
+pub fn check(change: &Change) -> Result<()> {
+    match change {
+        Change::Tag { changes, .. } => parse_tags(changes, None).map(|_| ()),
+        Change::Remove => Ok(()),
+    }
+}
+
+/// Carries out several changes across several notes, and commits all of it at
+/// once.
+///
+/// One commit, because a queue is one intention. "These twelve notes are no
+/// longer q3" is a thing somebody did; twelve commits saying so is a history
+/// that buries the fact under the work of carrying it out. What a change *means*
+/// is not restated here — this is the same code writing the same files as
+/// `tag` and `rm`, with the commit boundary moved out one level.
+///
+/// What can be refused is refused before anything is written: every tag is
+/// parsed up front, so a queue with one bad change in it leaves the notebook
+/// untouched. What cannot be known in advance — a note deleted from another
+/// window between one step and the next — is reported and does not stop the
+/// rest, because the changes already made are on disk by then and leaving them
+/// uncommitted would be the worse answer.
+pub fn bulk(paths: &Paths, steps: &[Step]) -> Result<String> {
+    if steps.is_empty() {
+        return Err(Error::msg("there is nothing to send"));
+    }
+    let mut plan = Vec::new();
+    for step in steps {
+        if step.keys.is_empty() {
+            return Err(Error::msg("a change has to be aimed at a note"));
+        }
+        plan.push(match &step.change {
+            Change::Tag { changes, touch } => Planned::Tag(parse_tags(changes, None)?, *touch),
+            Change::Remove => Planned::Remove,
+        });
+    }
+
+    let notebook = Notebook::open_active(paths)?;
+    let mut files: Vec<String> = Vec::new();
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    let mut problems: Vec<String> = Vec::new();
+
+    for (step, planned) in steps.iter().zip(&plan) {
+        for key in &step.keys {
+            let done = match planned {
+                Planned::Tag(edits, touch) => apply_tags(&notebook, key, edits, *touch),
+                Planned::Remove => apply_remove(&notebook, key),
+            };
+            match done {
+                Ok(done) if done.changed => {
+                    files.extend(done.files);
+                    touched.insert(done.id);
+                }
+                // A note already carrying the tag it was told to carry is not a
+                // failure and not a change; it is one of the reasons a set is
+                // worth acting on at all.
+                Ok(_) => {}
+                Err(e) => problems.push(format!("{key}: {e}")),
+            }
+        }
+    }
+
+    files.sort();
+    files.dedup();
+
+    let mut report = if touched.is_empty() {
+        "nothing to change".to_string()
+    } else {
+        let paths: Vec<&Path> = files.iter().map(Path::new).collect();
+        notebook.commit(&paths, &commit_message(steps))?;
+        format!(
+            "{} over {}, in one commit",
+            count(steps.len(), "change"),
+            count(touched.len(), "note")
+        )
+    };
+    for problem in &problems {
+        report.push('\n');
+        report.push_str(problem);
+    }
+    Ok(report)
+}
+
+/// A step with its tags already parsed, so the parsing happens once rather than
+/// once per note.
+enum Planned {
+    Tag(Vec<TagEdit>, Touch),
+    Remove,
+}
+
+/// One step is its own subject; several get a subject that counts them and a
+/// body that lists them, which is what a reader of `git log --oneline` wants
+/// either way.
+fn commit_message(steps: &[Step]) -> String {
+    if let [only] = steps {
+        return only.describe();
+    }
+    let notes: BTreeSet<&str> = steps
+        .iter()
+        .flat_map(|step| step.keys.iter().map(String::as_str))
+        .collect();
+    let mut message = format!(
+        "bulk: {} over {}\n",
+        count(steps.len(), "change"),
+        count(notes.len(), "note")
+    );
+    for step in steps {
+        message.push('\n');
+        message.push_str(&step.describe());
+    }
+    message
 }
 
 /// Copies files into the active notebook and commits them.
