@@ -174,6 +174,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | `noda status` | Where the active notebook stands: notes, changes, drift from the remote. |
 | `noda doctor [--dry-run] [--links] [--times]` | Report what noda will not settle on its own, and adopt notes that only lack an id. |
 | `noda clone <url> [name]` | Clone an existing remote notebook. |
+| `noda readme [--force]` | Write the notebook's `README.md`, which a git host shows as its front page. |
 
 `noda rm` (a note) is a commit you can revert. `noda notebook rm` is not — it deletes the
 repository and its whole history from disk. The active notebook is refused outright; switch
@@ -254,6 +255,28 @@ A file that will not parse does not lock you out of the commands that do not rea
 `restore`, `rm`, `log` and `diff` identify a note by its filename alone, so they work on one
 whose frontmatter has gone — which is exactly when they are wanted. `mv` and `tag` rewrite
 the frontmatter, so they still have to read it first and say so plainly.
+
+**`noda readme`** writes the one file a notebook needs for a reader who is not you. Push a
+notebook to GitHub, GitLab, Codeberg or Gitea and the front page is whatever `README.md`
+says — without one it is a wall of `k3f9m2p1-*.md` with nothing to explain them. It is a
+separate command rather than a flag on `notebook add` because the day a notebook wants a
+README is the day it goes somewhere people can see, which is rarely the day it was created.
+
+```
+$ noda readme
+wrote README.md in `work`
+```
+
+What it writes is fixed prose: what the filenames mean, what the frontmatter fields are,
+that none of it needs noda to be read, and how to clone it back. Every line stays true
+however many notes arrive. It deliberately does **not** write an index of the notes — that
+would be wrong from the next `noda add` onward, and `noda ls` is that list, always current.
+Everything under the trailing comment is yours; a second run refuses rather than overwrite
+it, and `--force` replaces the file as a commit you can revert.
+
+Because it is addressed to a reader outside the notebook, `doctor --links` never counts it
+as a file no note links to. The only way to clear such a report would be to link the front
+page from a note, which reads backwards.
 
 ### Attachments
 
@@ -385,7 +408,8 @@ Nothing here is repaired, and the three lines are three different questions. A f
 links to may be an attachment whose note was deleted, or a receipt you parked here on purpose
 — and the only repair available is deleting something git cannot regenerate from anything
 else. A **broken** link names nothing at all: a typo, or a file you have not added yet, and
-only you know which.
+only you know which. `README.md` is the one file never counted here: it is written for a
+reader outside the notebook, so no note was ever supposed to link to it.
 
 A **stale** link is the one noda can answer. `noda mv` moves the slug half of a note's
 filename, so a destination written before the retitle names a path that is gone — and still
@@ -1115,6 +1139,7 @@ $XDG_DATA_HOME/noda/            (default ~/.local/share/noda/)
 └── notebooks/
     ├── work/                   # a notebook = a git repo
     │   ├── .git/
+    │   ├── README.md           # the front page, written by `noda readme`
     │   ├── diagram.png         # a file put there by `noda file add`
     │   ├── k3f9m2p1-meeting-notes.md
     │   └── q7x2rstv-reading-log.md

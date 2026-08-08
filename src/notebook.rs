@@ -27,6 +27,11 @@ const REMOTE_NAME: &str = "origin";
 /// failure through untouched.
 pub const NOT_FOUND: &str = "note not found";
 
+/// The file a git host renders on the notebook's front page, written by `noda
+/// readme`. Spelled exactly, because that is the one spelling noda writes and a
+/// wider match would start excusing files nobody meant as a front page.
+pub const README_FILE: &str = "README.md";
+
 pub struct Notebook {
     pub name: String,
     pub path: PathBuf,
@@ -135,7 +140,9 @@ pub struct Scan {
 /// Deliberately not part of `Scan`: building it reads and parses the body of
 /// every note, so `status` must never reach for it.
 pub struct Audit {
-    /// Files in the notebook that no note links to.
+    /// Files in the notebook that no note links to, except the `README_FILE`,
+    /// which is addressed to a reader outside the notebook rather than linked
+    /// from inside it.
     pub orphans: Vec<String>,
     /// `(note filename, destination, the note that destination still names)`
     /// where the file is gone but its id is one the notebook still holds — a
@@ -452,9 +459,13 @@ impl Notebook {
             }
         }
 
+        // The README is the notebook's own entrance, not a resource a note was
+        // supposed to link to. Reporting it would put a line in every `--links`
+        // run that the author can never clear, since the only way to clear it is
+        // to link the front page from a note — which reads backwards.
         let orphans = files
             .into_iter()
-            .filter(|file| !referenced.contains(file))
+            .filter(|file| file != README_FILE && !referenced.contains(file))
             .collect();
 
         stale.sort();

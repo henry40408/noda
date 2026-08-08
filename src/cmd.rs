@@ -1125,6 +1125,113 @@ fn commit_message(steps: &[Step]) -> String {
     message
 }
 
+/// Writes the notebook's `README.md` and commits it.
+///
+/// A notebook read through noda needs no such file — `noda ls` is the listing.
+/// This is for the other reader: a git host renders `README.md` above the file
+/// list, so the first thing anyone meets of a pushed notebook is either this or
+/// a wall of `k3f9m2p1-*.md` with nothing to say what they are.
+///
+/// It is its own command rather than a flag on `notebook add` because the moment
+/// a notebook wants a README is not the moment it is created — it is the day it
+/// is pushed somewhere people can see, which is usually much later, and a flag on
+/// creation could never reach a notebook that already exists.
+///
+/// What it writes is fixed prose on purpose: every line stays true no matter how
+/// many notes arrive. An index of the notes would not, and it is the one thing
+/// this storage model refuses outright — identity lives in the filenames and
+/// nothing in the repository restates it, so a generated list would be a second
+/// copy going stale from the next `noda add` onward.
+pub fn readme(paths: &Paths, force: bool) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    let path = notebook.path.join(notebook::README_FILE);
+
+    // A README anyone has touched is prose someone wrote, and the template has
+    // nothing in it worth losing that for.
+    let existed = path.exists();
+    if existed && !force {
+        return Err(Error::msg(format!(
+            "{} already exists — pass `--force` to overwrite",
+            notebook::README_FILE
+        )));
+    }
+
+    std::fs::write(&path, readme_template(&notebook.name))?;
+    let verb = if existed { "update" } else { "add" };
+    notebook.commit(
+        &[Path::new(notebook::README_FILE)],
+        &format!("file: {verb} {}", notebook::README_FILE),
+    )?;
+
+    Ok(format!(
+        "{} {} in `{}`",
+        if existed { "rewrote" } else { "wrote" },
+        notebook::README_FILE,
+        notebook.name
+    ))
+}
+
+/// The prose `noda readme` writes, with the notebook's name in the places a
+/// reader would have to guess it otherwise.
+fn readme_template(name: &str) -> String {
+    format!(
+        r"# {name}
+
+A [noda](https://github.com/henry40408/noda) notebook: plain Markdown notes kept in git.
+
+## Nothing here needs noda to be read
+
+Every note is a Markdown file at the root of this repository. Open one in this web view,
+in an editor, in anything that renders Markdown. noda makes these notes quicker to write
+and to search; it is not what makes them readable.
+
+## Filenames
+
+Notes are named `<id>-<slug>.md` — for example `k3f9m2p1-meeting-notes.md`.
+
+- The **id** (`k3f9m2p1`) is the note's permanent identity, and never changes.
+- The **slug** (`meeting-notes`) comes from the title, and changes when the title does.
+
+A link from one note to another names the whole filename, so links work in this web view,
+and a link survives a retitle because the id in it still names the same note.
+
+## Frontmatter
+
+Each note opens with a block like this:
+
+```yaml
+---
+title: Reading notes on TAOCP
+tags: [books, algorithms]
+created: 2019-03-14T08:21:00Z
+updated: 2024-11-02T16:40:12Z
+---
+```
+
+`created` is set once and never moves; `updated` follows every change. `tags` is optional.
+noda reads those four fields and leaves everything else in the block alone, so any other
+field is yours to use.
+
+## Working on it with noda
+
+```console
+$ noda clone <this repository's URL> {name}
+$ noda use {name}
+$ noda ls
+```
+
+<!--
+  Everything below is yours to write.
+
+  One thing worth leaving out: a list of the notes. Nothing updates it, so it is wrong
+  from the next `noda add` onward — `noda ls` is that list, always current. What belongs
+  here is what stays true: what this notebook is for, and links to the few notes a reader
+  should start from.
+-->
+"
+    )
+}
+
 /// Copies files into the active notebook and commits them.
 ///
 /// A notebook is a directory, so this wraps a copy — but the directory is one
