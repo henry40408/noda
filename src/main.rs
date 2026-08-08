@@ -29,6 +29,13 @@ struct Cli {
 enum Command {
     /// Create the XDG directories and a default notebook.
     Init,
+    /// Write the notebook's README.md, which a git host shows as its front page.
+    /// Auto-commits.
+    Readme {
+        /// Replace a README.md the notebook already holds.
+        #[arg(long)]
+        force: bool,
+    },
     /// Create a note. Opens $EDITOR when no content is given. Auto-commits.
     Add {
         /// Note title. Derived from the first line when omitted.
@@ -441,6 +448,7 @@ fn run() -> noda::Result<()> {
     let paths = Paths::from_env()?;
     let output = match &cli.command {
         Command::Init => cmd::init(&paths)?,
+        Command::Readme { force } => cmd::readme(&paths, *force)?,
         Command::Add {
             title,
             content,

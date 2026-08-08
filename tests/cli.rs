@@ -2999,6 +2999,119 @@ fn source_file(root: &TempRoot, name: &str) -> PathBuf {
 }
 
 #[test]
+fn readme_writes_the_front_page_and_commits_it() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::readme(&paths, false).unwrap());
+    assert!(out.contains("wrote README.md"), "{out}");
+    assert!(out.contains(cmd::DEFAULT_NOTEBOOK), "and says where: {out}");
+
+    let written = std::fs::read_to_string(notebook.join("README.md")).unwrap();
+    assert!(
+        written.starts_with(&format!("# {}\n", cmd::DEFAULT_NOTEBOOK)),
+        "the notebook names itself: {written}"
+    );
+    assert!(
+        written.contains("<id>-<slug>.md"),
+        "and explains the filenames, which is what a stranger asks first: {written}"
+    );
+    assert!(
+        written.contains(&format!("noda use {}", cmd::DEFAULT_NOTEBOOK)),
+        "and how to work on it: {written}"
+    );
+    assert_eq!(
+        commit_count(&notebook),
+        commits + 1,
+        "one commit, revertible like every other change"
+    );
+}
+
+#[test]
+fn readme_says_nothing_that_the_next_note_would_falsify() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
+    cmd::readme(&paths, false).unwrap();
+
+    let written = std::fs::read_to_string(notebook.join("README.md")).unwrap();
+    assert!(
+        !written.contains("Alpha"),
+        "no index of the notes: it would be stale from the next `noda add` onward, \
+         and `noda ls` is that list: {written}"
+    );
+}
+
+#[test]
+fn readme_will_not_overwrite_prose_someone_wrote() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::readme(&paths, false).unwrap();
+    std::fs::write(notebook.join("README.md"), "# hand-written\n").unwrap();
+    let commits = commit_count(&notebook);
+
+    let err = cmd::readme(&paths, false).unwrap_err().to_string();
+    assert!(err.contains("already exists"), "{err}");
+    assert!(
+        err.contains("--force"),
+        "and says how to get past it: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(notebook.join("README.md")).unwrap(),
+        "# hand-written\n",
+        "the one already there is untouched"
+    );
+    assert_eq!(
+        commit_count(&notebook),
+        commits,
+        "and nothing was committed"
+    );
+}
+
+#[test]
+fn readme_force_replaces_it_in_a_commit() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    std::fs::write(notebook.join("README.md"), "# hand-written\n").unwrap();
+    let commits = commit_count(&notebook);
+
+    let out = plain(&cmd::readme(&paths, true).unwrap());
+    assert!(out.contains("rewrote README.md"), "{out}");
+    assert!(
+        std::fs::read_to_string(notebook.join("README.md"))
+            .unwrap()
+            .contains("A [noda]"),
+        "the template replaced it"
+    );
+    assert_eq!(
+        commit_count(&notebook),
+        commits + 1,
+        "so `git revert` brings the old one back"
+    );
+}
+
+#[test]
+fn readme_is_a_file_rather_than_a_note_and_never_an_orphan() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
+    cmd::readme(&paths, false).unwrap();
+
+    let listed = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap());
+    assert!(
+        listed.contains("files\n  README.md"),
+        "it is one of the notebook's files, not one of its notes: {listed}"
+    );
+
+    let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
+    assert!(
+        !out.contains("README.md"),
+        "and never reported as unlinked — the only way to clear that would be to \
+         link the front page from a note, which reads backwards: {out}"
+    );
+}
+
+#[test]
 fn file_add_copies_it_in_and_commits_it() {
     let (root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
