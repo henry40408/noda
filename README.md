@@ -479,7 +479,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. |
+| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -650,6 +650,8 @@ still marked in the note you opened to read it in.
 | `Enter` | open what the cursor is on; while a query is being typed, keep it and put the keyboard back on the list |
 | `Esc` | leave a prompt; close the screen you are on; otherwise drop the query, and once there is no query, the marks |
 | `/` | filter, in the language `noda search` takes. There is no shell in front of the field, so it quotes like one: `tag:"12.34 foo bar"` |
+| `:` | run a command by name: `:open meeting-notes`, `:tag reading-list +urgent`, `:status`, `:sync`. `Up` / `Down` walk what you have already typed |
+| `Ctrl-a` | what `:` accepts, narrowed as you type — by what a command *does* as well as by its name, so `remote` finds `push` and `pull`. `Enter` puts one on the prompt |
 | `Space`, `*` | mark the note under the cursor; mark everything the filter is showing (or take the marks off it) |
 | `Q` | the queue: what is waiting to be sent, `d` to drop an entry, `Enter` to send |
 | `e` | edit in `$EDITOR` |
@@ -665,6 +667,31 @@ still marked in the note you opened to read it in.
 the listing, and the note itself once you have opened it — so they read the same on either.
 The delete is behind a modifier because it is the one key here that cannot be taken back by
 pressing something else.
+
+**`:` is how the rest of noda gets in.** There are about a dozen letters worth spending on
+keys and rather more subcommands than that, so the ones that do not get a letter are named
+instead — under the names they already have:
+
+```
+:open meeting-notes          # a note by id or by slug, without going to find it
+:tag reading-list +urgent    # naming the note, which the `#` key has no way to do
+:status                      # and everything else that was never going to get a key
+:doctor --links
+:sync
+```
+
+The names are noda's own subcommands; a browser that invented a second vocabulary for the
+same commands would be a second thing to learn. `Ctrl-a` lists them with what each one takes,
+and searches their descriptions as well as their names — type `remote` and you get `push` and
+`pull`. What a name refers to is the notebook's question, not the browser's: `:open k3f` is
+resolved by the same code `noda show k3f` uses, so an id prefix that matches two notes is
+refused here in the same words it would be refused at the prompt.
+
+Two things `:` deliberately does not do. `:rm` takes no note — a delete is only worth asking
+about for a note you can see, so it removes the one on screen and `:open` is how you put
+another one there. And `:doctor` reports and stops: it will adopt files and write to the
+notebook when you ask it to at the prompt, but a browser is not where you want to find out
+that a keystroke rewrote a directory.
 
 **Every key that changes a note runs the command that changes it.** `e` is `noda edit`, `#`
 is `noda tag`, `Ctrl-d` is `noda rm` — so a change made here is validated, stamped and committed

@@ -32,6 +32,7 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
+use super::command;
 use crate::Result;
 use crate::cmd::{self, Change, Step, Touch};
 use crate::note;
@@ -87,6 +88,57 @@ pub enum Action {
     /// same files as the keys above, with the commit boundary moved out one
     /// level so that a queue arrives in the history as the one thing it was.
     Send(Vec<Step>),
+    /// Open a note the prompt named, on a screen of its own.
+    ///
+    /// The key is not resolved here, deliberately. What an id prefix or a slug
+    /// names — and what it means for one to name two notes — is `Notebook::
+    /// resolve`, and a browser holding the notes in memory could answer it a
+    /// second way without noticing it had. So the runtime asks the notebook, and
+    /// an ambiguous key comes back as the same refusal the prompt would print.
+    Open(String),
+    /// A command that reads or changes the notebook and answers with a line.
+    Run(Run),
+}
+
+/// The commands the prompt can ask for that are not about one note.
+///
+/// One variant apiece rather than a closure, so that what the browser is able to
+/// ask for is a list somebody can read — and so the runtime, which is the only
+/// part allowed to open a repository, stays the only part that knows how the
+/// call is made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Run {
+    Status,
+    /// Reporting only. `doctor` will adopt files and write to the notebook when
+    /// asked to at the prompt; from here it says what it found and stops, because
+    /// a browser is not where you find out that a keystroke rewrote a directory.
+    Doctor {
+        links: bool,
+        times: bool,
+    },
+    Readme,
+    /// A name marks the notebook as it stands; no name lists what has been
+    /// marked, which is what `noda snapshot` alone already does.
+    Snapshot(Option<String>),
+    Sync,
+    Push,
+    Pull,
+}
+
+impl Action {
+    /// What to say while this runs, for the ones that go to the network.
+    ///
+    /// The loop draws, waits for a key, then acts — so a command that takes
+    /// seconds leaves the last frame on the screen with no sign that anything is
+    /// happening. These get a frame of their own first.
+    pub fn working(&self) -> Option<&'static str> {
+        match self {
+            Action::Run(Run::Sync) => Some("syncing…"),
+            Action::Run(Run::Push) => Some("pushing…"),
+            Action::Run(Run::Pull) => Some("pulling…"),
+            _ => None,
+        }
+    }
 }
 
 /// What a command said when it was asked to change something.
@@ -186,6 +238,14 @@ pub enum Mode {
     Help,
     /// Typing the one thing a change needs said in words.
     Ask(Ask),
+    /// Typing a command. The same line the query and the prompt use, because
+    /// only one of the three can be open at a time and a browser with three
+    /// places to type would be one you had to look at to find out where your
+    /// keystrokes were going.
+    Command,
+    /// Reading what the prompt accepts, narrowed as you type. The way in for
+    /// somebody who knows what they want to do and not what it is called.
+    Commands,
     /// Waiting for a `y` before something that cannot be taken back. The
     /// confirmation `noda rm` does not ask for at the prompt is asked for here,
     /// and asked for on the screen: the terminal is in raw mode, so a command
@@ -323,6 +383,19 @@ pub struct App {
     pub touch: Touch,
     /// The note the top screen is showing, once the runtime has read it.
     pub reading: Option<Reading>,
+    /// The command lines this session has run, oldest first, for the prompt to
+    /// walk back through. Kept for the session and no longer: a browser is not a
+    /// shell, and a file of everything anyone ever typed into a notebook is a
+    /// thing to have to think about rather than a convenience.
+    history: Vec<String>,
+    /// How far back through it the prompt has been walked. `None` is the line
+    /// being typed, which is why walking forward past the end returns to it
+    /// rather than to the newest entry.
+    history_at: Option<usize>,
+    /// Where the cursor is in the list of commands.
+    commands_at: usize,
+    /// What is being waited for, while it is being waited for.
+    pub working: Option<&'static str>,
     /// How many rows the body last had room for, written back by the drawing
     /// code. Half a screen is half of what you can see, and only the drawing
     /// knows how much that is.
@@ -347,6 +420,10 @@ impl App {
             queue_at: 0,
             touch: Touch::Stamp,
             reading: None,
+            history: Vec::new(),
+            history_at: None,
+            commands_at: 0,
+            working: None,
             page: 10,
         };
         app.select(0);
@@ -593,6 +670,8 @@ impl App {
             }
             Mode::Search => self.searching(key),
             Mode::Ask(what) => self.asking(what, key),
+            Mode::Command => self.commanding(key),
+            Mode::Commands => self.listing_commands(key),
             Mode::Confirm(what) => self.confirming(what, key),
             Mode::Queue => self.queueing(key),
             Mode::Browse => self.browsing(key),
@@ -612,16 +691,19 @@ impl App {
         // it, and so that a key cannot come to mean two things by being added to
         // one screen and forgotten on another.
         match key.code {
-            KeyCode::Char('q') => {
-                if self.queue.is_empty() {
-                    return Some(Action::Quit);
-                }
-                self.mode = Mode::Confirm(What::Quit);
-                return None;
-            }
+            KeyCode::Char('q') => return self.leaving(),
             KeyCode::Char('r') => return Some(Action::Reload),
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
+                return None;
+            }
+            // The way to the commands a key cannot reach. There are thirty
+            // subcommands and about a dozen letters worth spending on them, so
+            // the rest arrive by being named.
+            KeyCode::Char(':') => {
+                self.mode = Mode::Command;
+                self.input.clear();
+                self.history_at = None;
                 return None;
             }
             // Not a change of its own — a change to what the next one records.
@@ -697,6 +779,14 @@ impl App {
             KeyCode::Char('f') => self.step(half),
             KeyCode::Char('b') => self.step(-half),
             KeyCode::Char('d') => return self.delete(),
+            // What the prompt accepts, for somebody who knows what they want to
+            // do and not what it is called. A card and not a key apiece: the
+            // list is the point at which there are too many to have keys.
+            KeyCode::Char('a') => {
+                self.mode = Mode::Commands;
+                self.input.clear();
+                self.commands_at = 0;
+            }
             _ => {}
         }
         None
@@ -1011,6 +1101,281 @@ impl App {
         }
     }
 
+    /// Leaving, or asking about the queue first. The one piece of state a
+    /// session holds that is written down nowhere.
+    fn leaving(&mut self) -> Option<Action> {
+        if self.queue.is_empty() {
+            return Some(Action::Quit);
+        }
+        self.mode = Mode::Confirm(What::Quit);
+        None
+    }
+
+    /// Typing a command.
+    ///
+    /// The same field the query and the prompt use, and the same rule they live
+    /// by: a chord is not a character. `Ctrl-D` arrives as `Char('d')`, and here
+    /// that would put a `d` in the middle of a command name.
+    fn commanding(&mut self, key: KeyEvent) -> Option<Action> {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return None;
+        }
+        match key.code {
+            KeyCode::Enter => {
+                let line = std::mem::take(&mut self.input);
+                self.mode = Mode::Browse;
+                self.history_at = None;
+                return self.run(&line);
+            }
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                self.input.clear();
+                self.history_at = None;
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            // What a shell does with the same keys, and for the same reason: the
+            // command you want next is usually one you have already typed.
+            KeyCode::Up => self.recall(true),
+            KeyCode::Down => self.recall(false),
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        None
+    }
+
+    /// Walks the history. Forward past the newest entry gives back an empty
+    /// line rather than sticking on it — walking away from what you were typing
+    /// is what discarded it, and stopping dead at the end would leave no way to
+    /// type something new without clearing the field by hand.
+    fn recall(&mut self, back: bool) {
+        if self.history.is_empty() {
+            return;
+        }
+        let last = self.history.len() - 1;
+        self.history_at = match (self.history_at, back) {
+            (None, true) => Some(last),
+            (Some(at), true) => Some(at.saturating_sub(1)),
+            (None, false) => None,
+            (Some(at), false) if at >= last => None,
+            (Some(at), false) => Some(at + 1),
+        };
+        self.input = match self.history_at {
+            Some(at) => self.history[at].clone(),
+            None => String::new(),
+        };
+    }
+
+    /// Turns a typed line into the command it names.
+    ///
+    /// The rest of the line is kept as it was typed rather than rebuilt from its
+    /// tokens: a query and a title both survive quoting only if nothing puts
+    /// them back together, and `tag:"12.34 foo bar"` is exactly the case that
+    /// has already been got wrong twice elsewhere.
+    fn run(&mut self, line: &str) -> Option<Action> {
+        let line = line.trim();
+        if line.is_empty() {
+            return None;
+        }
+        self.remember(line);
+        let (name, rest) = match line.find(char::is_whitespace) {
+            Some(at) => (&line[..at], line[at..].trim_start()),
+            None => (line, ""),
+        };
+        let Some(spec) = command::find(name) else {
+            self.refuse(format!("no command `{name}` — Ctrl-a lists them"));
+            return None;
+        };
+        let args = split_quoted(rest);
+
+        match spec.name {
+            "quit" => return self.leaving(),
+            "reload" => return Some(Action::Reload),
+            "keys" => self.mode = Mode::Help,
+            // Back to the listing from wherever you are, and narrowed on the way
+            // if a query came with it.
+            "notes" => {
+                while self.back() {}
+                self.top_mut().search = rest.to_string();
+                self.refilter();
+            }
+            "open" => {
+                let Some(key) = args.first() else {
+                    return self.wants(spec);
+                };
+                return Some(Action::Open(key.clone()));
+            }
+            "edit" => {
+                let key = self.aimed(args.first())?;
+                return Some(Action::Edit {
+                    key,
+                    touch: self.touch,
+                });
+            }
+            "add" => {
+                return Some(Action::Add((!rest.is_empty()).then(|| rest.to_string())));
+            }
+            // No note may be named: a title is free text, so the first word of
+            // one cannot be told from a key. The note on screen is the one that
+            // gets retitled, and `open` is how you put another one there.
+            "mv" => {
+                if rest.is_empty() {
+                    return self.wants(spec);
+                }
+                let key = self.aimed(None)?;
+                return Some(Action::Retitle {
+                    key,
+                    title: rest.to_string(),
+                    touch: self.touch,
+                });
+            }
+            "tag" => {
+                // A key cannot begin with `+` or `-`, so a first argument that
+                // does is a change rather than a note. That is the whole of the
+                // ambiguity, and the notation settles it.
+                let (key, changes) = match args.split_first() {
+                    Some((first, rest)) if !first.starts_with(['+', '-']) => {
+                        (self.aimed(Some(first))?, rest.to_vec())
+                    }
+                    _ => (self.aimed(None)?, args.clone()),
+                };
+                if changes.is_empty() {
+                    return self.wants(spec);
+                }
+                return Some(Action::Tag {
+                    key,
+                    changes,
+                    touch: self.touch,
+                });
+            }
+            // The same question the key asks, and aimed the same way — at the
+            // marked set when there is one, and at the note on screen when there
+            // is not.
+            "rm" => return self.delete(),
+            "status" => return Some(Action::Run(Run::Status)),
+            "doctor" => {
+                let mut links = false;
+                let mut times = false;
+                for arg in &args {
+                    match arg.as_str() {
+                        "--links" => links = true,
+                        "--times" => times = true,
+                        _ => return self.wants(spec),
+                    }
+                }
+                return Some(Action::Run(Run::Doctor { links, times }));
+            }
+            "snapshot" => return Some(Action::Run(Run::Snapshot(args.first().cloned()))),
+            "readme" => return Some(Action::Run(Run::Readme)),
+            "sync" => return Some(Action::Run(Run::Sync)),
+            "push" => return Some(Action::Run(Run::Push)),
+            "pull" => return Some(Action::Run(Run::Pull)),
+            _ => {}
+        }
+        None
+    }
+
+    /// The note a command is aimed at: the one it named, or the one the screen
+    /// is about.
+    fn aimed(&mut self, given: Option<&String>) -> Option<String> {
+        if let Some(key) = given {
+            return Some(key.clone());
+        }
+        let Some(file) = self.selected() else {
+            self.refuse("no note on screen — name one, or open one first".to_string());
+            return None;
+        };
+        Some(file.id.clone())
+    }
+
+    /// What the command takes, said back at somebody who did not give it.
+    fn wants(&mut self, spec: &command::Spec) -> Option<Action> {
+        self.refuse(format!("{} — {}", spec.usage(), spec.what));
+        None
+    }
+
+    /// Why a line was not a command, on the line it was typed on.
+    ///
+    /// Not a card. A card is for what a command said when it ran; this is a
+    /// sentence that never became one, which is the same class of thing as a
+    /// query that is not a query yet — and that already lives here.
+    fn refuse(&mut self, text: String) {
+        self.message = Some(Message { text, failed: true });
+    }
+
+    fn remember(&mut self, line: &str) {
+        if self.history.last().map(String::as_str) == Some(line) {
+            return;
+        }
+        self.history.push(line.to_string());
+    }
+
+    /// Reading what the prompt accepts, narrowed as you type.
+    fn listing_commands(&mut self, key: KeyEvent) -> Option<Action> {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return None;
+        }
+        let shown = command::matching(&self.input).count();
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                self.input.clear();
+            }
+            KeyCode::Down => {
+                self.commands_at = (self.commands_at + 1).min(shown.saturating_sub(1));
+            }
+            KeyCode::Up => self.commands_at = self.commands_at.saturating_sub(1),
+            // Onto the prompt rather than run outright. Most of them take
+            // something, and a list that ran them blind would be no use for the
+            // half that do — and `push` is not a thing to set off by landing on
+            // it and pressing Enter.
+            KeyCode::Enter => {
+                let Some(spec) = command::matching(&self.input).nth(self.commands_at) else {
+                    self.mode = Mode::Browse;
+                    self.input.clear();
+                    return None;
+                };
+                self.input = if spec.takes.is_empty() {
+                    spec.name.to_string()
+                } else {
+                    format!("{} ", spec.name)
+                };
+                self.mode = Mode::Command;
+                self.history_at = None;
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+                self.commands_at = 0;
+            }
+            KeyCode::Char(c) => {
+                self.input.push(c);
+                self.commands_at = 0;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Which row the command list has its cursor on.
+    pub fn commands_at(&self) -> usize {
+        self.commands_at
+    }
+
+    /// Opens a note the runtime has resolved, on a screen of its own.
+    ///
+    /// The id comes from `Notebook::resolve` rather than from anything here, so
+    /// that what a key names is answered in one place.
+    pub fn open_note(&mut self, id: String) {
+        self.open(View::Note(id));
+    }
+
     /// `y` agrees; anything else is a way out. Not `n` alone — the key that
     /// cancels a destructive question should be every key but one.
     fn confirming(&mut self, what: What, key: KeyEvent) -> Option<Action> {
@@ -1032,7 +1397,7 @@ impl App {
     pub fn report(&mut self, outcome: Result<String>) {
         self.message = Some(match outcome {
             Ok(text) => {
-                let text = text.trim_end().to_string();
+                let text = plain(&text).trim_end().to_string();
                 // A line is an acknowledgement and lives on the status bar. More
                 // than a line has to be read, so it gets the card: `bulk` puts
                 // what it could not do underneath what it did, and that second
@@ -1052,7 +1417,7 @@ impl App {
                 // says what to do next.
                 self.mode = Mode::Alert;
                 Message {
-                    text: e.to_string(),
+                    text: plain(&e.to_string()),
                     failed: true,
                 }
             }
@@ -1231,6 +1596,21 @@ fn split_quoted(text: &str) -> Vec<String> {
         pieces.push(piece);
     }
     pieces
+}
+
+/// A command's answer with its colour taken out.
+///
+/// `style` paints unconditionally and leaves it to `anstream` to strip the
+/// escapes when what is on the other end of the pipe is not a terminal. Here the
+/// other end *is* a terminal — but not a stream: the answer is put on a card a
+/// character at a time, so an escape arrives as the text `[2m` and is drawn as
+/// one. Stripping here is that same decision made at the other consumer, and it
+/// is done where every answer passes rather than where each one is shown.
+///
+/// It also matters for the size of the card: it is measured from its longest
+/// line, and escapes that draw nothing would have been counted.
+fn plain(text: &str) -> String {
+    anstream::adapter::strip_str(text).to_string()
 }
 
 /// A scroll offset moved by `delta` and kept inside `[0, max]`.
@@ -2085,6 +2465,21 @@ mod tests {
     }
 
     #[test]
+    fn a_command_that_colours_its_answer_is_quoted_without_the_colour() {
+        let mut app = an_app();
+        // What `noda status` actually returns: the palette paints
+        // unconditionally, because at a prompt `anstream` is what decides
+        // whether the escapes survive. Nothing on a card goes through it.
+        app.report(Ok(format!(
+            "notebook  personal  {}\nnotes     3",
+            crate::style::paint(crate::style::MUTED, "(main)")
+        )));
+        let said = app.message.as_ref().expect("an answer");
+        assert_eq!(said.text, "notebook  personal  (main)\nnotes     3");
+        assert!(!said.text.contains('\u{1b}'), "{:?}", said.text);
+    }
+
+    #[test]
     fn a_command_that_refused_puts_its_reason_on_a_card() {
         let mut app = an_app();
         app.report(Err(crate::Error::msg(
@@ -2390,6 +2785,272 @@ mod tests {
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
         app.select_id("dddd4444");
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("dddd4444"));
+    }
+
+    /// Types a line at the command prompt and presses Enter, the way `:` does.
+    fn command(app: &mut App, line: &str) -> Option<Action> {
+        app.on_key(key(KeyCode::Char(':')));
+        assert_eq!(app.mode, Mode::Command, "`:` did not open the prompt");
+        typing(app, line);
+        app.on_key(key(KeyCode::Enter))
+    }
+
+    #[test]
+    fn a_command_aims_at_the_note_on_screen_when_it_names_none() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(
+            command(&mut app, "edit"),
+            Some(Action::Edit {
+                key: "bbbb2222".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+        assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn a_command_can_name_the_note_it_is_aimed_at() {
+        let mut app = an_app();
+        assert_eq!(
+            command(&mut app, "edit cccc3333"),
+            Some(Action::Edit {
+                key: "cccc3333".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn a_tag_change_is_told_from_a_note_by_the_sign_in_front_of_it() {
+        let mut app = an_app();
+        assert_eq!(
+            command(&mut app, "tag +urgent"),
+            Some(Action::Tag {
+                key: "aaaa1111".to_string(),
+                changes: vec!["+urgent".to_string()],
+                touch: Touch::Stamp,
+            })
+        );
+        // A key cannot begin with `+` or `-`, so the first argument here is a
+        // note and there it was a change. That is the whole ambiguity.
+        assert_eq!(
+            command(&mut app, "tag cccc3333 -work +q3"),
+            Some(Action::Tag {
+                key: "cccc3333".to_string(),
+                changes: vec!["-work".to_string(), "+q3".to_string()],
+                touch: Touch::Stamp,
+            })
+        );
+        // And the quoting the tags prompt already does survives being typed
+        // here instead — there is still no shell in front of the field.
+        assert_eq!(
+            command(&mut app, "tag -\"24.04 Dark patterns\""),
+            Some(Action::Tag {
+                key: "aaaa1111".to_string(),
+                changes: vec!["-24.04 Dark patterns".to_string()],
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn a_query_typed_at_the_command_line_keeps_its_quotes() {
+        let mut app = App::new(
+            "personal".to_string(),
+            PathBuf::from("/notebook"),
+            a_status(),
+            vec![
+                a_note(
+                    "aaaa1111",
+                    "ubuntu-notes",
+                    "Ubuntu notes",
+                    &["12.34 foo bar"],
+                    "body",
+                ),
+                a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
+            ],
+        );
+        // The rest of the line is kept as it was typed rather than rebuilt from
+        // its tokens, which is the only way a value with a space in it arrives
+        // whole.
+        assert_eq!(command(&mut app, "notes tag:\"12.34 foo bar\""), None);
+        assert_eq!(app.shown(), 1);
+        assert_eq!(app.search(), "tag:\"12.34 foo bar\"");
+    }
+
+    #[test]
+    fn notes_comes_back_up_the_stack_and_narrows_on_the_way() {
+        let mut app = an_app();
+        read_it(&mut app, "the q3 budget\n");
+        assert_eq!(app.depth(), 2);
+
+        command(&mut app, "notes tag:q3");
+        assert_eq!(app.depth(), 1);
+        assert_eq!(app.shown(), 1);
+    }
+
+    #[test]
+    fn a_command_that_is_not_one_says_so_on_the_line_and_does_nothing() {
+        let mut app = an_app();
+        assert_eq!(command(&mut app, "frobnicate the notebook"), None);
+        // A line and not a card: this never reached the notebook, so there is
+        // nothing a card would be quoting.
+        assert_eq!(app.mode, Mode::Browse);
+        let said = app.message.as_ref().expect("a reason");
+        assert!(said.failed);
+        assert!(said.text.contains("frobnicate"), "{}", said.text);
+    }
+
+    #[test]
+    fn a_command_that_needs_something_says_what_it_takes() {
+        let mut app = an_app();
+        assert_eq!(command(&mut app, "open"), None);
+        assert!(
+            app.message
+                .as_ref()
+                .is_some_and(|said| said.text.contains("open <note>"))
+        );
+
+        // And a flag it does not take is refused rather than passed on.
+        assert_eq!(command(&mut app, "doctor --fix"), None);
+        assert!(app.message.as_ref().is_some_and(|said| said.failed));
+    }
+
+    #[test]
+    fn opening_by_name_is_left_to_the_notebook_to_answer() {
+        let mut app = an_app();
+        // Not resolved here. What an id prefix or a slug names — and what it
+        // means for one to name two notes — has one implementation, and a
+        // browser holding the notes in memory could answer it a second way
+        // without noticing it had.
+        assert_eq!(
+            command(&mut app, "open meeting-notes"),
+            Some(Action::Open("meeting-notes".to_string()))
+        );
+        assert_eq!(app.depth(), 1, "nothing opens until the notebook answers");
+    }
+
+    #[test]
+    fn a_command_on_a_note_is_aimed_at_the_note_it_is_on() {
+        let mut app = an_app();
+        read_it(&mut app, "the q3 budget\n");
+        assert_eq!(
+            command(&mut app, "mv Budget revision"),
+            Some(Action::Retitle {
+                key: "aaaa1111".to_string(),
+                title: "Budget revision".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn the_delete_command_asks_the_question_the_key_asks() {
+        let mut app = an_app();
+        assert_eq!(command(&mut app, "rm"), None);
+        assert_eq!(app.mode, Mode::Confirm(What::Delete));
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('y'))),
+            Some(Action::Remove("aaaa1111".to_string()))
+        );
+    }
+
+    #[test]
+    fn quitting_by_name_asks_about_the_queue_too() {
+        let mut app = an_app();
+        mark(&mut app, &["aaaa1111"]);
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+archive");
+        app.on_key(key(KeyCode::Enter));
+
+        assert_eq!(command(&mut app, "quit"), None);
+        assert_eq!(app.mode, Mode::Confirm(What::Quit));
+    }
+
+    #[test]
+    fn doctor_from_here_reports_and_changes_nothing() {
+        let mut app = an_app();
+        assert_eq!(
+            command(&mut app, "doctor"),
+            Some(Action::Run(Run::Doctor {
+                links: false,
+                times: false,
+            }))
+        );
+        assert_eq!(
+            command(&mut app, "doctor --links --times"),
+            Some(Action::Run(Run::Doctor {
+                links: true,
+                times: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn the_network_commands_say_what_is_being_waited_for() {
+        let mut app = an_app();
+        let sync = command(&mut app, "sync").expect("a command to run");
+        assert_eq!(sync, Action::Run(Run::Sync));
+        assert_eq!(sync.working(), Some("syncing…"));
+        // And the ones that answer at once do not.
+        assert_eq!(Action::Run(Run::Status).working(), None);
+    }
+
+    #[test]
+    fn the_prompt_remembers_what_has_been_typed_into_it() {
+        let mut app = an_app();
+        command(&mut app, "status");
+        command(&mut app, "push");
+
+        app.on_key(key(KeyCode::Char(':')));
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "push");
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "status");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "push");
+        // Forward past the newest gives back the line that was being typed,
+        // rather than sticking on the last thing that was run.
+        app.on_key(key(KeyCode::Down));
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn a_chord_does_not_type_its_own_letter_into_the_command_line() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "stat");
+        // The same trap as the query field and the tags prompt, one field on.
+        app.on_key(ctrl('d'));
+        app.on_key(ctrl('a'));
+        assert_eq!(app.input, "stat");
+        assert_eq!(app.mode, Mode::Command, "and none of them left the field");
+    }
+
+    #[test]
+    fn the_command_list_puts_what_you_pick_on_the_prompt() {
+        let mut app = an_app();
+        app.on_key(ctrl('a'));
+        assert_eq!(app.mode, Mode::Commands);
+
+        typing(&mut app, "snap");
+        app.on_key(key(KeyCode::Enter));
+        // Onto the prompt with a space after it, because it takes something —
+        // and not run, because a list that set off a `push` by being landed on
+        // would be a list nobody could read.
+        assert_eq!(app.mode, Mode::Command);
+        assert_eq!(app.input, "snapshot ");
+    }
+
+    #[test]
+    fn the_command_list_leaves_nothing_behind_when_it_is_escaped() {
+        let mut app = an_app();
+        app.on_key(ctrl('a'));
+        typing(&mut app, "push");
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Browse);
+        assert!(app.input.is_empty());
     }
 
     #[test]

@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use noda::notebook::Notebook;
 use noda::paths::Paths;
 use noda::tui::app::App;
 use noda::{cmd, tui};
@@ -190,6 +191,28 @@ fn the_header_holds_still_while_the_session_changes_underneath_it() {
 }
 
 #[test]
+fn the_way_to_everything_else_is_on_the_header_of_every_screen() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // Eighty columns, which is the narrow end of what anybody has and the width
+    // at which the key grid starts dropping its rightmost column. `:` is the
+    // one key that cannot be looked up if it is not shown — everything it
+    // reaches is reached by knowing it exists.
+    let listing = screen_at(&mut app, 80, 28);
+    assert!(has_line_with(&listing[..HEADER], &["<:>", "command"]));
+    assert!(has_line_with(&listing[..HEADER], &["<ctrl-a>", "commands"]));
+
+    app.on_key(key(KeyCode::Enter));
+    let note = screen_at(&mut app, 80, 28);
+    assert!(has_line_with(&note[..HEADER], &["<:>", "command"]));
+    assert!(has_line_with(&note[..HEADER], &["<ctrl-a>", "commands"]));
+    // And the way back out, which is the other thing a screen must never hide.
+    assert!(has_line_with(&note[..HEADER], &["<esc>", "back"]));
+    assert!(has_line_with(&note[..HEADER], &["<q>", "quit"]));
+}
+
+#[test]
 fn the_title_band_says_what_the_screen_is_of() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
@@ -352,6 +375,30 @@ fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
             }
             sent
         }
+        // What a key names is the notebook's question, and this is where the
+        // runtime asks it — the same call `noda show` makes, so an id prefix
+        // that names two notes is refused in the same words here as there.
+        tui::Action::Open(key) => {
+            let notebook = Notebook::open_active(paths).expect("open the notebook");
+            match notebook.resolve(&key) {
+                Ok((id, _)) => {
+                    tui::reload(paths, app).expect("reload");
+                    app.open_note(id);
+                    return;
+                }
+                Err(e) => Err(e),
+            }
+        }
+        tui::Action::Run(run) => match run {
+            tui::Run::Status => cmd::status(paths),
+            tui::Run::Doctor { links, times } => cmd::doctor(paths, true, links, times),
+            tui::Run::Readme => cmd::readme(paths, false),
+            tui::Run::Snapshot(Some(name)) => cmd::snapshot(paths, &name, None),
+            tui::Run::Snapshot(None) => cmd::snapshot_ls(paths),
+            // The three that go to the network are left out: there is no remote
+            // here, and what they do is `cmd`'s to be tested.
+            other => panic!("{other:?} wants a remote"),
+        },
         other => panic!("{other:?} wants a terminal of its own"),
     };
     app.report(outcome);
@@ -793,6 +840,109 @@ fn a_change_the_command_refuses_is_reported_in_its_own_words() {
         has_line_with(&after, &["Budget review", "[work]"]),
         "the note is as it was"
     );
+}
+
+/// Types a line at the command prompt and presses Enter, the way `:` does.
+fn command(app: &mut App, line: &str) -> Option<tui::Action> {
+    app.on_key(key(KeyCode::Char(':')));
+    typing(app, line);
+    app.on_key(key(KeyCode::Enter))
+}
+
+#[test]
+fn a_command_reaches_what_no_key_does() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // `noda status` has no key and is not going to get one; this is the whole
+    // reason the prompt exists.
+    let action = command(&mut app, "status").expect("a command to run");
+    perform(&paths, &mut app, action);
+
+    // More than a line, so it is read on a card rather than in passing.
+    let after = screen(&mut app);
+    assert!(has_line_with(&after, &["3 notes"]), "{after:?}");
+    assert!(has_line_with(&after, &["branch"]) || has_line_with(&after, &["clean"]));
+}
+
+#[test]
+fn a_note_can_be_opened_by_name_from_the_prompt() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // By slug, without going and finding it in the listing first.
+    let action = command(&mut app, "open reading-list").expect("a note to open");
+    perform(&paths, &mut app, action);
+
+    let opened = screen(&mut app);
+    assert_eq!(app.depth(), 2);
+    assert!(has_line_with(&opened, &["Note(", "Reading list"]));
+    assert!(has_line_with(&opened, &["a book"]));
+}
+
+#[test]
+fn a_name_that_names_nothing_is_refused_in_the_notebooks_own_words() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    let action = command(&mut app, "open nowhere").expect("a note to open");
+    perform(&paths, &mut app, action);
+
+    // Not a sentence the browser wrote: the answer `noda show nowhere` would
+    // have given, on a card because it is a refusal.
+    let after = screen(&mut app);
+    assert!(has_line_with(&after, &["nowhere"]), "{after:?}");
+    assert_eq!(app.depth(), 1, "nothing opened");
+}
+
+#[test]
+fn a_tag_can_be_changed_from_the_command_line_too() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // Naming the note, which the `#` key has no way to do.
+    let action = command(&mut app, "tag reading-list +urgent").expect("a tag to apply");
+    perform(&paths, &mut app, action);
+
+    app.on_key(key(KeyCode::Char('G')));
+    let after = screen(&mut app);
+    assert!(
+        has_line_with(&after, &["Reading list", "[urgent]"]),
+        "{after:?}"
+    );
+}
+
+#[test]
+fn the_command_list_is_narrowed_by_what_a_command_does() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+    let listed = screen(&mut app);
+    assert!(has_line_with(&listed, &["commands"]));
+    assert!(has_line_with(&listed, &["open <note>"]));
+
+    // Typed at, it narrows on what the commands do rather than only on their
+    // names — which is the way somebody who knows the job and not the name will
+    // look for it.
+    typing(&mut app, "remote");
+    let narrowed = screen(&mut app);
+    assert!(has_line_with(&narrowed, &["push"]));
+    assert!(has_line_with(&narrowed, &["pull"]));
+    assert!(!has_line_with(&narrowed, &["open <note>"]));
+}
+
+#[test]
+fn a_line_that_is_not_a_command_stays_on_the_line() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    assert_eq!(command(&mut app, "frobnicate"), None);
+    let after = screen(&mut app);
+    assert!(has_line_with(&after, &["frobnicate"]));
+    // And the notebook is untouched behind it.
+    assert!(has_line_with(&after, &["Budget review"]));
+    assert_eq!(app.total(), 3);
 }
 
 #[test]

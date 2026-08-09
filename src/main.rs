@@ -175,7 +175,8 @@ enum Command {
     /// Browse the notebook: the listing, the same query language `noda search`
     /// takes, and Enter to open what the cursor is on as a screen of its own.
     ///
-    /// Every key that changes a note runs the command that changes it, so that
+    /// Every key that changes a note runs the command that changes it, and `:`
+    /// runs the ones that have no key, under the names they already have — so
     /// what a change means is written down in exactly one place.
     Tui,
     /// Show commit history for the notebook, or for one note.
