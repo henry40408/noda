@@ -20,7 +20,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::app::{App, Mode, View};
 use super::theme;
-use crate::cmd::Touch;
+use crate::cmd::{Sort, Touch};
 use crate::style as palette;
 
 /// How many rows the standing information wants when there is room for it.
@@ -73,6 +73,25 @@ const LISTING_KEYS: &[Column] = &[
         ("Q", "queue"),
         ("T", "keep updated"),
         ("q", "quit"),
+    ],
+    // The listing's own density and order, which no other screen has: `S` walks
+    // the four orders `--sort` names, `R` is `-r`, `ctrl-w` is `-l`, and `1`–`9`
+    // are the commonest tags.
+    //
+    // Behind the other three because every one of them is a way of *looking*
+    // rather than a way of doing, and because each has a second way of being
+    // found when the column goes: all five are on the `?` card, `?` is in the
+    // first column of every screen there is, the order and the density say
+    // themselves on the title band once used, and the tags screen numbers its
+    // first nine rows with the very digits that reach them. That is the test a
+    // key has to pass to sit out here — the same one `ctrl-f/b` passes by being
+    // on the card and nowhere else.
+    [
+        ("S", "sort"),
+        ("R", "reverse"),
+        ("ctrl-w", "wide"),
+        ("1-9", "tag, 0 all"),
+        ("ctrl-g", "crumbs"),
     ],
     VIEW_KEYS,
 ];
@@ -460,6 +479,27 @@ fn compact(app: &App) -> Vec<Span<'_>> {
     spans
 }
 
+/// How the listing is being looked at, when it is not the way it comes.
+///
+/// Spelled the way `--sort`, `-r` and `-l` spell it, because these are the same
+/// three settings asked for from the other end. Nothing is said when nothing has
+/// been changed: a band that read `by slug` on every screen would be four
+/// columns spent saying nothing, and the reason for saying it at all is that
+/// `S`, `R` and `ctrl-w` rearrange rows and leave nothing else behind.
+fn looking(app: &App) -> Option<String> {
+    let mut said = Vec::new();
+    if app.sort != Sort::Slug || app.reverse {
+        said.push(format!("by {}", app.sort.name()));
+    }
+    if app.reverse {
+        said.push("reversed".to_string());
+    }
+    if app.long {
+        said.push("wide".to_string());
+    }
+    (!said.is_empty()).then(|| said.join(" "))
+}
+
 /// What this screen is of, and how much of it there is.
 ///
 /// The rule follows the notebook's own naming: a listing says what it is
@@ -487,15 +527,21 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let mut spans = match app.view() {
-        View::Notes => banner(
-            "Notes",
-            Some(if app.search().is_empty() {
-                "all".to_string()
-            } else {
-                app.search().to_string()
-            }),
-            Some(app.shown()),
-        ),
+        View::Notes => {
+            let mut spans = banner(
+                "Notes",
+                Some(if app.search().is_empty() {
+                    "all".to_string()
+                } else {
+                    app.search().to_string()
+                }),
+                Some(app.shown()),
+            );
+            if let Some(said) = looking(app) {
+                spans.push(Span::styled(format!(" {said}"), muted));
+            }
+            spans
+        }
         View::Note(id) => {
             let mut spans = banner("Note", Some(id.clone()), None);
             spans.push(Span::raw("  "));

@@ -479,7 +479,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. The view-shaped commands get screens of their own — `todo`, `tags`, `backlinks`, `log`, `blame`, `diff`, `deleted`, `files`, `notebooks` — the first four of those on a letter. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
+| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. The view-shaped commands get screens of their own — `todo`, `tags`, `backlinks`, `log`, `blame`, `diff`, `deleted`, `files`, `notebooks` — the first four of those on a letter. `S`, `R` and `Ctrl-w` are `--sort`, `-r` and `-l` asked for from the other end, and `1`–`9` narrow to the commonest tags. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -662,6 +662,10 @@ still marked in the note you opened to read it in.
 | `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The title band says `keeping updated` for as long as it is on |
 | `t`, `l` | the notebook's unticked boxes; commits — this note's, or the notebook's from the listing |
 | `b`, `B` | what links to this note; who wrote each of its lines |
+| `S`, `R` | the four orders `--sort` names, one press apiece; `-r`, which turns whichever one is in force |
+| `Ctrl-w` | the whole row — `ls -l`'s columns, in `ls -l`'s places |
+| `1` – `9` | narrow to one of the commonest tags; `0` lets go again. The tags screen numbers its first nine rows with these very keys |
+| `Ctrl-g` | the crumb trail on and off, for a terminal that would rather have the row |
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
 
@@ -669,6 +673,31 @@ still marked in the note you opened to read it in.
 the listing, and the note itself once you have opened it — so they read the same on either.
 The delete is behind a modifier because it is the one key here that cannot be taken back by
 pressing something else.
+
+**`S`, `R` and `Ctrl-w` are the flags `noda ls` already has**, asked for from the other end.
+At a prompt an order is written on the one `ls` it applies to; on a screen there is nothing
+to write it on, so they are session settings like `T` — and the title band says which ones
+are in force, because all three rearrange rows and leave nothing else behind to say why:
+
+```
+Notes(all)[128] by updated reversed wide ──────────────────────── 3 marks  1 queued
+```
+
+They survive `r`. A read brings the notebook back in the walk's own order, and a setting that
+came off every time you refreshed would not be a setting. Re-sorting keeps the cursor on the
+note it was on rather than the row — re-sorting is asking where *this* note falls in a new
+order, and being thrown to the top to find out would be a reason not to press the key.
+
+`Ctrl-w` is `ls -l`: the same columns in the same places, extending the row rather than
+rearranging it. When the terminal is too narrow for all of them they give way from the right,
+one whole column at a time, because the id and the title are what name a note and everything
+behind them is a density.
+
+`1`–`9` narrow the listing to one of the commonest tags from wherever you are, and `0` lets
+go. Nine because a notebook's tags are a long tail with a short head: the handful it actually
+runs on are worth a keystroke apiece, and the hundred one-offs are what `/` is for. They are
+the short version of what the tags screen's `Enter` does, which is why that screen numbers
+its first nine rows with the very digits that reach them.
 
 #### The other screens
 
@@ -679,7 +708,7 @@ beside a note at any width; given the width, each of them is a screen.
 | | |
 | --- | --- |
 | `t` / `:todo` | every unticked box in the notebook, soonest due first, with a missed date in red. `Enter` reads the note it is in |
-| `:tags` | every tag, commonest first, and how many notes carry it. `Enter` narrows the listing to it rather than opening a screen — the notes are already down there |
+| `:tags` | every tag, commonest first, and how many notes carry it, with the first nine numbered. `Enter` narrows the listing to it rather than opening a screen — the notes are already down there |
 | `b` / `:backlinks` | what links to the note in front of you. `Enter` reads the note that was found |
 | `l` / `:log` | commits, newest first: the note's on a note screen, the notebook's on the listing |
 | `B` / `:blame` | which commit put each line of a note where it is — the body only, because `updated` moves on every edit |
