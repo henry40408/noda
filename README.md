@@ -658,8 +658,9 @@ still marked in the note you opened to read it in.
 | `Enter` | open what the cursor is on; while a query is being typed, keep it and put the keyboard back on the list |
 | `Esc` | leave a prompt; close the screen you are on; otherwise drop the query, and once there is no query, the marks |
 | `/` | filter, in the language `noda search` takes. There is no shell in front of the field, so it quotes like one: `tag:"12.34 foo bar"` |
-| `:` | run a command by name: `:open meeting-notes`, `:tag reading-list +urgent`, `:status`, `:sync`. `Up` / `Down` walk what you have already typed |
+| `:` | run a command by name: `:open meeting-notes`, `:tag reading-list +urgent`, `:status`, `:sync`. `Up` / `Down` — or `Ctrl-p` / `Ctrl-n` — walk what you have already typed |
 | `Ctrl-a` | what `:` accepts, narrowed as you type — by what a command *does* as well as by its name, so `remote` finds `push` and `pull`. `Enter` puts one on the prompt |
+| in a field | readline's keys, on readline's bindings: `Ctrl-a` / `Ctrl-e` and `Alt-b` / `Alt-f` to move, `Ctrl-w` / `Ctrl-u` / `Ctrl-k` to take a word or an end of the line out, `Ctrl-y` to put the last of those back. `Ctrl-p` / `Ctrl-n` are `Up` / `Down` |
 | `Space`, `*` | mark the note under the cursor; mark everything the filter is showing (or take the marks off it) |
 | `Q` | the queue: what is waiting to be sent, `d` to drop an entry, `Enter` to send |
 | `e` | edit in `$EDITOR` |
@@ -776,6 +777,23 @@ about for a note you can see, so it removes the one on screen and `:open` is how
 another one there. And `:doctor` reports and stops: it will adopt files and write to the
 notebook when you ask it to at the prompt, but a browser is not where you want to find out
 that a keystroke rewrote a directory.
+
+**Everywhere you type, the keys are readline's.** The query, the prompt and the `:` line are
+one field wearing three labels, and it answers the bindings a shell prompt answers: `Ctrl-a`
+and `Ctrl-e` for the ends of the line, `Ctrl-b` / `Ctrl-f` and `Alt-b` / `Alt-f` for a
+character and a word, `Ctrl-w`, `Ctrl-u` and `Ctrl-k` for taking a word or an end of it out,
+`Ctrl-y` for putting the last of those back, `Ctrl-d` and `Delete` forwards. They are not a
+feature to learn — they are there so that a hand which has typed at shell prompts for twenty
+years does not have to stop and find out this field is different. A chord the field does not
+bind does nothing at all rather than typing its own letter, which is the trap here: `Ctrl-d`
+arrives as `d` with a modifier on it, and a field that took it at face value would put a `d`
+in the middle of somebody's title.
+
+Two places where the browser and readline part company, both deliberate. `Ctrl-c` leaves the
+browser instead of abandoning the line — `Esc` is what abandons a line here, and a program
+that argues with `Ctrl-c` is one you end up killing from another window. And `Ctrl-p` /
+`Ctrl-n` walk the command history at `:` where there is one, and the list of notes while a
+query is being typed, where there is not.
 
 **Every key that changes a note runs the command that changes it.** `e` is `noda edit`, `#`
 is `noda tag`, `Ctrl-d` is `noda rm` — so a change made here is validated, stamped and committed

@@ -19,12 +19,14 @@
 //! printed. Nothing in this module writes a note itself.
 //!
 //! The parts are kept apart so that most of this can be tested with no terminal
-//! in the room: [`app`] is the state and takes no input but keystrokes, [`view`]
-//! and [`frame`] turn that state into a frame, and this module is the only place
-//! that opens a repository, reads a file, runs a command or touches a terminal.
+//! in the room: [`app`] is the state and takes no input but keystrokes, [`field`]
+//! is the one line at a time that is typed into it, [`view`] and [`frame`] turn
+//! that state into a frame, and this module is the only place that opens a
+//! repository, reads a file, runs a command or touches a terminal.
 
 pub mod app;
 mod command;
+mod field;
 mod frame;
 mod theme;
 pub mod view;

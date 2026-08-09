@@ -79,9 +79,10 @@ const HEADING_ROWS: u16 = 1;
 /// What the card has to say that the band along the top does not.
 ///
 /// The keys for the screen you are on are up there, named and always visible, so
-/// this is the rest: how to move, what the filter takes, and the two keys that
-/// open and close a screen. Ten rows and a border, which is what fits on a
-/// terminal short enough to have made the point once already.
+/// this is the rest: how to move, what the filter takes, the two keys that open
+/// and close a screen, and the keymap the fields answer. Thirteen rows and a
+/// border, which is what fits on a terminal short enough to have made the point
+/// once already.
 const KEYS: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "move · scroll"),
     ("ctrl-f / ctrl-b, g / G", "half a screen · first / last"),
@@ -101,6 +102,10 @@ const KEYS: &[(&str, &str)] = &[
         "sort · reverse · wide row · a tag (0 = all)",
     ),
     ("r, ctrl-g, q / ctrl-c", "read again · crumbs · quit"),
+    // One row for a whole keymap, because it is a keymap nobody has to read:
+    // anybody who wants these keys already knows them, and the row is here to
+    // say they are answered rather than to teach them.
+    ("while typing", "readline: ctrl-a/e/w/u/k/y, alt-b/f"),
 ];
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -872,7 +877,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
 /// footer with it, which is the mistake the help card made once already.
 fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
-    let shown: Vec<&command::Spec> = command::matching(&app.input).collect();
+    let shown: Vec<&command::Spec> = command::matching(app.input.text()).collect();
     let width = shown
         .iter()
         .map(|spec| spec.usage().chars().count())
@@ -923,7 +928,7 @@ fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
     let title = if app.input.is_empty() {
         " commands ".to_string()
     } else {
-        format!(" commands: {} ", app.input)
+        format!(" commands: {} ", app.input.text())
     };
     card(f, area, &title, lines, muted);
 }
@@ -1240,8 +1245,10 @@ mod tests {
     #[test]
     fn the_help_card_still_fits_a_short_terminal() {
         // The card outgrew a twenty-four row terminal once; the keys moved into
-        // the header partly so it would not again. Ten rows and two of border.
-        assert!(KEYS.len() + 2 <= 14, "the card has {} rows", KEYS.len() + 2);
+        // the header partly so it would not again. Thirteen rows and two of
+        // border — the last of them spent on the field keys, which are worth a
+        // row precisely because they are the ones nobody thinks to look up.
+        assert!(KEYS.len() + 2 <= 15, "the card has {} rows", KEYS.len() + 2);
         // And the column is as wide as the widest set of keys on it, or the
         // descriptions stop lining up.
         let widest = KEYS.iter().map(|(key, _)| key.chars().count()).max();
@@ -1254,12 +1261,15 @@ mod tests {
         // a second way of being found. For these it is the card and nothing
         // else — no `:` name, no letter in a column that survives eighty
         // columns — which makes this the check that they are on it.
+        // Both columns, because one row's keys are named in its description:
+        // `readline` is the name of that keymap and the keys themselves are the
+        // gloss on it, not the other way round.
         let said = KEYS
             .iter()
-            .map(|(key, _)| *key)
+            .map(|(key, what)| format!("{key} {what}"))
             .collect::<Vec<_>>()
             .join(" ");
-        for key in ["ctrl-f", "S", "R", "ctrl-w", "1-9", "ctrl-g"] {
+        for key in ["ctrl-f", "S", "R", "ctrl-w", "1-9", "ctrl-g", "readline"] {
             assert!(said.contains(key), "the card does not teach {key}");
         }
     }

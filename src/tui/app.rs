@@ -33,6 +33,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use super::command;
+use super::field::{Edit, Field};
 use crate::Result;
 use crate::cmd::{self, Change, Sort, Step, Touch};
 use crate::note;
@@ -349,9 +350,9 @@ pub struct Screen {
     pub table: TableState,
     /// How far a screen of text has been scrolled.
     pub scroll: u16,
-    /// The query as typed. Split the way a shell would split it, it is what
-    /// `noda search` takes: one token per argument.
-    pub search: String,
+    /// The query as typed, and where in it the cursor is. Split the way a shell
+    /// would split it, it is what `noda search` takes: one token per argument.
+    pub search: Field,
     /// The text terms of the active query, for picking the match out of a title
     /// and a body. A `tag:` or an `id:` matched something the prose does not
     /// contain, so there is nothing in the note to point at.
@@ -369,7 +370,7 @@ impl Screen {
             view,
             table: TableState::new(),
             scroll: 0,
-            search: String::new(),
+            search: Field::default(),
             terms,
             error: None,
             visible: Vec::new(),
@@ -509,7 +510,7 @@ pub struct App {
     /// What is being typed into the prompt, when there is one. A title, a new
     /// title or a run of tag changes — one field, because only one of them can
     /// be open at a time and [`Mode::Ask`] already says which.
-    pub input: String,
+    pub input: Field,
     /// What the last command that changed something had to say.
     pub message: Option<Message>,
     /// The notes picked out to be changed together, by id.
@@ -599,7 +600,7 @@ impl App {
             today: session.today,
             stack: vec![listing],
             mode: Mode::Browse,
-            input: String::new(),
+            input: Field::default(),
             message: None,
             marks: BTreeSet::new(),
             queue: Vec::new(),
@@ -662,7 +663,13 @@ impl App {
 
     /// The query the listing is narrowed by, as typed.
     pub fn search(&self) -> &str {
-        &self.listing().search
+        self.listing().search.text()
+    }
+
+    /// The part of it that is to the left of the cursor, which is what says
+    /// where along the line the terminal's cursor belongs.
+    pub fn search_before(&self) -> &str {
+        self.listing().search.before()
     }
 
     /// Why the query as typed is not a query yet.
@@ -1503,7 +1510,7 @@ impl App {
     /// Puts a command on the prompt, written out but not run.
     fn compose(&mut self, line: String) {
         self.mode = Mode::Command;
-        self.input = line;
+        self.input.set(line);
         self.history_at = None;
     }
 
@@ -1567,11 +1574,12 @@ impl App {
     /// and-ed together, and would find nothing at all.
     fn scope(&mut self, tag: &str) {
         while self.back() {}
-        self.top_mut().search = if tag.contains(char::is_whitespace) {
+        let query = if tag.contains(char::is_whitespace) {
             format!("tag:\"{tag}\"")
         } else {
             format!("tag:{tag}")
         };
+        self.top_mut().search.set(query);
         self.refilter();
     }
 
@@ -1705,20 +1713,24 @@ impl App {
     }
 
     fn searching(&mut self, key: KeyEvent) -> Option<Action> {
-        // A chord is not a character. `KeyCode::Char('d')` is what arrives for
-        // Ctrl-D as much as for `d`, so without this every control key anyone
-        // reaches for out of habit would type its own letter into the query —
-        // silently, and into a query that is being read as it is typed.
+        // Typing, and every key readline puts around a line, are the field's
+        // business — including the rule the field was built around: a chord is
+        // not a character. `KeyCode::Char('d')` is what arrives for Ctrl-D as
+        // much as for `d`, and a query field that took it at face value would
+        // quietly read `budgetd`.
         //
-        // Shift is not one of these: `G` arrives as `Char('G')` with the shift
-        // bit set, and a query with no capital letters in it would be a strange
-        // thing to ship.
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
-            return None;
+        // Only the query's own keys are left here, and they are the ones the
+        // field deliberately does not bind. Re-running the query is this end's
+        // job because only this end knows there is a notebook behind the line.
+        match self.top_mut().search.key(key) {
+            Some(Edit::Typed) => {
+                self.refilter();
+                return None;
+            }
+            Some(Edit::Moved) => return None,
+            None => {}
         }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             // The list is already narrowed, so there is nothing left to run:
             // this only hands the keyboard back to the list.
@@ -1730,18 +1742,20 @@ impl App {
                 self.refilter();
                 self.mode = Mode::Browse;
             }
-            KeyCode::Backspace => {
-                self.top_mut().search.pop();
-                self.refilter();
-            }
             // The cursor still moves while the query is being typed, so the
             // listing can be walked without stopping to leave the field.
+            //
+            // Ctrl-N and Ctrl-P do the same, which is the one place the browser
+            // parts company with readline: there they walk a history this field
+            // does not have, and a query field is walked the way every other
+            // narrowing list in a terminal is walked. Only an unbound chord can
+            // arrive here as a `Char`, but the modifier is asked for anyway —
+            // that invariant belongs to another module and should not be what a
+            // plain `n` depends on.
             KeyCode::Down => self.step(1),
             KeyCode::Up => self.step(-1),
-            KeyCode::Char(c) => {
-                self.top_mut().search.push(c);
-                self.refilter();
-            }
+            KeyCode::Char('n') if ctrl => self.step(1),
+            KeyCode::Char('p') if ctrl => self.step(-1),
             _ => {}
         }
         None
@@ -1752,17 +1766,15 @@ impl App {
     /// typing it all again.
     fn ask(&mut self, what: Ask, start: String) {
         self.mode = Mode::Ask(what);
-        self.input = start;
+        self.input.set(start);
     }
 
     fn asking(&mut self, what: Ask, key: KeyEvent) -> Option<Action> {
-        // The same rule the query field lives by, and for the same reason: Ctrl-D
-        // arrives as `Char('d')`, and a prompt that took it at face value would
-        // quietly put a `d` in somebody's title. See `searching`.
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        // The same field the query is typed into, so the same keys work in it —
+        // which matters most here, where the line often arrives already written:
+        // a retitle is somebody editing a title rather than typing one, and
+        // editing is what a cursor is for.
+        if self.input.key(key).is_some() {
             return None;
         }
         match key.code {
@@ -1771,10 +1783,6 @@ impl App {
                 self.mode = Mode::Browse;
                 self.input.clear();
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Char(c) => self.input.push(c),
             _ => {}
         }
         None
@@ -1788,7 +1796,7 @@ impl App {
     /// exception is a new note, where nothing typed is what `noda add` already
     /// means by no title — the body will say what the note is called.
     fn answered(&mut self, what: Ask) -> Option<Action> {
-        let answer = self.input.trim().to_string();
+        let answer = self.input.text().trim().to_string();
         self.mode = Mode::Browse;
         self.input.clear();
         match what {
@@ -1833,19 +1841,18 @@ impl App {
 
     /// Typing a command.
     ///
-    /// The same field the query and the prompt use, and the same rule they live
-    /// by: a chord is not a character. `Ctrl-D` arrives as `Char('d')`, and here
-    /// that would put a `d` in the middle of a command name.
+    /// The same field the query and the prompt use, and so the same keys: this
+    /// is the one of the three that is most like a shell prompt, and the one
+    /// where a hand that has typed at shell prompts for twenty years is most
+    /// likely to reach for `Ctrl-A` without deciding to.
     fn commanding(&mut self, key: KeyEvent) -> Option<Action> {
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        if self.input.key(key).is_some() {
             return None;
         }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Enter => {
-                let line = std::mem::take(&mut self.input);
+                let line = self.input.take();
                 self.mode = Mode::Browse;
                 self.history_at = None;
                 return self.run(&line);
@@ -1855,14 +1862,13 @@ impl App {
                 self.input.clear();
                 self.history_at = None;
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
             // What a shell does with the same keys, and for the same reason: the
-            // command you want next is usually one you have already typed.
+            // command you want next is usually one you have already typed. Both
+            // spellings of them, because readline has two.
             KeyCode::Up => self.recall(true),
             KeyCode::Down => self.recall(false),
-            KeyCode::Char(c) => self.input.push(c),
+            KeyCode::Char('p') if ctrl => self.recall(true),
+            KeyCode::Char('n') if ctrl => self.recall(false),
             _ => {}
         }
         None
@@ -1884,10 +1890,10 @@ impl App {
             (Some(at), false) if at >= last => None,
             (Some(at), false) => Some(at + 1),
         };
-        self.input = match self.history_at {
+        self.input.set(match self.history_at {
             Some(at) => self.history[at].clone(),
             None => String::new(),
-        };
+        });
     }
 
     /// Turns a typed line into the command it names.
@@ -1920,7 +1926,7 @@ impl App {
             // if a query came with it.
             "notes" => {
                 while self.back() {}
-                self.top_mut().search = rest.to_string();
+                self.top_mut().search.set(rest.to_string());
                 self.refilter();
             }
             "open" => {
@@ -2128,13 +2134,17 @@ impl App {
 
     /// Reading what the prompt accepts, narrowed as you type.
     fn listing_commands(&mut self, key: KeyEvent) -> Option<Action> {
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        // Erasing only, and typing. What is being typed here is shown along the
+        // top of the card and nowhere else, so there is no cursor on the screen
+        // for the motion keys to move — see `Field::erasing`. The keys that
+        // shorten the line from the end still work, because those are the ones
+        // this list is actually narrowed with.
+        if self.input.erasing(key).is_some() {
+            self.commands_at = 0;
             return None;
         }
-        let shown = command::matching(&self.input).count();
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shown = command::matching(self.input.text()).count();
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Browse;
@@ -2144,31 +2154,31 @@ impl App {
                 self.commands_at = (self.commands_at + 1).min(shown.saturating_sub(1));
             }
             KeyCode::Up => self.commands_at = self.commands_at.saturating_sub(1),
+            // The other spelling of the same two, for the same hands the rest of
+            // this is for.
+            KeyCode::Char('n') if ctrl => {
+                self.commands_at = (self.commands_at + 1).min(shown.saturating_sub(1));
+            }
+            KeyCode::Char('p') if ctrl => {
+                self.commands_at = self.commands_at.saturating_sub(1);
+            }
             // Onto the prompt rather than run outright. Most of them take
             // something, and a list that ran them blind would be no use for the
             // half that do — and `push` is not a thing to set off by landing on
             // it and pressing Enter.
             KeyCode::Enter => {
-                let Some(spec) = command::matching(&self.input).nth(self.commands_at) else {
+                let Some(spec) = command::matching(self.input.text()).nth(self.commands_at) else {
                     self.mode = Mode::Browse;
                     self.input.clear();
                     return None;
                 };
-                self.input = if spec.takes.is_empty() {
+                self.input.set(if spec.takes.is_empty() {
                     spec.name.to_string()
                 } else {
                     format!("{} ", spec.name)
-                };
+                });
                 self.mode = Mode::Command;
                 self.history_at = None;
-            }
-            KeyCode::Backspace => {
-                self.input.pop();
-                self.commands_at = 0;
-            }
-            KeyCode::Char(c) => {
-                self.input.push(c);
-                self.commands_at = 0;
             }
             _ => {}
         }
@@ -2354,7 +2364,7 @@ impl App {
     /// and-ed together, and a tag you can read in the listing is one you cannot
     /// filter by on the screen it is on. Same reasoning as the tags prompt.
     fn refilter(&mut self) {
-        let tokens = split_quoted(&self.listing().search);
+        let tokens = split_quoted(self.listing().search.text());
 
         if tokens.is_empty() {
             let all = (0..self.notes.len()).collect();
@@ -2819,7 +2829,7 @@ mod tests {
         );
         app.on_key(key(KeyCode::Char('m')));
         assert_eq!(app.mode, Mode::Ask(Ask::Retitle));
-        assert_eq!(app.input, "Budget review");
+        assert_eq!(app.input.text(), "Budget review");
         app.on_key(key(KeyCode::Esc));
 
         app.on_key(ctrl('d'));
@@ -2863,18 +2873,64 @@ mod tests {
         app.on_key(key(KeyCode::Char('/')));
         typing(&mut app, "budget");
 
-        // Ctrl-D arrives as `Char('d')` with a modifier, and a query field that
-        // took it at face value would quietly become `budgetd` — and this one
-        // now deletes a note when it is not in a field.
-        app.on_key(ctrl('d'));
-        app.on_key(ctrl('w'));
-        app.on_key(ctrl('a'));
+        // Ctrl-R arrives as `Char('r')` with a modifier, and a query field that
+        // took it at face value would quietly become `budgetr` — and this one
+        // reloads the notebook when it is not in a field. A chord the field does
+        // not bind does nothing at all rather than either.
+        app.on_key(ctrl('r'));
+        app.on_key(ctrl('o'));
         assert_eq!(app.search(), "budget");
-        assert_eq!(app.mode, Mode::Search, "and none of them left the field");
+        assert_eq!(app.mode, Mode::Search, "and neither of them left the field");
 
         // A capital is still a capital, though: shift is not a chord.
         app.on_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT));
         assert_eq!(app.search(), "budgetQ");
+    }
+
+    #[test]
+    fn the_query_answers_the_keys_a_shell_prompt_answers() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work budget");
+        assert_eq!(app.shown(), 1, "one note has both");
+
+        // The keys are the field's and are tested there; what is checked here is
+        // that the notebook is walked again afterwards. A query that had been
+        // edited but not re-run would leave the listing describing a line
+        // nobody can see any more.
+        app.on_key(ctrl('w'));
+        assert_eq!(app.search(), "tag:work ");
+        assert_eq!(app.shown(), 2, "and the listing is what the query now says");
+
+        // Including when the edit is in the middle of the line rather than at
+        // the end of it, which is the whole point of there being a cursor.
+        app.on_key(ctrl('a'));
+        typing(&mut app, "id:aaaa1111 ");
+        assert_eq!(app.search(), "id:aaaa1111 tag:work ");
+        assert_eq!(app.shown(), 1);
+    }
+
+    #[test]
+    fn the_cursor_still_walks_the_listing_while_a_query_is_typed() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work");
+        assert_eq!(
+            app.selected().map(|note| note.id.as_str()),
+            Some("aaaa1111")
+        );
+        // Both spellings of down, and neither of them types anything.
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(
+            app.selected().map(|note| note.id.as_str()),
+            Some("bbbb2222")
+        );
+        app.on_key(ctrl('p'));
+        assert_eq!(
+            app.selected().map(|note| note.id.as_str()),
+            Some("aaaa1111")
+        );
+        assert_eq!(app.search(), "tag:work");
     }
 
     #[test]
@@ -3009,7 +3065,7 @@ mod tests {
         assert_eq!(app.mode, Mode::Ask(Ask::Title));
 
         typing(&mut app, "Trip plan");
-        assert_eq!(app.input, "Trip plan");
+        assert_eq!(app.input.text(), "Trip plan");
         assert_eq!(
             app.on_key(key(KeyCode::Enter)),
             Some(Action::Add(Some("Trip plan".to_string())))
@@ -3031,7 +3087,7 @@ mod tests {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('m')));
         assert_eq!(app.mode, Mode::Ask(Ask::Retitle));
-        assert_eq!(app.input, "Budget review");
+        assert_eq!(app.input.text(), "Budget review");
 
         for _ in 0.."review".len() {
             app.on_key(key(KeyCode::Backspace));
@@ -3229,7 +3285,7 @@ mod tests {
         app.on_key(key(KeyCode::Esc));
         app.on_key(key(KeyCode::Char('m')));
         typing(&mut app, "T");
-        assert!(app.input.ends_with('T'));
+        assert!(app.input.text().ends_with('T'));
         assert_eq!(app.touch, Touch::Stamp);
     }
 
@@ -3256,10 +3312,46 @@ mod tests {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('a')));
         typing(&mut app, "Trip");
-        // The same trap the query field has: Ctrl-D arrives as `Char('d')`.
+        // The same trap the query field has: Ctrl-R arrives as `Char('r')`, and
+        // an unbound chord in a field is a key that does nothing rather than one
+        // that types an `r` into a title.
+        app.on_key(ctrl('r'));
+        app.on_key(ctrl('o'));
+        assert_eq!(app.input.text(), "Trip");
+        assert_eq!(app.mode, Mode::Ask(Ask::Title));
+    }
+
+    #[test]
+    fn a_title_being_edited_is_edited_and_not_only_added_to() {
+        // The retitle case, which is what made a cursor worth having: the prompt
+        // opens on the title the note already has, and the word to fix is not
+        // the last one.
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('m')));
+        assert_eq!(app.input.text(), "Budget review");
+        app.on_key(ctrl('a'));
         app.on_key(ctrl('d'));
+        typing(&mut app, "F");
+        assert_eq!(app.input.text(), "Fudget review");
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Retitle {
+                key: "aaaa1111".to_string(),
+                title: "Fudget review".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn the_prompt_takes_a_word_back_and_puts_it_back_again() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "+work +q3");
         app.on_key(ctrl('w'));
-        assert_eq!(app.input, "Trip");
+        assert_eq!(app.input.text(), "+work ");
+        app.on_key(ctrl('y'));
+        assert_eq!(app.input.text(), "+work +q3", "and Ctrl-W is undoable");
     }
 
     #[test]
@@ -3871,11 +3963,11 @@ mod tests {
 
         app.on_key(key(KeyCode::Char(':')));
         app.on_key(key(KeyCode::Up));
-        assert_eq!(app.input, "push");
+        assert_eq!(app.input.text(), "push");
         app.on_key(key(KeyCode::Up));
-        assert_eq!(app.input, "status");
+        assert_eq!(app.input.text(), "status");
         app.on_key(key(KeyCode::Down));
-        assert_eq!(app.input, "push");
+        assert_eq!(app.input.text(), "push");
         // Forward past the newest gives back the line that was being typed,
         // rather than sticking on the last thing that was run.
         app.on_key(key(KeyCode::Down));
@@ -3890,7 +3982,7 @@ mod tests {
         // The same trap as the query field and the tags prompt, one field on.
         app.on_key(ctrl('d'));
         app.on_key(ctrl('a'));
-        assert_eq!(app.input, "stat");
+        assert_eq!(app.input.text(), "stat");
         assert_eq!(app.mode, Mode::Command, "and none of them left the field");
     }
 
@@ -3906,7 +3998,7 @@ mod tests {
         // and not run, because a list that set off a `push` by being landed on
         // would be a list nobody could read.
         assert_eq!(app.mode, Mode::Command);
-        assert_eq!(app.input, "snapshot ");
+        assert_eq!(app.input.text(), "snapshot ");
     }
 
     #[test]
@@ -4161,7 +4253,7 @@ mod tests {
         // On the prompt, spelled out and waiting for a second Enter: landing on
         // a row is not agreeing to write over the note it names.
         assert_eq!(app.mode, Mode::Command);
-        assert_eq!(app.input, "restore aaaa1111 2222222");
+        assert_eq!(app.input.text(), "restore aaaa1111 2222222");
 
         assert_eq!(
             app.on_key(key(KeyCode::Enter)),
@@ -4216,7 +4308,7 @@ mod tests {
         // The commit *before* the deletion, which is the one `restore` wants —
         // naming the deletion and leaving the `~1` to be worked out would be
         // reporting a problem without its remedy.
-        assert_eq!(app.input, "restore dddd4444 4444444");
+        assert_eq!(app.input.text(), "restore dddd4444 4444444");
     }
 
     #[test]
