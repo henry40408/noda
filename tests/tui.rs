@@ -150,9 +150,15 @@ fn the_header_says_where_the_notebook_stands() {
 
     // One fact to a line, always the same five in the same order, so the eye
     // learns where each one is rather than reading a strip left to right.
+    //
+    // The branch is read back out of the status rather than named: what a fresh
+    // notebook's branch is called comes from whoever's `init.defaultBranch` is
+    // in force, so a literal here passes on the machine it was written on and
+    // fails on the next one.
+    let branch = app.status.branch.clone();
     let head = &screen[..HEADER];
     assert!(has_line_with(head, &["Notebook:", cmd::DEFAULT_NOTEBOOK]));
-    assert!(has_line_with(head, &["Branch:", "main"]));
+    assert!(has_line_with(head, &["Branch:", &branch]));
     assert!(has_line_with(head, &["Remote:", "none"]));
     assert!(has_line_with(head, &["Notes:", "3 notes"]));
     assert!(has_line_with(head, &["Changes:", "none"]));
