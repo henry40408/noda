@@ -10,6 +10,8 @@
 //! checkbox, and a list nested three deep is still a list. Getting either wrong
 //! puts something on a todo list that its author never put there.
 
+use std::cmp::Ordering;
+
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 /// One unticked checkbox, as `noda todo` reports it.
@@ -99,6 +101,26 @@ pub fn items(body: &str) -> Vec<Item> {
     }
     flush(&mut found, &mut collecting);
     found
+}
+
+/// How a list of items is ordered, wherever one is printed.
+///
+/// Soonest first, and the undated last: a date is a claim about when something
+/// has to happen, and an item without one has made no claim. Ties fall back to
+/// the note's slug so a listing does not reshuffle between runs.
+///
+/// Written down once because two things print this list — `noda todo` and the
+/// browser's todo screen — and a list that came out in a different order
+/// depending on which one you asked would look like a bug in whichever you
+/// asked second.
+pub fn order((left_slug, left): (&str, &Item), (right_slug, right): (&str, &Item)) -> Ordering {
+    match (&left.due, &right.due) {
+        (Some(left), Some(right)) => left.cmp(right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+    .then_with(|| left_slug.cmp(right_slug))
 }
 
 /// Markup that lives inside a paragraph rather than replacing it.

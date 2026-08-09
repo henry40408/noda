@@ -2529,9 +2529,18 @@ fn backlinks_json(notebook: &str, subject: &str, found: &[notebook::NoteFile]) -
 /// the file into a noda-only format, which is the one thing choosing GFM
 /// checkboxes was meant to avoid. `noda edit <note>` types one `x`.
 pub fn todo(paths: &Paths, json: bool) -> Result<String> {
+    todo_on(paths, json, &today()?)
+}
+
+/// Today's date where this machine is, as `YYYY-MM-DD`.
+///
+/// The *local* date, which is the only kind a due date can be compared against:
+/// nobody writes `due:2026-08-10` meaning UTC. Public because the browser has to
+/// decide what is overdue too, and it decides it the same way or not at all.
+pub fn today() -> Result<String> {
     let (seconds, offset_minutes) = notebook::local_now()?;
     // The date half of a `YYYY-MM-DD HH:MM`, which is ASCII throughout.
-    todo_on(paths, json, &format_time(seconds, offset_minutes)[..10])
+    Ok(format_time(seconds, offset_minutes)[..DATE_WIDTH].to_string())
 }
 
 /// `todo`, with today given explicitly, so a test can say what "overdue" means
@@ -2552,17 +2561,8 @@ pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
         }
     }
 
-    // Soonest first, and the undated last: a date is a claim about when
-    // something has to happen, and an item without one has made no claim. Ties
-    // fall back to the slug so a listing does not reshuffle between runs.
     items.sort_by(|(_, left_slug, left), (_, right_slug, right)| {
-        match (&left.due, &right.due) {
-            (Some(left), Some(right)) => left.cmp(right),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
-        .then_with(|| left_slug.cmp(right_slug))
+        todo::order((left_slug, left), (right_slug, right))
     });
 
     // Before the empty check, as `ls` and `deleted` do it: a program asking for
@@ -3091,17 +3091,20 @@ fn summary(id: &str, slug: &str, tags: &[String]) -> String {
     }
 }
 
-/// How wide `format_time` prints, for the one caller that has to line something
+/// How wide `format_time` prints, for the callers that have to line something
 /// else up against it.
-const TIME_WIDTH: usize = "0000-00-00 00:00".len();
+pub const TIME_WIDTH: usize = "0000-00-00 00:00".len();
 
 /// How wide a `due:` date prints, for the rows that have none.
-const DATE_WIDTH: usize = "0000-00-00".len();
+pub const DATE_WIDTH: usize = "0000-00-00".len();
 
 /// `YYYY-MM-DD HH:MM`, in the timezone the commit was made in — the same choice
 /// git makes by default. Absolute rather than "3 days ago": it is testable
 /// without freezing the clock, and it sorts.
-fn format_time(seconds: i64, offset_minutes: i32) -> String {
+///
+/// Public because the browser prints the same commits down the same columns, and
+/// a second spelling of a timestamp is a second thing to keep in step.
+pub fn format_time(seconds: i64, offset_minutes: i32) -> String {
     let local = seconds + i64::from(offset_minutes) * 60;
     let (year, month, day) = civil_from_days(local.div_euclid(86_400));
     let time = local.rem_euclid(86_400);
@@ -3143,7 +3146,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 /// Terminal columns a string occupies. East Asian Wide and Fullwidth characters
 /// take two cells, so counting `chars()` would leave a CJK slug misaligned in `ls`.
 /// This covers the wide blocks in common use rather than the whole of UAX #11.
-fn display_width(text: &str) -> usize {
+pub fn display_width(text: &str) -> usize {
     text.chars()
         .map(|c| match c as u32 {
             0x1100..=0x115F

@@ -494,8 +494,11 @@ impl Notebook {
     /// A note that links to itself is listed. It is what the file says, and
     /// leaving it out would be noda deciding the author did not mean it.
     pub fn backlinks_to_note(&self, id: &str) -> Result<Vec<NoteFile>> {
-        let want = note::normalize_id(id);
-        self.linking_notes(|target| linked_note_id(target).as_deref() == Some(want.as_str()))
+        Ok(self
+            .notes()?
+            .into_iter()
+            .filter(|file| links_to_note(&file.note, id))
+            .collect())
     }
 
     /// The notes whose bodies link to one of the notebook's files, by name.
@@ -504,26 +507,11 @@ impl Notebook {
     /// identity, which is why `file mv` has to offer `--update-links` at the
     /// moment it renames one.
     pub fn backlinks_to_file(&self, name: &str) -> Result<Vec<NoteFile>> {
-        self.linking_notes(|target| target == name)
-    }
-
-    /// Every note with a link `matches` accepts.
-    ///
-    /// The expensive walk, the same one `audit_links` pays for: every note's
-    /// body is read and parsed. Reached only when asked.
-    fn linking_notes(&self, matches: impl Fn(&str) -> bool) -> Result<Vec<NoteFile>> {
-        let mut found = Vec::new();
-        for file in self.notes()? {
-            // `targets` is a set, so a note that links to the same place three
-            // times is one backlink rather than three.
-            if crate::link::targets(&file.note.body)
-                .iter()
-                .any(|target| matches(target))
-            {
-                found.push(file);
-            }
-        }
-        Ok(found)
+        Ok(self
+            .notes()?
+            .into_iter()
+            .filter(|file| links_to_file(&file.note, name))
+            .collect())
     }
 
     /// The hooks the repository holds that will never fire.
@@ -1867,6 +1855,31 @@ pub fn linked_note_id(target: &str) -> Option<String> {
     }
     let (id, _) = note::split_stem(target.strip_suffix(".md")?)?;
     Some(note::normalize_id(id))
+}
+
+/// Whether this note's body links to the note `id` names.
+///
+/// A free function rather than a method, and this is the reason: the browser
+/// holds every note in memory for the length of a session, so asking it to walk
+/// the directory again to answer "what links here" would be reading the notebook
+/// twice — and writing the test itself a second time in the browser is how two
+/// answers to one question get into a program. This is the answer;
+/// [`Notebook::backlinks_to_note`] is the walk that feeds it from disk.
+///
+/// `targets` is a set, so a note that links to the same place three times is one
+/// backlink rather than three.
+pub fn links_to_note(note: &Note, id: &str) -> bool {
+    let want = note::normalize_id(id);
+    crate::link::targets(&note.body)
+        .iter()
+        .any(|target| linked_note_id(target).as_deref() == Some(want.as_str()))
+}
+
+/// Whether this note's body links to the notebook file `name` names.
+pub fn links_to_file(note: &Note, name: &str) -> bool {
+    crate::link::targets(&note.body)
+        .iter()
+        .any(|target| target == name)
 }
 
 /// Whether git would run this file: the executable bit, which is the whole of
