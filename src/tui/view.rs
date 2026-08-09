@@ -16,10 +16,13 @@
 //! the exception `noda search` already makes when it quotes a hit back.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Padding, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{
+    Block, HighlightSpacing, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, Wrap,
+};
 
 use super::app::{App, Mode, SCOPE_KEYS, View, What};
 use super::command;
@@ -48,7 +51,30 @@ const SHORT_COMMIT: u16 = 7;
 
 /// How far the body is held off either edge, so nothing on it is written into
 /// the corner of the terminal.
+///
+/// Both columns are spoken for now and neither is padding any more: the left one
+/// is where the cursor's bar goes and the right one is where a scrollbar goes.
+/// They are taken whether or not there is anything to draw in them, which is the
+/// point — a bar that appeared when a list grew past the bottom of the screen
+/// would move every column on it by one at the moment the list got longer.
 const PADDING: u16 = 1;
+
+/// The bar down the left of the row the cursor is on, and the column of air
+/// that holds it off what it is pointing at.
+///
+/// A half block rather than an arrow or a `>`: it is the row being pointed at
+/// and not a place in the text, and a solid edge says so without being read as
+/// a character. The space is not decoration — the screens whose first column is
+/// an id have nothing else between the bar and the id, and a bar written against
+/// a commit hash reads as part of it.
+const CURSOR_BAR: &str = "▌ ";
+
+/// How many columns that takes, which is what every measurement of the row has
+/// to be made against.
+const GUTTER: usize = 2;
+
+/// The row every table spends on the names of its columns.
+const HEADING_ROWS: u16 = 1;
 
 /// What the card has to say that the band along the top does not.
 ///
@@ -91,7 +117,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
-    app.set_page(body.height);
+    // A screen with a heading row has one row fewer to move a cursor through,
+    // and a half-screen jump measured against the whole body would land a row
+    // past what was on it.
+    app.set_page(if app.has_rows() {
+        body.height.saturating_sub(HEADING_ROWS)
+    } else {
+        body.height
+    });
     frame::draw_header(f, header, app);
     frame::draw_title(f, title, app);
     draw_body(f, body, app);
@@ -111,6 +144,85 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::Alert => draw_alert(f, area, app),
         _ => {}
     }
+}
+
+/// The body, less the column down its right-hand edge a scrollbar goes in.
+///
+/// Split off whether or not one is drawn there. Taken only when the list
+/// overflowed, the columns would all shift by one at whatever moment the list
+/// got long enough — and the moment a list gets longer is exactly the moment a
+/// reader is looking at it.
+fn less_the_bar(area: Rect) -> (Rect, Rect) {
+    let [content, bar] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(PADDING)]).areas(area);
+    (content, bar)
+}
+
+/// Where in a screenful of `total` you are, drawn down the right-hand edge.
+///
+/// Nothing is drawn when everything is on screen: a bar that is always full says
+/// only that the list ends where the reader can see it ending. The two ends are
+/// left off for the same reason a heading is not a row — an arrow at each end
+/// costs two of the rows the bar has to say anything with, and on a body twelve
+/// rows tall that is a sixth of the answer spent on decoration.
+fn draw_scrollbar(f: &mut Frame, area: Rect, total: usize, shown: usize, at: usize) {
+    if total <= shown || area.height == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(total.saturating_sub(shown))
+        .viewport_content_length(shown)
+        .position(at);
+    f.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some("│"))
+            .track_style(theme::from(palette::TAGS_PUNCT))
+            .thumb_symbol("█"),
+        area,
+        &mut state,
+    );
+}
+
+/// The table every screen's rows are drawn in.
+///
+/// One builder rather than one per screen, because they are one thing: the
+/// notebook answering a different question each time, in the same
+/// rows-and-a-cursor. What differs is the columns, and each screen says its own.
+///
+/// The cursor is a bar and a bolder row rather than a reversed one. Reversing
+/// inverts the id's yellow and the tags' cyan along with the rest, so the row
+/// being looked at is the one row whose columns have stopped being told apart by
+/// colour — and the bar is in the column that used to be padding, so the row
+/// under the cursor sits where every other row sits.
+fn sheet<'a>(rows: Vec<Row<'a>>, widths: Vec<Constraint>, headings: &[String]) -> Table<'a> {
+    Table::new(rows, widths)
+        .header(Row::new(
+            headings
+                .iter()
+                .map(|name| Line::from(Span::styled(name.clone(), theme::from(palette::COLUMN))))
+                .collect::<Vec<_>>(),
+        ))
+        .column_spacing(COLUMN_GAP as u16)
+        .row_highlight_style(Style::default().add_modifier(Modifier::BOLD))
+        .highlight_symbol(Span::styled(CURSOR_BAR, theme::from(palette::CURSOR)))
+        // Always, or the columns move sideways by the width of the bar on the
+        // one screen that has no cursor to draw it for — an empty list, and a
+        // list that has just been emptied by a query is the commonest thing on
+        // screen while a query is being typed.
+        .highlight_spacing(HighlightSpacing::Always)
+}
+
+/// A column's name, indented past the mark that goes in front of the first
+/// value. The mark is part of the cell rather than a column of its own, so a
+/// heading that started where the cell does would sit over the mark.
+fn under_mark(name: &str) -> String {
+    format!("{UNMARKED}{name}")
+}
+
+/// The names along the top of a screen's table, as one row of headings.
+fn headings(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| (*name).to_string()).collect()
 }
 
 /// Whichever screen is on top.
@@ -148,7 +260,9 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
 fn draw_nothing(f: &mut Frame, area: Rect, said: &str) {
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(said, theme::from(palette::MUTED))))
-            .block(Block::new().padding(Padding::horizontal(PADDING))),
+            // Held off the edge by as much as a row would have been, so a list
+            // and the sentence standing in for one start in the same column.
+            .block(Block::new().padding(Padding::new(GUTTER as u16, PADDING, 0, 0))),
         area,
     );
 }
@@ -166,6 +280,8 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         );
         return;
     }
+
+    let (area, bar) = less_the_bar(area);
 
     // Taken out and put back so the rows may borrow the notes while ratatui
     // writes this frame's scroll offset into the state. They are different
@@ -191,9 +307,10 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     // cut tag list still says there are tags. Short tag lists, which is nearly
     // all of them, are not affected by this at all.
     // Measured against what the row actually gets, which is the width less the
-    // padding on either side of it. Counting the padding as usable is how the
-    // title ends up one column short of the floor it was promised.
-    let inner = (area.width as usize).saturating_sub(2 * PADDING as usize);
+    // scrollbar's column (already off `area`) and the cursor bar's gutter.
+    // Counting either as usable is how the title ends up short of the floor it
+    // was promised.
+    let inner = (area.width as usize).saturating_sub(GUTTER);
 
     // What `-l` adds, measured the same way and dropped from the right when
     // there is no room. A note may have no times at all — nothing invents one,
@@ -294,14 +411,34 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     constraints.extend(widths.iter().map(|w| Constraint::Length(*w as u16)));
     constraints.push(Constraint::Length(tag_width as u16));
 
-    let table = Table::new(rows, constraints)
-        .block(Block::new().padding(Padding::horizontal(PADDING)))
-        .column_spacing(COLUMN_GAP as u16)
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("");
+    // The names of the columns `-l` adds, in the order it added them — which is
+    // the whole reason this row is here: `created` and `updated` are the same
+    // twenty characters twice, and which is which is not a thing to work out
+    // from two timestamps a second apart.
+    let mut names = vec![under_mark("ID"), "TITLE".to_string()];
+    names.extend(extra.iter().map(|(which, _)| which.to_uppercase()));
+    names.push("TAGS".to_string());
 
-    f.render_stateful_widget(table, area, &mut state);
+    let rows_shown = rows.len();
+    f.render_stateful_widget(sheet(rows, constraints, &names), area, &mut state);
+    draw_scrollbar(
+        f,
+        rows_area(bar),
+        rows_shown,
+        rows_area(bar).height as usize,
+        state.offset(),
+    );
     app.put_table(state);
+}
+
+/// The part of a table's area its rows are drawn in, which is what a scrollbar
+/// down the side of them has to line up with: the heading row is not one of
+/// them, and a bar starting a row above the first row would be a bar that is
+/// never quite where it says it is.
+fn rows_area(area: Rect) -> Rect {
+    let [_, rows] =
+        Layout::vertical([Constraint::Length(HEADING_ROWS), Constraint::Fill(1)]).areas(area);
+    rows
 }
 
 /// A timestamp as the long row prints it, with `noda ls -l`'s dash for a note
@@ -317,28 +454,36 @@ fn stamp(value: Option<&String>) -> String {
 /// under the cursor: these are the notebook answering different questions, not
 /// different programs. Only the columns change, and each screen says what its
 /// own are.
-fn draw_rows(
-    f: &mut Frame,
-    area: Rect,
-    app: &mut App,
-    (rows, widths): (Vec<Row<'static>>, Vec<Constraint>),
-    empty: &str,
-) {
-    if rows.is_empty() {
+fn draw_rows(f: &mut Frame, area: Rect, app: &mut App, sheet_of: Sheet, empty: &str) {
+    if sheet_of.rows.is_empty() {
         draw_nothing(f, area, empty);
         return;
     }
+    let (area, bar) = less_the_bar(area);
     let mut state = app.take_table();
+    let total = sheet_of.rows.len();
     f.render_stateful_widget(
-        Table::new(rows, widths)
-            .block(Block::new().padding(Padding::horizontal(PADDING)))
-            .column_spacing(COLUMN_GAP as u16)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol(""),
+        sheet(sheet_of.rows, sheet_of.widths, &sheet_of.names),
         area,
         &mut state,
     );
+    draw_scrollbar(
+        f,
+        rows_area(bar),
+        total,
+        rows_area(bar).height as usize,
+        state.offset(),
+    );
     app.put_table(state);
+}
+
+/// One screen's worth of table: what its columns are called, how wide they are,
+/// and the rows themselves. Each screen builds its own and the drawing is the
+/// same for all of them.
+struct Sheet {
+    names: Vec<String>,
+    widths: Vec<Constraint>,
+    rows: Vec<Row<'static>>,
 }
 
 /// How wide a column of these has to be. Measured rather than fixed, because
@@ -369,7 +514,7 @@ fn owned(line: Line<'_>) -> Line<'static> {
 /// Never truncated, as `noda todo` never truncates it: a real action item is a
 /// sentence, and a list that cuts the sentence off is a list you have to open
 /// the note to read.
-fn todo_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn todo_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let notes = |pick: fn(&crate::notebook::NoteFile) -> &str| {
         widest(
@@ -399,19 +544,20 @@ fn todo_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
             ]))
         })
         .collect();
-    (
-        rows,
-        vec![
+    Sheet {
+        names: headings(&["ID", "SLUG", "DUE", "TASK"]),
+        widths: vec![
             Constraint::Length(notes(|file| &file.id)),
             Constraint::Length(notes(|file| &file.slug)),
             Constraint::Length(cmd::DATE_WIDTH as u16),
             Constraint::Fill(1),
         ],
-    )
+        rows,
+    }
 }
 
 /// Every tag, commonest first, and how many notes carry it.
-fn tag_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn tag_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let width = widest(app.tallies().iter().map(|t| display_width(&t.tag)));
     let rows = app
@@ -435,24 +581,32 @@ fn tag_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
             ])
         })
         .collect();
-    (
-        rows,
-        vec![
+    Sheet {
+        // The digit column is not named. It holds the key that reaches the tag
+        // beside it, and there is no word for that column which is shorter than
+        // the column is wide.
+        names: headings(&["", "TAG", "NOTES"]),
+        widths: vec![
             Constraint::Length(1),
             Constraint::Length(width),
             Constraint::Fill(1),
         ],
-    )
+        rows,
+    }
 }
 
 /// What the notebook holds that is not a note.
-fn file_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn file_rows(app: &App) -> Sheet {
     let rows = app
         .files()
         .iter()
         .map(|name| Row::new(vec![Line::from(Span::raw(name.clone()))]))
         .collect();
-    (rows, vec![Constraint::Fill(1)])
+    Sheet {
+        names: headings(&["FILE"]),
+        widths: vec![Constraint::Fill(1)],
+        rows,
+    }
 }
 
 /// Every notebook, with a mark against the one this session is in.
@@ -460,7 +614,7 @@ fn file_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
 /// The same mark the listing puts in front of a marked note, and as wide when
 /// there is nothing to show: a list that shifted sideways would be a list you
 /// have to re-find your place in.
-fn notebook_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn notebook_rows(app: &App) -> Sheet {
     let rows = app
         .notebooks()
         .iter()
@@ -475,7 +629,11 @@ fn notebook_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
             ])])
         })
         .collect();
-    (rows, vec![Constraint::Fill(1)])
+    Sheet {
+        names: vec![under_mark("NOTEBOOK")],
+        widths: vec![Constraint::Fill(1)],
+        rows,
+    }
 }
 
 /// The notes history holds that the notebook no longer does.
@@ -484,7 +642,7 @@ fn notebook_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
 /// the deletion, not the deletion itself. Naming the deletion and leaving the
 /// `~1` to be worked out would be reporting a problem without its remedy, which
 /// is the same call `noda deleted` makes.
-fn deleted_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn deleted_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let ids = widest(app.gone().iter().map(|gone| display_width(&gone.id)));
     let slugs = widest(app.gone().iter().map(|gone| display_width(&gone.slug)));
@@ -507,22 +665,28 @@ fn deleted_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
             ])
         })
         .collect();
-    (
-        rows,
-        vec![
+    Sheet {
+        // `FROM` and not `COMMIT`: the revision in that column is the one
+        // *before* the deletion, because that is what `restore` has to be
+        // given. Naming the column after what it holds would name the commit
+        // that removed the note, and it is not that one — and the word has to
+        // fit inside the seven columns git abbreviates an object id to.
+        names: headings(&["ID", "SLUG", "DELETED", "FROM", "TITLE"]),
+        widths: vec![
             Constraint::Length(ids),
             Constraint::Length(slugs),
             Constraint::Length(cmd::TIME_WIDTH as u16),
             Constraint::Length(SHORT_COMMIT),
             Constraint::Fill(1),
         ],
-    )
+        rows,
+    }
 }
 
 /// What links here: the same row `noda ls` prints, for the same reason `search`
 /// and `backlinks` both print it — what comes back is a note, and there is one
 /// shape for naming a note.
-fn backlink_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn backlink_rows(app: &App) -> Sheet {
     let found = || app.linking().iter().filter_map(|&at| app.note_at(at));
     let ids = widest(found().map(|file| display_width(&file.id)));
     let terms = app.terms().to_vec();
@@ -540,20 +704,21 @@ fn backlink_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
             ])
         })
         .collect();
-    (
-        rows,
-        vec![
+    Sheet {
+        names: headings(&["ID", "TITLE", "TAGS"]),
+        widths: vec![
             Constraint::Length(ids),
             Constraint::Fill(1),
             Constraint::Length(widest(
                 found().map(|file| tags(&file.note.tags).chars().count()),
             )),
         ],
-    )
+        rows,
+    }
 }
 
 /// Commits, newest first — the same three columns `noda log` prints.
-fn log_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+fn log_rows(app: &App) -> Sheet {
     let rows = app
         .entries()
         .iter()
@@ -568,14 +733,15 @@ fn log_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
             ])
         })
         .collect();
-    (
-        rows,
-        vec![
+    Sheet {
+        names: headings(&["COMMIT", "WHEN", "SUMMARY"]),
+        widths: vec![
             Constraint::Length(SHORT_COMMIT),
             Constraint::Length(cmd::TIME_WIDTH as u16),
             Constraint::Fill(1),
         ],
-    )
+        rows,
+    }
 }
 
 /// Which commit put each line of a note where it is.
@@ -606,12 +772,30 @@ fn draw_blame(f: &mut Frame, area: Rect, app: &App) {
             ])
         })
         .collect();
-    f.render_widget(
-        Paragraph::new(lines)
-            .block(Block::new().padding(Padding::horizontal(PADDING)))
-            .scroll((app.scroll(), 0)),
-        area,
-    );
+    draw_page(f, area, lines, app.scroll(), false);
+}
+
+/// A screen that is text rather than rows, with the bar down its side saying how
+/// much of it there is.
+///
+/// The bar is measured in the note's own lines, which is what `j` moves by and
+/// what the scroll is clamped against. On a wrapped note that is not the number
+/// of rows drawn — but a bar that disagreed with the key would be worse than one
+/// that is approximate, and the alternative is laying the text out twice.
+fn draw_page(f: &mut Frame, area: Rect, lines: Vec<Line>, scroll: u16, wrap: bool) {
+    let (area, bar) = less_the_bar(area);
+    let total = lines.len();
+    let mut page = Paragraph::new(lines)
+        // The left columns are the cursor bar's gutter on every other screen,
+        // so the text starts where the rows do; the right one has gone to the
+        // scrollbar.
+        .block(Block::new().padding(Padding::new(GUTTER as u16, 0, 0, 0)))
+        .scroll((scroll, 0));
+    if wrap {
+        page = page.wrap(Wrap { trim: false });
+    }
+    f.render_widget(page, area);
+    draw_scrollbar(f, bar, total, bar.height as usize, scroll as usize);
 }
 
 /// What is uncommitted, or what the last commit did.
@@ -649,31 +833,19 @@ fn draw_diff(f: &mut Frame, area: Rect, app: &App) {
             Line::from(Span::styled(line, style))
         })
         .collect();
-    f.render_widget(
-        Paragraph::new(lines)
-            .block(Block::new().padding(Padding::horizontal(PADDING)))
-            // Not wrapped: a patch is a grid, and a wrapped `+` line reads as a
-            // line that was added twice.
-            .scroll((app.scroll(), 0)),
-        area,
-    );
+    // Not wrapped: a patch is a grid, and a wrapped `+` line reads as a line
+    // that was added twice.
+    draw_page(f, area, lines, app.scroll(), false);
 }
 
 fn draw_note(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::new().padding(Padding::horizontal(PADDING));
     let Some(text) = app.text() else {
-        f.render_widget(block, area);
+        f.render_widget(Block::new(), area);
         return;
     };
-    f.render_widget(
-        Paragraph::new(lines(text, app.terms()))
-            .block(block)
-            // Wrapped rather than cut: a note is prose, and a reader who has to
-            // scroll sideways to finish a sentence is not reading.
-            .wrap(Wrap { trim: false })
-            .scroll((app.scroll(), 0)),
-        area,
-    );
+    // Wrapped rather than cut: a note is prose, and a reader who has to scroll
+    // sideways to finish a sentence is not reading.
+    draw_page(f, area, lines(text, app.terms()), app.scroll(), true);
 }
 
 fn draw_help(f: &mut Frame, area: Rect) {
@@ -958,6 +1130,20 @@ mod tests {
 
     fn terms(text: &str) -> Vec<String> {
         text.split(' ').map(str::to_string).collect()
+    }
+
+    #[test]
+    fn the_gutter_is_the_same_width_on_every_screen() {
+        // The bar takes as many columns as everything measured against it
+        // assumes — the title's floor among them, which is what goes short when
+        // this drifts.
+        assert_eq!(CURSOR_BAR.chars().count(), GUTTER);
+        // And the mark lives inside the row rather than in the gutter, so the
+        // screens that have no mark column start their first value where the
+        // ones that do start theirs. Written against the bar it once was, a
+        // commit hash read as part of it.
+        assert_eq!(under_mark("ID"), "  ID");
+        assert_eq!(UNMARKED.len(), MARK.chars().count());
     }
 
     #[test]

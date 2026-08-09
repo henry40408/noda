@@ -16,7 +16,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
 use super::app::{App, Mode, View};
 use super::theme;
@@ -38,10 +38,19 @@ const ROOM_FOR_INFO: u16 = 20;
 const MENU_ROWS: usize = 5;
 
 /// The width of the labels down the left of the header, so their values line up.
-const LABEL: usize = 9;
+///
+/// One wider than the longest label written with its colon, which is `Notebook:`
+/// at nine. Sized to the longest exactly, the padding for that one row is empty
+/// and `Notebook:work` comes out with no gap at all while the four rows under it
+/// have two or three — the column lines up and the longest entry in it still
+/// reads as a mistake.
+const LABEL: usize = 10;
 
 /// The gap between one column of keys and the next.
 const MENU_GAP: usize = 2;
+
+/// What separates one thing from the next along the title band.
+const GAP: &str = "  ";
 
 /// The gap between a key and what it does, which is what makes the two read as
 /// one thing rather than as two columns.
@@ -510,13 +519,18 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     // The heading, what narrows it, and how many that leaves — in that order on
     // every screen, so the eye learns one place to look for each.
+    // Set apart by a gap rather than wrapped in brackets: the three are read
+    // one after another and the punctuation was doing the work of a space,
+    // which is the one thing a band with columns to spare has plenty of. The
+    // same two-space gap the note's own heading has always used between its id
+    // and its title, so the band is spaced one way and not two.
     let banner = |name: &'static str, scope: Option<String>, count: Option<usize>| {
         let mut spans = vec![Span::styled(name, bold)];
         if let Some(scope) = scope {
-            spans.push(Span::styled(format!("({scope})"), muted));
+            spans.push(Span::styled(format!("{GAP}{scope}"), muted));
         }
         if let Some(count) = count {
-            spans.push(Span::styled(format!("[{count}]"), muted));
+            spans.push(Span::styled(format!("{GAP}{count}"), muted));
         }
         spans
     };
@@ -538,13 +552,13 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
                 Some(app.shown()),
             );
             if let Some(said) = looking(app) {
-                spans.push(Span::styled(format!(" {said}"), muted));
+                spans.push(Span::styled(format!("{GAP}{said}"), muted));
             }
             spans
         }
         View::Note(id) => {
             let mut spans = banner("Note", Some(id.clone()), None);
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(GAP));
             spans.push(Span::raw(titled(id)));
             spans
         }
@@ -568,7 +582,7 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
                 Some(app.entries().len()),
             );
             if let Some(id) = id {
-                spans.push(Span::raw("  "));
+                spans.push(Span::raw(GAP));
                 spans.push(Span::raw(titled(id)));
             }
             spans
@@ -580,7 +594,7 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
         ),
         View::Blame(id) => {
             let mut spans = banner("Blame", Some(id.clone()), None);
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(GAP));
             spans.push(Span::raw(titled(id)));
             spans
         }
@@ -750,9 +764,18 @@ pub fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border
 
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::bordered().title(title).border_style(border)),
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::bordered()
+                // Rounded, which is the whole of the difference between a
+                // card lying over the screen and a box drawn on it. The
+                // corner is the only part of a border anybody reads.
+                .border_type(BorderType::Rounded)
+                // The title in the border's own colour rather than the
+                // text's: it names the card, and a card whose name is as
+                // loud as what is on it is a card you read twice.
+                .title(Span::styled(title, border.add_modifier(Modifier::BOLD)))
+                .border_style(border),
+        ),
         area,
     );
 }
@@ -761,6 +784,28 @@ pub fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border
 mod tests {
     use super::*;
     use crate::tui::app::Subject;
+
+    /// The labels down the left of the header, which is the column `LABEL`
+    /// sizes. Restated here rather than reached for, because what is being
+    /// checked is that the constant is wide enough for all of them.
+    const LABELS: [&str; 5] = ["Notebook", "Branch", "Remote", "Notes", "Changes"];
+
+    #[test]
+    fn the_longest_label_still_gets_a_gap_after_its_colon() {
+        // Sized to the longest exactly, that one row's padding is empty:
+        // `Notebook:work`, with no space at all, under four rows that have two
+        // or three. The column lines up and the entry that set its width is the
+        // one that reads as a mistake.
+        let widest = LABELS
+            .iter()
+            .map(|label| label.chars().count() + ":".len())
+            .max()
+            .expect("there are labels");
+        assert!(
+            LABEL > widest,
+            "the widest label fills its own column: {widest} of {LABEL}"
+        );
+    }
 
     #[test]
     fn a_short_terminal_gets_a_header_it_can_afford() {

@@ -215,11 +215,89 @@ fn the_way_to_everything_else_is_on_the_header_of_every_screen() {
     assert!(has_line_with(&note[..HEADER], &["<q>", "quit"]));
 }
 
+/// The bar down the left of the row the cursor is on. Matched at the start of
+/// the line because that is where it is: the column it sits in is the one the
+/// body's left padding used to be, so nothing else can be there.
+const BAR: char = '▌';
+
+#[test]
+fn every_screen_names_its_columns_along_the_top() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    let listing = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&listing, &["ID", "TITLE", "TAGS"]),
+        "{listing:#?}"
+    );
+
+    // `ctrl-w` is the reason the row is worth what it costs: it puts `created`
+    // and `updated` side by side, and they are the same twenty characters
+    // twice — which of them is which is not a thing to work out from two
+    // timestamps written in the same second.
+    app.on_key(ctrl('w'));
+    let wide = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&wide, &["SLUG", "CREATED", "UPDATED"]),
+        "{wide:#?}"
+    );
+}
+
+#[test]
+fn the_row_under_the_cursor_is_the_only_one_wearing_the_bar() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    let barred = |screen: &[String]| {
+        screen
+            .iter()
+            .filter(|line| line.starts_with(BAR))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    let listing = screen(&paths, &mut app);
+    assert_eq!(barred(&listing).len(), 1, "{listing:#?}");
+    assert!(
+        barred(&listing)[0].contains("Budget review"),
+        "{listing:#?}"
+    );
+
+    app.on_key(key(KeyCode::Char('j')));
+    let moved = screen(&paths, &mut app);
+    assert_eq!(barred(&moved).len(), 1, "{moved:#?}");
+    assert!(barred(&moved)[0].contains("Meeting notes"), "{moved:#?}");
+    // The heading is not a row of the list and never wears it, however the
+    // cursor moves.
+    assert!(!barred(&moved)[0].contains("TITLE"), "{moved:#?}");
+}
+
+#[test]
+fn a_list_says_how_much_of_it_is_off_the_screen_and_only_when_some_is() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // Three notes and room for all of them. A bar that was always there would
+    // say only that the list ends where the reader can see it ending.
+    let roomy = screen(&paths, &mut app);
+    assert!(!roomy.iter().any(|line| line.contains('█')), "{roomy:#?}");
+
+    // The same three notes on a terminal with room for two of them.
+    let cramped = screen_at(&paths, &mut app, 90, 7);
+    assert!(
+        cramped.iter().any(|line| line.contains('█')),
+        "{cramped:#?}"
+    );
+    // And the column it takes comes off the chrome, not off the row: the note
+    // is still named the way every other listing names it.
+    assert!(has_line_with(&cramped, &["Budget review", "[work]"]));
+}
+
 #[test]
 fn the_title_band_says_what_the_screen_is_of() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
-    assert!(has_line_with(&screen(&paths, &mut app), &["Notes(all)[3]"]));
+    assert!(has_line_with(&screen(&paths, &mut app), &["Notes  all  3"]));
 
     // A note names itself the way every other listing names it: the id, then
     // the title.
@@ -227,7 +305,7 @@ fn the_title_band_says_what_the_screen_is_of() {
     let opened = opened(&paths, &mut app);
     assert!(has_line_with(
         &opened,
-        &[&format!("Note({id})"), "Budget review"]
+        &[&format!("Note  {id}"), "Budget review"]
     ));
 }
 
@@ -280,7 +358,7 @@ fn a_query_narrows_the_listing_as_it_is_typed() {
     // The query stays visible while it is being typed, and the title band says
     // what it narrowed to and how much it left.
     assert!(has_line_with(&screen, &["/tag:q3"]));
-    assert!(has_line_with(&screen, &["Notes(tag:q3)[1]"]));
+    assert!(has_line_with(&screen, &["Notes  tag:q3  1"]));
 }
 
 #[test]
@@ -314,7 +392,7 @@ fn a_query_that_matches_nothing_says_so() {
     let screen = screen(&paths, &mut app);
 
     assert!(has_line_with(&screen, &["nothing matches"]));
-    assert!(has_line_with(&screen, &["Notes(tag:archived)[0]"]));
+    assert!(has_line_with(&screen, &["Notes  tag:archived  0"]));
 }
 
 #[test]
@@ -585,7 +663,10 @@ fn a_tag_with_a_space_can_be_filtered_for_from_the_screen_it_is_on() {
     // The shell would keep this in one piece, and so does the field.
     typing(&mut app, "tag:\"24.04 Dark patterns\"");
     let screen = screen(&paths, &mut app);
-    assert!(has_line_with(&screen, &["[1]"]));
+    assert!(has_line_with(
+        &screen,
+        &["tag:\"24.04 Dark patterns\"", "  1"]
+    ));
     assert_eq!(
         app.selected().map(|f| f.note.title.clone()),
         Some("Ubuntu notes".to_string())
@@ -909,7 +990,7 @@ fn a_note_can_be_opened_by_name_from_the_prompt() {
 
     let opened = screen(&paths, &mut app);
     assert_eq!(app.depth(), 2);
-    assert!(has_line_with(&opened, &["Note(", "Reading list"]));
+    assert!(has_line_with(&opened, &["Note  ", "Reading list"]));
     assert!(has_line_with(&opened, &["a book"]));
 }
 
@@ -1061,7 +1142,7 @@ fn the_todo_screen_lists_the_boxes_with_the_dates_that_have_been_missed() {
     let mut app = tui::load(&paths).expect("load");
 
     let todo = go(&paths, &mut app, "todo");
-    assert!(has_line_with(&todo, &["Todo", "[1]"]), "{todo:#?}");
+    assert!(has_line_with(&todo, &["Todo", "  1"]), "{todo:#?}");
     assert!(
         has_line_with(&todo, &["meeting-notes", "2020-01-01", "book a room"]),
         "{todo:#?}"
@@ -1087,7 +1168,7 @@ fn the_tags_screen_counts_them_and_enter_narrows_the_listing() {
     app.on_key(key(KeyCode::Enter));
     let narrowed = screen(&paths, &mut app);
     assert!(
-        has_line_with(&narrowed, &["Notes(tag:work)[2]"]),
+        has_line_with(&narrowed, &["Notes  tag:work  2"]),
         "{narrowed:#?}"
     );
     assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
@@ -1100,14 +1181,14 @@ fn the_backlinks_screen_finds_the_note_that_points_here() {
 
     // The cursor opens on the budget, which is what the meeting notes link to.
     let found = go(&paths, &mut app, "backlinks");
-    assert!(has_line_with(&found, &["Backlinks("]), "{found:#?}");
+    assert!(has_line_with(&found, &["Backlinks  "]), "{found:#?}");
     assert!(has_line_with(&found, &["Meeting notes"]), "{found:#?}");
 
     // A row that names a note opens it, here as on the listing.
     app.on_key(key(KeyCode::Enter));
     let note = screen(&paths, &mut app);
     assert!(
-        has_line_with(&note, &["Note(", "Meeting notes"]),
+        has_line_with(&note, &["Note  ", "Meeting notes"]),
         "{note:#?}"
     );
 }
@@ -1139,7 +1220,7 @@ fn the_log_screen_shows_the_notebooks_commits_and_then_one_notes_own() {
     let whole = go(&paths, &mut app, "log");
     let all = commits(&paths);
     assert!(
-        has_line_with(&whole, &[&format!("Log({})", cmd::DEFAULT_NOTEBOOK)]),
+        has_line_with(&whole, &[&format!("Log  {}", cmd::DEFAULT_NOTEBOOK)]),
         "{whole:#?}"
     );
     assert_eq!(app.entries().len(), all);
@@ -1150,7 +1231,7 @@ fn the_log_screen_shows_the_notebooks_commits_and_then_one_notes_own() {
     app.on_key(key(KeyCode::Enter));
     app.on_key(key(KeyCode::Char('l')));
     let one = screen(&paths, &mut app);
-    assert!(has_line_with(&one, &["Log(", "Budget review"]), "{one:#?}");
+    assert!(has_line_with(&one, &["Log  ", "Budget review"]), "{one:#?}");
     assert!(app.entries().len() < all, "{one:#?}");
 }
 
@@ -1205,7 +1286,7 @@ fn the_deleted_screen_names_the_revision_that_brings_a_note_back() {
     assert_eq!(app.total(), 3, "the trip was deleted");
 
     let gone = go(&paths, &mut app, "deleted");
-    assert!(has_line_with(&gone, &["Deleted", "[1]"]), "{gone:#?}");
+    assert!(has_line_with(&gone, &["Deleted", "  1"]), "{gone:#?}");
     assert!(
         has_line_with(&gone, &["trip-plan", "Trip plan"]),
         "{gone:#?}"
@@ -1242,7 +1323,7 @@ fn the_blame_screen_credits_the_body_and_leaves_the_frontmatter_out() {
     app.on_key(key(KeyCode::Char('B')));
     let blame = screen(&paths, &mut app);
     assert!(
-        has_line_with(&blame, &["Blame(", "Meeting notes"]),
+        has_line_with(&blame, &["Blame  ", "Meeting notes"]),
         "{blame:#?}"
     );
     assert!(has_line_with(&blame, &["book a room"]), "{blame:#?}");
@@ -1285,7 +1366,7 @@ fn the_notebooks_screen_moves_the_whole_session() {
     assert!(
         has_line_with(
             &listed,
-            &[&format!("Notebooks({})[2]", cmd::DEFAULT_NOTEBOOK)]
+            &[&format!("Notebooks  {}  2", cmd::DEFAULT_NOTEBOOK)]
         ),
         "{listed:#?}"
     );
@@ -1464,14 +1545,14 @@ fn a_digit_narrows_to_a_tag_and_the_tags_screen_says_which_digit() {
     app.on_key(key(KeyCode::Char('1')));
     let narrowed = screen(&paths, &mut app);
     assert!(
-        has_line_with(&narrowed, &["Notes(tag:work)[2]"]),
+        has_line_with(&narrowed, &["Notes  tag:work  2"]),
         "{narrowed:#?}"
     );
     assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
 
     app.on_key(key(KeyCode::Char('0')));
     let all = screen(&paths, &mut app);
-    assert!(has_line_with(&all, &["Notes(all)[3]"]), "{all:#?}");
+    assert!(has_line_with(&all, &["Notes  all  3"]), "{all:#?}");
 }
 
 #[test]
@@ -1493,5 +1574,5 @@ fn ctrl_g_gives_the_crumb_row_to_the_notes() {
     // The row went to the notes rather than being drawn blank, and the band
     // still says what screen you are on — the half of the trail that cannot be
     // worked out from anywhere else.
-    assert!(has_line_with(&without, &["Note("]), "{without:#?}");
+    assert!(has_line_with(&without, &["Note  "]), "{without:#?}");
 }

@@ -609,9 +609,10 @@ Branch:   main        </>  filter         <a>  new          <*>  mark shown
 Remote:   origin      <:>  command        <m>  retitle      <Q>  queue
 Notes:    128 notes   <ctrl-a>  commands  <#>  tags         <T>  keep updated
 Changes:  2 uncommitted <?>  keys         <ctrl-d>  delete  <q>  quit
-Notes(tag:work budget)[2] ──────────────────────────────────────── 3 marks  1 queued
- • k3f9m2p1  Budget review                                             [work]
-   7bqx4t20  Meeting notes                                             [work, q3]
+Notes  tag:work budget  2 ───────────────────────────────────────── 3 marks  1 queued
+    ID        TITLE                                                    TAGS
+▌ • k3f9m2p1  Budget review                                            [work]
+    7bqx4t20  Meeting notes                                            [work, q3]
 
  notes
 /tag:work budget
@@ -622,18 +623,25 @@ what this screen is of, the screen itself, how far down you are, and what was la
 row in the listing is the row every other listing prints — the id, the title, then the tags —
 because a note is named the same way wherever noda names it.
 
+Every screen names its columns along the top, the row under the cursor carries a bar down its
+left-hand edge, and a screen with more on it than fits gets a bar down its right. The names
+are there because `Ctrl-w` puts `created` and `updated` side by side and they are the same
+twenty characters twice; the cursor is a bar rather than a reversed row because reversing one
+inverts the id's yellow and the tags' cyan along with it, and the row you are looking at
+should not be the one row whose columns have stopped being told apart by colour.
+
 `Enter` opens what the cursor is on as a screen of its own, and `Esc` closes it again. The
 listing keeps its cursor while you are down there, so coming back lands where you left.
 
 ```
-Note(7bqx4t20)  Meeting notes ─────────────────────────────────────────────────────
- ---
- title: Meeting notes
- tags: [work, q3]
- ---
+Note  7bqx4t20  Meeting notes ─────────────────────────────────────────────────────
+  ---
+  title: Meeting notes
+  tags: [work, q3]
+  ---
 
- # Agenda
- - [ ] budget due:2026-08-10
+  # Agenda
+  - [ ] budget due:2026-08-10
 
  notes   7bqx4t20
 ```
@@ -680,7 +688,7 @@ to write it on, so they are session settings like `T` — and the title band say
 are in force, because all three rearrange rows and leave nothing else behind to say why:
 
 ```
-Notes(all)[128] by updated reversed wide ──────────────────────── 3 marks  1 queued
+Notes  all  128  by updated reversed wide ─────────────────────── 3 marks  1 queued
 ```
 
 They survive `r`. A read brings the notebook back in the walk's own order, and a setting that
@@ -726,8 +734,9 @@ deleted note, or on a commit in a note's own history, puts `restore <note> <rev>
 prompt and stops there:
 
 ```
-Deleted[1] ────────────────────────────────────────────────────────────────────
- v62b8rfa  trip-plan  2026-08-04 09:12  2a8715b  Trip plan
+Deleted  1 ─────────────────────────────────────────────────────────────────────
+  ID        SLUG       DELETED           FROM     TITLE
+▌ v62b8rfa  trip-plan  2026-08-04 09:12  2a8715b  Trip plan
 
  notes   deleted
 :restore v62b8rfa 2a8715b
@@ -802,12 +811,12 @@ personal  (main)  128 notes  12 marked  2 queued
 `Q` reads the queue back, `d` drops an entry, and `Enter` sends it:
 
 ```
-┌ queued ─────────────────────────────────────────────────────────┐
+╭ queued ─────────────────────────────────────────────────────────╮
 │tag: -q3 (12 notes)                                              │
 │tag: +archive (12 notes)                                         │
 │                                                                 │
 │Enter  send, in one commit       d  drop this one       Esc  back│
-└─────────────────────────────────────────────────────────────────┘
+╰─────────────────────────────────────────────────────────────────╯
 ```
 
 **A queue arrives in the history as one commit**, because a queue is one intention: "these

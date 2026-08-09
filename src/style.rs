@@ -59,6 +59,28 @@ pub const INVALID: Style = AnsiColor::Red.on_default();
 /// that does not distinguish late from not-yet is a list you have to read
 /// rather than glance at. Nothing else may follow it without the same argument.
 pub const OVERDUE: Style = AnsiColor::Red.on_default();
+/// The names along the top of a table, in `noda tui`.
+///
+/// The second thing here no command needs, and for the same shape of reason as
+/// [`INVALID`]: a listing printed into a pipe is read once, by somebody who
+/// asked for those columns by name a moment earlier, and `noda ls -l` has never
+/// wanted a heading. A browser is stood in front of for a sitting, and the two
+/// timestamps `-l` adds are the same twenty characters twice — which one is
+/// `created` is not a thing to work out from the values.
+///
+/// Grey and bold, which is [`TAGS_PUNCT`]'s argument one band up: a heading is
+/// not the part you read, so it steps back by hue rather than by an effect a
+/// terminal may decline, and the bold is what keeps it from reading as another
+/// row of dimmed data.
+pub const COLUMN: Style = AnsiColor::BrightBlack.on_default().bold();
+/// The bar down the left of the row the cursor is on, in `noda tui`.
+///
+/// [`ID`]'s yellow, because the row it marks is a note and the id is how a note
+/// is pointed at everywhere else. The row itself is only emboldened: reversing
+/// it — which is what this replaced — inverts the id's yellow and the tags' cyan
+/// along with everything else, so the one row you are looking at is the one row
+/// whose columns have stopped being told apart by colour.
+pub const CURSOR: Style = AnsiColor::Yellow.on_default();
 
 /// Wraps `text` in `style`. The `:#` form writes the reset sequence.
 pub fn paint(style: Style, text: &str) -> String {
