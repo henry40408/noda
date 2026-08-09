@@ -101,11 +101,12 @@ argument is resolved as a note first — by id prefix or slug — and then as a 
 key that means both is an error naming both.
 
 **Q: Is there anything more interactive than one command at a time?**
-`noda tui` opens the notebook on one screen: the listing on the left, the note under the
-cursor on the right, and the same query language `noda search` takes narrowing the list as
-you type. It reads and does not write — the keys that would change a note are not bound, so
-that what a change means (validate, stamp `updated`, commit) has exactly one implementation
-and it is the one every command already uses. `noda edit` is still how a note is edited.
+`noda tui` opens the notebook as a screen you can go into and come back out of: the listing,
+the same query language `noda search` takes narrowing it as you type, and `Enter` to open
+what the cursor is on as a screen of its own. The keys that change a note ask the commands to
+do it — `e` runs `noda edit`, `#` runs `noda tag` — so that what a change means (validate,
+stamp `updated`, commit) has exactly one implementation and it is the one every command
+already uses. Nothing in the browser writes a note itself.
 
 **Q: What about a web UI?**
 Planned. The v1 focus is the CLI. A `noda web` local server that serves the same notebook
