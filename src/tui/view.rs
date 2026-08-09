@@ -21,7 +21,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Padding, Paragraph, Row, Table, Wrap};
 
-use super::app::{App, Mode, View, What};
+use super::app::{App, Mode, SCOPE_KEYS, View, What};
 use super::command;
 use super::frame::{self, card, plural};
 use super::theme;
@@ -62,26 +62,31 @@ const KEYS: &[(&str, &str)] = &[
     ("enter, esc", "open it · back out of it"),
     ("/", "filter: tag:work OR tag:q3 budget"),
     (":, ctrl-a", "run a command · the list of what it takes"),
-    ("space, *", "mark this one · mark all the filter shows"),
+    ("space, *, Q", "mark · mark all shown · the queue"),
     ("e, a", "edit in $EDITOR · new note"),
     ("m, #", "retitle · tags: +work -\"two words\""),
     ("ctrl-d, T", "delete (after a y) · leave updated alone"),
-    ("Q", "the queue: what is waiting · send it"),
-    // One row for the four screens with a letter, not four. The other five are
-    // named — `:tags`, `:files`, `:notebooks`, `:deleted`, `:diff` — and the
-    // card has to stay inside a twenty-four row terminal, which it has already
-    // failed to do once.
+    // One row per group of keys rather than one per key. The card has to stay
+    // inside a twenty-four row terminal, which it has already failed to do
+    // twice — once when the write keys arrived and once when the screens did.
     ("t, l, b, B", "todo · log · backlinks · blame"),
-    ("r, q / ctrl-c", "read the notebook again · quit"),
+    (
+        "S, R, ctrl-w, 1-9",
+        "sort · reverse · wide row · a tag (0 = all)",
+    ),
+    ("r, ctrl-g, q / ctrl-c", "read again · crumbs · quit"),
 ];
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    // The crumb band is a row the reader may want back. Given no rows rather
+    // than drawn empty, so the notes get it — a band that is only invisible is
+    // a band that still costs what it did.
     let [header, title, body, crumbs, status] = ratatui::layout::Layout::vertical([
         Constraint::Length(frame::header_rows(area.height)),
         Constraint::Length(1),
         Constraint::Min(0),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(app.crumbs_shown)),
         Constraint::Length(1),
     ])
     .areas(area);
@@ -90,7 +95,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     frame::draw_header(f, header, app);
     frame::draw_title(f, title, app);
     draw_body(f, body, app);
-    frame::draw_crumbs(f, crumbs, app);
+    if app.crumbs_shown {
+        frame::draw_crumbs(f, crumbs, app);
+    }
     if let Some(x) = frame::draw_status(f, status, app) {
         f.set_cursor_position((x, status.y));
     }
@@ -187,7 +194,54 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     // padding on either side of it. Counting the padding as usable is how the
     // title ends up one column short of the floor it was promised.
     let inner = (area.width as usize).saturating_sub(2 * PADDING as usize);
-    let room = inner.saturating_sub(id_width + 2 * COLUMN_GAP + TITLE_FLOOR);
+
+    // What `-l` adds, measured the same way and dropped from the right when
+    // there is no room. A note may have no times at all — nothing invents one,
+    // so the column says so rather than leaving a hole the eye has to measure,
+    // which is what `noda ls -l` does with it too.
+    let mut extra: Vec<(&'static str, Vec<String>)> = Vec::new();
+    if app.long {
+        extra.push(("slug", app.rows().map(|file| file.slug.clone()).collect()));
+        extra.push((
+            "created",
+            app.rows()
+                .map(|file| stamp(file.note.created.as_ref()))
+                .collect(),
+        ));
+        extra.push((
+            "updated",
+            app.rows()
+                .map(|file| stamp(file.note.updated.as_ref()))
+                .collect(),
+        ));
+    }
+    // Dropped from the right, one whole column at a time, while the title still
+    // has less than its floor. The id and the title are what name a note; the
+    // columns behind them are a density, and a density is the thing to give up.
+    let mut widths: Vec<usize> = extra
+        .iter()
+        .map(|(_, values)| values.iter().map(|v| display_width(v)).max().unwrap_or(0))
+        .collect();
+    let spent = |widths: &[usize]| {
+        widths.iter().sum::<usize>() + (widths.len() + 2) * COLUMN_GAP + id_width + TITLE_FLOOR
+    };
+    while !widths.is_empty() && spent(&widths) > inner {
+        widths.pop();
+        extra.pop();
+    }
+
+    // As wide as the longest tag list, unless that would starve the title.
+    //
+    // A tag may be a sentence — `24.04 Dark patterns` is what an import leaves
+    // behind — and a column sized to the longest one can take a narrow screen
+    // whole, leaving the title nothing at all. So the title is given a floor
+    // first and the tags get what is left: a note is found by its title, and a
+    // cut tag list still says there are tags. Short tag lists, which is nearly
+    // all of them, are not affected by this at all.
+    // Measured against what the row actually gets, which is the width less the
+    // padding on either side of it. Counting the padding as usable is how the
+    // title ends up one column short of the floor it was promised.
+    let room = inner.saturating_sub(spent(&widths));
     let tag_width = app
         .rows()
         .map(|file| tags(&file.note.tags).chars().count())
@@ -196,10 +250,12 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         .min(room);
 
     let terms = app.terms().to_vec();
+    let muted = theme::from(palette::MUTED);
     let rows: Vec<Row> = app
         .rows()
-        .map(|file| {
-            Row::new(vec![
+        .enumerate()
+        .map(|(at, file)| {
+            let mut cells = vec![
                 Line::from(vec![
                     Span::styled(
                         if app.marked(&file.id) { MARK } else { UNMARKED },
@@ -210,33 +266,49 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
                 // The title is the column the eye lands on, so it is the one
                 // left uncoloured — the same reason `noda ls` leaves it alone.
                 marked(&file.note.title, &terms, Style::default()),
+            ];
+            // `-l` extends the row rather than rearranging it: the id and the
+            // title are the first two columns in both, and the tags stay last
+            // in both. Same order, same colours, same reasons as the CLI's.
+            for (which, values) in &extra {
+                let style = if *which == "slug" {
+                    theme::from(palette::SLUG)
+                } else {
+                    muted
+                };
+                cells.push(Line::from(Span::styled(values[at].clone(), style)));
+            }
+            cells.push(Line::from(
                 // The brackets and the commas grey behind the tags they hold,
                 // the same split `noda ls` prints.
-                Line::from(
-                    palette::tag_pieces(&file.note.tags)
-                        .into_iter()
-                        .map(|(style, text)| Span::styled(text, theme::from(style)))
-                        .collect::<Vec<_>>(),
-                ),
-            ])
+                palette::tag_pieces(&file.note.tags)
+                    .into_iter()
+                    .map(|(style, text)| Span::styled(text, theme::from(style)))
+                    .collect::<Vec<_>>(),
+            ));
+            Row::new(cells)
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(id_width as u16),
-            Constraint::Fill(1),
-            Constraint::Length(tag_width as u16),
-        ],
-    )
-    .block(Block::new().padding(Padding::horizontal(PADDING)))
-    .column_spacing(COLUMN_GAP as u16)
-    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-    .highlight_symbol("");
+    let mut constraints = vec![Constraint::Length(id_width as u16), Constraint::Fill(1)];
+    constraints.extend(widths.iter().map(|w| Constraint::Length(*w as u16)));
+    constraints.push(Constraint::Length(tag_width as u16));
+
+    let table = Table::new(rows, constraints)
+        .block(Block::new().padding(Padding::horizontal(PADDING)))
+        .column_spacing(COLUMN_GAP as u16)
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("");
 
     f.render_stateful_widget(table, area, &mut state);
     app.put_table(state);
+}
+
+/// A timestamp as the long row prints it, with `noda ls -l`'s dash for a note
+/// that has none — nothing invents one, and a hole is a thing the eye has to
+/// measure.
+fn stamp(value: Option<&String>) -> String {
+    value.cloned().unwrap_or_else(|| "-".to_string())
 }
 
 /// Any of the other lists.
@@ -340,21 +412,37 @@ fn todo_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
 
 /// Every tag, commonest first, and how many notes carry it.
 fn tag_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let muted = theme::from(palette::MUTED);
     let width = widest(app.tallies().iter().map(|t| display_width(&t.tag)));
     let rows = app
         .tallies()
         .iter()
-        .map(|tally| {
+        .enumerate()
+        .map(|(at, tally)| {
+            // The first nine are numbered, because those nine digits are the
+            // keys that reach them from anywhere. A key you can only find in the
+            // help is a key nobody has; the number beside the tag is where
+            // somebody will look for it.
+            let key = if at < SCOPE_KEYS {
+                format!("{}", at + 1)
+            } else {
+                String::new()
+            };
             Row::new(vec![
+                Line::from(Span::styled(key, theme::from(palette::ID))),
                 Line::from(Span::styled(tally.tag.clone(), theme::from(palette::TAGS))),
-                Line::from(Span::styled(
-                    plural(tally.notes, "note"),
-                    theme::from(palette::MUTED),
-                )),
+                Line::from(Span::styled(plural(tally.notes, "note"), muted)),
             ])
         })
         .collect();
-    (rows, vec![Constraint::Length(width), Constraint::Fill(1)])
+    (
+        rows,
+        vec![
+            Constraint::Length(1),
+            Constraint::Length(width),
+            Constraint::Fill(1),
+        ],
+    )
 }
 
 /// What the notebook holds that is not a note.
@@ -972,5 +1060,33 @@ mod tests {
         // descriptions stop lining up.
         let widest = KEYS.iter().map(|(key, _)| key.chars().count()).max();
         assert_eq!(widest, Some(KEY_COLUMN));
+    }
+
+    #[test]
+    fn every_key_that_only_the_card_can_teach_is_on_the_card() {
+        // The grid drops columns from the right, so a key out there has to have
+        // a second way of being found. For these it is the card and nothing
+        // else — no `:` name, no letter in a column that survives eighty
+        // columns — which makes this the check that they are on it.
+        let said = KEYS
+            .iter()
+            .map(|(key, _)| *key)
+            .collect::<Vec<_>>()
+            .join(" ");
+        for key in ["ctrl-f", "S", "R", "ctrl-w", "1-9", "ctrl-g"] {
+            assert!(said.contains(key), "the card does not teach {key}");
+        }
+    }
+
+    #[test]
+    fn a_note_is_not_named_twice_when_the_row_is_the_short_one() {
+        // The default row answers "which note is this", and the title is the
+        // answer — the slug is the same words with the spaces taken out. It
+        // arrives only with `-l`, which is a density and not a selection.
+        assert_eq!(stamp(None), "-");
+        assert_eq!(
+            stamp(Some(&"2026-01-01T00:00:00Z".to_string())),
+            "2026-01-01T00:00:00Z"
+        );
     }
 }

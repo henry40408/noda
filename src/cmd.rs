@@ -278,7 +278,7 @@ pub struct List<'a> {
 }
 
 /// What order the notes come out in.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
     /// By slug, which is what a notebook walk already produces.
     #[default]
@@ -289,6 +289,31 @@ pub enum Sort {
     Updated,
     /// Alphabetical.
     Title,
+}
+
+impl Sort {
+    /// What `--sort` is spelled with, which is what a screen showing the order
+    /// in force should call it too.
+    pub fn name(self) -> &'static str {
+        match self {
+            Sort::Slug => "slug",
+            Sort::Created => "created",
+            Sort::Updated => "updated",
+            Sort::Title => "title",
+        }
+    }
+
+    /// The next one round, for a key that has one press and four orders to
+    /// reach. In the order `--sort` lists them, so the key walks the same list
+    /// the help does.
+    pub fn next(self) -> Sort {
+        match self {
+            Sort::Slug => Sort::Created,
+            Sort::Created => Sort::Updated,
+            Sort::Updated => Sort::Title,
+            Sort::Title => Sort::Slug,
+        }
+    }
 }
 
 /// How a listing is written out.
@@ -496,7 +521,14 @@ fn instant(stamp: Option<&String>) -> Option<jiff::Timestamp> {
     stamp?.parse().ok()
 }
 
-fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
+/// Puts the notes in the order `sort` names.
+///
+/// Public because the browser offers the same orders under a key, and an order
+/// that came out differently depending on whether you asked for it at the
+/// prompt or on a screen would be two features wearing one name. The reverse is
+/// the caller's, here as it is in `ls`: applied afterwards, every order gets one
+/// for free and this keeps having one job.
+pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
     match sort {
         // Already in this order: the walk sorts by slug before returning.
         Sort::Slug => {}

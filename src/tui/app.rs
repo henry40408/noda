@@ -34,7 +34,7 @@ use ratatui::widgets::TableState;
 
 use super::command;
 use crate::Result;
-use crate::cmd::{self, Change, Step, Touch};
+use crate::cmd::{self, Change, Sort, Step, Touch};
 use crate::note;
 use crate::notebook::{self, BlameLine, Deleted, Entry, NoteFile, Status};
 use crate::query::Query;
@@ -122,6 +122,14 @@ pub enum Action {
     /// A command that reads or changes the notebook and answers with a line.
     Run(Run),
 }
+
+/// How many tags get a digit of their own.
+///
+/// Nine, because there are nine digits that are not `0` and `0` is the way back
+/// out. A notebook's tags are a long tail with a short head — the handful it
+/// actually runs on are worth a keystroke apiece, and the hundred one-offs are
+/// what `/` is for.
+pub const SCOPE_KEYS: usize = 9;
 
 /// A screen about one note, named before the note is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -538,6 +546,20 @@ pub struct App {
     /// for as long as it is on, because a setting you cannot see is one you
     /// forget you left on.
     pub touch: Touch,
+    /// What order the listing is in, and whether it is running the other way.
+    ///
+    /// Session settings for the same reason `touch` is one: at a prompt an order
+    /// is written on the one `ls` it applies to, and on a screen there is
+    /// nothing to write it on. They are the orders `--sort` and `-r` already
+    /// name, put in the order `cmd::sort_notes` already puts them.
+    pub sort: Sort,
+    pub reverse: bool,
+    /// Whether the listing shows the whole row — `ls -l`'s columns, which are
+    /// the same columns and in the same places.
+    pub long: bool,
+    /// Whether the crumb trail is drawn. A row of the terminal, given back to
+    /// the notes by anyone who would rather have the row.
+    pub crumbs_shown: bool,
     /// What the top screen shows, and which screen it was worked out for.
     ///
     /// Kept with its view so that a screen never draws the last screen's answer:
@@ -583,6 +605,10 @@ impl App {
             queue: Vec::new(),
             queue_at: 0,
             touch: Touch::Stamp,
+            sort: Sort::default(),
+            reverse: false,
+            long: false,
+            crumbs_shown: true,
             loaded: None,
             history: Vec::new(),
             history_at: None,
@@ -867,6 +893,11 @@ impl App {
         self.files = session.files;
         self.notebooks = session.notebooks;
         self.today = session.today;
+        // Before the query is rerun, because the query picks out indices into
+        // this list. Reapplied rather than remembered: a read brings the
+        // notebook back in the walk's own order, and an order that came off
+        // every time you pressed `r` would not be a setting.
+        self.arrange();
         self.refilter();
         match was.and_then(|id| {
             self.listing()
@@ -1224,6 +1255,18 @@ impl App {
                 self.open(View::Blame(id));
                 return None;
             }
+            // The nine commonest tags, one press apiece, and `0` for the way
+            // back out. The short version of what the tags screen's `enter`
+            // does, which is why that screen numbers its first nine rows: the
+            // number beside a tag there is the key that reaches it.
+            //
+            // Answered on every screen, because the answer is a screen: like
+            // `:notes` it comes back down to the listing, which is where the
+            // notes a tag narrows already are.
+            KeyCode::Char(digit @ '0'..='9') => {
+                self.scope_nth(digit as usize - '0' as usize);
+                return None;
+            }
             // Deliberately not a delete, and deliberately not anything else
             // either. This key removed a note until the modifier was put in
             // front of it, and a key that used to delete must not quietly become
@@ -1268,6 +1311,20 @@ impl App {
                 self.input.clear();
                 self.commands_at = 0;
             }
+            // `ls -l`'s columns, and only where there are rows to put them on.
+            // The other screens print what their own command prints and have no
+            // second density to offer.
+            KeyCode::Char('w') => {
+                if matches!(self.top().view, View::Notes) {
+                    self.long = !self.long;
+                }
+            }
+            // A row of the terminal, given back to the notes. The trail is worth
+            // a line most of the time — a stack you cannot see the depth of is
+            // one whose Escape key you have to guess at — but on a short
+            // terminal a row is a row, and the title band still says what screen
+            // you are on.
+            KeyCode::Char('g') => self.crumbs_shown = !self.crumbs_shown,
             _ => {}
         }
         None
@@ -1304,6 +1361,18 @@ impl App {
             KeyCode::PageUp => self.step(-page),
             KeyCode::Char('g') | KeyCode::Home => self.jump(Edge::First),
             KeyCode::Char('G') | KeyCode::End => self.jump(Edge::Last),
+            // The orders `--sort` names, one press apiece, and the reverse `-r`
+            // already spells. Shifted because they are about the listing rather
+            // than about a note, and the unshifted letters near them are not:
+            // `r` reads the notebook again and `s` is not a key at all.
+            KeyCode::Char('S') => {
+                self.sort = self.sort.next();
+                self.reorder();
+            }
+            KeyCode::Char('R') => {
+                self.reverse = !self.reverse;
+                self.reorder();
+            }
             // Down the stack. The note gets a screen of its own rather than half
             // of this one, which is what lets it be read at the width it was
             // written at.
@@ -1436,6 +1505,59 @@ impl App {
         self.mode = Mode::Command;
         self.input = line;
         self.history_at = None;
+    }
+
+    /// Puts the notes in the order the session has asked for.
+    ///
+    /// `cmd::sort_notes` and not a comparison written here: `noda ls --sort`
+    /// offers the same four orders, and an order that came out differently
+    /// depending on which one you asked would be two features wearing one name.
+    /// The reverse is applied after, here as it is there, so every order gets
+    /// one for free.
+    fn arrange(&mut self) {
+        cmd::sort_notes(&mut self.notes, self.sort);
+        if self.reverse {
+            self.notes.reverse();
+        }
+    }
+
+    /// Reorders the listing under the cursor, and leaves the cursor on the note
+    /// it was on.
+    ///
+    /// The note and not the row: re-sorting is asking where a particular note
+    /// falls in a new order, and being thrown to the top to find out would be a
+    /// reason not to press the key.
+    fn reorder(&mut self) {
+        let was = self.at_cursor().map(|file| file.id.clone());
+        self.arrange();
+        self.refilter();
+        if let Some(id) = was {
+            self.select_id(&id);
+        }
+        // Every derived screen holds indices into the notes, and the notes have
+        // just moved underneath them.
+        self.loaded = None;
+        self.settle();
+    }
+
+    /// The tag a digit stands for: one of the commonest, in the order the tags
+    /// screen lists them, so the number beside a tag there is the key that
+    /// reaches it. `0` is the way back out.
+    fn scope_nth(&mut self, nth: usize) {
+        if nth == 0 {
+            while self.back() {}
+            self.top_mut().search.clear();
+            self.refilter();
+            return;
+        }
+        let Some(Content::Tags(tallies)) = self.derive(&View::Tags) else {
+            return;
+        };
+        let Some(tally) = tallies.get(nth - 1) else {
+            return;
+        };
+        let tag = tally.tag.clone();
+        self.scope(&tag);
     }
 
     /// Back to the listing, narrowed to one tag.
@@ -4294,6 +4416,216 @@ mod tests {
         app.on_key(key(KeyCode::Char('j')));
         assert_eq!(app.scroll(), 0, "a list moves a cursor, not a page");
         assert_eq!(app.row(), Some(1));
+    }
+
+    /// The same note with times on it, for the two orders that need them.
+    fn dated(mut file: NoteFile, created: &str, updated: &str) -> NoteFile {
+        file.note.created = Some(created.to_string());
+        file.note.updated = Some(updated.to_string());
+        file
+    }
+
+    /// Three notes whose slug, title, creation and update orders are all
+    /// different, so a test can tell which one is in force.
+    fn a_dated_app() -> App {
+        App::new(
+            "personal".to_string(),
+            PathBuf::from("/notebook"),
+            a_session(
+                a_status(),
+                vec![
+                    dated(
+                        a_note("aaaa1111", "budget-review", "Zebra", &["work"], ""),
+                        "2026-01-01T00:00:00Z",
+                        "2026-03-01T00:00:00Z",
+                    ),
+                    dated(
+                        a_note("bbbb2222", "meeting-notes", "Apple", &["work", "q3"], ""),
+                        "2026-02-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    dated(
+                        a_note("cccc3333", "reading-list", "Mango", &["q3"], ""),
+                        "2026-03-01T00:00:00Z",
+                        "2026-02-01T00:00:00Z",
+                    ),
+                ],
+            ),
+        )
+    }
+
+    fn listed(app: &App) -> Vec<&str> {
+        app.rows().map(|file| file.id.as_str()).collect()
+    }
+
+    #[test]
+    fn s_walks_the_orders_that_sort_names() {
+        let mut app = a_dated_app();
+        assert_eq!(app.sort, Sort::Slug);
+        assert_eq!(listed(&app), ["aaaa1111", "bbbb2222", "cccc3333"]);
+
+        // Newest first, which is how `--sort created` runs: the question put to
+        // a time is nearly always "what is recent".
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(app.sort, Sort::Created);
+        assert_eq!(listed(&app), ["cccc3333", "bbbb2222", "aaaa1111"]);
+
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(app.sort, Sort::Updated);
+        assert_eq!(listed(&app), ["aaaa1111", "cccc3333", "bbbb2222"]);
+
+        // Alphabetical, which runs the other way to the two times.
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(app.sort, Sort::Title);
+        assert_eq!(listed(&app), ["bbbb2222", "cccc3333", "aaaa1111"]);
+
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(app.sort, Sort::Slug, "round to where it started");
+    }
+
+    #[test]
+    fn r_turns_whichever_order_is_in_force() {
+        let mut app = a_dated_app();
+        app.on_key(key(KeyCode::Char('R')));
+        assert_eq!(listed(&app), ["cccc3333", "bbbb2222", "aaaa1111"]);
+
+        // Applied after the sort, so every order gets one — the same bargain
+        // `ls -r` makes, and the reason it needs no `--sort` beside it.
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(listed(&app), ["aaaa1111", "bbbb2222", "cccc3333"]);
+    }
+
+    #[test]
+    fn reordering_keeps_the_cursor_on_the_note_it_was_on() {
+        let mut app = a_dated_app();
+        app.on_key(key(KeyCode::Char('G')));
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("cccc3333"));
+
+        // The note and not the row: re-sorting is asking where this note falls
+        // in a new order, and being thrown to the top to find out would be a
+        // reason not to press the key.
+        app.on_key(key(KeyCode::Char('S')));
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("cccc3333"));
+        assert_eq!(app.row(), Some(0), "it is the newest, so it is first now");
+    }
+
+    #[test]
+    fn the_order_survives_reading_the_notebook_again() {
+        let mut app = a_dated_app();
+        app.on_key(key(KeyCode::Char('S')));
+        app.on_key(key(KeyCode::Char('R')));
+        assert_eq!(listed(&app), ["aaaa1111", "bbbb2222", "cccc3333"]);
+
+        // A read brings the notebook back in the walk's own order. A setting
+        // that came off every time you pressed `r` would not be a setting.
+        app.replace(a_session(
+            a_status(),
+            vec![
+                dated(
+                    a_note("aaaa1111", "budget-review", "Zebra", &["work"], ""),
+                    "2026-01-01T00:00:00Z",
+                    "2026-03-01T00:00:00Z",
+                ),
+                dated(
+                    a_note("bbbb2222", "meeting-notes", "Apple", &["work", "q3"], ""),
+                    "2026-02-01T00:00:00Z",
+                    "2026-01-01T00:00:00Z",
+                ),
+                dated(
+                    a_note("cccc3333", "reading-list", "Mango", &["q3"], ""),
+                    "2026-03-01T00:00:00Z",
+                    "2026-02-01T00:00:00Z",
+                ),
+            ],
+        ));
+        assert_eq!(app.sort, Sort::Created);
+        assert!(app.reverse);
+        assert_eq!(listed(&app), ["aaaa1111", "bbbb2222", "cccc3333"]);
+    }
+
+    #[test]
+    fn the_query_narrows_whatever_order_is_in_force() {
+        let mut app = a_dated_app();
+        app.on_key(key(KeyCode::Char('S')));
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work");
+        assert_eq!(listed(&app), ["bbbb2222", "aaaa1111"], "still newest first");
+    }
+
+    #[test]
+    fn ctrl_w_is_the_listings_own_density_and_no_other_screens() {
+        let mut app = a_dated_app();
+        assert!(!app.long);
+        app.on_key(ctrl('w'));
+        assert!(app.long);
+        app.on_key(ctrl('w'));
+        assert!(!app.long);
+
+        // The other screens print what their own command prints; there is no
+        // second density for them to offer.
+        app.on_key(key(KeyCode::Char('t')));
+        app.on_key(ctrl('w'));
+        assert!(!app.long, "{:?} has no wide row", app.view());
+    }
+
+    #[test]
+    fn a_digit_narrows_to_one_of_the_commonest_tags_and_zero_lets_go() {
+        let mut app = a_dated_app();
+        // Commonest first, ties alphabetical: `q3` and `work` both have two.
+        app.on_key(key(KeyCode::Char('1')));
+        assert_eq!(app.search(), "tag:q3");
+        assert_eq!(app.shown(), 2);
+
+        app.on_key(key(KeyCode::Char('2')));
+        assert_eq!(app.search(), "tag:work");
+
+        // A digit past the end of the list is a digit with nothing to mean.
+        app.on_key(key(KeyCode::Char('9')));
+        assert_eq!(app.search(), "tag:work");
+
+        app.on_key(key(KeyCode::Char('0')));
+        assert_eq!(app.search(), "");
+        assert_eq!(app.shown(), 3);
+    }
+
+    #[test]
+    fn a_digit_comes_back_down_to_the_listing_from_wherever_it_is_pressed() {
+        let mut app = a_dated_app();
+        read_it(&mut app, "the q3 budget\n");
+        app.on_key(key(KeyCode::Char('B')));
+        assert_eq!(app.depth(), 3);
+
+        // The answer to "show me this tag" is a screen, and it is the one at the
+        // bottom of the stack — the same reason `:notes` comes back down.
+        app.on_key(key(KeyCode::Char('1')));
+        assert_eq!(app.view(), &View::Notes);
+        assert_eq!(app.depth(), 1);
+        assert_eq!(app.search(), "tag:q3");
+    }
+
+    #[test]
+    fn the_digits_are_the_numbers_the_tags_screen_puts_beside_them() {
+        let mut app = a_dated_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "tags");
+        app.on_key(key(KeyCode::Enter));
+
+        // The screen numbers its first nine rows with the very keys that reach
+        // them, so the two cannot drift: whatever is second there is what `2`
+        // narrows to.
+        let second = app.tallies()[1].tag.clone();
+        app.on_key(key(KeyCode::Char('2')));
+        assert_eq!(app.search(), format!("tag:{second}"));
+    }
+
+    #[test]
+    fn ctrl_g_gives_the_crumb_row_back() {
+        let mut app = a_dated_app();
+        assert!(app.crumbs_shown);
+        app.on_key(ctrl('g'));
+        assert!(!app.crumbs_shown);
+        app.on_key(ctrl('g'));
+        assert!(app.crumbs_shown);
     }
 
     fn a_blame_line(text: &str) -> BlameLine {

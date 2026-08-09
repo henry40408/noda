@@ -1328,3 +1328,170 @@ fn a_screen_that_cannot_be_filled_closes_and_says_why() {
     assert_eq!(app.depth(), 1);
     assert!(has_line_with(&after, &[" no "]), "{after:#?}");
 }
+
+/// The titles the listing shows, top to bottom, so a test can say what order it
+/// is in without depending on ids nobody chose.
+fn titles(screen: &[String]) -> Vec<&str> {
+    [
+        "Budget review",
+        "Meeting notes",
+        "Reading list",
+        "Trip plan",
+    ]
+    .into_iter()
+    .filter_map(|title| {
+        screen
+            .iter()
+            .position(|line| line.contains(title))
+            .map(|at| (at, title))
+    })
+    .fold(Vec::new(), |mut sorted: Vec<(usize, &str)>, row| {
+        sorted.push(row);
+        sorted.sort_by_key(|(at, _)| *at);
+        sorted
+    })
+    .into_iter()
+    .map(|(_, title)| title)
+    .collect()
+}
+
+#[test]
+fn s_and_r_put_the_listing_in_the_orders_sort_and_r_already_name() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let opened = screen(&paths, &mut app);
+    let by_slug = titles(&opened);
+    assert_eq!(
+        by_slug,
+        ["Budget review", "Meeting notes", "Reading list"],
+        "by slug, which is what a walk produces"
+    );
+
+    // `R` on its own turns the walk's own order, which is `ls -r`'s bargain and
+    // the reason it needs no `--sort` beside it.
+    app.on_key(key(KeyCode::Char('R')));
+    let turned = screen(&paths, &mut app);
+    assert!(has_line_with(&turned, &["by slug reversed"]), "{turned:#?}");
+    assert_eq!(
+        titles(&turned),
+        ["Reading list", "Meeting notes", "Budget review"]
+    );
+    app.on_key(key(KeyCode::Char('R')));
+
+    // Which order each key lands on is `sort_notes`', and tested against fixed
+    // dates next to the state machine. What is checked here is that the key
+    // reaches all four and that the band says which one is in force — `S`
+    // rearranges rows and leaves nothing else behind to say why.
+    //
+    // The row order is deliberately not asserted for the two time orders: these
+    // notes were made in the same second, so their stamps tie and the order
+    // falls back to ids nobody chose. A test written on those ids passes on the
+    // run that wrote it.
+    for order in ["by created", "by updated", "by title"] {
+        app.on_key(key(KeyCode::Char('S')));
+        let sorted = screen(&paths, &mut app);
+        assert!(has_line_with(&sorted, &[order]), "{order}: {sorted:#?}");
+        let mut still_there = titles(&sorted);
+        still_there.sort_unstable();
+        assert_eq!(
+            still_there,
+            ["Budget review", "Meeting notes", "Reading list"],
+            "reordering lost a note"
+        );
+    }
+
+    // And round to where it started, which is the order that says nothing.
+    app.on_key(key(KeyCode::Char('S')));
+    let back = screen(&paths, &mut app);
+    assert!(!has_line_with(&back, &["by "]), "{back:#?}");
+    assert_eq!(titles(&back), by_slug);
+}
+
+#[test]
+fn ctrl_w_adds_the_columns_ls_l_adds_and_puts_them_where_it_puts_them() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let short = screen(&paths, &mut app);
+    assert!(!has_line_with(&short, &["budget-review"]), "{short:#?}");
+
+    app.on_key(ctrl('w'));
+    // Wide enough for the whole long row. At ninety the title is squeezed to
+    // its floor, which is the give-way the next test is about.
+    let wide = screen_at(&paths, &mut app, 120, 28);
+    // The id and the title first in both, then what `-l` adds, then the tags:
+    // the long row extends the short one rather than rearranging it.
+    assert!(
+        has_line_with(&wide, &["Budget review", "budget-review", "[work]"]),
+        "{wide:#?}"
+    );
+    assert!(
+        has_line_with(&wide, &["Meeting notes", "meeting-notes"]),
+        "{wide:#?}"
+    );
+    // And the band says so, because a row that changed shape should say why.
+    assert!(has_line_with(&wide, &["wide"]), "{wide:#?}");
+}
+
+#[test]
+fn the_wide_row_gives_way_from_the_right_rather_than_starving_the_title() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    app.on_key(ctrl('w'));
+
+    // Narrow enough that the whole long row cannot fit. The id and the title
+    // are what name a note; the columns behind them are a density, and a
+    // density is the thing to give up.
+    let narrow = screen_at(&paths, &mut app, 46, 28);
+    for title in ["Budget rev", "Meeting no", "Reading li"] {
+        assert!(has_line_with(&narrow, &[title]), "{title}: {narrow:#?}");
+    }
+    assert!(
+        !has_line_with(&narrow, &["2026-"]),
+        "the timestamps went before the title did: {narrow:#?}"
+    );
+}
+
+#[test]
+fn a_digit_narrows_to_a_tag_and_the_tags_screen_says_which_digit() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // The screen numbers its first nine rows with the keys that reach them.
+    let tags = go(&paths, &mut app, "tags");
+    assert!(has_line_with(&tags, &["1", "work", "2 notes"]), "{tags:#?}");
+    assert!(has_line_with(&tags, &["2", "q3", "1 note"]), "{tags:#?}");
+
+    app.on_key(key(KeyCode::Char('1')));
+    let narrowed = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&narrowed, &["Notes(tag:work)[2]"]),
+        "{narrowed:#?}"
+    );
+    assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
+
+    app.on_key(key(KeyCode::Char('0')));
+    let all = screen(&paths, &mut app);
+    assert!(has_line_with(&all, &["Notes(all)[3]"]), "{all:#?}");
+}
+
+#[test]
+fn ctrl_g_gives_the_crumb_row_to_the_notes() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    app.on_key(key(KeyCode::Enter));
+    // By position rather than by text: `notes` is a word the header says too,
+    // and a needle that matches "3 notes  1 file" would pass whether the trail
+    // was drawn or not. The trail is the band above the status line.
+    let trail = |screen: &[String]| screen[screen.len() - 2].trim().to_string();
+
+    let with = screen(&paths, &mut app);
+    assert!(trail(&with).starts_with("notes"), "{with:#?}");
+
+    app.on_key(ctrl('g'));
+    let without = screen(&paths, &mut app);
+    assert!(trail(&without).is_empty(), "{without:#?}");
+    // The row went to the notes rather than being drawn blank, and the band
+    // still says what screen you are on — the half of the trail that cannot be
+    // worked out from anywhere else.
+    assert!(has_line_with(&without, &["Note("]), "{without:#?}");
+}
