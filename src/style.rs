@@ -19,6 +19,19 @@ pub const SLUG: Style = AnsiColor::Yellow.on_default().dimmed();
 /// A note's tags, in `ls`. The one column that groups notes rather than
 /// naming one, so it gets a hue of its own.
 pub const TAGS: Style = AnsiColor::Cyan.on_default();
+/// The `[`, `,` and `]` around and between those tags: the brackets are how you
+/// know a tag list is a tag list, but they are not the part you read, so they
+/// step back and leave the tags the only [`TAGS`]-coloured thing in the column.
+///
+/// Grey rather than [`TAGS`] dimmed, which is what this was first. A colour and
+/// not an effect: `dim` is a request a terminal may answer with a half-blend, a
+/// different palette entry, or nothing at all, and where it answers with nothing
+/// a dimmed cyan *is* cyan — the distinction this exists to draw disappears on
+/// exactly the terminals that cannot show it. [`SLUG`] is dimmed and stays that
+/// way; it sits beside the id it belongs to, so if the dim is dropped the pair
+/// still reads correctly. Here the two halves are interleaved, and losing the
+/// difference loses the point.
+pub const TAGS_PUNCT: Style = AnsiColor::BrightBlack.on_default();
 /// Timestamps and other supporting detail.
 pub const MUTED: Style = Style::new().dimmed();
 /// The `+` side of a diff.
@@ -50,4 +63,62 @@ pub const OVERDUE: Style = AnsiColor::Red.on_default();
 /// Wraps `text` in `style`. The `:#` form writes the reset sequence.
 pub fn paint(style: Style, text: &str) -> String {
     format!("{style}{text}{style:#}")
+}
+
+/// A tag list cut into the pieces that are coloured differently: the brackets
+/// and separators in [`TAGS_PUNCT`], each tag in [`TAGS`]. Empty tags give no
+/// pieces at all — a note without tags writes nothing, not `[]`.
+///
+/// Here rather than in either caller because there are two writers of this one
+/// column — `ls` emits escape sequences, `tui` builds ratatui spans — and the
+/// thing they must agree on is *where the cuts fall*. Splitting it twice is how
+/// the browser's column and the listing's stop being the same string.
+pub fn tag_pieces(tags: &[String]) -> Vec<(Style, String)> {
+    if tags.is_empty() {
+        return Vec::new();
+    }
+    let mut pieces = vec![(TAGS_PUNCT, "[".to_string())];
+    for (i, tag) in tags.iter().enumerate() {
+        if i > 0 {
+            pieces.push((TAGS_PUNCT, ", ".to_string()));
+        }
+        pieces.push((TAGS, tag.clone()));
+    }
+    pieces.push((TAGS_PUNCT, "]".to_string()));
+    pieces
+}
+
+/// The same pieces, painted and joined — the tag list as a listing writes it.
+pub fn tags(tags: &[String]) -> String {
+    tag_pieces(tags)
+        .iter()
+        .map(|(style, text)| paint(*style, text))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tag_list_is_cut_between_the_tags_and_the_punctuation() {
+        assert!(tag_pieces(&[]).is_empty());
+
+        let pieces = tag_pieces(&["work".to_string(), "q3".to_string()]);
+        assert_eq!(
+            pieces,
+            vec![
+                (TAGS_PUNCT, "[".to_string()),
+                (TAGS, "work".to_string()),
+                (TAGS_PUNCT, ", ".to_string()),
+                (TAGS, "q3".to_string()),
+                (TAGS_PUNCT, "]".to_string()),
+            ]
+        );
+
+        // Read back without the escapes, it is still the row `ls` has always
+        // printed — the colouring changed, the text did not.
+        let plain: String = pieces.into_iter().map(|(_, text)| text).collect();
+        assert_eq!(plain, "[work, q3]");
+    }
 }

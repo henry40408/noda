@@ -166,10 +166,14 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
                 // The title is the column the eye lands on, so it is the one
                 // left uncoloured — the same reason `noda ls` leaves it alone.
                 marked(&file.note.title, &terms, Style::default()),
-                Line::from(Span::styled(
-                    tags(&file.note.tags),
-                    theme::from(palette::TAGS),
-                )),
+                // The brackets and the commas grey behind the tags they hold,
+                // the same split `noda ls` prints.
+                Line::from(
+                    palette::tag_pieces(&file.note.tags)
+                        .into_iter()
+                        .map(|(style, text)| Span::styled(text, theme::from(style)))
+                        .collect::<Vec<_>>(),
+                ),
             ])
         })
         .collect();
@@ -336,15 +340,17 @@ fn draw_alert(f: &mut Frame, area: Rect, app: &App) {
     card(f, area, title, lines, border);
 }
 
-/// A note's tags as the listing writes them, or nothing at all. Tags are the one
-/// thing a note may not have, which is why they are the last column: an empty
-/// cell here shifts nothing.
+/// A note's tags as the listing writes them, with no colour on them: what the
+/// column has to be wide enough to hold. Built from the same pieces the row is
+/// drawn from, so the width cannot drift from what lands in it.
+///
+/// Tags are the one thing a note may not have, which is why they are the last
+/// column: an empty cell here shifts nothing.
 fn tags(tags: &[String]) -> String {
-    if tags.is_empty() {
-        String::new()
-    } else {
-        format!("[{}]", tags.join(", "))
-    }
+    palette::tag_pieces(tags)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect()
 }
 
 /// The file as the screen shows it: the frontmatter pushed into the background

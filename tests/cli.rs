@@ -312,7 +312,9 @@ fn ls_lists_notes_and_filters_by_tag() {
     let all = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert_eq!(all.lines().count(), 2);
     assert!(all.lines().next().unwrap().contains("Alpha"), "{all}");
-    assert!(all.contains("[work]"), "{all}");
+    // Under the escapes: the brackets and the tag are coloured apart, so the
+    // raw output no longer holds `[work]` as one run.
+    assert!(plain(&all).contains("[work]"), "{all}");
 
     let tagged = cmd::ls(
         &paths,
@@ -2649,6 +2651,45 @@ fn ls_colours_the_columns_without_moving_them() {
         "the slug column holds its place: {stripped}"
     );
     assert_eq!(slug_at(&short), slug_at("undated"), "{stripped}");
+}
+
+/// The tag column is two colours, not one: the brackets and the comma grey, the
+/// tags themselves cyan. Two colours rather than one colour dimmed, so that no
+/// assertion here mentions `dim` — a terminal free to ignore it is the reason
+/// the grey was chosen. Like the overdue date, this has to be read before
+/// `plain` strips it.
+#[test]
+fn ls_greys_the_punctuation_a_tag_list_is_written_with() {
+    let (_root, paths) = initialized();
+    cmd::add(
+        &paths,
+        Some("Alpha"),
+        Some("a\n"),
+        &["work".to_string(), "q3".to_string()],
+    )
+    .unwrap();
+
+    let out = cmd::ls(&paths, &cmd::List::default()).unwrap();
+    let row = out.lines().next().unwrap();
+    let grey = "\u{1b}[90m";
+    let cyan = "\u{1b}[36m";
+    for punctuation in ["[", ", ", "]"] {
+        assert!(
+            row.contains(&format!("{grey}{punctuation}")),
+            "{punctuation:?} is grey: {row:?}"
+        );
+    }
+    for tag in ["work", "q3"] {
+        assert!(
+            row.contains(&format!("{cyan}{tag}")),
+            "{tag:?} keeps the tag colour: {row:?}"
+        );
+    }
+    assert!(
+        !row.contains("\u{1b}[2m"),
+        "nothing in the column leans on dim: {row:?}"
+    );
+    assert!(plain(&out).contains("[work, q3]"), "{out}");
 }
 
 /// `-l` extends the default row rather than rearranging it. A script that cuts
