@@ -411,7 +411,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
     // A note may have no times at all — nothing invents one, so the column says
     // so rather than leaving a hole the eye has to measure.
     let stamp = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
-    let rows: Vec<(String, String, String, String, String, String)> = notes
+    let rows: Vec<(String, String, String, String, String, Vec<String>)> = notes
         .into_iter()
         .map(|file| {
             (
@@ -420,7 +420,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
                 stamp(file.note.created),
                 stamp(file.note.updated),
                 file.note.title,
-                file.note.tags.join(", "),
+                file.note.tags,
             )
         })
         .collect();
@@ -464,11 +464,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
             let _ = write!(line, "  {title}");
         }
         if !tags.is_empty() {
-            let _ = write!(
-                line,
-                "  {}",
-                style::paint(style::TAGS, &format!("[{tags}]"))
-            );
+            let _ = write!(line, "  {}", style::tags(&tags));
         }
         out.push_str(line.trim_end());
         out.push('\n');

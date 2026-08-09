@@ -75,4 +75,15 @@ mod tests {
         assert_eq!(slug.fg, Some(Color::Yellow));
         assert!(slug.add_modifier.contains(Modifier::DIM));
     }
+
+    /// The brackets around a tag list step back by being a different colour, not
+    /// by being the tags' colour weakened — a terminal that ignores `dim` would
+    /// have drawn the whole column in one cyan.
+    #[test]
+    fn tag_punctuation_steps_back_without_leaning_on_dim() {
+        let punct = from(style::TAGS_PUNCT);
+        assert_eq!(punct.fg, Some(Color::DarkGray));
+        assert!(punct.add_modifier.is_empty());
+        assert_ne!(punct.fg, from(style::TAGS).fg);
+    }
 }
