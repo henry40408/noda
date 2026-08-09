@@ -26,7 +26,7 @@
 //! instead of once per query — which is the whole point of typing into a filter
 //! rather than into a shell.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -36,8 +36,9 @@ use super::command;
 use crate::Result;
 use crate::cmd::{self, Change, Step, Touch};
 use crate::note;
-use crate::notebook::{NoteFile, Status};
+use crate::notebook::{self, BlameLine, Deleted, Entry, NoteFile, Status};
 use crate::query::Query;
+use crate::todo;
 
 /// Something the runtime has to do that the state cannot do for itself.
 ///
@@ -88,6 +89,14 @@ pub enum Action {
     /// same files as the keys above, with the commit boundary moved out one
     /// level so that a queue arrives in the history as the one thing it was.
     Send(Vec<Step>),
+    /// `noda restore`: a note put back the way it was at a revision, as a new
+    /// commit. Nothing is rewritten, which is why it is not asked about — and
+    /// why it takes two arguments, both typed on purpose.
+    Restore {
+        key: String,
+        rev: String,
+        touch: Touch,
+    },
     /// Open a note the prompt named, on a screen of its own.
     ///
     /// The key is not resolved here, deliberately. What an id prefix or a slug
@@ -96,8 +105,30 @@ pub enum Action {
     /// second way without noticing it had. So the runtime asks the notebook, and
     /// an ambiguous key comes back as the same refusal the prompt would print.
     Open(String),
+    /// Open a screen *about* a note the prompt named by key — its history, who
+    /// wrote it, what points at it.
+    ///
+    /// A second variant rather than a flag on `Open`, and resolved by the
+    /// runtime for the same reason `Open` is: the key is not an id until the
+    /// notebook has said so.
+    Show {
+        key: String,
+        look: Look,
+    },
+    /// `noda use`: the whole session moved to another notebook. Not a `Run`,
+    /// because what comes back is a different notebook — the runtime builds a
+    /// new session rather than reloading this one.
+    Use(String),
     /// A command that reads or changes the notebook and answers with a line.
     Run(Run),
+}
+
+/// A screen about one note, named before the note is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Look {
+    Log,
+    Blame,
+    Backlinks,
 }
 
 /// The commands the prompt can ask for that are not about one note.
@@ -159,11 +190,33 @@ impl Message {
     }
 }
 
+/// What a `backlinks` screen is about.
+///
+/// Both kinds, because the question is one question: "which notes use this
+/// diagram" and "which notes link to this note" are answered by the same walk,
+/// which is why `noda backlinks` takes either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Subject {
+    Note(String),
+    File(String),
+}
+
+impl Subject {
+    /// What it is called, for the band that says what the screen is of.
+    pub fn name(&self) -> &str {
+        match self {
+            Subject::Note(name) | Subject::File(name) => name,
+        }
+    }
+}
+
 /// What a screen is a screen of.
 ///
 /// The name is what the crumb trail shows, so it is the notebook's own word for
 /// the thing rather than a heading invented for the browser: a note is named by
-/// its id here for the same reason it is named by its id everywhere else.
+/// its id here for the same reason it is named by its id everywhere else, and
+/// every other screen is named by the subcommand that prints the same thing at
+/// the prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum View {
     /// Every note the notebook holds, narrowed by this screen's own query. The
@@ -174,16 +227,104 @@ pub enum View {
     /// screen survives the listing underneath it being filtered, re-sorted or
     /// read again.
     Note(String),
+    /// Every unticked box in the notebook, soonest due first.
+    Todo,
+    /// Every tag, and how many notes carry it.
+    Tags,
+    /// What the notebook holds that is not a note.
+    Files,
+    /// Every notebook there is, and which one this is.
+    Notebooks,
+    /// The notes history holds that the notebook no longer does.
+    Deleted,
+    /// What is uncommitted, or what the last commit did.
+    Diff,
+    /// Commits, newest first: one note's, or the whole notebook's.
+    Log(Option<String>),
+    /// What links to a note or to a file.
+    Backlinks(Subject),
+    /// Which commit put each line of a note where it is.
+    Blame(String),
 }
 
 impl View {
     /// What the crumb trail calls it.
+    ///
+    /// The subcommand's own name, so the trail reads as the path you would have
+    /// typed. Which note a screen is about is not in the crumb — it is on the
+    /// title band, and repeating it here would make the trail as wide as the
+    /// screen on a stack three deep.
     pub fn crumb(&self) -> &str {
         match self {
             View::Notes => "notes",
             View::Note(id) => id,
+            View::Todo => "todo",
+            View::Tags => "tags",
+            View::Files => "files",
+            View::Notebooks => "notebooks",
+            View::Deleted => "deleted",
+            View::Diff => "diff",
+            View::Log(_) => "log",
+            View::Backlinks(_) => "backlinks",
+            View::Blame(_) => "blame",
         }
     }
+}
+
+/// What a screen shows, once somebody has worked it out.
+///
+/// One at a time, because one screen is on top at a time: keeping the last five
+/// would be a cache, and a cache of a notebook that another window is writing to
+/// is a cache that goes wrong quietly.
+///
+/// Some of these the session can work out for itself — every note is in memory
+/// already — and some need a repository, which only the runtime may open. Which
+/// is which is [`App::derive`] and [`App::wanted`]; the difference does not show
+/// on screen.
+pub enum Content {
+    /// A note's file as it is on disk, read rather than rendered back from the
+    /// parse — the reason `noda show` reads it too.
+    Note(String),
+    Todo(Vec<Task>),
+    Tags(Vec<Tally>),
+    /// Indices into the session's notes: the ones that link to the subject.
+    Backlinks(Vec<usize>),
+    Log(Vec<Entry>),
+    Blame(Vec<BlameLine>),
+    Deleted(Vec<Deleted>),
+    /// The patch, with no colour on it. Colour is put back on by the drawing,
+    /// which is where every other listing's colour is decided.
+    Diff(String),
+}
+
+/// One unticked box, and the note carrying it.
+pub struct Task {
+    /// Which note, as an index into the session's notes. An index rather than an
+    /// id because the list is rebuilt whenever the notes are, and never outlives
+    /// them.
+    pub note: usize,
+    pub item: todo::Item,
+}
+
+/// One tag, and how many notes carry it.
+pub struct Tally {
+    pub tag: String,
+    pub notes: usize,
+}
+
+/// Something a screen needs that only the runtime can get, because getting it
+/// means opening the repository.
+///
+/// Asked for rather than fetched, in the same shape the note's own file has
+/// always been asked for: the state says what it wants, the runtime brings it
+/// back, and nothing here touches a disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Need {
+    Note { id: String, path: PathBuf },
+    Log(Option<String>),
+    Blame { id: String, slug: String },
+    Deleted,
+    Diff,
 }
 
 /// One screen on the stack: what it is of, and everything about it that a
@@ -309,19 +450,25 @@ impl Ask {
     }
 }
 
-/// A note's text as it was last read from disk.
+/// One read of the notebook: everything a session holds that does not depend on
+/// which screen is on top.
 ///
-/// Read from the file rather than rendered back from the parsed note, for the
-/// reason `noda show` reads the file: a note on screen should be what is on
-/// disk, including a frontmatter field noda does not interpret and would not
-/// know to write back.
-///
-/// One at a time, because one note is open at a time. The file is read when the
-/// screen is opened rather than as the cursor moves, which is the difference
-/// between reading a notebook and reading a file per keystroke.
-pub struct Reading {
-    pub id: String,
-    pub text: String,
+/// Gathered into one value because a reload has to replace all of it at once. A
+/// listing rebuilt from new notes while the file list still describes the old
+/// notebook is a screen that is half true, and half true is the hardest kind of
+/// wrong to notice.
+pub struct Session {
+    pub status: Status,
+    pub notes: Vec<NoteFile>,
+    /// What the notebook holds that is not a note, by name — an attachment, a
+    /// README, a file parked here on purpose.
+    pub files: Vec<String>,
+    /// Every notebook there is, for the screen that moves between them.
+    pub notebooks: Vec<String>,
+    /// Today where this machine is, `YYYY-MM-DD`, for deciding what is overdue.
+    /// The local date and not UTC: east of here an item would otherwise stay
+    /// unmarked until morning, which is exactly when a todo list is read.
+    pub today: String,
 }
 
 pub struct App {
@@ -337,6 +484,16 @@ pub struct App {
     /// Every note the notebook holds, in the order the walk produced: by slug,
     /// which is what `noda ls` shows without `--sort`.
     notes: Vec<NoteFile>,
+    /// What it holds that is not a note, and every notebook there is. Both come
+    /// with the read that produced the notes, because both are cheap enough that
+    /// fetching them when a screen asks would be a repository opened for a list
+    /// of filenames.
+    files: Vec<String>,
+    notebooks: Vec<String>,
+    /// Today, for the todo screen. Taken once per read rather than per frame: a
+    /// browser left open overnight is a rarer thing than a clock asked sixty
+    /// times a second.
+    today: String,
     /// The screens, oldest first. Never empty: the listing at the bottom is what
     /// the session is open on, and popping it would leave nothing to be in.
     stack: Vec<Screen>,
@@ -381,8 +538,12 @@ pub struct App {
     /// for as long as it is on, because a setting you cannot see is one you
     /// forget you left on.
     pub touch: Touch,
-    /// The note the top screen is showing, once the runtime has read it.
-    pub reading: Option<Reading>,
+    /// What the top screen shows, and which screen it was worked out for.
+    ///
+    /// Kept with its view so that a screen never draws the last screen's answer:
+    /// what is loaded is only loaded *for* something, and going somewhere else
+    /// makes it stale rather than merely old.
+    loaded: Option<(View, Content)>,
     /// The command lines this session has run, oldest first, for the prompt to
     /// walk back through. Kept for the session and no longer: a browser is not a
     /// shell, and a file of everything anyone ever typed into a notebook is a
@@ -403,14 +564,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(notebook: String, root: PathBuf, status: Status, notes: Vec<NoteFile>) -> App {
+    pub fn new(notebook: String, root: PathBuf, session: Session) -> App {
         let mut listing = Screen::new(View::Notes, Vec::new());
-        listing.visible = (0..notes.len()).collect();
+        listing.visible = (0..session.notes.len()).collect();
         let mut app = App {
             notebook,
             root,
-            status,
-            notes,
+            status: session.status,
+            notes: session.notes,
+            files: session.files,
+            notebooks: session.notebooks,
+            today: session.today,
             stack: vec![listing],
             mode: Mode::Browse,
             input: String::new(),
@@ -419,7 +583,7 @@ impl App {
             queue: Vec::new(),
             queue_at: 0,
             touch: Touch::Stamp,
-            reading: None,
+            loaded: None,
             history: Vec::new(),
             history_at: None,
             commands_at: 0,
@@ -500,6 +664,7 @@ impl App {
     fn open(&mut self, view: View) {
         let terms = self.top().terms.clone();
         self.stack.push(Screen::new(view, terms));
+        self.settle();
     }
 
     /// Closes the top screen, unless it is the listing. `false` when there was
@@ -507,10 +672,183 @@ impl App {
     fn back(&mut self) -> bool {
         if self.stack.len() > 1 {
             self.stack.pop();
+            // What was loaded belonged to the screen that has just gone, so the
+            // one underneath has to be worked out again — with its own cursor
+            // left where it was, which is the whole reason for coming back.
+            self.settle();
             true
         } else {
             false
         }
+    }
+
+    /// Works out what the screen on top shows, for the screens whose answer is
+    /// already in the session.
+    ///
+    /// Called wherever the top screen changes — pushed, popped, or left standing
+    /// while the notebook underneath it was read again. The screens that need a
+    /// repository are not answered here; they ask through [`App::wanted`] and
+    /// wait a frame.
+    fn settle(&mut self) {
+        let view = self.top().view.clone();
+        if self.content().is_none()
+            && let Some(content) = self.derive(&view)
+        {
+            self.loaded = Some((view, content));
+        }
+        // Kept where it was and clamped, rather than sent back to the top: this
+        // runs on the way back to a screen as well as on the way in, and a stack
+        // that dropped the cursor on the way back would be a stack you learn not
+        // to press Escape in. A list that has since got shorter is what the
+        // clamp is for, and a list that never needed working out — the files,
+        // the notebooks — still needs a cursor put on it.
+        let at = self.top().table.selected().unwrap_or(0);
+        self.cursor_to(at);
+    }
+
+    /// What a screen shows, when the session already holds the answer.
+    ///
+    /// These three read every note's body, which is why they are worked out when
+    /// a screen is opened rather than as the cursor moves: parsing the notebook
+    /// per keystroke is what the in-memory copy exists to avoid, not something it
+    /// makes affordable.
+    fn derive(&self, view: &View) -> Option<Content> {
+        match view {
+            View::Todo => {
+                let mut tasks: Vec<Task> = self
+                    .notes
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(at, file)| {
+                        todo::items(&file.note.body)
+                            .into_iter()
+                            .map(move |item| Task { note: at, item })
+                    })
+                    .collect();
+                // `todo::order` and not a comparison written here: `noda todo`
+                // prints this list too, and a list that came out in a different
+                // order depending on which one you asked would read as a bug in
+                // whichever you asked second.
+                tasks.sort_by(|left, right| {
+                    todo::order(
+                        (self.notes[left.note].slug.as_str(), &left.item),
+                        (self.notes[right.note].slug.as_str(), &right.item),
+                    )
+                });
+                Some(Content::Todo(tasks))
+            }
+            View::Tags => {
+                let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
+                for file in &self.notes {
+                    for tag in &file.note.tags {
+                        *counted.entry(tag.as_str()).or_default() += 1;
+                    }
+                }
+                let mut tallies: Vec<Tally> = counted
+                    .into_iter()
+                    .map(|(tag, notes)| Tally {
+                        tag: tag.to_string(),
+                        notes,
+                    })
+                    .collect();
+                // Commonest first, and alphabetical within a count. A tag list
+                // sorted by name alone buries the four tags a notebook actually
+                // runs on under every one-off ever typed.
+                tallies.sort_by(|left, right| {
+                    right
+                        .notes
+                        .cmp(&left.notes)
+                        .then_with(|| left.tag.cmp(&right.tag))
+                });
+                Some(Content::Tags(tallies))
+            }
+            // Asked of `notebook` rather than worked out here. What counts as a
+            // link — the id in the destination, not the filename, so an answer
+            // survives a retitle — is written down once, and this is the same
+            // test applied to the notes already in hand instead of to a second
+            // walk of the directory.
+            View::Backlinks(subject) => {
+                let found = self
+                    .notes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, file)| match subject {
+                        Subject::Note(id) => notebook::links_to_note(&file.note, id),
+                        Subject::File(name) => notebook::links_to_file(&file.note, name),
+                    })
+                    .map(|(at, _)| at)
+                    .collect();
+                Some(Content::Backlinks(found))
+            }
+            _ => None,
+        }
+    }
+
+    /// What the top screen shows, when what is loaded was loaded for it.
+    fn content(&self) -> Option<&Content> {
+        match &self.loaded {
+            Some((view, content)) if view == &self.top().view => Some(content),
+            _ => None,
+        }
+    }
+
+    /// What the screen in front of you needs that only the runtime can get.
+    ///
+    /// `None` on every frame but the one after a screen is opened, which is what
+    /// keeps a repository from being opened per keystroke.
+    pub fn wanted(&self) -> Option<Need> {
+        if self.content().is_some() {
+            return None;
+        }
+        match &self.top().view {
+            View::Note(id) => {
+                let file = self.note_of(id)?;
+                Some(Need::Note {
+                    id: file.id.clone(),
+                    path: self.root.join(note::file_name(&file.id, &file.slug)),
+                })
+            }
+            View::Blame(id) => {
+                let file = self.note_of(id)?;
+                Some(Need::Blame {
+                    id: file.id.clone(),
+                    slug: file.slug.clone(),
+                })
+            }
+            View::Log(id) => Some(Need::Log(id.clone())),
+            View::Deleted => Some(Need::Deleted),
+            View::Diff => Some(Need::Diff),
+            _ => None,
+        }
+    }
+
+    /// Takes what the runtime went and got.
+    ///
+    /// Dropped when the screen it was for is no longer the one in front of you:
+    /// a blame of two thousand commits takes long enough to press Escape during,
+    /// and the answer to a question nobody is asking any more must not land on
+    /// whatever screen happens to be there instead.
+    pub fn supply(&mut self, view: &View, content: Content) {
+        if self.top().view != *view {
+            return;
+        }
+        self.loaded = Some((view.clone(), content));
+        self.top_mut().scroll = 0;
+        let at = self.top().table.selected().unwrap_or(0);
+        self.cursor_to(at);
+    }
+
+    /// Closes the screen a command could not fill. Public because only the
+    /// runtime finds out that it could not: a `blame` of a note whose file has
+    /// gone is a screen with nothing to be about, and leaving it up would leave
+    /// the reason for the empty screen on a card over the top of it.
+    pub fn give_up(&mut self) {
+        self.back();
+    }
+
+    /// A note by id, for the screens that are about one.
+    pub fn note_of(&self, id: &str) -> Option<&NoteFile> {
+        self.notes.iter().find(|file| file.id == id)
     }
 
     /// Swaps in a freshly read notebook, keeping the query and — when the note
@@ -521,11 +859,14 @@ impl App {
     /// the case a delete makes ordinary: removing the fortieth note of two
     /// hundred and being returned to the first would be a reason not to press
     /// that key either.
-    pub fn replace(&mut self, status: Status, notes: Vec<NoteFile>) {
+    pub fn replace(&mut self, session: Session) {
         let was = self.at_cursor().map(|file| file.id.clone());
         let row = self.listing().table.selected();
-        self.status = status;
-        self.notes = notes;
+        self.status = session.status;
+        self.notes = session.notes;
+        self.files = session.files;
+        self.notebooks = session.notebooks;
+        self.today = session.today;
         self.refilter();
         match was.and_then(|id| {
             self.listing()
@@ -536,17 +877,22 @@ impl App {
             Some(at) => self.select(at),
             None => self.select(row.unwrap_or(0)),
         }
-        // Dropped rather than kept: the file on disk is what changed, and this
+        // Dropped rather than kept: what is on disk is what changed, and this
         // copy of it is what the reload was pressed to get rid of.
-        self.reading = None;
-        // A screen showing a note the notebook no longer holds is a screen with
+        self.loaded = None;
+        // A screen about a note the notebook no longer holds is a screen with
         // nothing behind it — which is the ordinary end of deleting the note you
         // are reading. Taken off the stack rather than left showing the last
-        // thing that was true.
+        // thing that was true, and the same goes for every screen that is about
+        // one note rather than about the notebook.
         let mut stack = std::mem::take(&mut self.stack);
         stack.retain(|screen| match &screen.view {
-            View::Note(id) => self.notes.iter().any(|file| &file.id == id),
-            View::Notes => true,
+            View::Note(id)
+            | View::Blame(id)
+            | View::Log(Some(id))
+            | View::Backlinks(Subject::Note(id)) => self.notes.iter().any(|file| &file.id == id),
+            View::Backlinks(Subject::File(name)) => self.files.contains(name),
+            _ => true,
         });
         self.stack = stack;
         // A mark on a note that is no longer there is a change aimed at nothing.
@@ -555,6 +901,10 @@ impl App {
         // them has since gone.
         let ids: BTreeSet<&str> = self.notes.iter().map(|file| file.id.as_str()).collect();
         self.marks.retain(|id| ids.contains(id.as_str()));
+        // Whatever screen the reload left you on is now describing a notebook
+        // that has been read again, so it is worked out again — and the ones
+        // that need a repository ask for themselves on the next frame.
+        self.settle();
     }
 
     /// Whether the note is one of the ones picked out.
@@ -579,14 +929,137 @@ impl App {
     /// The note the screen in front of you is about.
     ///
     /// On the listing that is the row under the cursor; on a note it is that
-    /// note. One question with one answer on either screen, which is what lets
-    /// `e`, `m`, `#` and `Ctrl-d` mean the same thing on both without either
-    /// knowing where it is.
+    /// note. One question with one answer on every screen, which is what lets
+    /// `e`, `m`, `#` and `Ctrl-d` mean the same thing everywhere without any of
+    /// them knowing where they are.
+    ///
+    /// A screen whose rows are notes answers with the row — the todo list and
+    /// the backlinks are listings of notes, and a key that changes a note should
+    /// change the one under the cursor there for the same reason it does on the
+    /// listing. A screen *about* one note answers with that note however far its
+    /// own rows have been scrolled. A screen about the notebook answers with
+    /// nothing, and the keys that need a note quietly do nothing.
     pub fn selected(&self) -> Option<&NoteFile> {
+        let at = || self.top().table.selected();
         match &self.top().view {
             View::Notes => self.at_cursor(),
-            View::Note(id) => self.notes.iter().find(|file| &file.id == id),
+            View::Note(id) | View::Blame(id) | View::Log(Some(id)) => self.note_of(id),
+            View::Todo => {
+                let task = self.tasks().get(at()?)?;
+                self.notes.get(task.note)
+            }
+            View::Backlinks(_) => self.notes.get(*self.linking().get(at()?)?),
+            View::Log(None)
+            | View::Tags
+            | View::Files
+            | View::Notebooks
+            | View::Deleted
+            | View::Diff => None,
         }
+    }
+
+    /// The unticked boxes, the tags, and the notes that link here — whichever of
+    /// them the screen in front of you is showing, and nothing when it is
+    /// showing something else.
+    pub fn tasks(&self) -> &[Task] {
+        match self.content() {
+            Some(Content::Todo(tasks)) => tasks,
+            _ => &[],
+        }
+    }
+
+    pub fn tallies(&self) -> &[Tally] {
+        match self.content() {
+            Some(Content::Tags(tallies)) => tallies,
+            _ => &[],
+        }
+    }
+
+    pub fn linking(&self) -> &[usize] {
+        match self.content() {
+            Some(Content::Backlinks(found)) => found,
+            _ => &[],
+        }
+    }
+
+    pub fn entries(&self) -> &[Entry] {
+        match self.content() {
+            Some(Content::Log(entries)) => entries,
+            _ => &[],
+        }
+    }
+
+    pub fn gone(&self) -> &[Deleted] {
+        match self.content() {
+            Some(Content::Deleted(gone)) => gone,
+            _ => &[],
+        }
+    }
+
+    pub fn blamed(&self) -> &[BlameLine] {
+        match self.content() {
+            Some(Content::Blame(lines)) => lines,
+            _ => &[],
+        }
+    }
+
+    /// The note's file, or the patch — the two screens that are a block of text
+    /// rather than a list of anything.
+    pub fn text(&self) -> Option<&str> {
+        match self.content() {
+            Some(Content::Note(text) | Content::Diff(text)) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// A note by index, for the rows that name one.
+    pub fn note_at(&self, at: usize) -> Option<&NoteFile> {
+        self.notes.get(at)
+    }
+
+    /// What the notebook holds that is not a note.
+    pub fn files(&self) -> &[String] {
+        &self.files
+    }
+
+    /// Every notebook there is.
+    pub fn notebooks(&self) -> &[String] {
+        &self.notebooks
+    }
+
+    /// Today, for deciding which due dates have been missed.
+    pub fn today(&self) -> &str {
+        &self.today
+    }
+
+    /// How many rows the screen in front of you has, or `None` when it is a
+    /// block of text and the keys scroll it instead of moving a cursor.
+    ///
+    /// The one place that says which kind a screen is. Every key that moves
+    /// asks here rather than matching on the view itself, so a screen added
+    /// later cannot be a list on one key and a page on another.
+    fn rows_here(&self) -> Option<usize> {
+        match &self.top().view {
+            View::Notes => Some(self.top().visible.len()),
+            View::Todo => Some(self.tasks().len()),
+            View::Tags => Some(self.tallies().len()),
+            View::Files => Some(self.files.len()),
+            View::Notebooks => Some(self.notebooks.len()),
+            View::Deleted => Some(self.gone().len()),
+            View::Backlinks(_) => Some(self.linking().len()),
+            View::Log(_) => Some(self.entries().len()),
+            View::Note(_) | View::Blame(_) | View::Diff => None,
+        }
+    }
+
+    /// Whether the screen in front of you is a list with a cursor in it.
+    pub fn has_rows(&self) -> bool {
+        self.rows_here().is_some()
+    }
+
+    /// Which row the cursor is on, for the screens that draw one.
+    pub fn row(&self) -> Option<usize> {
+        self.top().table.selected()
     }
 
     /// The notes the listing's query admits, in listing order.
@@ -605,39 +1078,15 @@ impl App {
         self.notes.len()
     }
 
-    /// The listing's cursor and scroll, taken out so the rows may borrow the
-    /// notes while ratatui writes this frame's offset into it. They are
-    /// different fields, but the borrow checker only sees `self`.
+    /// The cursor and scroll of the screen being drawn, taken out so the rows
+    /// may borrow the notes while ratatui writes this frame's offset into it.
+    /// They are different fields, but the borrow checker only sees `self`.
     pub fn take_table(&mut self) -> TableState {
-        std::mem::take(&mut self.listing_mut().table)
+        std::mem::take(&mut self.top_mut().table)
     }
 
     pub fn put_table(&mut self, state: TableState) {
-        self.listing_mut().table = state;
-    }
-
-    /// The note whose file the runtime should read, when the note on the screen
-    /// is not the one already in hand. Owned, because the caller needs the state
-    /// back to put the answer in it.
-    pub fn reading_wanted(&self) -> Option<(String, PathBuf)> {
-        let View::Note(id) = &self.top().view else {
-            return None;
-        };
-        let file = self.notes.iter().find(|file| &file.id == id)?;
-        match &self.reading {
-            Some(reading) if reading.id == file.id => None,
-            _ => Some((
-                file.id.clone(),
-                self.root.join(note::file_name(&file.id, &file.slug)),
-            )),
-        }
-    }
-
-    pub fn set_reading(&mut self, id: String, text: String) {
-        self.reading = Some(Reading { id, text });
-        // A note starts at its top. Carrying an offset over from the last one
-        // would open a short note somewhere past its end.
-        self.top_mut().scroll = 0;
+        self.top_mut().table = state;
     }
 
     /// Told by the drawing code, which is the only part that knows.
@@ -747,6 +1196,34 @@ impl App {
                 self.queue_at = self.queue_at.min(self.queue.len().saturating_sub(1));
                 return None;
             }
+            // The four screens worth a letter, and the rule for which four: the
+            // three that are *about the note in front of you* — where you would
+            // otherwise have to name a note you are already looking at — and the
+            // one list of the notebook that is read as often as the notes
+            // themselves. The other five arrive by being named, which is what
+            // `:` is for.
+            KeyCode::Char('t') => {
+                self.open(View::Todo);
+                return None;
+            }
+            // The whole notebook's, from a screen that is about the notebook;
+            // one note's, from a screen that is about a note. `:log` reads the
+            // screen the same way, so the key and the name never disagree.
+            KeyCode::Char('l') => {
+                let about = self.about();
+                self.open(View::Log(about));
+                return None;
+            }
+            KeyCode::Char('b') => {
+                let subject = self.linkable()?;
+                self.open(View::Backlinks(subject));
+                return None;
+            }
+            KeyCode::Char('B') => {
+                let id = self.aimed(None)?;
+                self.open(View::Blame(id));
+                return None;
+            }
             // Deliberately not a delete, and deliberately not anything else
             // either. This key removed a note until the modifier was put in
             // front of it, and a key that used to delete must not quietly become
@@ -761,9 +1238,13 @@ impl App {
             }
             _ => {}
         }
-        match self.top().view {
-            View::Notes => self.on_listing(key),
-            View::Note(_) => self.on_note(key),
+        // Which kind of screen this is, rather than which screen: a list is
+        // walked with a cursor and a page of text is scrolled, and everything
+        // else about them is the same.
+        match (&self.top().view, self.has_rows()) {
+            (View::Notes, _) => self.on_listing(key),
+            (_, true) => self.on_rows(key),
+            (_, false) => self.on_reading(key),
         }
     }
 
@@ -861,8 +1342,9 @@ impl App {
         None
     }
 
-    /// A note on a screen of its own: scrolling it, and closing it again.
-    fn on_note(&mut self, key: KeyEvent) -> Option<Action> {
+    /// A page of text — a note, a patch, a note with its history down the left:
+    /// scrolling it, and closing it again.
+    fn on_reading(&mut self, key: KeyEvent) -> Option<Action> {
         let page = i32::from(self.page);
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.step(1),
@@ -877,6 +1359,122 @@ impl App {
             _ => {}
         }
         None
+    }
+
+    /// Any of the other lists: walking it, closing it, and doing whatever the
+    /// row under the cursor is for.
+    fn on_rows(&mut self, key: KeyEvent) -> Option<Action> {
+        let page = i32::from(self.page);
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.step(1),
+            KeyCode::Char('k') | KeyCode::Up => self.step(-1),
+            KeyCode::PageDown => self.step(page),
+            KeyCode::PageUp => self.step(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.jump(Edge::First),
+            KeyCode::Char('G') | KeyCode::End => self.jump(Edge::Last),
+            KeyCode::Enter => return self.chose(),
+            KeyCode::Esc => {
+                self.back();
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// What the row under the cursor is for.
+    ///
+    /// Every one of these is the obvious next question about the thing on the
+    /// row, and they divide into three kinds. A row that names a note opens it.
+    /// A row that names something to look at from another angle opens that
+    /// angle. And a row that names something *irreversible* puts the command on
+    /// the prompt instead of running it — the same bargain `Ctrl-a` makes, and
+    /// for a stronger reason here: landing on a row is not agreeing to overwrite
+    /// the note it names.
+    fn chose(&mut self) -> Option<Action> {
+        let at = self.top().table.selected()?;
+        match self.top().view.clone() {
+            View::Todo | View::Backlinks(_) => {
+                let id = self.selected()?.id.clone();
+                self.open(View::Note(id));
+            }
+            // Not a screen of its own: a tag is a way of narrowing the listing,
+            // and the listing is where the notes it narrows already live. This
+            // is the key `0`–`9` will be short for.
+            View::Tags => {
+                let tag = self.tallies().get(at)?.tag.clone();
+                self.scope(&tag);
+            }
+            // The one question worth asking about an attachment, and the reason
+            // `backlinks` takes a file as readily as a note.
+            View::Files => {
+                let name = self.files.get(at)?.clone();
+                self.open(View::Backlinks(Subject::File(name)));
+            }
+            View::Notebooks => {
+                let name = self.notebooks.get(at)?.clone();
+                return self.switch(name);
+            }
+            View::Deleted => {
+                let gone = self.gone().get(at)?;
+                let line = format!("restore {} {}", gone.id, gone.restore_from_short());
+                self.compose(line);
+            }
+            // A commit in one note's history is a version of that note, so the
+            // row is the revision `restore` wants. The notebook's own log names
+            // no note, so there is nothing to put the commit against.
+            View::Log(Some(id)) => {
+                let rev = self.entries().get(at)?.short_id();
+                self.compose(format!("restore {id} {rev}"));
+            }
+            View::Notes | View::Note(_) | View::Log(None) | View::Blame(_) | View::Diff => {}
+        }
+        None
+    }
+
+    /// Puts a command on the prompt, written out but not run.
+    fn compose(&mut self, line: String) {
+        self.mode = Mode::Command;
+        self.input = line;
+        self.history_at = None;
+    }
+
+    /// Back to the listing, narrowed to one tag.
+    ///
+    /// Quoted when the tag has a space in it, because the listing's query field
+    /// splits the way a shell would — `tag:24.04 Dark patterns` is three terms
+    /// and-ed together, and would find nothing at all.
+    fn scope(&mut self, tag: &str) {
+        while self.back() {}
+        self.top_mut().search = if tag.contains(char::is_whitespace) {
+            format!("tag:\"{tag}\"")
+        } else {
+            format!("tag:{tag}")
+        };
+        self.refilter();
+    }
+
+    /// Moves the whole session to another notebook, or says why not.
+    ///
+    /// The queue is what stands in the way, and it has to: an entry names notes
+    /// by id, and ids belong to the notebook they were minted in. Sent against
+    /// another one it would find nothing, or — with two notebooks imported from
+    /// the same place — find the wrong thing. Refused rather than dropped,
+    /// because the queue is the one piece of a session that is written down
+    /// nowhere else.
+    fn switch(&mut self, name: String) -> Option<Action> {
+        if name == self.notebook {
+            self.refuse(format!("`{name}` is the notebook you are in"));
+            return None;
+        }
+        if !self.queue.is_empty() {
+            self.refuse(format!(
+                "{} queued against `{}` — send it or drop it first (Q)",
+                self.queue.len(),
+                self.notebook
+            ));
+            return None;
+        }
+        Some(Action::Use(name))
     }
 
     /// Marks everything the query is showing, or takes the marks off it when it
@@ -1256,6 +1854,69 @@ impl App {
             // marked set when there is one, and at the note on screen when there
             // is not.
             "rm" => return self.delete(),
+            "restore" => {
+                let (Some(key), Some(rev)) = (args.first(), args.get(1)) else {
+                    return self.wants(spec);
+                };
+                return Some(Action::Restore {
+                    key: key.clone(),
+                    rev: rev.clone(),
+                    touch: self.touch,
+                });
+            }
+            "use" => {
+                let Some(name) = args.first() else {
+                    return self.wants(spec);
+                };
+                return self.switch(name.clone());
+            }
+            // The screens. Each is the subcommand's own name, showing what that
+            // subcommand prints — so `:` is one vocabulary and not two.
+            "todo" => self.open(View::Todo),
+            "tags" => self.open(View::Tags),
+            "files" => self.open(View::Files),
+            "notebooks" => self.open(View::Notebooks),
+            "deleted" => self.open(View::Deleted),
+            "diff" => self.open(View::Diff),
+            // The three that can be about a note somewhere else in the notebook.
+            // A key is not an id until the notebook has said so, so a named one
+            // goes back out to the runtime to be resolved — the same route
+            // `open` takes, and for the same reason.
+            "log" => {
+                if let Some(key) = args.first() {
+                    return Some(Action::Show {
+                        key: key.clone(),
+                        look: Look::Log,
+                    });
+                }
+                let about = self.about();
+                self.open(View::Log(about));
+            }
+            "blame" => {
+                if let Some(key) = args.first() {
+                    return Some(Action::Show {
+                        key: key.clone(),
+                        look: Look::Blame,
+                    });
+                }
+                let id = self.aimed(None)?;
+                self.open(View::Blame(id));
+            }
+            // A file's backlinks are reached from the files screen rather than
+            // by name. `noda backlinks` has to tell a note from a file because
+            // it is handed a bare word; here the screen has already said which,
+            // and a browser guessing between them would be inventing an
+            // ambiguity it does not have.
+            "backlinks" => {
+                if let Some(key) = args.first() {
+                    return Some(Action::Show {
+                        key: key.clone(),
+                        look: Look::Backlinks,
+                    });
+                }
+                let subject = self.linkable()?;
+                self.open(View::Backlinks(subject));
+            }
             "status" => return Some(Action::Run(Run::Status)),
             "doctor" => {
                 let mut links = false;
@@ -1290,6 +1951,35 @@ impl App {
             return None;
         };
         Some(file.id.clone())
+    }
+
+    /// What the screen in front of you is about, for the one command that is
+    /// happy with either answer.
+    ///
+    /// `log` is the only thing here that reads a note and the notebook alike, so
+    /// it is the only thing that can follow the screen this way: on a note it is
+    /// that note's history, and on any screen about the notebook as a whole it
+    /// is the notebook's. Everything else needs a note and says so.
+    fn about(&self) -> Option<String> {
+        match &self.top().view {
+            View::Note(id)
+            | View::Blame(id)
+            | View::Log(Some(id))
+            | View::Backlinks(Subject::Note(id)) => Some(id.clone()),
+            _ => None,
+        }
+    }
+
+    /// What `backlinks` is about here: the file under the cursor when the files
+    /// are what is on screen, and otherwise the note every other key aims at.
+    fn linkable(&mut self) -> Option<Subject> {
+        if matches!(self.top().view, View::Files)
+            && let Some(at) = self.top().table.selected()
+            && let Some(name) = self.files.get(at)
+        {
+            return Some(Subject::File(name.clone()));
+        }
+        Some(Subject::Note(self.aimed(None)?))
     }
 
     /// What the command takes, said back at somebody who did not give it.
@@ -1376,6 +2066,15 @@ impl App {
         self.open(View::Note(id));
     }
 
+    /// Opens a screen about a note the runtime has resolved.
+    pub fn look_at(&mut self, look: Look, id: String) {
+        match look {
+            Look::Log => self.open(View::Log(Some(id))),
+            Look::Blame => self.open(View::Blame(id)),
+            Look::Backlinks => self.open(View::Backlinks(Subject::Note(id))),
+        }
+    }
+
     /// `y` agrees; anything else is a way out. Not `n` alone — the key that
     /// cancels a destructive question should be every key but one.
     fn confirming(&mut self, what: What, key: KeyEvent) -> Option<Action> {
@@ -1445,51 +2144,67 @@ impl App {
         }
     }
 
-    /// Moves the cursor, or the note on screen, by `delta` rows.
+    /// Moves the cursor, or scrolls the page, by `delta` rows — whichever the
+    /// screen in front of you has.
     fn step(&mut self, delta: i32) {
-        if matches!(self.top().view, View::Note(_)) {
+        let Some(rows) = self.rows_here() else {
             let max = self.reading_height();
             let screen = self.top_mut();
             screen.scroll = scrolled(screen.scroll, delta, max);
             return;
-        }
-        let listing = self.listing();
-        let Some(at) = listing.table.selected() else {
+        };
+        let Some(at) = self.top().table.selected() else {
             return;
         };
-        let last = listing.visible.len().saturating_sub(1);
+        let last = rows.saturating_sub(1);
         let moved = match usize::try_from(delta) {
             Ok(down) => at.saturating_add(down).min(last),
             Err(_) => at.saturating_sub(delta.unsigned_abs() as usize),
         };
-        self.select(moved);
+        self.cursor_to(moved);
     }
 
     fn jump(&mut self, edge: Edge) {
-        if matches!(self.top().view, View::Note(_)) {
+        let Some(rows) = self.rows_here() else {
             let max = self.reading_height();
             self.top_mut().scroll = match edge {
                 Edge::First => 0,
                 Edge::Last => max,
             };
             return;
-        }
+        };
         match edge {
-            Edge::First => self.select(0),
-            Edge::Last => self.select(self.listing().visible.len().saturating_sub(1)),
+            Edge::First => self.cursor_to(0),
+            Edge::Last => self.cursor_to(rows.saturating_sub(1)),
         }
     }
 
-    /// How far the note may be scrolled: its last line, so its end can be
+    /// How far the page may be scrolled: its last line, so its end can be
     /// brought to the top of the screen and no further.
     ///
     /// Counted before wrapping, so a note of long lines can be scrolled less far
     /// than it is tall. Under-shooting leaves text reachable; over-shooting
     /// would scroll into blank space, which reads like a bug.
     fn reading_height(&self) -> u16 {
-        self.reading.as_ref().map_or(0, |reading| {
-            reading.text.lines().count().saturating_sub(1) as u16
-        })
+        let lines = match self.content() {
+            Some(Content::Note(text) | Content::Diff(text)) => text.lines().count(),
+            Some(Content::Blame(lines)) => lines.len(),
+            _ => 0,
+        };
+        lines.saturating_sub(1) as u16
+    }
+
+    /// Puts the cursor on a row of the screen in front of you, clamped to what
+    /// it has. A list with nothing in it has no cursor at all, which is what the
+    /// drawing needs to know not to highlight a row that is not there.
+    fn cursor_to(&mut self, at: usize) {
+        let rows = self.rows_here().unwrap_or(0);
+        let screen = self.top_mut();
+        if rows == 0 {
+            screen.table.select(None);
+        } else {
+            screen.table.select(Some(at.min(rows - 1)));
+        }
     }
 
     fn select(&mut self, at: usize) {
@@ -1646,8 +2361,32 @@ mod tests {
     /// what the runtime does between the keystroke and the frame.
     fn read_it(app: &mut App, text: &str) {
         app.on_key(key(KeyCode::Enter));
-        let (id, _) = app.reading_wanted().expect("a note screen wants its file");
-        app.set_reading(id, text.to_string());
+        let view = app.view().clone();
+        assert!(
+            matches!(app.wanted(), Some(Need::Note { .. })),
+            "a note screen wants its file"
+        );
+        app.supply(&view, Content::Note(text.to_string()));
+    }
+
+    /// What the runtime brings back for a screen that needs a repository, put
+    /// straight into the state the way `refresh` puts it.
+    fn supplied(app: &mut App, content: Content) {
+        let view = app.view().clone();
+        assert!(app.wanted().is_some(), "{view:?} asked for nothing");
+        app.supply(&view, content);
+    }
+
+    /// A read of a notebook holding nothing but these notes: no attachments, one
+    /// notebook, and a fixed date so "overdue" means the same thing every run.
+    fn a_session(status: Status, notes: Vec<NoteFile>) -> Session {
+        Session {
+            status,
+            notes,
+            files: Vec::new(),
+            notebooks: vec!["personal".to_string()],
+            today: "2026-08-09".to_string(),
+        }
     }
 
     fn a_status() -> Status {
@@ -1683,30 +2422,32 @@ mod tests {
         App::new(
             "personal".to_string(),
             PathBuf::from("/notebook"),
-            a_status(),
-            vec![
-                a_note(
-                    "aaaa1111",
-                    "budget-review",
-                    "Budget review",
-                    &["work"],
-                    "the q3 budget",
-                ),
-                a_note(
-                    "bbbb2222",
-                    "meeting-notes",
-                    "Meeting notes",
-                    &["work", "q3"],
-                    "agenda",
-                ),
-                a_note(
-                    "cccc3333",
-                    "reading-list",
-                    "Reading list",
-                    &[],
-                    "a book about budgets",
-                ),
-            ],
+            a_session(
+                a_status(),
+                vec![
+                    a_note(
+                        "aaaa1111",
+                        "budget-review",
+                        "Budget review",
+                        &["work"],
+                        "the q3 budget",
+                    ),
+                    a_note(
+                        "bbbb2222",
+                        "meeting-notes",
+                        "Meeting notes",
+                        &["work", "q3"],
+                        "agenda",
+                    ),
+                    a_note(
+                        "cccc3333",
+                        "reading-list",
+                        "Reading list",
+                        &[],
+                        "a book about budgets",
+                    ),
+                ],
+            ),
         )
     }
 
@@ -1822,7 +2563,7 @@ mod tests {
         app.on_key(key(KeyCode::Enter));
         app.on_key(key(KeyCode::Enter));
         assert_eq!(app.depth(), 1);
-        assert!(app.reading_wanted().is_none());
+        assert!(app.wanted().is_none());
     }
 
     #[test]
@@ -1835,14 +2576,14 @@ mod tests {
         assert_eq!(app.depth(), 2);
         // The file the runtime should read, named the way the notebook names it.
         assert_eq!(
-            app.reading_wanted(),
-            Some((
-                "bbbb2222".to_string(),
-                PathBuf::from("/notebook/bbbb2222-meeting-notes.md")
-            ))
+            app.wanted(),
+            Some(Need::Note {
+                id: "bbbb2222".to_string(),
+                path: PathBuf::from("/notebook/bbbb2222-meeting-notes.md"),
+            })
         );
-        app.set_reading("bbbb2222".to_string(), "agenda\n".to_string());
-        assert!(app.reading_wanted().is_none());
+        supplied(&mut app, Content::Note("agenda\n".to_string()));
+        assert!(app.wanted().is_none());
 
         app.on_key(key(KeyCode::Esc));
         assert_eq!(app.view(), &View::Notes);
@@ -1917,7 +2658,8 @@ mod tests {
         assert_eq!(app.scroll(), 1);
 
         // Another note in the same screen: a fresh file starts where it starts.
-        app.set_reading("bbbb2222".to_string(), "agenda\n".to_string());
+        let view = app.view().clone();
+        app.supply(&view, Content::Note("agenda\n".to_string()));
         assert_eq!(app.scroll(), 0);
     }
 
@@ -1974,13 +2716,13 @@ mod tests {
 
         // What the runtime does after a delete: the notebook is read again, and
         // the note that had a screen is not in it.
-        app.replace(
+        app.replace(a_session(
             a_status(),
             vec![
                 a_note("bbbb2222", "meeting-notes", "Meeting notes", &["work"], "x"),
                 a_note("cccc3333", "reading-list", "Reading list", &[], "a book"),
             ],
-        );
+        ));
         assert_eq!(app.depth(), 1, "a screen with nothing behind it is closed");
         assert_eq!(app.view(), &View::Notes);
     }
@@ -2063,7 +2805,7 @@ mod tests {
             ),
             a_note("dddd4444", "trip-plan", "Trip plan", &["work"], "flights"),
         ];
-        app.replace(a_status(), notes);
+        app.replace(a_session(a_status(), notes));
 
         assert_eq!(app.search(), "tag:work");
         assert_eq!(app.shown(), 3);
@@ -2074,9 +2816,9 @@ mod tests {
     fn a_reload_drops_the_copy_of_the_note_that_was_on_screen() {
         let mut app = an_app();
         read_it(&mut app, "the q3 budget\n");
-        assert!(app.reading_wanted().is_none(), "it has been read");
+        assert!(app.wanted().is_none(), "it has been read");
 
-        app.replace(
+        app.replace(a_session(
             a_status(),
             vec![a_note(
                 "aaaa1111",
@@ -2085,10 +2827,10 @@ mod tests {
                 &["work"],
                 "the q3 budget, revised",
             )],
-        );
+        ));
         // The copy on screen was the reason to press the key, so it goes and the
         // file is asked for again.
-        assert!(app.reading_wanted().is_some());
+        assert!(app.wanted().is_some());
     }
 
     #[test]
@@ -2097,7 +2839,7 @@ mod tests {
         app.on_key(key(KeyCode::Char('G')));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("cccc3333"));
 
-        app.replace(
+        app.replace(a_session(
             a_status(),
             vec![a_note(
                 "aaaa1111",
@@ -2106,7 +2848,7 @@ mod tests {
                 &["work"],
                 "q3",
             )],
-        );
+        ));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
     }
 
@@ -2115,8 +2857,7 @@ mod tests {
         let mut app = App::new(
             "personal".to_string(),
             PathBuf::from("/notebook"),
-            a_status(),
-            Vec::new(),
+            a_session(a_status(), Vec::new()),
         );
         assert!(app.selected().is_none());
         app.on_key(key(KeyCode::Char('j')));
@@ -2223,17 +2964,19 @@ mod tests {
         let mut app = App::new(
             "personal".to_string(),
             PathBuf::from("/notebook"),
-            a_status(),
-            vec![
-                a_note(
-                    "aaaa1111",
-                    "ubuntu-notes",
-                    "Ubuntu notes",
-                    &["12.34 foo bar"],
-                    "body",
-                ),
-                a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
-            ],
+            a_session(
+                a_status(),
+                vec![
+                    a_note(
+                        "aaaa1111",
+                        "ubuntu-notes",
+                        "Ubuntu notes",
+                        &["12.34 foo bar"],
+                        "body",
+                    ),
+                    a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
+                ],
+            ),
         );
 
         app.on_key(key(KeyCode::Char('/')));
@@ -2435,8 +3178,7 @@ mod tests {
         let mut app = App::new(
             "personal".to_string(),
             PathBuf::from("/notebook"),
-            a_status(),
-            Vec::new(),
+            a_session(a_status(), Vec::new()),
         );
         for pressed in ['e', 'm', '#'] {
             assert_eq!(app.on_key(key(KeyCode::Char(pressed))), None);
@@ -2510,7 +3252,7 @@ mod tests {
 
         // What the runtime does after a delete: the notebook is read again, and
         // the note that was under the cursor is not in it.
-        app.replace(
+        app.replace(a_session(
             a_status(),
             vec![
                 a_note(
@@ -2528,7 +3270,7 @@ mod tests {
                     "a book about budgets",
                 ),
             ],
-        );
+        ));
         assert_eq!(
             app.selected().map(|f| f.id.as_str()),
             Some("cccc3333"),
@@ -2750,7 +3492,7 @@ mod tests {
     fn a_mark_on_a_note_that_has_gone_goes_with_it() {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111", "bbbb2222"]);
-        app.replace(
+        app.replace(a_session(
             a_status(),
             vec![a_note(
                 "bbbb2222",
@@ -2759,7 +3501,7 @@ mod tests {
                 &["work"],
                 "agenda",
             )],
-        );
+        ));
         assert_eq!(app.marks.len(), 1);
         assert!(app.marked("bbbb2222"));
     }
@@ -2781,7 +3523,7 @@ mod tests {
             a_note("bbbb2222", "meeting-notes", "Meeting notes", &["work"], "x"),
             a_note("dddd4444", "trip-plan", "Trip plan", &[], "flights"),
         ];
-        app.replace(a_status(), notes);
+        app.replace(a_session(a_status(), notes));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
         app.select_id("dddd4444");
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("dddd4444"));
@@ -2859,17 +3601,19 @@ mod tests {
         let mut app = App::new(
             "personal".to_string(),
             PathBuf::from("/notebook"),
-            a_status(),
-            vec![
-                a_note(
-                    "aaaa1111",
-                    "ubuntu-notes",
-                    "Ubuntu notes",
-                    &["12.34 foo bar"],
-                    "body",
-                ),
-                a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
-            ],
+            a_session(
+                a_status(),
+                vec![
+                    a_note(
+                        "aaaa1111",
+                        "ubuntu-notes",
+                        "Ubuntu notes",
+                        &["12.34 foo bar"],
+                        "body",
+                    ),
+                    a_note("bbbb2222", "other-note", "Other note", &["work"], "foo bar"),
+                ],
+            ),
         );
         // The rest of the line is kept as it was typed rather than rebuilt from
         // its tokens, which is the only way a value with a space in it arrives
@@ -3065,5 +3809,499 @@ mod tests {
 
         app.on_key(key(KeyCode::Esc));
         assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
+    }
+
+    /// A notebook whose notes carry boxes and links, which the plain one does
+    /// not: the screens below are about what is *in* the notes rather than what
+    /// the notes are called.
+    fn a_working_app() -> App {
+        App::new(
+            "personal".to_string(),
+            PathBuf::from("/notebook"),
+            a_session(
+                a_status(),
+                vec![
+                    a_note(
+                        "aaaa1111",
+                        "budget-review",
+                        "Budget review",
+                        &["work"],
+                        "- [ ] chase finance due:2026-08-01\n- [x] done already\n",
+                    ),
+                    a_note(
+                        "bbbb2222",
+                        "meeting-notes",
+                        "Meeting notes",
+                        &["work", "q3"],
+                        "see [the budget](aaaa1111-budget-review.md)\n\n- [ ] book a room\n",
+                    ),
+                    a_note(
+                        "cccc3333",
+                        "reading-list",
+                        "Reading list",
+                        &["q3"],
+                        "nothing links from here",
+                    ),
+                ],
+            ),
+        )
+    }
+
+    fn a_commit(hex: &str, seconds: i64, summary: &str) -> Entry {
+        Entry {
+            id: git2::Oid::from_str(hex).expect("an oid"),
+            seconds,
+            offset_minutes: 0,
+            summary: summary.to_string(),
+        }
+    }
+
+    #[test]
+    fn t_lists_every_unticked_box_soonest_first() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('t')));
+        assert_eq!(app.view(), &View::Todo);
+
+        // The ticked one is not here: a finished item stays where its author
+        // wrote it, and `noda todo` does not list it either.
+        let said: Vec<&str> = app
+            .tasks()
+            .iter()
+            .map(|task| task.item.text.as_str())
+            .collect();
+        assert_eq!(said, vec!["chase finance", "book a room"]);
+        // Dated before undated, which is `todo::order` and not a rule written
+        // twice.
+        assert_eq!(app.tasks()[0].item.due.as_deref(), Some("2026-08-01"));
+        assert!(app.tasks()[1].item.due.is_none());
+    }
+
+    #[test]
+    fn a_row_that_names_a_note_is_the_note_the_keys_aim_at() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('t')));
+        // The first box belongs to the first note; the second to the second.
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
+
+        // So `e` edits the note the cursor is on, exactly as it does on the
+        // listing — one question with one answer on every screen.
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('e'))),
+            Some(Action::Edit {
+                key: "bbbb2222".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+
+        // And `enter` opens it.
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.view(), &View::Note("bbbb2222".to_string()));
+        assert_eq!(
+            app.crumbs().collect::<Vec<_>>(),
+            ["notes", "todo", "bbbb2222"]
+        );
+    }
+
+    #[test]
+    fn a_screen_about_the_notebook_has_no_note_for_the_keys_that_need_one() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "tags");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.view(), &View::Tags);
+        assert!(app.selected().is_none());
+        // Nothing to edit and nothing to delete, so both do nothing at all
+        // rather than reaching past the screen for a note somewhere else.
+        assert_eq!(app.on_key(key(KeyCode::Char('e'))), None);
+        assert_eq!(app.on_key(ctrl('d')), None);
+        assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn the_tags_are_counted_commonest_first_and_enter_narrows_the_listing() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "tags");
+        app.on_key(key(KeyCode::Enter));
+
+        let counted: Vec<(&str, usize)> = app
+            .tallies()
+            .iter()
+            .map(|tally| (tally.tag.as_str(), tally.notes))
+            .collect();
+        assert_eq!(counted, vec![("q3", 2), ("work", 2)]);
+
+        // Enter is not a screen of its own: a tag is a way of narrowing the
+        // listing, and the listing is where the notes it narrows already are.
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.view(), &View::Notes);
+        assert_eq!(app.depth(), 1);
+        assert_eq!(app.search(), "tag:q3");
+        assert_eq!(app.shown(), 2);
+    }
+
+    #[test]
+    fn a_tag_with_a_space_in_it_is_quoted_on_its_way_to_the_query() {
+        let mut app = App::new(
+            "personal".to_string(),
+            PathBuf::from("/notebook"),
+            a_session(
+                a_status(),
+                vec![
+                    a_note(
+                        "aaaa1111",
+                        "budget-review",
+                        "Budget review",
+                        &["24.04 Dark patterns"],
+                        "",
+                    ),
+                    a_note("bbbb2222", "meeting-notes", "Meeting notes", &[], ""),
+                ],
+            ),
+        );
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "tags");
+        app.on_key(key(KeyCode::Enter));
+        app.on_key(key(KeyCode::Enter));
+
+        // Unquoted this is three terms and-ed together, and would find nothing
+        // — the same trap the tags prompt and the search field both fell into.
+        assert_eq!(app.search(), "tag:\"24.04 Dark patterns\"");
+        assert_eq!(app.shown(), 1);
+    }
+
+    #[test]
+    fn b_shows_what_links_to_the_note_in_front_of_you() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('b')));
+        assert_eq!(
+            app.view(),
+            &View::Backlinks(Subject::Note("aaaa1111".to_string()))
+        );
+        let found: Vec<&str> = app
+            .linking()
+            .iter()
+            .filter_map(|&at| app.note_at(at))
+            .map(|file| file.id.as_str())
+            .collect();
+        assert_eq!(found, vec!["bbbb2222"]);
+
+        // And a note nothing points at says so with an empty list rather than
+        // by refusing to open.
+        app.on_key(key(KeyCode::Esc));
+        app.on_key(key(KeyCode::Char('G')));
+        app.on_key(key(KeyCode::Char('b')));
+        assert!(app.linking().is_empty());
+        assert!(app.selected().is_none(), "no row, so nothing to aim at");
+    }
+
+    #[test]
+    fn l_follows_the_screen_the_way_log_itself_does() {
+        let mut app = a_working_app();
+        // On the listing, which is a screen about the notebook.
+        app.on_key(key(KeyCode::Char('l')));
+        assert_eq!(app.view(), &View::Log(None));
+        assert_eq!(app.wanted(), Some(Need::Log(None)));
+
+        app.on_key(key(KeyCode::Esc));
+        read_it(&mut app, "the q3 budget\n");
+        // On a note, which is a screen about a note.
+        app.on_key(key(KeyCode::Char('l')));
+        assert_eq!(app.view(), &View::Log(Some("aaaa1111".to_string())));
+        assert_eq!(app.wanted(), Some(Need::Log(Some("aaaa1111".to_string()))));
+    }
+
+    #[test]
+    fn a_commit_in_one_notes_history_writes_the_restore_rather_than_running_it() {
+        let mut app = a_working_app();
+        read_it(&mut app, "the q3 budget\n");
+        app.on_key(key(KeyCode::Char('l')));
+        supplied(
+            &mut app,
+            Content::Log(vec![
+                a_commit(
+                    "1111111111111111111111111111111111111111",
+                    1_770_000_000,
+                    "edit",
+                ),
+                a_commit(
+                    "2222222222222222222222222222222222222222",
+                    1_769_000_000,
+                    "add",
+                ),
+            ]),
+        );
+
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None, "nothing runs yet");
+        // On the prompt, spelled out and waiting for a second Enter: landing on
+        // a row is not agreeing to write over the note it names.
+        assert_eq!(app.mode, Mode::Command);
+        assert_eq!(app.input, "restore aaaa1111 2222222");
+
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Restore {
+                key: "aaaa1111".to_string(),
+                rev: "2222222".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn the_notebooks_own_log_has_no_note_to_restore() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('l')));
+        supplied(
+            &mut app,
+            Content::Log(vec![a_commit(
+                "1111111111111111111111111111111111111111",
+                1_770_000_000,
+                "edit",
+            )]),
+        );
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::Browse, "there is nothing to put it against");
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn a_deleted_note_offers_the_revision_restore_has_to_be_given() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "deleted");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.wanted(), Some(Need::Deleted));
+
+        supplied(
+            &mut app,
+            Content::Deleted(vec![Deleted {
+                id: "dddd4444".to_string(),
+                slug: "trip-plan".to_string(),
+                title: "Trip plan".to_string(),
+                removed_in: git2::Oid::from_str("3333333333333333333333333333333333333333")
+                    .expect("an oid"),
+                restore_from: git2::Oid::from_str("4444444444444444444444444444444444444444")
+                    .expect("an oid"),
+                removed_at: 1_770_000_000,
+                offset_minutes: 0,
+            }]),
+        );
+        app.on_key(key(KeyCode::Enter));
+        // The commit *before* the deletion, which is the one `restore` wants —
+        // naming the deletion and leaving the `~1` to be worked out would be
+        // reporting a problem without its remedy.
+        assert_eq!(app.input, "restore dddd4444 4444444");
+    }
+
+    #[test]
+    fn a_file_leads_to_what_uses_it() {
+        let mut session = a_session(a_status(), vec![]);
+        session.files = vec!["diagram.png".to_string()];
+        session.notes = vec![a_note(
+            "aaaa1111",
+            "budget-review",
+            "Budget review",
+            &[],
+            "![the shape of it](diagram.png)\n",
+        )];
+        let mut app = App::new("personal".to_string(), PathBuf::from("/notebook"), session);
+
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "files");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.files(), ["diagram.png"]);
+
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.view(),
+            &View::Backlinks(Subject::File("diagram.png".to_string()))
+        );
+        let found: Vec<&str> = app
+            .linking()
+            .iter()
+            .filter_map(|&at| app.note_at(at))
+            .map(|file| file.id.as_str())
+            .collect();
+        assert_eq!(found, vec!["aaaa1111"], "an image counts as a use");
+    }
+
+    #[test]
+    fn moving_to_another_notebook_waits_for_the_queue() {
+        let mut session = a_session(
+            a_status(),
+            vec![a_note("aaaa1111", "a", "A", &["work"], "")],
+        );
+        session.notebooks = vec!["personal".to_string(), "work".to_string()];
+        let mut app = App::new("personal".to_string(), PathBuf::from("/notebook"), session);
+
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "notebooks");
+        app.on_key(key(KeyCode::Enter));
+        // The one you are in is not somewhere to go.
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Use("work".to_string()))
+        );
+
+        // With a queue in hand it is refused: an entry names notes by id, and an
+        // id belongs to the notebook it was minted in.
+        app.queue.push(Step {
+            keys: vec!["aaaa1111".to_string()],
+            change: Change::Remove,
+        });
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        let said = app.message.as_ref().expect("a refusal");
+        assert!(said.failed, "{}", said.text);
+        assert!(said.text.contains("personal"), "{}", said.text);
+    }
+
+    #[test]
+    fn going_back_to_a_screen_lands_where_it_was_left() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('t')));
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
+
+        // Down into the note and back out again: the todo list is worked out a
+        // second time, and the cursor has to survive being worked out.
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.view(), &View::Note("bbbb2222".to_string()));
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.view(), &View::Todo);
+        assert_eq!(app.row(), Some(1));
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
+    }
+
+    #[test]
+    fn a_screen_about_a_note_that_has_gone_is_closed_like_the_note_itself() {
+        let mut app = a_working_app();
+        read_it(&mut app, "the q3 budget\n");
+        app.on_key(key(KeyCode::Char('B')));
+        assert_eq!(app.view(), &View::Blame("aaaa1111".to_string()));
+        assert_eq!(app.depth(), 3);
+
+        app.replace(a_session(
+            a_status(),
+            vec![a_note("cccc3333", "reading-list", "Reading list", &[], "")],
+        ));
+        // Both the blame and the note under it were about a note the notebook no
+        // longer holds.
+        assert_eq!(app.depth(), 1);
+        assert_eq!(app.view(), &View::Notes);
+    }
+
+    #[test]
+    fn a_reload_works_the_screen_out_again_rather_than_leaving_it_stale() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('t')));
+        assert_eq!(app.tasks().len(), 2);
+
+        app.replace(a_session(
+            a_status(),
+            vec![a_note(
+                "aaaa1111",
+                "budget-review",
+                "Budget review",
+                &["work"],
+                "- [ ] chase finance\n- [ ] and the other thing\n",
+            )],
+        ));
+        assert_eq!(app.view(), &View::Todo);
+        assert_eq!(
+            app.tasks().len(),
+            2,
+            "the new notebook's boxes, not the old"
+        );
+        assert_eq!(app.tasks()[1].item.text, "and the other thing");
+    }
+
+    #[test]
+    fn an_answer_that_arrives_after_the_reader_has_moved_on_is_dropped() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('l')));
+        let asked = app.view().clone();
+        // Escape while the walk is still going, which is what a slow blame or a
+        // long history makes ordinary.
+        app.on_key(key(KeyCode::Esc));
+
+        app.supply(
+            &asked,
+            Content::Log(vec![a_commit(
+                "1111111111111111111111111111111111111111",
+                1_770_000_000,
+                "edit",
+            )]),
+        );
+        assert_eq!(app.view(), &View::Notes);
+        assert!(app.entries().is_empty(), "it landed on the wrong screen");
+    }
+
+    #[test]
+    fn a_named_note_is_resolved_by_the_notebook_and_not_here() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "blame meeting-notes");
+        // A slug is not an id until `Notebook::resolve` has said so, so the key
+        // goes back out to the runtime exactly as `open` does.
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Show {
+                key: "meeting-notes".to_string(),
+                look: Look::Blame,
+            })
+        );
+        app.look_at(Look::Blame, "bbbb2222".to_string());
+        assert_eq!(app.view(), &View::Blame("bbbb2222".to_string()));
+    }
+
+    #[test]
+    fn restore_takes_a_note_and_a_revision_and_says_so_when_it_has_neither() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char(':')));
+        typing(&mut app, "restore aaaa1111");
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        let said = app.message.as_ref().expect("a refusal");
+        assert!(said.text.contains("<note> <rev>"), "{}", said.text);
+    }
+
+    #[test]
+    fn a_page_of_text_scrolls_and_a_list_of_rows_does_not() {
+        let mut app = a_working_app();
+        app.on_key(key(KeyCode::Char('B')));
+        supplied(
+            &mut app,
+            Content::Blame(vec![
+                a_blame_line("one"),
+                a_blame_line("two"),
+                a_blame_line("three"),
+            ]),
+        );
+        assert!(!app.has_rows());
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.scroll(), 1);
+        app.on_key(key(KeyCode::Char('G')));
+        assert_eq!(app.scroll(), 2, "its last line, and no further");
+
+        app.on_key(key(KeyCode::Esc));
+        app.on_key(key(KeyCode::Char('t')));
+        assert!(app.has_rows());
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.scroll(), 0, "a list moves a cursor, not a page");
+        assert_eq!(app.row(), Some(1));
+    }
+
+    fn a_blame_line(text: &str) -> BlameLine {
+        BlameLine {
+            commit: git2::Oid::from_str("1111111111111111111111111111111111111111").ok(),
+            seconds: 1_770_000_000,
+            offset_minutes: 0,
+            text: text.to_string(),
+        }
     }
 }

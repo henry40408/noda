@@ -47,55 +47,192 @@ const MENU_GAP: usize = 2;
 /// one thing rather than as two columns.
 const KEY_GAP: usize = 2;
 
+/// One column of the key grid, which is what the list is cut into.
+type Column = [(&'static str, &'static str); MENU_ROWS];
+
 /// What the keys do on the listing. Read down each column of five, not across:
-/// moving, then changing, then picking out.
-const LISTING_KEYS: &[(&str, &str)] = &[
-    ("enter", "read"),
-    ("/", "filter"),
-    (":", "command"),
-    ("ctrl-a", "commands"),
-    ("?", "keys"),
-    ("e", "edit"),
-    ("a", "new"),
-    ("m", "retitle"),
-    ("#", "tags"),
-    ("ctrl-d", "delete"),
-    ("space", "mark"),
-    ("*", "mark shown"),
-    ("Q", "queue"),
-    ("T", "keep updated"),
-    ("q", "quit"),
+/// moving, then changing, then picking out, then the screens worth a letter.
+const LISTING_KEYS: &[Column] = &[
+    [
+        ("enter", "read"),
+        ("/", "filter"),
+        (":", "command"),
+        ("ctrl-a", "commands"),
+        ("?", "keys"),
+    ],
+    [
+        ("e", "edit"),
+        ("a", "new"),
+        ("m", "retitle"),
+        ("#", "tags"),
+        ("ctrl-d", "delete"),
+    ],
+    [
+        ("space", "mark"),
+        ("*", "mark shown"),
+        ("Q", "queue"),
+        ("T", "keep updated"),
+        ("q", "quit"),
+    ],
+    VIEW_KEYS,
 ];
 
 /// What the keys do on a note. The same words for the same keys — a key that
 /// changes a note is the same key here, aimed at the note you are reading rather
 /// than at the row under a cursor.
+///
 /// The way to everything else comes first, and `g` / `G` is not here at all: the
 /// columns are dropped from the right when they do not fit, so what goes in the
 /// last one has to be what can afford to go. A reader who does not know `:`
 /// exists cannot look it up; one who does not know `G` has both `j` and the
 /// card.
-const NOTE_KEYS: &[(&str, &str)] = &[
-    ("esc", "back"),
-    ("j/k", "scroll"),
-    (":", "command"),
-    ("ctrl-a", "commands"),
-    ("?", "keys"),
-    ("e", "edit"),
-    ("m", "retitle"),
-    ("#", "tags"),
-    ("ctrl-d", "delete"),
-    ("T", "keep updated"),
-    ("r", "reload"),
-    ("q", "quit"),
+const NOTE_KEYS: &[Column] = &[
+    [
+        ("esc", "back"),
+        ("j/k", "scroll"),
+        (":", "command"),
+        ("ctrl-a", "commands"),
+        ("?", "keys"),
+    ],
+    [
+        ("e", "edit"),
+        ("m", "retitle"),
+        ("#", "tags"),
+        ("ctrl-d", "delete"),
+        ("T", "keep updated"),
+    ],
+    [("r", "reload"), ("q", "quit"), BLANK, BLANK, BLANK],
+    VIEW_KEYS,
 ];
 
-/// The keys the screen in front of you answers to.
-pub fn keys_for(view: &View) -> &'static [(&'static str, &'static str)] {
-    match view {
-        View::Notes => LISTING_KEYS,
-        View::Note(_) => NOTE_KEYS,
+/// A cell with nothing in it, padding a column out to five so the grid stays a
+/// grid. Nothing is drawn for it.
+const BLANK: (&str, &str) = ("", "");
+
+/// The four screens worth a letter, and they go last on every screen.
+///
+/// Last because the columns are dropped from the right, and these are the ones
+/// that can afford to go: every one of them has a name as well — `:todo`,
+/// `:log` — and `:` is in the first column of every screen there is. Nothing
+/// else on a grid has a second way of being found, which is why nothing else may
+/// sit out here.
+const VIEW_KEYS: Column = [
+    ("t", "todo"),
+    ("l", "log"),
+    ("b", "backlinks"),
+    ("B", "blame"),
+    BLANK,
+];
+
+/// The keys any other list answers to: walking it, leaving it, and whatever
+/// `enter` is for on this one.
+///
+/// One shape for all of them, because that is what they are — the notebook
+/// answering a different question each time, in the same rows-and-a-cursor. Only
+/// the first entry differs, and it differs because it has to: what `enter` does
+/// to a tag and what it does to a notebook are not the same act.
+/// `None` for a list whose rows lead nowhere, which is the notebook's own log:
+/// every commit on it is a version of *some* note, and there is no one note to
+/// put a revision against. A key that says it restores something and then does
+/// nothing is worse than no key at all.
+fn rows_keys(enter: Option<&'static str>) -> Vec<Column> {
+    // What the screen is for, the way out of it, and the way to everything else.
+    // The first column is the one that is never dropped, so it holds what cannot
+    // be looked up when it is not shown.
+    //
+    // `ctrl-f/b` is on neither column, and nothing else here could be spelled
+    // shorter: twelve columns for a key that `j` already covers is twelve
+    // columns taken off whatever falls off the right-hand end, and on these
+    // screens that is the keys which change a note.
+    match enter {
+        Some(what) => vec![
+            [
+                ("enter", what),
+                ("j/k", "move"),
+                ("esc", "back"),
+                (":", "command"),
+                ("?", "keys"),
+            ],
+            [
+                ("g/G", "first / last"),
+                ("ctrl-a", "commands"),
+                ("r", "reload"),
+                ("q", "quit"),
+                BLANK,
+            ],
+        ],
+        None => vec![
+            [
+                ("j/k", "move"),
+                ("g/G", "first / last"),
+                ("esc", "back"),
+                (":", "command"),
+                ("?", "keys"),
+            ],
+            [
+                ("ctrl-a", "commands"),
+                ("r", "reload"),
+                ("q", "quit"),
+                BLANK,
+                BLANK,
+            ],
+        ],
     }
+}
+
+/// The keys the screen in front of you answers to.
+///
+/// A screen whose rows are notes gets the keys that change a note as well: the
+/// todo list and the backlinks are listings of notes, and `e` there means what
+/// it means on the listing. Those come before the view keys, because a key that
+/// changes a note has no other way of being found and a view key has a name.
+pub fn keys_for(view: &View) -> Vec<Column> {
+    let changing: Column = [
+        ("e", "edit"),
+        ("m", "retitle"),
+        ("#", "tags"),
+        ("ctrl-d", "delete"),
+        ("T", "keep updated"),
+    ];
+    let mut keys = match view {
+        View::Notes => return LISTING_KEYS.to_vec(),
+        View::Note(_) => return NOTE_KEYS.to_vec(),
+        // The two whose rows are notes. `read it` and not `read the note`
+        // because this is the one shape with four columns to fit, and the two
+        // words come out of the column that would otherwise be dropped — the
+        // one saying that `e` edits and `ctrl-d` deletes.
+        View::Todo | View::Backlinks(_) => {
+            let mut keys = rows_keys(Some("read it"));
+            keys.push(changing);
+            keys
+        }
+        View::Tags => rows_keys(Some("filter by it")),
+        View::Files => rows_keys(Some("what links here")),
+        View::Notebooks => rows_keys(Some("switch to it")),
+        // The rows that name a version of a note. The ellipsis is the promise
+        // that the key writes the command rather than running it.
+        View::Deleted | View::Log(Some(_)) => rows_keys(Some("restore it…")),
+        View::Log(None) => rows_keys(None),
+        // A page of text, so there is no row to press `enter` on.
+        View::Blame(_) | View::Diff => vec![
+            [
+                ("j/k", "scroll"),
+                ("g/G", "top / end"),
+                ("esc", "back"),
+                (":", "command"),
+                ("?", "keys"),
+            ],
+            [
+                ("ctrl-a", "commands"),
+                ("r", "reload"),
+                ("q", "quit"),
+                BLANK,
+                BLANK,
+            ],
+        ],
+    };
+    keys.push(VIEW_KEYS);
+    keys
 }
 
 /// How tall the header may be on a terminal this size.
@@ -231,14 +368,14 @@ fn info_width(app: &App) -> u16 {
 /// been narrowed until its words are cut is a key list that has stopped saying
 /// what the keys do, and the ones that go are the ones furthest from the hand.
 fn menu(app: &App, width: u16) -> Vec<Line<'static>> {
-    let keys = keys_for(app.view());
-    let columns: Vec<&[(&str, &str)]> = keys.chunks(MENU_ROWS).collect();
+    let columns = keys_for(app.view());
 
     let mut widths = Vec::new();
     let mut room = width as usize;
     for column in &columns {
         let wanted = column
             .iter()
+            .filter(|(key, _)| !key.is_empty())
             .map(|(key, what)| key.chars().count() + 2 + KEY_GAP + what.chars().count())
             .max()
             .unwrap_or(0)
@@ -254,9 +391,17 @@ fn menu(app: &App, width: u16) -> Vec<Line<'static>> {
         .map(|row| {
             let mut spans = Vec::new();
             for (at, wanted) in widths.iter().enumerate() {
-                let Some((key, what)) = columns[at].get(row) else {
+                // A blank pads a column out to five so a short one stays a
+                // column. It still takes its width: skipped outright, every
+                // column after it on that one row slides left, and a key ends up
+                // under the heading of the column beside it — which is the same
+                // mistake as putting the padding in front of the description,
+                // one axis over.
+                let (key, what) = &columns[at][row];
+                if key.is_empty() {
+                    spans.push(Span::raw(" ".repeat(*wanted)));
                     continue;
-                };
+                }
                 let named = format!("<{key}>");
                 // The padding goes after what the key does, not between the key
                 // and its description. Put it in front and the description is
@@ -322,27 +467,76 @@ fn compact(app: &App) -> Vec<Span<'_>> {
 /// title — the same two things in the same order as every row of `noda ls`.
 pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    // The heading, what narrows it, and how many that leaves — in that order on
+    // every screen, so the eye learns one place to look for each.
+    let banner = |name: &'static str, scope: Option<String>, count: Option<usize>| {
+        let mut spans = vec![Span::styled(name, bold)];
+        if let Some(scope) = scope {
+            spans.push(Span::styled(format!("({scope})"), muted));
+        }
+        if let Some(count) = count {
+            spans.push(Span::styled(format!("[{count}]"), muted));
+        }
+        spans
+    };
+    let titled = |id: &str| {
+        app.note_of(id)
+            .map(|file| file.note.title.clone())
+            .unwrap_or_default()
+    };
+
     let mut spans = match app.view() {
-        View::Notes => {
-            let scope = if app.search().is_empty() {
+        View::Notes => banner(
+            "Notes",
+            Some(if app.search().is_empty() {
                 "all".to_string()
             } else {
                 app.search().to_string()
-            };
-            vec![
-                Span::styled("Notes", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(format!("({scope})"), muted),
-                Span::styled(format!("[{}]", app.shown()), muted),
-            ]
-        }
+            }),
+            Some(app.shown()),
+        ),
         View::Note(id) => {
-            let title = app.selected().map(|file| file.note.title.as_str());
-            vec![
-                Span::styled("Note", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(format!("({id})"), muted),
-                Span::raw("  "),
-                Span::raw(title.unwrap_or_default()),
-            ]
+            let mut spans = banner("Note", Some(id.clone()), None);
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(titled(id)));
+            spans
+        }
+        View::Todo => banner("Todo", None, Some(app.tasks().len())),
+        View::Tags => banner("Tags", None, Some(app.tallies().len())),
+        View::Files => banner("Files", None, Some(app.files().len())),
+        View::Notebooks => banner(
+            "Notebooks",
+            Some(app.notebook.clone()),
+            Some(app.notebooks().len()),
+        ),
+        View::Deleted => banner("Deleted", None, Some(app.gone().len())),
+        View::Diff => banner("Diff", None, None),
+        // What a screen about one note is about is said here rather than in the
+        // crumb trail: the trail names the kind of screen, and a stack three
+        // deep with an id on every crumb would be as wide as the terminal.
+        View::Log(id) => {
+            let mut spans = banner(
+                "Log",
+                Some(id.clone().unwrap_or_else(|| app.notebook.clone())),
+                Some(app.entries().len()),
+            );
+            if let Some(id) = id {
+                spans.push(Span::raw("  "));
+                spans.push(Span::raw(titled(id)));
+            }
+            spans
+        }
+        View::Backlinks(subject) => banner(
+            "Backlinks",
+            Some(subject.name().to_string()),
+            Some(app.linking().len()),
+        ),
+        View::Blame(id) => {
+            let mut spans = banner("Blame", Some(id.clone()), None);
+            spans.push(Span::raw("  "));
+            spans.push(Span::raw(titled(id)));
+            spans
         }
     };
     // Ruled out to the far end, so the band reads as the top of the body rather
@@ -520,6 +714,7 @@ pub fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::app::Subject;
 
     #[test]
     fn a_short_terminal_gets_a_header_it_can_afford() {
@@ -529,18 +724,46 @@ mod tests {
         assert_eq!(header_rows(14), 1);
     }
 
+    /// Every key on a screen's grid, in the order it is laid out, with the
+    /// blanks that pad a column out to five left off.
+    fn named(view: &View) -> Vec<&'static str> {
+        keys_for(view)
+            .into_iter()
+            .flatten()
+            .map(|(key, _)| key)
+            .filter(|key| !key.is_empty())
+            .collect()
+    }
+
+    /// One of each kind of screen there is, which is what the checks below have
+    /// to hold for.
+    fn every_screen() -> Vec<View> {
+        vec![
+            View::Notes,
+            View::Note("aaaa1111".to_string()),
+            View::Todo,
+            View::Tags,
+            View::Files,
+            View::Notebooks,
+            View::Deleted,
+            View::Diff,
+            View::Log(None),
+            View::Log(Some("aaaa1111".to_string())),
+            View::Backlinks(Subject::Note("aaaa1111".to_string())),
+            View::Backlinks(Subject::File("diagram.png".to_string())),
+            View::Blame("aaaa1111".to_string()),
+        ]
+    }
+
     #[test]
     fn the_keys_are_the_ones_the_screen_answers_to() {
-        let listing: Vec<&str> = keys_for(&View::Notes).iter().map(|(key, _)| *key).collect();
+        let listing = named(&View::Notes);
         assert!(listing.contains(&"enter"));
         assert!(listing.contains(&"space"));
 
         // A note has no cursor to mark and nothing to filter, and says so by not
         // offering the keys.
-        let note: Vec<&str> = keys_for(&View::Note("aaaa1111".to_string()))
-            .iter()
-            .map(|(key, _)| *key)
-            .collect();
+        let note = named(&View::Note("aaaa1111".to_string()));
         assert!(!note.contains(&"space"));
         assert!(!note.contains(&"/"));
         // But every key that changes a note is on both, spelled the same way.
@@ -548,6 +771,12 @@ mod tests {
             assert!(listing.contains(&key), "the listing lost {key}");
             assert!(note.contains(&key), "the note lost {key}");
         }
+
+        // A screen whose rows are notes offers them too, and one whose rows are
+        // not does not: `e` there would have nothing to edit.
+        assert!(named(&View::Todo).contains(&"e"));
+        assert!(!named(&View::Tags).contains(&"e"));
+        assert!(!named(&View::Notebooks).contains(&"ctrl-d"));
     }
 
     #[test]
@@ -556,10 +785,42 @@ mod tests {
         // which is fine. What is not fine is the same key appearing twice: the
         // second entry is unreachable, and the two say different things about
         // what pressing it does.
-        for keys in [LISTING_KEYS, NOTE_KEYS] {
+        for view in every_screen() {
             let mut seen = std::collections::BTreeSet::new();
-            for (key, _) in keys {
-                assert!(seen.insert(key), "`{key}` is on the same grid twice");
+            for key in named(&view) {
+                assert!(
+                    seen.insert(key),
+                    "`{key}` is on {}'s grid twice",
+                    view.crumb()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_screen_says_how_to_leave_it_and_where_everything_else_is() {
+        // The three that cannot be looked up if they are not shown: `:` is how
+        // the screens with no key of their own are reached, `?` is the card, and
+        // a screen that does not say how to get out of it is a trap. All three
+        // are in the first column, which is the one that is never dropped.
+        for view in every_screen() {
+            let first: Vec<&str> = keys_for(&view)[0].iter().map(|(key, _)| *key).collect();
+            for key in [":", "?"] {
+                assert!(
+                    first.contains(&key),
+                    "{} does not show {key} in its first column",
+                    view.crumb()
+                );
+            }
+            // The listing is exempt: it is the bottom of the stack, so there is
+            // nothing to back out of and `q` is the way out — which lives in a
+            // column that may be dropped, as it always has.
+            if !matches!(view, View::Notes) {
+                assert!(
+                    first.contains(&"esc"),
+                    "{} does not show esc in its first column",
+                    view.crumb()
+                );
             }
         }
     }

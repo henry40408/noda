@@ -51,6 +51,66 @@ pub const COMMANDS: &[Spec] = &[
         takes: "[query...]",
         what: "back to the listing, filtered if a query is given",
     },
+    // The screens. Each shows what the subcommand of the same name prints, so
+    // `:` stays one vocabulary — and each is a full-width screen because that is
+    // what these outputs need: a blame or a patch does not fit beside anything.
+    Spec {
+        name: "todo",
+        aliases: &["t"],
+        takes: "",
+        what: "every unticked box, soonest due first",
+    },
+    Spec {
+        name: "tags",
+        aliases: &[],
+        takes: "",
+        what: "every tag; enter filters the listing by one",
+    },
+    Spec {
+        name: "backlinks",
+        aliases: &["b"],
+        takes: "[note]",
+        what: "what links to a note — the one shown, or one named",
+    },
+    // No note means the notebook here, and one note means that note. The only
+    // command on this list that reads either, which is why it is the only one
+    // whose empty form is not "the note in front of you".
+    Spec {
+        name: "log",
+        aliases: &["l"],
+        takes: "[note]",
+        what: "commits, newest first: the notebook's or a note's",
+    },
+    Spec {
+        name: "blame",
+        aliases: &[],
+        takes: "[note]",
+        what: "which commit put each line of a note where it is",
+    },
+    Spec {
+        name: "diff",
+        aliases: &[],
+        takes: "",
+        what: "what is uncommitted, or what the last commit did",
+    },
+    Spec {
+        name: "deleted",
+        aliases: &[],
+        takes: "",
+        what: "notes history holds that the notebook no longer does",
+    },
+    Spec {
+        name: "files",
+        aliases: &[],
+        takes: "",
+        what: "what the notebook holds that is not a note",
+    },
+    Spec {
+        name: "notebooks",
+        aliases: &["nb"],
+        takes: "",
+        what: "every notebook; enter moves this session to one",
+    },
     Spec {
         name: "edit",
         aliases: &["e"],
@@ -83,6 +143,23 @@ pub const COMMANDS: &[Spec] = &[
         aliases: &[],
         takes: "",
         what: "delete the note on screen, after a y",
+    },
+    // Two arguments and no confirmation, deliberately: `restore` writes a note
+    // back as a new commit, so nothing is lost by it — and naming both a note
+    // and a revision is not something anybody does by accident. The deleted and
+    // log screens put the line here rather than running it, which is where the
+    // deciding happens.
+    Spec {
+        name: "restore",
+        aliases: &[],
+        takes: "<note> <rev>",
+        what: "put a note back as it was at a revision",
+    },
+    Spec {
+        name: "use",
+        aliases: &[],
+        takes: "<notebook>",
+        what: "move this session to another notebook",
     },
     Spec {
         name: "status",
@@ -207,8 +284,12 @@ mod tests {
 
     #[test]
     fn the_list_is_searched_by_what_a_command_does_as_well_as_by_its_name() {
+        // Both, in table order: the screen of every tag comes before the command
+        // that changes a note's. Narrowing is a filter and not a guess, so a
+        // word that is the whole of one name and the start of another finds
+        // both rather than choosing.
         let named: Vec<&str> = matching("tag").map(|spec| spec.name).collect();
-        assert_eq!(named, vec!["tag"]);
+        assert_eq!(named, vec!["tags", "tag"]);
 
         // What somebody who wants to get their notes onto the remote would type,
         // knowing that and not the three names it goes by.

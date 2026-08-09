@@ -41,11 +41,11 @@ use ratatui::crossterm::{cursor, execute};
 use ratatui::{DefaultTerminal, Terminal};
 
 use crate::cmd;
-use crate::notebook::{NoteFile, Notebook, Status};
+use crate::notebook::Notebook;
 use crate::paths::Paths;
 use crate::{Error, Result};
 
-pub use app::{Action, App, Run};
+pub use app::{Action, App, Content, Look, Need, Run};
 
 /// Opens the active notebook in the browser, and returns when it is closed.
 ///
@@ -92,12 +92,25 @@ pub fn run(paths: &Paths) -> Result<String> {
 /// that walks the notebook per keystroke.
 pub fn load(paths: &Paths) -> Result<App> {
     let notebook = Notebook::open_active(paths)?;
-    let (status, notes) = read(&notebook)?;
-    Ok(App::new(notebook.name, notebook.path, status, notes))
+    let session = read(paths, &notebook)?;
+    Ok(App::new(notebook.name, notebook.path, session))
 }
 
-fn read(notebook: &Notebook) -> Result<(Status, Vec<NoteFile>)> {
-    Ok((notebook.status()?, notebook.notes()?))
+/// Everything a session holds that does not depend on which screen is on top.
+///
+/// One walk of the directory answers both the notes and the files, which is why
+/// `inventory` is asked rather than `notes`: the files screen would otherwise be
+/// a second walk for a list the first one already went past.
+fn read(paths: &Paths, notebook: &Notebook) -> Result<app::Session> {
+    let status = notebook.status()?;
+    let (notes, files) = notebook.inventory()?;
+    Ok(app::Session {
+        status,
+        notes,
+        files,
+        notebooks: Notebook::list(paths)?,
+        today: cmd::today()?,
+    })
 }
 
 /// Reads the notebook again into a session already under way, keeping the query
@@ -108,14 +121,14 @@ fn read(notebook: &Notebook) -> Result<(Status, Vec<NoteFile>)> {
 /// reader mid-sentence would be worse than one that waits to be asked.
 pub fn reload(paths: &Paths, app: &mut App) -> Result<()> {
     let notebook = Notebook::open_active(paths)?;
-    let (status, notes) = read(&notebook)?;
-    app.replace(status, notes);
+    let session = read(paths, &notebook)?;
+    app.replace(session);
     Ok(())
 }
 
 fn browse(paths: &Paths, terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
-        refresh_reading(app);
+        refresh(paths, app);
         terminal.draw(|frame| view::draw(frame, app))?;
         // Blocking: a browser has nothing to do between keystrokes, and polling
         // to find that out would keep a laptop awake for the privilege.
@@ -185,6 +198,30 @@ fn perform(
             }
             return Ok(());
         }
+        // The same question, asked for a screen about the note rather than a
+        // screen of it.
+        Action::Show { key, look } => {
+            let notebook = Notebook::open_active(paths)?;
+            match notebook.resolve(&key) {
+                Ok((id, _)) => app.look_at(look, id),
+                Err(e) => app.report(Err(e)),
+            }
+            return Ok(());
+        }
+        // A different notebook is a different session: the name, the directory,
+        // the notes and every screen in the stack were all about the last one.
+        // Built fresh rather than reloaded, because `reload` keeps precisely the
+        // things that do not survive the move.
+        Action::Use(name) => {
+            match cmd::use_notebook(paths, &name) {
+                Ok(said) => {
+                    *app = load(paths)?;
+                    app.report(Ok(said));
+                }
+                Err(e) => app.report(Err(e)),
+            }
+            return Ok(());
+        }
         Action::Run(run) => match run {
             // Reporting only. `doctor` writes when it is asked to at the prompt;
             // from a browser it says what it found, because a keystroke that
@@ -214,6 +251,7 @@ fn perform(
             touch,
         } => cmd::tag(paths, &key, &changes, touch),
         Action::Remove(key) => cmd::rm(paths, &key),
+        Action::Restore { key, rev, touch } => cmd::restore(paths, &key, &rev, touch),
         // The whole queue, in one commit. Nothing is decided here about what any
         // of it means — `bulk` runs the same code the keys above run, and the
         // only thing that moved is where the commit falls.
@@ -283,28 +321,73 @@ fn in_the_foreground<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T)
     Ok(out)
 }
 
-/// Reads the file behind a note that has just been opened on a screen of its
-/// own.
+/// Fetches whatever the screen that has just been opened is a screen of.
 ///
-/// The file is read rather than the note re-rendered from memory, for the reason
-/// `noda show` reads it: what is on screen should be what is on disk, down to a
-/// frontmatter field noda does not interpret.
+/// Once per screen rather than once per keystroke: [`App::wanted`] answers
+/// `None` as soon as the screen has what it is about, so the ordinary frame
+/// opens no repository at all. Moving a cursor reads nothing.
 ///
-/// Once per screen rather than once per keystroke. Moving the cursor down a
-/// listing reads nothing at all now — the file is asked for when a note is
-/// opened, which is when somebody has said they want to read it.
+/// A note's file is read rather than the note re-rendered from memory, for the
+/// reason `noda show` reads it: what is on screen should be what is on disk,
+/// down to a frontmatter field noda does not interpret. The rest come from
+/// `notebook`, which is where a browser reads from — `cmd` is the layer that
+/// turns them into text for a pipe, and this is a second reader of the same
+/// answers rather than a second source of them.
 ///
-/// A file that cannot be read puts the reason on the screen instead of ending
-/// the session. It is one note out of a notebook, and it will more often be a
-/// note deleted from another window than anything worth quitting over.
+/// What cannot be fetched closes the screen and says why. Leaving an empty
+/// screen up with the reason on a card over the top of it would leave the reader
+/// somewhere with nothing on it once the card was dismissed.
 ///
 /// Public because it is the one step between a keystroke and a frame that the
 /// state cannot take for itself: a test that draws a screen has to take it too.
-pub fn refresh_reading(app: &mut App) {
-    let Some((id, path)) = app.reading_wanted() else {
+pub fn refresh(paths: &Paths, app: &mut App) {
+    let Some(need) = app.wanted() else {
         return;
     };
-    let text =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| format!("{}: {e}\n", path.display()));
-    app.set_reading(id, text);
+    // Taken before the fetch, so what comes back can be checked against the
+    // screen that asked for it: a slow blame must not land on whatever screen
+    // the reader has moved to in the meantime.
+    let asked = app.view().clone();
+
+    // A note's file is the one thing here that needs no repository, and it is
+    // also the one whose failure is not worth closing a screen over — a note
+    // deleted from another window is more likely than anything else, and the
+    // reason belongs where the note would have been.
+    if let Need::Note { id: _, path } = &need {
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|e| format!("{}: {e}\n", path.display()));
+        app.supply(&asked, Content::Note(text));
+        return;
+    }
+
+    match fetch(paths, need) {
+        Ok(content) => app.supply(&asked, content),
+        Err(e) => {
+            app.give_up();
+            app.report(Err(e));
+        }
+    }
+}
+
+fn fetch(paths: &Paths, need: Need) -> Result<Content> {
+    let notebook = Notebook::open_active(paths)?;
+    Ok(match need {
+        // Answered by the caller, which reads a file rather than opening a
+        // repository. Said rather than panicked over if it ever gets here: a
+        // browser is a loop, and this crate aborts on panic — ending somebody's
+        // session over an impossible case is a worse answer than a card.
+        Need::Note { .. } => {
+            return Err(Error::msg("a note's file is read without the repository"));
+        }
+        Need::Log(id) => Content::Log(notebook.log(id.as_deref(), None)?),
+        Need::Blame { id, slug } => Content::Blame(notebook.blame(&id, &slug)?),
+        Need::Deleted => Content::Deleted(notebook.deleted()?),
+        // Built by `cmd`, and then stripped of the colour `cmd` painted it for a
+        // pipe. The patch itself is the part worth having written down once; what
+        // colour a `+` line is, is the drawing's business here as it is for every
+        // other listing on screen.
+        Need::Diff => {
+            Content::Diff(anstream::adapter::strip_str(&cmd::diff(paths, None)?).to_string())
+        }
+    })
 }

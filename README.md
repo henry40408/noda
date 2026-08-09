@@ -479,7 +479,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
+| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. The view-shaped commands get screens of their own — `todo`, `tags`, `backlinks`, `log`, `blame`, `diff`, `deleted`, `files`, `notebooks` — the first four of those on a letter. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -604,11 +604,11 @@ you have finished typing it.
 
 ```
 $ noda tui
-Notebook: personal    <enter>  read    <e>  edit           <space>  mark          noda
-Branch:   main        </>  filter      <a>  new            <*>  mark shown      v0.1.0
-Remote:   origin      <?>  keys        <m>  retitle        <Q>  queue
-Notes:    128 notes   <r>  reload      <#>  tags           <T>  keep updated
-Changes:  2 uncommitted  <q>  quit     <ctrl-d>  delete    <esc>  clear
+Notebook: personal    <enter>  read       <e>  edit         <space>  mark        noda
+Branch:   main        </>  filter         <a>  new          <*>  mark shown
+Remote:   origin      <:>  command        <m>  retitle      <Q>  queue
+Notes:    128 notes   <ctrl-a>  commands  <#>  tags         <T>  keep updated
+Changes:  2 uncommitted <?>  keys         <ctrl-d>  delete  <q>  quit
 Notes(tag:work budget)[2] ──────────────────────────────────────── 3 marks  1 queued
  • k3f9m2p1  Budget review                                             [work]
    7bqx4t20  Meeting notes                                             [work, q3]
@@ -660,6 +660,8 @@ still marked in the note you opened to read it in.
 | `#` | tags, written the way `noda tag` takes them: `+work -q3`. A tag may contain a space, so the prompt quotes like a shell: `-"24.04 Dark patterns"` |
 | `Ctrl-d` | delete, once you have said `y`. With notes marked, `#` and `Ctrl-d` are aimed at the marked set and go into the queue instead |
 | `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The title band says `keeping updated` for as long as it is on |
+| `t`, `l` | the notebook's unticked boxes; commits — this note's, or the notebook's from the listing |
+| `b`, `B` | what links to this note; who wrote each of its lines |
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
 
@@ -668,6 +670,49 @@ the listing, and the note itself once you have opened it — so they read the sa
 The delete is behind a modifier because it is the one key here that cannot be taken back by
 pressing something else.
 
+#### The other screens
+
+A screen is the whole width and there is a stack of them, which is what lets a screen be
+about something a listing cannot hold. `noda blame`, `noda log` and `noda diff` do not fit
+beside a note at any width; given the width, each of them is a screen.
+
+| | |
+| --- | --- |
+| `t` / `:todo` | every unticked box in the notebook, soonest due first, with a missed date in red. `Enter` reads the note it is in |
+| `:tags` | every tag, commonest first, and how many notes carry it. `Enter` narrows the listing to it rather than opening a screen — the notes are already down there |
+| `b` / `:backlinks` | what links to the note in front of you. `Enter` reads the note that was found |
+| `l` / `:log` | commits, newest first: the note's on a note screen, the notebook's on the listing |
+| `B` / `:blame` | which commit put each line of a note where it is — the body only, because `updated` moves on every edit |
+| `:diff` | what is uncommitted, or what the last commit did |
+| `:deleted` | the notes history holds that the notebook no longer does |
+| `:files` | what the notebook holds that is not a note. `Enter` asks what links to one, which is the question worth asking about an attachment |
+| `:notebooks` | every notebook there is. `Enter` moves the whole session to one |
+
+Four have a letter and five do not, on the same rule the keys already follow: the ones about
+the note in front of you are worth a keystroke, because naming a note you are already looking
+at is the thing a browser exists to avoid. The rest are named.
+
+**A row that cannot be taken back writes the command instead of running it.** `Enter` on a
+deleted note, or on a commit in a note's own history, puts `restore <note> <rev>` on the
+prompt and stops there:
+
+```
+Deleted[1] ────────────────────────────────────────────────────────────────────
+ v62b8rfa  trip-plan  2026-08-04 09:12  2a8715b  Trip plan
+
+ notes   deleted
+:restore v62b8rfa 2a8715b
+```
+
+Press `Enter` again and it runs. Landing on a row is not agreeing to write over the note it
+names — the same bargain `Ctrl-a` makes, for a stronger reason. Nothing is rewritten either
+way: `restore` puts the old text back as a new commit, so the version you moved away from is
+still there to move back to.
+
+Moving to another notebook is refused while the queue has anything in it. A queued change
+names notes by id, and an id belongs to the notebook it was minted in; sent against another
+one it would find nothing, or find the wrong thing.
+
 **`:` is how the rest of noda gets in.** There are about a dozen letters worth spending on
 keys and rather more subcommands than that, so the ones that do not get a letter are named
 instead — under the names they already have:
@@ -675,6 +720,7 @@ instead — under the names they already have:
 ```
 :open meeting-notes          # a note by id or by slug, without going to find it
 :tag reading-list +urgent    # naming the note, which the `#` key has no way to do
+:log budget-review           # a screen about a note you are not looking at
 :status                      # and everything else that was never going to get a key
 :doctor --links
 :sync
@@ -716,7 +762,7 @@ lot, search again" builds a selection out of several searches. A note the query 
 hiding is still marked and still gets changed — otherwise marking would only ever mean "what
 is on screen right now", which is what the query already means.
 
-With notes marked, `#` and `d` stop acting on the note under the cursor and start filling a
+With notes marked, `#` and `Ctrl-d` stop acting on the note under the cursor and start filling a
 queue: one entry per change, each aimed at the notes that were marked when it was added. The
 header counts both, because a key that means two things has to say which one it means.
 

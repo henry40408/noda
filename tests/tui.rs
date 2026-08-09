@@ -91,12 +91,15 @@ const HEADER: usize = 5;
 ///
 /// Tall enough for the standing header: on a shorter terminal it collapses to
 /// one line, and a test drawn there would be asserting about the fallback.
-fn screen(app: &mut App) -> Vec<String> {
-    screen_at(app, 90, 28)
+fn screen(paths: &Paths, app: &mut App) -> Vec<String> {
+    screen_at(paths, app, 90, 28)
 }
 
-fn screen_at(app: &mut App, width: u16, height: u16) -> Vec<String> {
-    tui::refresh_reading(app);
+fn screen_at(paths: &Paths, app: &mut App, width: u16, height: u16) -> Vec<String> {
+    // The step the runtime takes between a keystroke and a frame: a screen that
+    // has just been opened does not know what it is of until somebody goes and
+    // looks.
+    tui::refresh(paths, app);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     terminal
         .draw(|frame| tui::view::draw(frame, app))
@@ -114,9 +117,9 @@ fn screen_at(app: &mut App, width: u16, height: u16) -> Vec<String> {
 
 /// The note under the cursor, opened and drawn — what `Enter` gets you. The
 /// session is left on the note, the way pressing the key leaves it.
-fn opened(app: &mut App) -> Vec<String> {
+fn opened(paths: &Paths, app: &mut App) -> Vec<String> {
     app.on_key(key(KeyCode::Enter));
-    screen(app)
+    screen(paths, app)
 }
 
 fn has_line_with(screen: &[String], needles: &[&str]) -> bool {
@@ -129,7 +132,7 @@ fn has_line_with(screen: &[String], needles: &[&str]) -> bool {
 fn the_listing_names_a_note_the_way_every_other_listing_does() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
-    let screen = screen(&mut app);
+    let screen = screen(&paths, &mut app);
 
     // The id first, the title, then the tags — the row `ls`, `search` and
     // `backlinks` all print. The id is minted, so it is the id of the note the
@@ -147,7 +150,7 @@ fn the_listing_names_a_note_the_way_every_other_listing_does() {
 fn the_header_says_where_the_notebook_stands() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
-    let screen = screen(&mut app);
+    let screen = screen(&paths, &mut app);
 
     // One fact to a line, always the same five in the same order, so the eye
     // learns where each one is rather than reading a strip left to right.
@@ -172,7 +175,7 @@ fn the_header_says_where_the_notebook_stands() {
 fn the_header_holds_still_while_the_session_changes_underneath_it() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
-    let before = screen(&mut app)[..HEADER].to_vec();
+    let before = screen(&paths, &mut app)[..HEADER].to_vec();
 
     // Marking, queueing and the flag are the only things that move while you
     // sit there, and they are said on the title band for exactly this reason:
@@ -184,7 +187,7 @@ fn the_header_holds_still_while_the_session_changes_underneath_it() {
     typing(&mut app, "+archive");
     app.on_key(key(KeyCode::Enter));
 
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert_eq!(after[..HEADER], before[..], "the header moved");
     assert!(has_line_with(&after, &["3 marks", "1 queued"]));
     assert!(has_line_with(&after[..HEADER], &["<space>", "mark"]));
@@ -199,12 +202,12 @@ fn the_way_to_everything_else_is_on_the_header_of_every_screen() {
     // at which the key grid starts dropping its rightmost column. `:` is the
     // one key that cannot be looked up if it is not shown — everything it
     // reaches is reached by knowing it exists.
-    let listing = screen_at(&mut app, 80, 28);
+    let listing = screen_at(&paths, &mut app, 80, 28);
     assert!(has_line_with(&listing[..HEADER], &["<:>", "command"]));
     assert!(has_line_with(&listing[..HEADER], &["<ctrl-a>", "commands"]));
 
     app.on_key(key(KeyCode::Enter));
-    let note = screen_at(&mut app, 80, 28);
+    let note = screen_at(&paths, &mut app, 80, 28);
     assert!(has_line_with(&note[..HEADER], &["<:>", "command"]));
     assert!(has_line_with(&note[..HEADER], &["<ctrl-a>", "commands"]));
     // And the way back out, which is the other thing a screen must never hide.
@@ -216,12 +219,12 @@ fn the_way_to_everything_else_is_on_the_header_of_every_screen() {
 fn the_title_band_says_what_the_screen_is_of() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
-    assert!(has_line_with(&screen(&mut app), &["Notes(all)[3]"]));
+    assert!(has_line_with(&screen(&paths, &mut app), &["Notes(all)[3]"]));
 
     // A note names itself the way every other listing names it: the id, then
     // the title.
     let id = app.selected().expect("a note").id.clone();
-    let opened = opened(&mut app);
+    let opened = opened(&paths, &mut app);
     assert!(has_line_with(
         &opened,
         &[&format!("Note({id})"), "Budget review"]
@@ -235,11 +238,11 @@ fn a_note_opens_on_a_screen_of_its_own_and_escape_comes_back() {
 
     // Nothing of the note is on the listing: the row is the row `noda ls`
     // prints, and reading it is a screen you go into.
-    let listing = screen(&mut app);
+    let listing = screen(&paths, &mut app);
     assert!(!has_line_with(&listing, &["the q3 budget is late"]));
 
     let id = app.selected().expect("a note").id.clone();
-    let first = opened(&mut app);
+    let first = opened(&paths, &mut app);
     assert!(has_line_with(&first, &["the q3 budget is late"]));
     // The frontmatter is on screen too — dimmed, not hidden, exactly as
     // `noda show` prints it.
@@ -248,7 +251,7 @@ fn a_note_opens_on_a_screen_of_its_own_and_escape_comes_back() {
     assert!(has_line_with(&first, &["notes", &id]));
 
     app.on_key(key(KeyCode::Esc));
-    let back = screen(&mut app);
+    let back = screen(&paths, &mut app);
     assert!(has_line_with(&back, &["Meeting notes"]));
     assert!(
         !has_line_with(&back, &["the q3 budget is late"]),
@@ -257,7 +260,7 @@ fn a_note_opens_on_a_screen_of_its_own_and_escape_comes_back() {
 
     // The next note down, and it is the one that opens.
     app.on_key(key(KeyCode::Char('j')));
-    let moved = opened(&mut app);
+    let moved = opened(&paths, &mut app);
     assert!(has_line_with(&moved, &["# Agenda"]));
     assert!(!has_line_with(&moved, &["the q3 budget is late"]));
 }
@@ -269,7 +272,7 @@ fn a_query_narrows_the_listing_as_it_is_typed() {
 
     app.on_key(key(KeyCode::Char('/')));
     typing(&mut app, "tag:q3");
-    let screen = screen(&mut app);
+    let screen = screen(&paths, &mut app);
 
     assert!(has_line_with(&screen, &["Meeting notes"]));
     assert!(!has_line_with(&screen, &["Budget review"]));
@@ -288,12 +291,12 @@ fn an_unfinished_query_says_why_instead_of_emptying_the_screen() {
     app.on_key(key(KeyCode::Char('/')));
     // Still a query: a bare `O` is a `text:` term, and one note's title has one.
     typing(&mut app, "tag:work O");
-    let good = screen(&mut app);
+    let good = screen(&paths, &mut app);
     assert!(has_line_with(&good, &["Meeting notes"]));
 
     // And now it is not one — the state every alternative passes through.
     typing(&mut app, "R");
-    let unfinished = screen(&mut app);
+    let unfinished = screen(&paths, &mut app);
     assert!(has_line_with(&unfinished, &["needs a term on both sides"]));
     assert!(
         has_line_with(&unfinished, &["Meeting notes"]),
@@ -308,7 +311,7 @@ fn a_query_that_matches_nothing_says_so() {
 
     app.on_key(key(KeyCode::Char('/')));
     typing(&mut app, "tag:archived");
-    let screen = screen(&mut app);
+    let screen = screen(&paths, &mut app);
 
     assert!(has_line_with(&screen, &["nothing matches"]));
     assert!(has_line_with(&screen, &["Notes(tag:archived)[0]"]));
@@ -320,7 +323,7 @@ fn the_help_card_lists_the_keys_and_goes_away_again() {
     let mut app = tui::load(&paths).expect("load");
 
     app.on_key(key(KeyCode::Char('?')));
-    let with_help = screen(&mut app);
+    let with_help = screen(&paths, &mut app);
     assert!(has_line_with(&with_help, &["keys"]));
     assert!(has_line_with(&with_help, &["quit"]));
     // The card is as wide as its longest line. The filter example is the one
@@ -332,7 +335,7 @@ fn the_help_card_lists_the_keys_and_goes_away_again() {
     ));
 
     app.on_key(key(KeyCode::Esc));
-    let without = screen(&mut app);
+    let without = screen(&paths, &mut app);
     assert!(!has_line_with(&without, &["first / last"]));
 }
 
@@ -351,7 +354,7 @@ fn a_reload_picks_up_a_note_written_from_somewhere_else() {
     );
     tui::reload(&paths, &mut app).expect("reload");
 
-    let screen = screen(&mut app);
+    let screen = screen(&paths, &mut app);
     assert!(has_line_with(&screen, &["Trip plan"]));
 }
 
@@ -368,6 +371,27 @@ fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
         } => cmd::tag(paths, &key, &changes, touch),
         tui::Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
         tui::Action::Remove(key) => cmd::rm(paths, &key),
+        tui::Action::Restore { key, rev, touch } => cmd::restore(paths, &key, &rev, touch),
+        // A screen about a note the prompt named, resolved by the notebook
+        // rather than by the browser — the same call `Open` makes.
+        tui::Action::Show { key, look } => {
+            let notebook = Notebook::open_active(paths).expect("open the notebook");
+            match notebook.resolve(&key) {
+                Ok((id, _)) => {
+                    app.look_at(look, id);
+                    return;
+                }
+                Err(e) => Err(e),
+            }
+        }
+        tui::Action::Use(name) => match cmd::use_notebook(paths, &name) {
+            Ok(said) => {
+                *app = tui::load(paths).expect("load the notebook moved to");
+                app.report(Ok(said));
+                return;
+            }
+            Err(e) => Err(e),
+        },
         tui::Action::Send(steps) => {
             let sent = cmd::bulk(paths, &steps);
             if sent.is_ok() {
@@ -422,7 +446,7 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
     let before = commits(&paths);
 
     mark_all_shown(&mut app);
-    assert!(has_line_with(&screen(&mut app), &["3 marks"]));
+    assert!(has_line_with(&screen(&paths, &mut app), &["3 marks"]));
 
     for tags in ["+archive", "-work"] {
         app.on_key(key(KeyCode::Char('#')));
@@ -434,10 +458,10 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
         );
     }
     assert_eq!(app.queue.len(), 2);
-    assert!(has_line_with(&screen(&mut app), &["2 queued"]));
+    assert!(has_line_with(&screen(&paths, &mut app), &["2 queued"]));
 
     app.on_key(key(KeyCode::Char('Q')));
-    let queued = screen(&mut app);
+    let queued = screen(&paths, &mut app);
     // The queue reads in the words the commit message will use.
     assert!(has_line_with(&queued, &["tag: +archive (3 notes)"]));
     assert!(has_line_with(&queued, &["tag: -work (3 notes)"]));
@@ -450,14 +474,14 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
         1,
         "two changes over three notes, and one thing was done"
     );
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(has_line_with(&after, &["2 changes over 3 notes"]));
     assert!(
         has_line_with(&after, &["[q3, archive]"]),
         "and the listing says so"
     );
     // Read out of the file itself, on the screen that shows the file.
-    let file = opened(&mut app);
+    let file = opened(&paths, &mut app);
     assert!(has_line_with(&file, &["tags: [archive]"]));
     app.on_key(key(KeyCode::Esc));
     // Spent: the queue was carried out and the notes are no longer picked out.
@@ -531,7 +555,7 @@ fn a_tag_long_enough_to_fill_the_listing_does_not_take_the_title_with_it() {
     // this long no longer starves the title at eighty columns — but a terminal
     // is whatever size it is given, and the cap is what holds at the size where
     // it still would.
-    let screen = screen_at(&mut app, 46, 28);
+    let screen = screen_at(&paths, &mut app, 46, 28);
 
     // Without the cap, a tag list this long takes the row whole and leaves the
     // title column nothing at all. The title keeps its floor — enough to tell
@@ -560,7 +584,7 @@ fn a_tag_with_a_space_can_be_filtered_for_from_the_screen_it_is_on() {
     app.on_key(key(KeyCode::Char('/')));
     // The shell would keep this in one piece, and so does the field.
     typing(&mut app, "tag:\"24.04 Dark patterns\"");
-    let screen = screen(&mut app);
+    let screen = screen(&paths, &mut app);
     assert!(has_line_with(&screen, &["[1]"]));
     assert_eq!(
         app.selected().map(|f| f.note.title.clone()),
@@ -579,7 +603,7 @@ fn leaving_with_a_queue_in_hand_is_asked_about() {
     app.on_key(key(KeyCode::Enter));
 
     assert_eq!(app.on_key(key(KeyCode::Char('q'))), None, "not yet");
-    let asked = screen(&mut app);
+    let asked = screen(&paths, &mut app);
     assert!(has_line_with(&asked, &["leave the queue behind?"]));
     assert!(has_line_with(&asked, &["1 change over 3 notes"]));
     assert!(has_line_with(&asked, &["written down anywhere"]));
@@ -607,12 +631,12 @@ fn a_queued_delete_takes_every_note_it_was_aimed_at() {
     app.on_key(ctrl('d'));
 
     app.on_key(key(KeyCode::Char('Q')));
-    let queued = screen(&mut app);
+    let queued = screen(&paths, &mut app);
     assert!(has_line_with(&queued, &["rm: 2 notes"]));
 
     // The send is where the question is asked, and only because of the delete.
     assert_eq!(app.on_key(key(KeyCode::Enter)), None);
-    let asked = screen(&mut app);
+    let asked = screen(&paths, &mut app);
     assert!(has_line_with(&asked, &["send the queue?"]));
     assert!(has_line_with(&asked, &["2 notes to be deleted"]));
 
@@ -622,7 +646,7 @@ fn a_queued_delete_takes_every_note_it_was_aimed_at() {
     perform(&paths, &mut app, action);
 
     app.on_key(key(KeyCode::Esc));
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert_eq!(app.total(), 1);
     assert!(has_line_with(&after, &["Reading list"]));
     assert!(!has_line_with(&after, &["Budget review"]));
@@ -637,7 +661,7 @@ fn a_tag_typed_at_the_prompt_is_on_the_note_afterwards() {
     app.on_key(key(KeyCode::Char('#')));
     typing(&mut app, "+urgent");
     // The prompt is on the same line the query uses, and says which it is.
-    let prompt = screen(&mut app);
+    let prompt = screen(&paths, &mut app);
     assert!(has_line_with(&prompt, &["tags", "+urgent"]));
     assert!(
         has_line_with(&prompt, &["+work -q3"]),
@@ -649,12 +673,12 @@ fn a_tag_typed_at_the_prompt_is_on_the_note_afterwards() {
 
     // The status line is `noda tag`'s own answer, not a sentence noda wrote
     // twice. It is read first, because the next key is what takes it away.
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     let id = app.selected().expect("a note").id.clone();
     assert!(has_line_with(&after, &[&id, "budget-review", "urgent"]));
 
     // And read out of the file the command wrote, on the screen that shows it.
-    let file = opened(&mut app);
+    let file = opened(&paths, &mut app);
     assert!(has_line_with(&file, &["tags: [work, urgent]"]));
 }
 
@@ -682,7 +706,7 @@ fn a_tag_with_a_space_in_it_can_be_removed_from_the_screen_it_is_on() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to remove");
     perform(&paths, &mut app, action);
 
-    let after = opened(&mut app);
+    let after = opened(&paths, &mut app);
     assert!(
         has_line_with(&after, &["tags: [work]"]),
         "the spaced tag is gone and the other one is not"
@@ -704,13 +728,13 @@ fn a_retitle_renames_the_note_and_keeps_the_cursor_on_it() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a retitle");
     perform(&paths, &mut app, action);
 
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(has_line_with(&after, &["Quarterly plan"]));
     assert!(!has_line_with(&after, &["Budget review"]));
     // The slug moved it down the listing; the id is what the cursor followed.
     assert_eq!(app.selected().map(|f| f.id.clone()), Some(id));
     assert!(
-        has_line_with(&opened(&mut app), &["title: Quarterly plan"]),
+        has_line_with(&opened(&paths, &mut app), &["title: Quarterly plan"]),
         "and it is read from the file it is now in"
     );
 }
@@ -723,11 +747,14 @@ fn a_delete_is_asked_about_and_then_carried_out() {
     // Behind a modifier: the plain key says where the deleting went and does
     // nothing, which is what a key that used to remove a note has to do.
     app.on_key(key(KeyCode::Char('d')));
-    assert!(has_line_with(&screen(&mut app), &["delete is Ctrl-d"]));
+    assert!(has_line_with(
+        &screen(&paths, &mut app),
+        &["delete is Ctrl-d"]
+    ));
     assert_eq!(app.total(), 3);
 
     app.on_key(ctrl('d'));
-    let asked = screen(&mut app);
+    let asked = screen(&paths, &mut app);
     assert!(has_line_with(&asked, &["delete this note?"]));
     assert!(has_line_with(&asked, &["Budget review"]));
     assert!(has_line_with(&asked, &["git revert brings it back"]));
@@ -735,7 +762,7 @@ fn a_delete_is_asked_about_and_then_carried_out() {
     let action = app.on_key(key(KeyCode::Char('y'))).expect("a delete");
     perform(&paths, &mut app, action);
 
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(!has_line_with(&after, &["Budget review"]));
     assert_eq!(app.total(), 2);
     // The row is kept rather than the id, so the cursor lands on the note that
@@ -786,10 +813,13 @@ fn t_holds_a_notes_own_updated_through_a_change() {
     assert_eq!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
 
     // Off, and the header says nothing about it.
-    assert!(!has_line_with(&screen(&mut app), &["keeping updated"]));
+    assert!(!has_line_with(
+        &screen(&paths, &mut app),
+        &["keeping updated"]
+    ));
 
     app.on_key(key(KeyCode::Char('T')));
-    let with_flag = screen(&mut app);
+    let with_flag = screen(&paths, &mut app);
     assert!(
         has_line_with(&with_flag, &["keeping updated"]),
         "a setting you cannot see is one you forget you left on"
@@ -800,7 +830,7 @@ fn t_holds_a_notes_own_updated_through_a_change() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
 
-    let after = opened(&mut app);
+    let after = opened(&paths, &mut app);
     assert!(
         has_line_with(&after, &["tags: [work, urgent]"]),
         "the change went in"
@@ -814,7 +844,10 @@ fn t_holds_a_notes_own_updated_through_a_change() {
 
     // Off again, and the next change records itself as every other one does.
     app.on_key(key(KeyCode::Char('T')));
-    assert!(!has_line_with(&screen(&mut app), &["keeping updated"]));
+    assert!(!has_line_with(
+        &screen(&paths, &mut app),
+        &["keeping updated"]
+    ));
     app.on_key(key(KeyCode::Char('#')));
     typing(&mut app, "-urgent");
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
@@ -834,7 +867,7 @@ fn a_change_the_command_refuses_is_reported_in_its_own_words() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
 
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(has_line_with(&after, &["a tag cannot contain `,`"]));
     assert!(
         has_line_with(&after, &["Budget review", "[work]"]),
@@ -860,7 +893,7 @@ fn a_command_reaches_what_no_key_does() {
     perform(&paths, &mut app, action);
 
     // More than a line, so it is read on a card rather than in passing.
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(has_line_with(&after, &["3 notes"]), "{after:?}");
     assert!(has_line_with(&after, &["branch"]) || has_line_with(&after, &["clean"]));
 }
@@ -874,7 +907,7 @@ fn a_note_can_be_opened_by_name_from_the_prompt() {
     let action = command(&mut app, "open reading-list").expect("a note to open");
     perform(&paths, &mut app, action);
 
-    let opened = screen(&mut app);
+    let opened = screen(&paths, &mut app);
     assert_eq!(app.depth(), 2);
     assert!(has_line_with(&opened, &["Note(", "Reading list"]));
     assert!(has_line_with(&opened, &["a book"]));
@@ -890,7 +923,7 @@ fn a_name_that_names_nothing_is_refused_in_the_notebooks_own_words() {
 
     // Not a sentence the browser wrote: the answer `noda show nowhere` would
     // have given, on a card because it is a refusal.
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(has_line_with(&after, &["nowhere"]), "{after:?}");
     assert_eq!(app.depth(), 1, "nothing opened");
 }
@@ -905,7 +938,7 @@ fn a_tag_can_be_changed_from_the_command_line_too() {
     perform(&paths, &mut app, action);
 
     app.on_key(key(KeyCode::Char('G')));
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(
         has_line_with(&after, &["Reading list", "[urgent]"]),
         "{after:?}"
@@ -918,7 +951,7 @@ fn the_command_list_is_narrowed_by_what_a_command_does() {
     let mut app = tui::load(&paths).expect("load");
 
     app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
-    let listed = screen(&mut app);
+    let listed = screen(&paths, &mut app);
     assert!(has_line_with(&listed, &["commands"]));
     assert!(has_line_with(&listed, &["open <note>"]));
 
@@ -926,7 +959,7 @@ fn the_command_list_is_narrowed_by_what_a_command_does() {
     // names — which is the way somebody who knows the job and not the name will
     // look for it.
     typing(&mut app, "remote");
-    let narrowed = screen(&mut app);
+    let narrowed = screen(&paths, &mut app);
     assert!(has_line_with(&narrowed, &["push"]));
     assert!(has_line_with(&narrowed, &["pull"]));
     assert!(!has_line_with(&narrowed, &["open <note>"]));
@@ -938,7 +971,7 @@ fn a_line_that_is_not_a_command_stays_on_the_line() {
     let mut app = tui::load(&paths).expect("load");
 
     assert_eq!(command(&mut app, "frobnicate"), None);
-    let after = screen(&mut app);
+    let after = screen(&paths, &mut app);
     assert!(has_line_with(&after, &["frobnicate"]));
     // And the notebook is untouched behind it.
     assert!(has_line_with(&after, &["Budget review"]));
@@ -956,4 +989,342 @@ fn it_refuses_to_run_where_there_is_no_terminal() {
     }
     let refused = tui::run(&paths).expect_err("a pipe is not a terminal");
     assert!(refused.to_string().contains("needs a terminal"));
+}
+
+/// A notebook with something for every screen to say: a note that links to
+/// another by id, an unticked box that went overdue years ago, an attachment
+/// nothing uses, and a deletion in the history.
+///
+/// Built with `cmd::add` rather than by writing files, so the link can name the
+/// budget's real id — which is what a backlink is matched on, and the only way
+/// to have one that survives a retitle.
+fn a_worked_notebook() -> (TempRoot, Paths) {
+    let root = TempRoot::new();
+    let paths = Paths::rooted(&root.0);
+    std::fs::create_dir_all(paths.config_dir()).expect("config dir");
+    std::fs::write(paths.config_dir().join("config.toml"), "sign = false\n").expect("config");
+    cmd::init(&paths).expect("init");
+
+    let added = cmd::add(
+        &paths,
+        Some("Budget review"),
+        Some("the q3 budget is late"),
+        &["work".to_string()],
+    )
+    .expect("add");
+    let id = added
+        .split_whitespace()
+        .next()
+        .expect("add says the id first")
+        .to_string();
+    cmd::add(
+        &paths,
+        Some("Meeting notes"),
+        Some(&format!(
+            "see [the budget]({id}-budget-review.md)\n\n- [ ] book a room due:2020-01-01\n"
+        )),
+        &["work".to_string(), "q3".to_string()],
+    )
+    .expect("add");
+    cmd::add(&paths, Some("Reading list"), Some("a book"), &[]).expect("add");
+    cmd::add(
+        &paths,
+        Some("Trip plan"),
+        Some("flights"),
+        &["travel".to_string()],
+    )
+    .expect("add");
+    cmd::rm(&paths, "trip-plan").expect("rm");
+
+    std::fs::write(
+        paths
+            .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+            .join("diagram.png"),
+        b"png",
+    )
+    .expect("an attachment");
+    (root, paths)
+}
+
+/// Opens a screen by naming it at the prompt, and gives the runtime its chance
+/// to go and read whatever the screen turns out to be of.
+fn go(paths: &Paths, app: &mut App, line: &str) -> Vec<String> {
+    if let Some(action) = command(app, line) {
+        perform(paths, app, action);
+    }
+    screen(paths, app)
+}
+
+#[test]
+fn the_todo_screen_lists_the_boxes_with_the_dates_that_have_been_missed() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    let todo = go(&paths, &mut app, "todo");
+    assert!(has_line_with(&todo, &["Todo", "[1]"]), "{todo:#?}");
+    assert!(
+        has_line_with(&todo, &["meeting-notes", "2020-01-01", "book a room"]),
+        "{todo:#?}"
+    );
+
+    // The key means what the name means, which is the whole reason four of them
+    // have one.
+    app.on_key(key(KeyCode::Esc));
+    app.on_key(key(KeyCode::Char('t')));
+    assert!(has_line_with(&screen(&paths, &mut app), &["book a room"]));
+}
+
+#[test]
+fn the_tags_screen_counts_them_and_enter_narrows_the_listing() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    let tags = go(&paths, &mut app, "tags");
+    assert!(has_line_with(&tags, &["work", "2 notes"]), "{tags:#?}");
+
+    // Not a screen of its own: a tag narrows the listing, and the listing is
+    // where the notes it narrows already are.
+    app.on_key(key(KeyCode::Enter));
+    let narrowed = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&narrowed, &["Notes(tag:work)[2]"]),
+        "{narrowed:#?}"
+    );
+    assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
+}
+
+#[test]
+fn the_backlinks_screen_finds_the_note_that_points_here() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // The cursor opens on the budget, which is what the meeting notes link to.
+    let found = go(&paths, &mut app, "backlinks");
+    assert!(has_line_with(&found, &["Backlinks("]), "{found:#?}");
+    assert!(has_line_with(&found, &["Meeting notes"]), "{found:#?}");
+
+    // A row that names a note opens it, here as on the listing.
+    app.on_key(key(KeyCode::Enter));
+    let note = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&note, &["Note(", "Meeting notes"]),
+        "{note:#?}"
+    );
+}
+
+#[test]
+fn the_files_screen_leads_to_what_uses_an_attachment() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    let files = go(&paths, &mut app, "files");
+    assert!(has_line_with(&files, &["diagram.png"]), "{files:#?}");
+
+    // Nothing uses it, which is a finding — the one `doctor --links` reports as
+    // an orphan — rather than an empty screen.
+    app.on_key(key(KeyCode::Enter));
+    let orphan = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&orphan, &["nothing links here"]),
+        "{orphan:#?}"
+    );
+}
+
+#[test]
+fn the_log_screen_shows_the_notebooks_commits_and_then_one_notes_own() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // On the listing, which is a screen about the notebook.
+    let whole = go(&paths, &mut app, "log");
+    let all = commits(&paths);
+    assert!(
+        has_line_with(&whole, &[&format!("Log({})", cmd::DEFAULT_NOTEBOOK)]),
+        "{whole:#?}"
+    );
+    assert_eq!(app.entries().len(), all);
+
+    // On a note, which is a screen about a note. Shorter, which is the whole
+    // reason for being able to ask for it.
+    app.on_key(key(KeyCode::Esc));
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Char('l')));
+    let one = screen(&paths, &mut app);
+    assert!(has_line_with(&one, &["Log(", "Budget review"]), "{one:#?}");
+    assert!(app.entries().len() < all, "{one:#?}");
+}
+
+#[test]
+fn a_commit_on_a_notes_log_writes_a_restore_that_puts_the_note_back() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('j')));
+    let id = app.selected().expect("the meeting notes").id.clone();
+    perform(
+        &paths,
+        &mut app,
+        tui::Action::Tag {
+            key: id.clone(),
+            changes: vec!["+later".to_string()],
+            touch: cmd::Touch::Stamp,
+        },
+    );
+    assert!(has_line_with(&screen(&paths, &mut app), &["later"]));
+
+    // Into the note, then its history: `l` on the listing would be the
+    // notebook's, which has nothing to restore against.
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Char('l')));
+    let log = screen(&paths, &mut app);
+    assert!(has_line_with(&log, &["tag: meeting-notes"]), "{log:#?}");
+
+    // The row below the newest is the note as it stood before the tag.
+    app.on_key(key(KeyCode::Char('j')));
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None, "nothing runs yet");
+    let written = screen(&paths, &mut app);
+    assert!(has_line_with(&written, &["restore", &id]), "{written:#?}");
+
+    let action = app.on_key(key(KeyCode::Enter)).expect("now it runs");
+    perform(&paths, &mut app, action);
+    let tags = app
+        .note_of(&id)
+        .expect("the note is still there")
+        .note
+        .tags
+        .clone();
+    assert!(!tags.contains(&"later".to_string()), "{tags:?}");
+    // Nothing was rewritten: putting it back is another commit on top.
+    assert!(commits(&paths) > 7);
+}
+
+#[test]
+fn the_deleted_screen_names_the_revision_that_brings_a_note_back() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    assert_eq!(app.total(), 3, "the trip was deleted");
+
+    let gone = go(&paths, &mut app, "deleted");
+    assert!(has_line_with(&gone, &["Deleted", "[1]"]), "{gone:#?}");
+    assert!(
+        has_line_with(&gone, &["trip-plan", "Trip plan"]),
+        "{gone:#?}"
+    );
+
+    // Enter writes the restore; a second Enter runs it. The line is not run for
+    // you, because landing on a row is not agreeing to bring a note back.
+    app.on_key(key(KeyCode::Enter));
+    let written = screen(&paths, &mut app);
+    assert!(has_line_with(&written, &["restore "]), "{written:#?}");
+    assert_eq!(app.total(), 3, "nothing has happened yet");
+
+    let action = app.on_key(key(KeyCode::Enter)).expect("the restore runs");
+    perform(&paths, &mut app, action);
+    assert_eq!(app.total(), 4);
+    // The screen you are on is still the deleted one, and it now has nothing on
+    // it — which is the answer to whether the restore worked.
+    let emptied = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&emptied, &["nothing has been deleted"]),
+        "{emptied:#?}"
+    );
+    app.on_key(key(KeyCode::Esc));
+    let listing = screen(&paths, &mut app);
+    assert!(has_line_with(&listing, &["Trip plan"]), "{listing:#?}");
+}
+
+#[test]
+fn the_blame_screen_credits_the_body_and_leaves_the_frontmatter_out() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('j')));
+    app.on_key(key(KeyCode::Char('B')));
+    let blame = screen(&paths, &mut app);
+    assert!(
+        has_line_with(&blame, &["Blame(", "Meeting notes"]),
+        "{blame:#?}"
+    );
+    assert!(has_line_with(&blame, &["book a room"]), "{blame:#?}");
+    // `updated` is rewritten on every edit, so every frontmatter line would be
+    // credited to the latest commit — a block of noise that looks like a bug.
+    assert!(!has_line_with(&blame, &["updated:"]), "{blame:#?}");
+}
+
+#[test]
+fn the_diff_screen_shows_what_has_not_been_committed() {
+    let (_root, paths) = a_worked_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // A note changed from another window, which is what a browser that watches
+    // no files would otherwise have no way of noticing.
+    let id = app.selected().expect("a note").id.clone();
+    let file = paths
+        .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+        .join(format!("{id}-budget-review.md"));
+    let was = std::fs::read_to_string(&file).expect("the note");
+    std::fs::write(&file, format!("{was}a line nobody committed\n")).expect("change it");
+
+    let patch = go(&paths, &mut app, "diff");
+    assert!(has_line_with(&patch, &["Diff"]), "{patch:#?}");
+    assert!(has_line_with(&patch, &["@@"]), "{patch:#?}");
+    assert!(
+        has_line_with(&patch, &["+a line nobody committed"]),
+        "{patch:#?}"
+    );
+}
+
+#[test]
+fn the_notebooks_screen_moves_the_whole_session() {
+    let (_root, paths) = a_worked_notebook();
+    cmd::notebook_add(&paths, "work", None).expect("a second notebook");
+    let mut app = tui::load(&paths).expect("load");
+    assert_eq!(app.total(), 3);
+
+    let listed = go(&paths, &mut app, "notebooks");
+    assert!(
+        has_line_with(
+            &listed,
+            &[&format!("Notebooks({})[2]", cmd::DEFAULT_NOTEBOOK)]
+        ),
+        "{listed:#?}"
+    );
+    assert!(
+        has_line_with(&listed, &["•", cmd::DEFAULT_NOTEBOOK]),
+        "{listed:#?}"
+    );
+
+    // Into the other one: the header, the notes and the stack are all the new
+    // notebook's, because a different notebook is a different session.
+    app.on_key(key(KeyCode::Char('j')));
+    let action = app.on_key(key(KeyCode::Enter)).expect("the switch");
+    perform(&paths, &mut app, action);
+    let moved = screen(&paths, &mut app);
+    assert_eq!(app.total(), 0, "{moved:#?}");
+    assert!(has_line_with(&moved, &["Notebook:", "work"]), "{moved:#?}");
+    assert!(has_line_with(&moved, &["no notes yet"]), "{moved:#?}");
+    assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
+}
+
+#[test]
+fn a_screen_that_cannot_be_filled_closes_and_says_why() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    // A blame of a note whose file has gone from under the browser: the id is
+    // still on the listing, and there is nothing on disk to read.
+    let id = app.selected().expect("a note").id.clone();
+    std::fs::remove_file(
+        paths
+            .notebook_dir(cmd::DEFAULT_NOTEBOOK)
+            .join(format!("{id}-budget-review.md")),
+    )
+    .expect("take the file away");
+
+    app.on_key(key(KeyCode::Char('B')));
+    let after = screen(&paths, &mut app);
+    // Back on the listing rather than sitting on an empty screen with the
+    // reason on a card that is about to be dismissed.
+    assert_eq!(app.depth(), 1);
+    assert!(has_line_with(&after, &[" no "]), "{after:#?}");
 }

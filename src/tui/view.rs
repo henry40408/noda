@@ -25,7 +25,7 @@ use super::app::{App, Mode, View, What};
 use super::command;
 use super::frame::{self, card, plural};
 use super::theme;
-use crate::cmd::find_ignoring_case;
+use crate::cmd::{self, display_width, find_ignoring_case};
 use crate::style as palette;
 
 /// How wide the key column on the help card is, so the descriptions line up: the
@@ -41,6 +41,10 @@ const UNMARKED: &str = "  ";
 /// readable however long the tags get.
 const COLUMN_GAP: usize = 2;
 const TITLE_FLOOR: usize = 10;
+
+/// How wide git abbreviates an object id to, which is what the commit columns
+/// hold.
+const SHORT_COMMIT: u16 = 7;
 
 /// How far the body is held off either edge, so nothing on it is written into
 /// the corner of the terminal.
@@ -63,6 +67,11 @@ const KEYS: &[(&str, &str)] = &[
     ("m, #", "retitle · tags: +work -\"two words\""),
     ("ctrl-d, T", "delete (after a y) · leave updated alone"),
     ("Q", "the queue: what is waiting · send it"),
+    // One row for the four screens with a letter, not four. The other five are
+    // named — `:tags`, `:files`, `:notebooks`, `:deleted`, `:diff` — and the
+    // card has to stay inside a twenty-four row terminal, which it has already
+    // failed to do once.
+    ("t, l, b, B", "todo · log · backlinks · blame"),
     ("r, q / ctrl-c", "read the notebook again · quit"),
 ];
 
@@ -80,11 +89,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.set_page(body.height);
     frame::draw_header(f, header, app);
     frame::draw_title(f, title, app);
-    if matches!(app.view(), View::Notes) {
-        draw_listing(f, body, app);
-    } else {
-        draw_note(f, body, app);
-    }
+    draw_body(f, body, app);
     frame::draw_crumbs(f, crumbs, app);
     if let Some(x) = frame::draw_status(f, status, app) {
         f.set_cursor_position((x, status.y));
@@ -101,20 +106,56 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
+/// Whichever screen is on top.
+///
+/// Two shapes between them and no more: a list with a cursor in it, or a page of
+/// text to scroll. Which one a screen is, is the state's answer and not decided
+/// again here — a screen that was a list to the keys and a page to the drawing
+/// would be a screen whose `j` did nothing.
+fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
+    match app.view().clone() {
+        View::Notes => draw_listing(f, area, app),
+        View::Note(_) => draw_note(f, area, app),
+        View::Todo => draw_rows(f, area, app, todo_rows(app), "nothing to do"),
+        View::Tags => draw_rows(f, area, app, tag_rows(app), "no tags yet"),
+        View::Files => draw_rows(
+            f,
+            area,
+            app,
+            file_rows(app),
+            "this notebook holds nothing but notes",
+        ),
+        View::Notebooks => draw_rows(f, area, app, notebook_rows(app), "no notebooks"),
+        View::Deleted => draw_rows(f, area, app, deleted_rows(app), "nothing has been deleted"),
+        View::Backlinks(_) => draw_rows(f, area, app, backlink_rows(app), "nothing links here"),
+        View::Log(_) => draw_rows(f, area, app, log_rows(app), "no commits"),
+        View::Blame(_) => draw_blame(f, area, app),
+        View::Diff => draw_diff(f, area, app),
+    }
+}
+
+/// The empty message a screen shows in place of rows it has none of.
+///
+/// Said in the notebook's own words rather than "no results": an empty todo
+/// list is a state worth recognising, and "0 rows" is a spreadsheet talking.
+fn draw_nothing(f: &mut Frame, area: Rect, said: &str) {
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(said, theme::from(palette::MUTED))))
+            .block(Block::new().padding(Padding::horizontal(PADDING))),
+        area,
+    );
+}
+
 fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     if app.shown() == 0 {
-        let nothing = if app.total() == 0 {
-            "this notebook has no notes yet"
-        } else {
-            "nothing matches"
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                nothing,
-                theme::from(palette::MUTED),
-            )))
-            .block(Block::new().padding(Padding::horizontal(PADDING))),
+        draw_nothing(
+            f,
             area,
+            if app.total() == 0 {
+                "this notebook has no notes yet"
+            } else {
+                "nothing matches"
+            },
         );
         return;
     }
@@ -198,14 +239,346 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     app.put_table(state);
 }
 
+/// Any of the other lists.
+///
+/// The same table the listing draws, down to the padding and the reversed row
+/// under the cursor: these are the notebook answering different questions, not
+/// different programs. Only the columns change, and each screen says what its
+/// own are.
+fn draw_rows(
+    f: &mut Frame,
+    area: Rect,
+    app: &mut App,
+    (rows, widths): (Vec<Row<'static>>, Vec<Constraint>),
+    empty: &str,
+) {
+    if rows.is_empty() {
+        draw_nothing(f, area, empty);
+        return;
+    }
+    let mut state = app.take_table();
+    f.render_stateful_widget(
+        Table::new(rows, widths)
+            .block(Block::new().padding(Padding::horizontal(PADDING)))
+            .column_spacing(COLUMN_GAP as u16)
+            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol(""),
+        area,
+        &mut state,
+    );
+    app.put_table(state);
+}
+
+/// How wide a column of these has to be. Measured rather than fixed, because
+/// every one of them holds something somebody else chose the length of.
+fn widest(of: impl Iterator<Item = usize>) -> u16 {
+    of.max().unwrap_or(0) as u16
+}
+
+/// A line that has stopped borrowing what it was built from.
+///
+/// A row of a table outlives the borrow of the session it was measured against,
+/// so the text has to come with it. Only the screens whose rows are built one at
+/// a time need this; the listing hands ratatui borrowed spans and is the one
+/// that can afford to.
+fn owned(line: Line<'_>) -> Line<'static> {
+    Line::from(
+        line.spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The unticked boxes: which note, when it is due, and what it says.
+///
+/// The date is the only thing coloured, and only when it has been missed —
+/// which is the one thing on the row that has changed since it was written.
+/// Never truncated, as `noda todo` never truncates it: a real action item is a
+/// sentence, and a list that cuts the sentence off is a list you have to open
+/// the note to read.
+fn todo_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let muted = theme::from(palette::MUTED);
+    let notes = |pick: fn(&crate::notebook::NoteFile) -> &str| {
+        widest(
+            app.tasks()
+                .iter()
+                .filter_map(|task| app.note_at(task.note))
+                .map(|file| display_width(pick(file))),
+        )
+    };
+    let rows = app
+        .tasks()
+        .iter()
+        .filter_map(|task| {
+            let file = app.note_at(task.note)?;
+            let due = match &task.item.due {
+                Some(due) if due.as_str() < app.today() => {
+                    Span::styled(due.clone(), theme::from(palette::OVERDUE))
+                }
+                Some(due) => Span::styled(due.clone(), muted),
+                None => Span::raw(String::new()),
+            };
+            Some(Row::new(vec![
+                Line::from(Span::styled(file.id.clone(), theme::from(palette::ID))),
+                Line::from(Span::styled(file.slug.clone(), theme::from(palette::SLUG))),
+                Line::from(due),
+                Line::from(Span::raw(task.item.text.clone())),
+            ]))
+        })
+        .collect();
+    (
+        rows,
+        vec![
+            Constraint::Length(notes(|file| &file.id)),
+            Constraint::Length(notes(|file| &file.slug)),
+            Constraint::Length(cmd::DATE_WIDTH as u16),
+            Constraint::Fill(1),
+        ],
+    )
+}
+
+/// Every tag, commonest first, and how many notes carry it.
+fn tag_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let width = widest(app.tallies().iter().map(|t| display_width(&t.tag)));
+    let rows = app
+        .tallies()
+        .iter()
+        .map(|tally| {
+            Row::new(vec![
+                Line::from(Span::styled(tally.tag.clone(), theme::from(palette::TAGS))),
+                Line::from(Span::styled(
+                    plural(tally.notes, "note"),
+                    theme::from(palette::MUTED),
+                )),
+            ])
+        })
+        .collect();
+    (rows, vec![Constraint::Length(width), Constraint::Fill(1)])
+}
+
+/// What the notebook holds that is not a note.
+fn file_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let rows = app
+        .files()
+        .iter()
+        .map(|name| Row::new(vec![Line::from(Span::raw(name.clone()))]))
+        .collect();
+    (rows, vec![Constraint::Fill(1)])
+}
+
+/// Every notebook, with a mark against the one this session is in.
+///
+/// The same mark the listing puts in front of a marked note, and as wide when
+/// there is nothing to show: a list that shifted sideways would be a list you
+/// have to re-find your place in.
+fn notebook_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let rows = app
+        .notebooks()
+        .iter()
+        .map(|name| {
+            let here = *name == app.notebook;
+            Row::new(vec![Line::from(vec![
+                Span::styled(
+                    if here { MARK } else { UNMARKED },
+                    theme::from(palette::MATCH),
+                ),
+                Span::raw(name.clone()),
+            ])])
+        })
+        .collect();
+    (rows, vec![Constraint::Fill(1)])
+}
+
+/// The notes history holds that the notebook no longer does.
+///
+/// The revision shown is the one `restore` has to be given — the commit *before*
+/// the deletion, not the deletion itself. Naming the deletion and leaving the
+/// `~1` to be worked out would be reporting a problem without its remedy, which
+/// is the same call `noda deleted` makes.
+fn deleted_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let muted = theme::from(palette::MUTED);
+    let ids = widest(app.gone().iter().map(|gone| display_width(&gone.id)));
+    let slugs = widest(app.gone().iter().map(|gone| display_width(&gone.slug)));
+    let rows = app
+        .gone()
+        .iter()
+        .map(|gone| {
+            Row::new(vec![
+                Line::from(Span::styled(gone.id.clone(), theme::from(palette::ID))),
+                Line::from(Span::styled(gone.slug.clone(), theme::from(palette::SLUG))),
+                Line::from(Span::styled(
+                    cmd::format_time(gone.removed_at, gone.offset_minutes),
+                    muted,
+                )),
+                Line::from(Span::styled(
+                    gone.restore_from_short(),
+                    theme::from(palette::COMMIT),
+                )),
+                Line::from(Span::raw(gone.title.clone())),
+            ])
+        })
+        .collect();
+    (
+        rows,
+        vec![
+            Constraint::Length(ids),
+            Constraint::Length(slugs),
+            Constraint::Length(cmd::TIME_WIDTH as u16),
+            Constraint::Length(SHORT_COMMIT),
+            Constraint::Fill(1),
+        ],
+    )
+}
+
+/// What links here: the same row `noda ls` prints, for the same reason `search`
+/// and `backlinks` both print it — what comes back is a note, and there is one
+/// shape for naming a note.
+fn backlink_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let found = || app.linking().iter().filter_map(|&at| app.note_at(at));
+    let ids = widest(found().map(|file| display_width(&file.id)));
+    let terms = app.terms().to_vec();
+    let rows = found()
+        .map(|file| {
+            Row::new(vec![
+                Line::from(Span::styled(file.id.clone(), theme::from(palette::ID))),
+                owned(marked(&file.note.title, &terms, Style::default())),
+                Line::from(
+                    palette::tag_pieces(&file.note.tags)
+                        .into_iter()
+                        .map(|(style, text)| Span::styled(text, theme::from(style)))
+                        .collect::<Vec<_>>(),
+                ),
+            ])
+        })
+        .collect();
+    (
+        rows,
+        vec![
+            Constraint::Length(ids),
+            Constraint::Fill(1),
+            Constraint::Length(widest(
+                found().map(|file| tags(&file.note.tags).chars().count()),
+            )),
+        ],
+    )
+}
+
+/// Commits, newest first — the same three columns `noda log` prints.
+fn log_rows(app: &App) -> (Vec<Row<'static>>, Vec<Constraint>) {
+    let rows = app
+        .entries()
+        .iter()
+        .map(|entry| {
+            Row::new(vec![
+                Line::from(Span::styled(entry.short_id(), theme::from(palette::COMMIT))),
+                Line::from(Span::styled(
+                    cmd::format_time(entry.seconds, entry.offset_minutes),
+                    theme::from(palette::MUTED),
+                )),
+                Line::from(Span::raw(entry.summary.clone())),
+            ])
+        })
+        .collect();
+    (
+        rows,
+        vec![
+            Constraint::Length(SHORT_COMMIT),
+            Constraint::Length(cmd::TIME_WIDTH as u16),
+            Constraint::Fill(1),
+        ],
+    )
+}
+
+/// Which commit put each line of a note where it is.
+///
+/// A page rather than a list: the rows are the note's own lines, and a cursor on
+/// one of them would be a cursor on a line of prose. Not wrapped either, for the
+/// reason a patch is not — the two columns down the left only line up while
+/// every line is one row.
+fn draw_blame(f: &mut Frame, area: Rect, app: &App) {
+    let muted = theme::from(palette::MUTED);
+    let lines: Vec<Line> = app
+        .blamed()
+        .iter()
+        .map(|line| {
+            let when = if line.commit.is_some() {
+                cmd::format_time(line.seconds, line.offset_minutes)
+            } else {
+                // Padded to the width of a time so the prose stays in one
+                // column, exactly as `noda blame` pads it.
+                format!("{:<width$}", "not committed", width = cmd::TIME_WIDTH)
+            };
+            Line::from(vec![
+                Span::styled(line.short_commit(), theme::from(palette::COMMIT)),
+                Span::raw("  "),
+                Span::styled(when, muted),
+                Span::raw("  "),
+                Span::raw(line.text.clone()),
+            ])
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::new().padding(Padding::horizontal(PADDING)))
+            .scroll((app.scroll(), 0)),
+        area,
+    );
+}
+
+/// What is uncommitted, or what the last commit did.
+///
+/// Coloured by what each line is rather than by an escape sequence carried over
+/// from the command: `cmd::diff` paints for a pipe, and a browser reading its
+/// own colours back out of the text would be parsing its own output. The patch
+/// is the part written down once; the colour is the drawing's, here as it is for
+/// every other listing on screen.
+fn draw_diff(f: &mut Frame, area: Rect, app: &App) {
+    let Some(patch) = app.text() else {
+        f.render_widget(Block::new().padding(Padding::horizontal(PADDING)), area);
+        return;
+    };
+    if patch.trim().is_empty() {
+        draw_nothing(f, area, "nothing has changed since the last commit");
+        return;
+    }
+    let lines: Vec<Line> = patch
+        .lines()
+        .map(|line| {
+            let style = if line.starts_with("+++") || line.starts_with("---") {
+                theme::from(palette::HEADING)
+            } else if line.starts_with('+') {
+                theme::from(palette::ADDED)
+            } else if line.starts_with('-') {
+                theme::from(palette::REMOVED)
+            } else if line.starts_with("@@") {
+                theme::from(palette::HUNK)
+            } else if line.starts_with("diff ") || line.starts_with("index ") {
+                theme::from(palette::HEADING)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(line, style))
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::new().padding(Padding::horizontal(PADDING)))
+            // Not wrapped: a patch is a grid, and a wrapped `+` line reads as a
+            // line that was added twice.
+            .scroll((app.scroll(), 0)),
+        area,
+    );
+}
+
 fn draw_note(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::new().padding(Padding::horizontal(PADDING));
-    let Some(reading) = &app.reading else {
+    let Some(text) = app.text() else {
         f.render_widget(block, area);
         return;
     };
     f.render_widget(
-        Paragraph::new(lines(&reading.text, app.terms()))
+        Paragraph::new(lines(text, app.terms()))
             .block(block)
             // Wrapped rather than cut: a note is prose, and a reader who has to
             // scroll sideways to finish a sentence is not reading.
