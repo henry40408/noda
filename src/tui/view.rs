@@ -22,6 +22,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Padding, Paragraph, Row, Table, Wrap};
 
 use super::app::{App, Mode, View, What};
+use super::command;
 use super::frame::{self, card, plural};
 use super::theme;
 use crate::cmd::find_ignoring_case;
@@ -56,6 +57,7 @@ const KEYS: &[(&str, &str)] = &[
     ("ctrl-f / ctrl-b, g / G", "half a screen · first / last"),
     ("enter, esc", "open it · back out of it"),
     ("/", "filter: tag:work OR tag:q3 budget"),
+    (":, ctrl-a", "run a command · the list of what it takes"),
     ("space, *", "mark this one · mark all the filter shows"),
     ("e, a", "edit in $EDITOR · new note"),
     ("m, #", "retitle · tags: +work -\"two words\""),
@@ -91,6 +93,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // keyboard is doing, so there is nothing else it could be doing at the time.
     match app.mode {
         Mode::Help => draw_help(f, area),
+        Mode::Commands => draw_commands(f, area, app),
         Mode::Confirm(what) => draw_confirm(f, area, app, what),
         Mode::Queue => draw_queue(f, area, app),
         Mode::Alert => draw_alert(f, area, app),
@@ -225,6 +228,73 @@ fn draw_help(f: &mut Frame, area: Rect) {
     card(f, area, " keys ", keys, theme::from(palette::MUTED));
 }
 
+/// What the prompt accepts, narrowed as you type.
+///
+/// Searched rather than paged, and searched by what a command *does* as well as
+/// by its name: the list exists for somebody who knows they want their notes on
+/// the remote and not that it is spelled `push`.
+///
+/// Cut to what the terminal can hold, with the cursor kept in view and the rest
+/// counted on the last line. A card that ran off the bottom would take its own
+/// footer with it, which is the mistake the help card made once already.
+fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
+    let muted = theme::from(palette::MUTED);
+    let shown: Vec<&command::Spec> = command::matching(&app.input).collect();
+    let width = shown
+        .iter()
+        .map(|spec| spec.usage().chars().count())
+        .max()
+        .unwrap_or(0);
+
+    // Two of border, one blank and one footer: what is left is for the list.
+    //
+    // One row per command, which is only true because the description is cut to
+    // fit rather than wrapped. Let it wrap and every row becomes two, the budget
+    // below is wrong by a factor of two, and the footer is pushed off the bottom
+    // of its own card — which is what a card that has stopped saying how to
+    // leave it looks like.
+    let room = (area.height as usize).saturating_sub(4).max(1);
+    let first = app.commands_at().saturating_sub(room.saturating_sub(1));
+    let told = (area.width as usize).saturating_sub(2 + width + 2);
+    let mut lines: Vec<Line> = if shown.is_empty() {
+        vec![Line::from(Span::styled("nothing goes by that", muted))]
+    } else {
+        shown
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(room)
+            .map(|(at, spec)| {
+                let usage = if at == app.commands_at() {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    theme::from(palette::ID)
+                };
+                Line::from(vec![
+                    Span::styled(format!("{:<width$}", spec.usage()), usage),
+                    Span::styled(format!("  {}", cut(spec.what, told)), muted),
+                ])
+            })
+            .collect()
+    };
+
+    let more = shown.len().saturating_sub(first + room);
+    let footer = if more > 0 {
+        format!("enter  put it on the prompt       esc  back       {more} more")
+    } else {
+        "type to narrow       enter  put it on the prompt       esc  back".to_string()
+    };
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(footer, muted)));
+
+    let title = if app.input.is_empty() {
+        " commands ".to_string()
+    } else {
+        format!(" commands: {} ", app.input)
+    };
+    card(f, area, &title, lines, muted);
+}
+
 /// The question `noda rm` does not ask.
 ///
 /// At a prompt a delete is a command you typed on purpose; here it is one chord,
@@ -338,6 +408,19 @@ fn draw_alert(f: &mut Frame, area: Rect, app: &App) {
         (" done ", theme::from(palette::MUTED))
     };
     card(f, area, title, lines, border);
+}
+
+/// As much of a line as there is room for, with an ellipsis where it was cut.
+///
+/// Cut on a character and not a byte: the descriptions are English today and the
+/// notebook is not, and a slice through the middle of a code point is a panic
+/// rather than a short line.
+fn cut(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(room.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
 }
 
 /// A note's tags as the listing writes them, with no colour on them: what the

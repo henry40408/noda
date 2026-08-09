@@ -52,9 +52,9 @@ const KEY_GAP: usize = 2;
 const LISTING_KEYS: &[(&str, &str)] = &[
     ("enter", "read"),
     ("/", "filter"),
+    (":", "command"),
+    ("ctrl-a", "commands"),
     ("?", "keys"),
-    ("r", "reload"),
-    ("q", "quit"),
     ("e", "edit"),
     ("a", "new"),
     ("m", "retitle"),
@@ -64,23 +64,30 @@ const LISTING_KEYS: &[(&str, &str)] = &[
     ("*", "mark shown"),
     ("Q", "queue"),
     ("T", "keep updated"),
-    ("esc", "clear"),
+    ("q", "quit"),
 ];
 
 /// What the keys do on a note. The same words for the same keys — a key that
 /// changes a note is the same key here, aimed at the note you are reading rather
 /// than at the row under a cursor.
+/// The way to everything else comes first, and `g` / `G` is not here at all: the
+/// columns are dropped from the right when they do not fit, so what goes in the
+/// last one has to be what can afford to go. A reader who does not know `:`
+/// exists cannot look it up; one who does not know `G` has both `j` and the
+/// card.
 const NOTE_KEYS: &[(&str, &str)] = &[
     ("esc", "back"),
     ("j/k", "scroll"),
+    (":", "command"),
+    ("ctrl-a", "commands"),
     ("?", "keys"),
-    ("r", "reload"),
-    ("q", "quit"),
     ("e", "edit"),
     ("m", "retitle"),
     ("#", "tags"),
     ("ctrl-d", "delete"),
     ("T", "keep updated"),
+    ("r", "reload"),
+    ("q", "quit"),
 ];
 
 /// The keys the screen in front of you answers to.
@@ -270,15 +277,17 @@ fn menu(app: &App, width: u16) -> Vec<Line<'static>> {
 }
 
 /// Whose browser this is, in the corner the eye does not need.
+///
+/// The name and nothing else. The version was here and is not: it is two columns
+/// the key grid wants more, and `noda --version` is where you would look for it
+/// anyway.
 fn wordmark() -> Vec<Line<'static>> {
-    let muted = theme::from(palette::MUTED);
     vec![
         Line::from(Span::styled(
             "noda",
             Style::default().add_modifier(Modifier::BOLD),
         ))
         .right_aligned(),
-        Line::from(Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), muted)).right_aligned(),
     ]
 }
 
@@ -383,7 +392,22 @@ pub fn draw_crumbs(frame: &mut Frame, area: Rect, app: &App) {
 /// would be one you had to look at to find out where your keystrokes were going.
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
     let muted = theme::from(palette::MUTED);
+    // What is being waited for wins the line outright: it is drawn on a frame of
+    // its own, before the thing it is waiting for has begun, and nothing else on
+    // the screen is going to change until it is over.
+    if let Some(waiting) = app.working {
+        frame.render_widget(Line::from(Span::styled(waiting, muted)), area);
+        return None;
+    }
     let (left, cursor) = match (&app.message, app.mode) {
+        (_, Mode::Command) => {
+            let typed = Span::raw(app.input.as_str());
+            let width = 1 + typed.width() as u16;
+            (
+                Line::from(vec![Span::styled(":", muted), typed]),
+                Some(area.x + width),
+            )
+        }
         (_, Mode::Search) => {
             let typed = Span::raw(app.search());
             let width = 1 + typed.width() as u16;
@@ -399,8 +423,18 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
             (Line::from(vec![label, typed]), Some(area.x + width))
         }
         // What the last command said, in its own words. The next key takes it
-        // away again.
-        (Some(said), _) => (Line::from(Span::raw(said.line())), None),
+        // away again — and a line that says why something did *not* run is
+        // coloured like the query that is not a query yet, because it is the
+        // same class of thing: not a refusal by the notebook, a sentence that
+        // never reached it.
+        (Some(said), _) => {
+            let style = if said.failed {
+                theme::from(palette::INVALID)
+            } else {
+                Style::default()
+            };
+            (Line::from(Span::styled(said.line(), style)), None)
+        }
         // A query that has been left in force is worth showing even when the
         // keyboard has moved on from it, because it is why the listing is short.
         _ if !app.search().is_empty() => (
@@ -517,10 +551,16 @@ mod tests {
     }
 
     #[test]
-    fn every_key_fits_the_grid_it_is_laid_out_in() {
-        // Column-major, five to a column: a list that grew past a multiple would
-        // leave a hole in the middle of the grid rather than at the end of it.
-        assert_eq!(LISTING_KEYS.len() % MENU_ROWS, 0);
-        assert_eq!(NOTE_KEYS.len() % MENU_ROWS, 0);
+    fn no_key_is_listed_twice_on_one_screen() {
+        // The grid is laid out column-major and the last column may be short,
+        // which is fine. What is not fine is the same key appearing twice: the
+        // second entry is unreachable, and the two say different things about
+        // what pressing it does.
+        for keys in [LISTING_KEYS, NOTE_KEYS] {
+            let mut seen = std::collections::BTreeSet::new();
+            for (key, _) in keys {
+                assert!(seen.insert(key), "`{key}` is on the same grid twice");
+            }
+        }
     }
 }

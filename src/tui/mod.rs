@@ -24,6 +24,7 @@
 //! that opens a repository, reads a file, runs a command or touches a terminal.
 
 pub mod app;
+mod command;
 mod frame;
 mod theme;
 pub mod view;
@@ -44,7 +45,7 @@ use crate::notebook::{NoteFile, Notebook, Status};
 use crate::paths::Paths;
 use crate::{Error, Result};
 
-pub use app::{Action, App};
+pub use app::{Action, App, Run};
 
 /// Opens the active notebook in the browser, and returns when it is closed.
 ///
@@ -125,7 +126,18 @@ fn browse(paths: &Paths, terminal: &mut DefaultTerminal, app: &mut App) -> Resul
             match app.on_key(key) {
                 Some(Action::Quit) => return Ok(()),
                 Some(Action::Reload) => reload(paths, app)?,
-                Some(action) => perform(paths, terminal, app, action)?,
+                Some(action) => {
+                    // A command that goes to the network takes long enough that
+                    // the last frame would sit there looking like nothing had
+                    // happened. Draw once, saying what is being waited for,
+                    // before handing over.
+                    if let Some(said) = action.working() {
+                        app.working = Some(said);
+                        terminal.draw(|frame| view::draw(frame, app))?;
+                        app.working = None;
+                    }
+                    perform(paths, terminal, app, action)?;
+                }
                 None => {}
             }
         }
@@ -155,6 +167,37 @@ fn perform(
         // Both are the caller's, and named rather than left to a wildcard so
         // that an action added later cannot be quietly swallowed here.
         Action::Quit | Action::Reload => return Ok(()),
+        // What a key names is `Notebook::resolve`'s question, and this is the
+        // only place that may ask it: an id prefix that names two notes has one
+        // answer, and it is the refusal the prompt would have printed.
+        //
+        // Read again first, because the note being asked for may be newer than
+        // the listing — a note written from another window is exactly the sort
+        // of thing somebody opens by name.
+        Action::Open(key) => {
+            let notebook = Notebook::open_active(paths)?;
+            match notebook.resolve(&key) {
+                Ok((id, _)) => {
+                    reload(paths, app)?;
+                    app.open_note(id);
+                }
+                Err(e) => app.report(Err(e)),
+            }
+            return Ok(());
+        }
+        Action::Run(run) => match run {
+            // Reporting only. `doctor` writes when it is asked to at the prompt;
+            // from a browser it says what it found, because a keystroke that
+            // rewrote a directory is not something to discover afterwards.
+            Run::Doctor { links, times } => cmd::doctor(paths, true, links, times),
+            Run::Status => cmd::status(paths),
+            Run::Readme => cmd::readme(paths, false),
+            Run::Snapshot(Some(name)) => cmd::snapshot(paths, &name, None),
+            Run::Snapshot(None) => cmd::snapshot_ls(paths),
+            Run::Sync => cmd::sync(paths),
+            Run::Push => cmd::push(paths),
+            Run::Pull => cmd::pull(paths),
+        },
         Action::Edit { key, touch } => {
             in_the_foreground(terminal, || cmd::edit(paths, &key, touch))?
         }
