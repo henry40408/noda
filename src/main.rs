@@ -172,11 +172,11 @@ enum Command {
         )]
         query: Vec<String>,
     },
-    /// Browse the notebook on one screen: the listing, the note under the
-    /// cursor, and the same query language `noda search` takes.
+    /// Browse the notebook: the listing, the same query language `noda search`
+    /// takes, and Enter to open what the cursor is on as a screen of its own.
     ///
-    /// Reading only — every key that would change a note is a command of its
-    /// own, so that what a change means is written down in exactly one place.
+    /// Every key that changes a note runs the command that changes it, so that
+    /// what a change means is written down in exactly one place.
     Tui,
     /// Show commit history for the notebook, or for one note.
     Log {

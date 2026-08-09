@@ -68,7 +68,7 @@ noda add "Meeting notes"        # opens $EDITOR; auto-commits on save
 noda ls                         # list notes in the current notebook
 noda show k3f9                  # or: noda show meeting-notes
 noda edit meeting-notes         # re-open in $EDITOR, auto-commits the change
-noda tui                        # or browse the lot on one screen: list, preview, search
+noda tui                        # or browse the lot: list, filter, open, come back
 
 noda notebook add work --remote git@github.com:me/work-notes.git
 noda use work                   # switch active notebook
@@ -479,7 +479,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook on one screen: the listing, the note under the cursor, and that same query filtering as you type. `e`, `a`, `m`, `#` and `d` run `edit`, `add`, `mv`, `tag` and `rm` on the note under the cursor; mark several and the tag and delete keys queue up instead, to be sent as one commit. |
+| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -597,49 +597,77 @@ and the editor is handed the file.
 
 ### Browsing
 
-`noda tui` puts the notebook on one screen. Reading a notebook from the shell is `ls`, then
-`show`, then `ls` again to find your place; here the listing does not go away while the note
-is read, and a query narrows it as you type rather than once you have finished typing it.
+`noda tui` puts the notebook on a screen you can go into and come back out of. Reading a
+notebook from the shell is `ls`, then `show`, then `ls` again to find your place; here the
+listing keeps its place while you read, and a query narrows it as you type rather than once
+you have finished typing it.
 
 ```
 $ noda tui
-personal  (main)  128 notes  2 uncommitted  ↑1 ↓0
-k3f9m2p1  Budget review          [work]      │ ---
-7bqx4t20  Meeting notes          [work, q3]  │ title: Meeting notes
-9m2p1k3f  Reading list                       │ tags: [work, q3]
-x4t207bq  Trip planning          [travel]    │ ---
-                                             │
-                                             │ # Agenda
-                                             │ - [ ] budget due:2026-08-10
-/tag:work budget                                                              2/128
+Notebook: personal    <enter>  read    <e>  edit           <space>  mark          noda
+Branch:   main        </>  filter      <a>  new            <*>  mark shown      v0.1.0
+Remote:   origin      <?>  keys        <m>  retitle        <Q>  queue
+Notes:    128 notes   <r>  reload      <#>  tags           <T>  keep updated
+Changes:  2 uncommitted  <q>  quit     <ctrl-d>  delete    <esc>  clear
+Notes(tag:work budget)[2] ──────────────────────────────────────── 3 marks  1 queued
+ • k3f9m2p1  Budget review                                             [work]
+   7bqx4t20  Meeting notes                                             [work, q3]
+
+ notes
+/tag:work budget
 ```
 
-The left column is the row every other listing prints — the id, the title, then the tags —
-because a note is named the same way wherever noda names it. The right pane is `noda show`:
-the frontmatter dimmed, your own text left alone. The one thing painted over your prose is
-the search match, which is the exception `noda search` already makes when it quotes a hit.
+Every screen is the same five bands: where the notebook stands and what the keys do here,
+what this screen is of, the screen itself, how far down you are, and what was last said. The
+row in the listing is the row every other listing prints — the id, the title, then the tags —
+because a note is named the same way wherever noda names it.
+
+`Enter` opens what the cursor is on as a screen of its own, and `Esc` closes it again. The
+listing keeps its cursor while you are down there, so coming back lands where you left.
+
+```
+Note(7bqx4t20)  Meeting notes ─────────────────────────────────────────────────────
+ ---
+ title: Meeting notes
+ tags: [work, q3]
+ ---
+
+ # Agenda
+ - [ ] budget due:2026-08-10
+
+ notes   7bqx4t20
+```
+
+A note is `noda show`: the frontmatter dimmed, your own text left alone. The one thing
+painted over your prose is the search match, which is the exception `noda search` already
+makes when it quotes a hit — and it survives the way down, so the word you searched for is
+still marked in the note you opened to read it in.
 
 | Key | |
 | --- | --- |
-| `j` / `k`, `↓` / `↑` | move |
-| `Ctrl-d` / `Ctrl-u`, `g` / `G` | half a screen, first / last |
-| `Tab`, `h` / `l` | move between the list and the preview (the preview scrolls with the same keys) |
-| `/` | search, in the language `noda search` takes. There is no shell in front of the field, so it quotes like one: `tag:"12.34 foo bar"` |
-| `Enter` | read the note under the cursor; while a query is being typed, keep it and put the keyboard back on the list |
-| `Esc` | leave a prompt; otherwise drop the query, and once there is no query, the marks |
-| `Space`, `*` | mark the note under the cursor; mark everything the query is showing (or take the marks off it) |
+| `j` / `k`, `↓` / `↑` | move the cursor, or scroll the note |
+| `Ctrl-f` / `Ctrl-b`, `g` / `G` | half a screen, first / last |
+| `Enter` | open what the cursor is on; while a query is being typed, keep it and put the keyboard back on the list |
+| `Esc` | leave a prompt; close the screen you are on; otherwise drop the query, and once there is no query, the marks |
+| `/` | filter, in the language `noda search` takes. There is no shell in front of the field, so it quotes like one: `tag:"12.34 foo bar"` |
+| `Space`, `*` | mark the note under the cursor; mark everything the filter is showing (or take the marks off it) |
 | `Q` | the queue: what is waiting to be sent, `d` to drop an entry, `Enter` to send |
-| `e` | edit the note in `$EDITOR` |
+| `e` | edit in `$EDITOR` |
 | `a` | new note: a title along the bottom, then `$EDITOR` for the body (`Enter` on an empty title takes it from the body, as `noda add` does) |
 | `m` | retitle, starting from the title it has |
 | `#` | tags, written the way `noda tag` takes them: `+work -q3`. A tag may contain a space, so the prompt quotes like a shell: `-"24.04 Dark patterns"` |
-| `d` | delete, once you have said `y`. With notes marked, `#` and `d` are aimed at the marked set and go into the queue instead |
-| `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The header says `keeping updated` for as long as it is on |
+| `Ctrl-d` | delete, once you have said `y`. With notes marked, `#` and `Ctrl-d` are aimed at the marked set and go into the queue instead |
+| `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The title band says `keeping updated` for as long as it is on |
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
 
+`e`, `m`, `#` and `Ctrl-d` aim at whatever the screen is about — the row under the cursor on
+the listing, and the note itself once you have opened it — so they read the same on either.
+The delete is behind a modifier because it is the one key here that cannot be taken back by
+pressing something else.
+
 **Every key that changes a note runs the command that changes it.** `e` is `noda edit`, `#`
-is `noda tag`, `d` is `noda rm` — so a change made here is validated, stamped and committed
+is `noda tag`, `Ctrl-d` is `noda rm` — so a change made here is validated, stamped and committed
 exactly as one made at the prompt, and the line along the bottom afterwards is the line that
 command would have printed. There is no second implementation of what a change means, which
 is the whole reason the keys are wired this way rather than to a writer of their own. Two

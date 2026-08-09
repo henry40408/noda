@@ -13,6 +13,14 @@
 //! have printed — so what a change means is written down once, in `cmd`, and
 //! this is a second way of asking for it rather than a second version of it.
 //!
+//! A session is a **stack of screens**. The notebook's notes are the one at the
+//! bottom and it is never popped; `Enter` opens what the cursor is on as a
+//! screen of its own and `Esc` closes it again. Each screen keeps its own
+//! cursor, its own query and its own scroll, which is what makes going back
+//! land where you left rather than at the top — and what lets a screen be about
+//! something other than a list of notes without the one underneath it having to
+//! give anything up.
+//!
 //! The notes are held in memory for the length of the session. `noda search`
 //! already reads every body on every invocation, so this is that cost paid once
 //! instead of once per query — which is the whole point of typing into a filter
@@ -87,23 +95,85 @@ pub enum Action {
 /// command meant, which is the same mistake as writing the change twice.
 pub struct Message {
     pub text: String,
-    /// Failures get a card and successes get the footer: an acknowledgement is
-    /// read in passing, a reason has to be read.
+    /// Failures get a card and successes get the status line: an acknowledgement
+    /// is read in passing, a reason has to be read.
     pub failed: bool,
 }
 
 impl Message {
-    /// As much of it as one line of footer can hold.
+    /// As much of it as one line of the status bar can hold.
     pub fn line(&self) -> &str {
         self.text.lines().next().unwrap_or_default()
     }
 }
 
-/// Which half of the screen the arrow keys are steering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    List,
-    Preview,
+/// What a screen is a screen of.
+///
+/// The name is what the crumb trail shows, so it is the notebook's own word for
+/// the thing rather than a heading invented for the browser: a note is named by
+/// its id here for the same reason it is named by its id everywhere else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum View {
+    /// Every note the notebook holds, narrowed by this screen's own query. The
+    /// bottom of the stack, always, and never popped: it is what a session is
+    /// open on.
+    Notes,
+    /// One note, read whole and on its own. Held by id rather than by row, so a
+    /// screen survives the listing underneath it being filtered, re-sorted or
+    /// read again.
+    Note(String),
+}
+
+impl View {
+    /// What the crumb trail calls it.
+    pub fn crumb(&self) -> &str {
+        match self {
+            View::Notes => "notes",
+            View::Note(id) => id,
+        }
+    }
+}
+
+/// One screen on the stack: what it is of, and everything about it that a
+/// keystroke can move.
+///
+/// The cursor, the query and the scroll are per-screen rather than per-session
+/// on purpose. Going back has to land where you left — a stack that dropped the
+/// cursor on the way down would make `Enter` a key you learn not to press — and
+/// a screen that is not a list of notes still has to be able to be scrolled
+/// without the listing underneath it losing its place.
+pub struct Screen {
+    pub view: View,
+    /// The cursor and the scroll offset of a listing, which ratatui keeps for us.
+    pub table: TableState,
+    /// How far a screen of text has been scrolled.
+    pub scroll: u16,
+    /// The query as typed. Split the way a shell would split it, it is what
+    /// `noda search` takes: one token per argument.
+    pub search: String,
+    /// The text terms of the active query, for picking the match out of a title
+    /// and a body. A `tag:` or an `id:` matched something the prose does not
+    /// contain, so there is nothing in the note to point at.
+    pub terms: Vec<String>,
+    /// Why the query as typed is not a query yet.
+    pub error: Option<String>,
+    /// Indices into the session's notes that this screen's query admits, in the
+    /// same order. Empty on a screen that is not a listing.
+    visible: Vec<usize>,
+}
+
+impl Screen {
+    fn new(view: View, terms: Vec<String>) -> Screen {
+        Screen {
+            view,
+            table: TableState::new(),
+            scroll: 0,
+            search: String::new(),
+            terms,
+            error: None,
+            visible: Vec::new(),
+        }
+    }
 }
 
 /// What the keyboard currently means.
@@ -157,7 +227,7 @@ pub enum Ask {
 }
 
 impl Ask {
-    /// What the footer calls the field.
+    /// What the status line calls the field.
     pub fn prompt(self) -> &'static str {
         match self {
             Ask::Title => "new note",
@@ -166,8 +236,8 @@ impl Ask {
         }
     }
 
-    /// The part of the answer that cannot be guessed from the prompt, shown
-    /// where the count would be. Nothing, where the prompt says it all.
+    /// The part of the answer that cannot be guessed from the prompt, shown at
+    /// the other end of the line. Nothing, where the prompt says it all.
     pub fn hint(self) -> &'static str {
         match self {
             Ask::Title => "Enter alone takes the title from the body",
@@ -179,13 +249,17 @@ impl Ask {
     }
 }
 
-/// A note's text as the preview last read it from disk.
+/// A note's text as it was last read from disk.
 ///
 /// Read from the file rather than rendered back from the parsed note, for the
-/// reason `noda show` reads the file: the preview should show what is on disk,
-/// including a frontmatter field noda does not interpret and would not know to
-/// write back.
-pub struct Preview {
+/// reason `noda show` reads the file: a note on screen should be what is on
+/// disk, including a frontmatter field noda does not interpret and would not
+/// know to write back.
+///
+/// One at a time, because one note is open at a time. The file is read when the
+/// screen is opened rather than as the cursor moves, which is the difference
+/// between reading a notebook and reading a file per keystroke.
+pub struct Reading {
     pub id: String,
     pub text: String,
 }
@@ -193,8 +267,8 @@ pub struct Preview {
 pub struct App {
     /// The active notebook's name, for the header.
     pub notebook: String,
-    /// Its directory, which is what turns a note under the cursor into a file
-    /// for the runtime to read.
+    /// Its directory, which is what turns a note on a screen into a file for the
+    /// runtime to read.
     pub root: PathBuf,
     /// Where the notebook stands, as of the last load. Nothing here touches the
     /// network — the drift is what the last sync left behind, exactly as
@@ -203,21 +277,10 @@ pub struct App {
     /// Every note the notebook holds, in the order the walk produced: by slug,
     /// which is what `noda ls` shows without `--sort`.
     notes: Vec<NoteFile>,
-    /// Indices into `notes` that the current query admits, in the same order.
-    visible: Vec<usize>,
-    /// The cursor, and the list's scroll offset, which ratatui keeps for us.
-    pub table: TableState,
+    /// The screens, oldest first. Never empty: the listing at the bottom is what
+    /// the session is open on, and popping it would leave nothing to be in.
+    stack: Vec<Screen>,
     pub mode: Mode,
-    pub focus: Focus,
-    /// The query as typed. Split on whitespace it is what `noda search` takes,
-    /// one token per argument — the shell's job, done here by the space bar.
-    pub search: String,
-    /// The text terms of the active query, for picking the match out of a title
-    /// and a body. A `tag:` or an `id:` matched something the prose does not
-    /// contain, so there is nothing in the preview to point at.
-    pub terms: Vec<String>,
-    /// Why the query as typed is not a query yet.
-    pub error: Option<String>,
     /// What is being typed into the prompt, when there is one. A title, a new
     /// title or a run of tag changes — one field, because only one of them can
     /// be open at a time and [`Mode::Ask`] already says which.
@@ -232,6 +295,9 @@ pub struct App {
     /// changed. Otherwise "mark these, then search for the next lot" would
     /// quietly drop the first lot, and the two would be one feature wearing two
     /// keys.
+    ///
+    /// Kept on the session rather than on a screen, for the same reason: a
+    /// selection outlives the screen it was made on.
     ///
     /// Ordered, so the queue reads the same way twice and a commit message does
     /// not depend on the order a hash happened to produce.
@@ -255,41 +321,119 @@ pub struct App {
     /// for as long as it is on, because a setting you cannot see is one you
     /// forget you left on.
     pub touch: Touch,
-    pub preview: Option<Preview>,
-    pub scroll: u16,
-    /// How many rows the list last had room for, written back by the drawing
-    /// code. `Ctrl-d` means "half of what I can see", and only the drawing knows
-    /// how much that is.
+    /// The note the top screen is showing, once the runtime has read it.
+    pub reading: Option<Reading>,
+    /// How many rows the body last had room for, written back by the drawing
+    /// code. Half a screen is half of what you can see, and only the drawing
+    /// knows how much that is.
     page: u16,
 }
 
 impl App {
     pub fn new(notebook: String, root: PathBuf, status: Status, notes: Vec<NoteFile>) -> App {
-        let visible = (0..notes.len()).collect();
+        let mut listing = Screen::new(View::Notes, Vec::new());
+        listing.visible = (0..notes.len()).collect();
         let mut app = App {
             notebook,
             root,
             status,
             notes,
-            visible,
-            table: TableState::new(),
+            stack: vec![listing],
             mode: Mode::Browse,
-            focus: Focus::List,
-            search: String::new(),
-            terms: Vec::new(),
-            error: None,
             input: String::new(),
             message: None,
             marks: BTreeSet::new(),
             queue: Vec::new(),
             queue_at: 0,
             touch: Touch::Stamp,
-            preview: None,
-            scroll: 0,
+            reading: None,
             page: 10,
         };
         app.select(0);
         app
+    }
+
+    /// The screen the keyboard is on.
+    fn top(&self) -> &Screen {
+        self.stack.last().expect("a session is never on no screen")
+    }
+
+    fn top_mut(&mut self) -> &mut Screen {
+        self.stack
+            .last_mut()
+            .expect("a session is never on no screen")
+    }
+
+    /// The listing, wherever the keyboard happens to be. It is the bottom of the
+    /// stack and it is never popped, so it is the one screen that can always be
+    /// asked about — which is what a mark, a reload and a cursor kept across one
+    /// all need.
+    fn listing(&self) -> &Screen {
+        self.stack.first().expect("a session is never on no screen")
+    }
+
+    fn listing_mut(&mut self) -> &mut Screen {
+        self.stack
+            .first_mut()
+            .expect("a session is never on no screen")
+    }
+
+    /// Which screen is on top, for the drawing and for the crumb trail.
+    pub fn view(&self) -> &View {
+        &self.top().view
+    }
+
+    /// The trail from the listing to where the keyboard is, outermost first.
+    pub fn crumbs(&self) -> impl Iterator<Item = &str> {
+        self.stack.iter().map(|screen| screen.view.crumb())
+    }
+
+    /// How deep the stack is. One is the listing alone.
+    pub fn depth(&self) -> usize {
+        self.stack.len()
+    }
+
+    /// The query the listing is narrowed by, as typed.
+    pub fn search(&self) -> &str {
+        &self.listing().search
+    }
+
+    /// Why the query as typed is not a query yet.
+    pub fn error(&self) -> Option<&str> {
+        self.listing().error.as_deref()
+    }
+
+    /// What to pick out of the prose on the screen in front of you. A screen
+    /// opened from a query inherits its terms, so a hit found by searching is
+    /// still marked in the note it was found in.
+    pub fn terms(&self) -> &[String] {
+        &self.top().terms
+    }
+
+    /// How far the note on screen has been scrolled.
+    pub fn scroll(&self) -> u16 {
+        self.top().scroll
+    }
+
+    /// Opens a screen on top of the one the keyboard is on.
+    ///
+    /// The terms come with it. Searching for a word and then opening the note
+    /// that matched should not lose the highlighting that said why it matched —
+    /// the query is the reason the screen was opened.
+    fn open(&mut self, view: View) {
+        let terms = self.top().terms.clone();
+        self.stack.push(Screen::new(view, terms));
+    }
+
+    /// Closes the top screen, unless it is the listing. `false` when there was
+    /// nothing to close, so `Esc` can go on to mean what it means down there.
+    fn back(&mut self) -> bool {
+        if self.stack.len() > 1 {
+            self.stack.pop();
+            true
+        } else {
+            false
+        }
     }
 
     /// Swaps in a freshly read notebook, keeping the query and — when the note
@@ -297,22 +441,37 @@ impl App {
     /// be a reason not to press the key.
     ///
     /// When it is not there, the row it was on is what is kept instead. That is
-    /// the case `d` makes ordinary: deleting the fortieth note of two hundred
-    /// and being returned to the first would be a reason not to press that key
-    /// either.
+    /// the case a delete makes ordinary: removing the fortieth note of two
+    /// hundred and being returned to the first would be a reason not to press
+    /// that key either.
     pub fn replace(&mut self, status: Status, notes: Vec<NoteFile>) {
-        let was = self.selected().map(|file| file.id.clone());
-        let row = self.table.selected();
+        let was = self.at_cursor().map(|file| file.id.clone());
+        let row = self.listing().table.selected();
         self.status = status;
         self.notes = notes;
         self.refilter();
-        match was.and_then(|id| self.visible.iter().position(|&i| self.notes[i].id == id)) {
+        match was.and_then(|id| {
+            self.listing()
+                .visible
+                .iter()
+                .position(|&i| self.notes[i].id == id)
+        }) {
             Some(at) => self.select(at),
             None => self.select(row.unwrap_or(0)),
         }
         // Dropped rather than kept: the file on disk is what changed, and this
         // copy of it is what the reload was pressed to get rid of.
-        self.preview = None;
+        self.reading = None;
+        // A screen showing a note the notebook no longer holds is a screen with
+        // nothing behind it — which is the ordinary end of deleting the note you
+        // are reading. Taken off the stack rather than left showing the last
+        // thing that was true.
+        let mut stack = std::mem::take(&mut self.stack);
+        stack.retain(|screen| match &screen.view {
+            View::Note(id) => self.notes.iter().any(|file| &file.id == id),
+            View::Notes => true,
+        });
+        self.stack = stack;
         // A mark on a note that is no longer there is a change aimed at nothing.
         // The queue keeps its own copy of the ids on purpose — an entry is a
         // record of what was asked for, and `bulk` is what says so if one of
@@ -333,32 +492,63 @@ impl App {
         self.marks.iter().cloned().collect()
     }
 
-    /// The note under the cursor.
-    pub fn selected(&self) -> Option<&NoteFile> {
-        let at = self.table.selected()?;
-        self.notes.get(*self.visible.get(at)?)
+    /// The note the listing's cursor is on, whatever screen is on top of it.
+    fn at_cursor(&self) -> Option<&NoteFile> {
+        let listing = self.listing();
+        let at = listing.table.selected()?;
+        self.notes.get(*listing.visible.get(at)?)
     }
 
-    /// The notes the query admits, in listing order.
+    /// The note the screen in front of you is about.
+    ///
+    /// On the listing that is the row under the cursor; on a note it is that
+    /// note. One question with one answer on either screen, which is what lets
+    /// `e`, `m`, `#` and `Ctrl-d` mean the same thing on both without either
+    /// knowing where it is.
+    pub fn selected(&self) -> Option<&NoteFile> {
+        match &self.top().view {
+            View::Notes => self.at_cursor(),
+            View::Note(id) => self.notes.iter().find(|file| &file.id == id),
+        }
+    }
+
+    /// The notes the listing's query admits, in listing order.
     pub fn rows(&self) -> impl Iterator<Item = &NoteFile> {
-        self.visible.iter().filter_map(|&i| self.notes.get(i))
+        self.listing()
+            .visible
+            .iter()
+            .filter_map(|&i| self.notes.get(i))
     }
 
     pub fn shown(&self) -> usize {
-        self.visible.len()
+        self.listing().visible.len()
     }
 
     pub fn total(&self) -> usize {
         self.notes.len()
     }
 
-    /// The note whose file the runtime should read, when the preview on screen
-    /// is not the note under the cursor. Owned, because the caller needs the
-    /// state back to put the answer in it.
-    pub fn preview_wanted(&self) -> Option<(String, PathBuf)> {
-        let file = self.selected()?;
-        match &self.preview {
-            Some(preview) if preview.id == file.id => None,
+    /// The listing's cursor and scroll, taken out so the rows may borrow the
+    /// notes while ratatui writes this frame's offset into it. They are
+    /// different fields, but the borrow checker only sees `self`.
+    pub fn take_table(&mut self) -> TableState {
+        std::mem::take(&mut self.listing_mut().table)
+    }
+
+    pub fn put_table(&mut self, state: TableState) {
+        self.listing_mut().table = state;
+    }
+
+    /// The note whose file the runtime should read, when the note on the screen
+    /// is not the one already in hand. Owned, because the caller needs the state
+    /// back to put the answer in it.
+    pub fn reading_wanted(&self) -> Option<(String, PathBuf)> {
+        let View::Note(id) = &self.top().view else {
+            return None;
+        };
+        let file = self.notes.iter().find(|file| &file.id == id)?;
+        match &self.reading {
+            Some(reading) if reading.id == file.id => None,
             _ => Some((
                 file.id.clone(),
                 self.root.join(note::file_name(&file.id, &file.slug)),
@@ -366,11 +556,11 @@ impl App {
         }
     }
 
-    pub fn set_preview(&mut self, id: String, text: String) {
-        self.preview = Some(Preview { id, text });
-        // A new note starts at its top. Carrying the old offset over would open
-        // a short note somewhere past its end.
-        self.scroll = 0;
+    pub fn set_reading(&mut self, id: String, text: String) {
+        self.reading = Some(Reading { id, text });
+        // A note starts at its top. Carrying an offset over from the last one
+        // would open a short note somewhere past its end.
+        self.top_mut().scroll = 0;
     }
 
     /// Told by the drawing code, which is the only part that knows.
@@ -412,75 +602,143 @@ impl App {
     fn browsing(&mut self, key: KeyEvent) -> Option<Action> {
         // Whatever the last command said has now been read, or has not been and
         // was only an acknowledgement. Either way the next key is the reader
-        // moving on, and the footer goes back to saying what there is to press.
+        // moving on, and the line goes back to being empty.
         self.message = None;
-        let half = i32::from(self.page.max(2) / 2);
-        let page = i32::from(self.page);
         if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('d') => self.step(half),
-                KeyCode::Char('u') => self.step(-half),
-                _ => {}
-            }
-            return None;
+            return self.chord(key.code);
         }
+        // The keys that mean the same thing on every screen. They are answered
+        // first so that a screen only has to describe what is different about
+        // it, and so that a key cannot come to mean two things by being added to
+        // one screen and forgotten on another.
         match key.code {
             KeyCode::Char('q') => {
                 if self.queue.is_empty() {
                     return Some(Action::Quit);
                 }
                 self.mode = Mode::Confirm(What::Quit);
+                return None;
             }
             KeyCode::Char('r') => return Some(Action::Reload),
-            KeyCode::Char('?') => self.mode = Mode::Help,
-            KeyCode::Char('/') => self.mode = Mode::Search,
+            KeyCode::Char('?') => {
+                self.mode = Mode::Help;
+                return None;
+            }
             // Not a change of its own — a change to what the next one records.
             KeyCode::Char('T') => {
                 self.touch = match self.touch {
                     Touch::Stamp => Touch::Keep,
                     Touch::Keep => Touch::Stamp,
                 };
+                return None;
             }
             // The keys that change a note. Each asks a command for it, and the
             // three that need something said first open the prompt instead.
+            // They aim at whatever the screen is about, so they read the same on
+            // a listing and on the note itself.
             KeyCode::Char('e') => {
                 return Some(Action::Edit {
                     key: self.selected()?.id.clone(),
                     touch: self.touch,
                 });
             }
-            KeyCode::Char('a') => self.ask(Ask::Title, String::new()),
+            KeyCode::Char('a') => {
+                self.ask(Ask::Title, String::new());
+                return None;
+            }
             KeyCode::Char('m') => {
                 let title = self.selected()?.note.title.clone();
                 self.ask(Ask::Retitle, title);
+                return None;
             }
-            // With notes marked these two aim at the marked set and go into the
-            // queue; with none marked they are what they have always been, and
-            // act on the note under the cursor at once. One key, one meaning —
-            // "do this to what is picked out" — and what is picked out is the
-            // cursor until you say otherwise. The header says which it will be.
             KeyCode::Char('#') => {
                 // Nothing to tag is nothing to ask about — the same reason `m`
-                // and `d` do nothing over an empty list.
+                // and a delete do nothing over an empty list.
                 if self.marks.is_empty() {
                     self.selected()?;
                 }
                 self.ask(Ask::Tags, String::new());
+                return None;
             }
+            KeyCode::Char('Q') => {
+                self.mode = Mode::Queue;
+                self.queue_at = self.queue_at.min(self.queue.len().saturating_sub(1));
+                return None;
+            }
+            // Deliberately not a delete, and deliberately not anything else
+            // either. This key removed a note until the modifier was put in
+            // front of it, and a key that used to delete must not quietly become
+            // the key that does something else instead — it has to say where the
+            // deleting went and do nothing at all.
             KeyCode::Char('d') => {
-                if self.marks.is_empty() {
-                    self.selected()?;
-                    self.mode = Mode::Confirm(What::Delete);
-                } else {
-                    // Not asked about here: queueing a delete deletes nothing,
-                    // and the question belongs at the send, where it is the last
-                    // moment it can still be answered no.
-                    let keys = self.marked_keys();
-                    self.enqueue(Step {
-                        keys,
-                        change: Change::Remove,
-                    });
-                }
+                self.message = Some(Message {
+                    text: "delete is Ctrl-d".to_string(),
+                    failed: false,
+                });
+                return None;
+            }
+            _ => {}
+        }
+        match self.top().view {
+            View::Notes => self.on_listing(key),
+            View::Note(_) => self.on_note(key),
+        }
+    }
+
+    /// The chords, which mean the same thing on every screen: half a screen
+    /// either way, and the delete.
+    ///
+    /// A chord and not a letter, for the delete. It is the one key here that
+    /// cannot be taken back by pressing something else, and one modifier is the
+    /// difference between a key you reach for and a key you mean.
+    fn chord(&mut self, code: KeyCode) -> Option<Action> {
+        let half = i32::from(self.page.max(2) / 2);
+        match code {
+            KeyCode::Char('f') => self.step(half),
+            KeyCode::Char('b') => self.step(-half),
+            KeyCode::Char('d') => return self.delete(),
+            _ => {}
+        }
+        None
+    }
+
+    /// The delete, aimed the way every change is aimed: at the marked notes when
+    /// there are any, and at the one on the screen when there are not.
+    fn delete(&mut self) -> Option<Action> {
+        if self.marks.is_empty() {
+            self.selected()?;
+            self.mode = Mode::Confirm(What::Delete);
+        } else {
+            // Not asked about here: queueing a delete deletes nothing, and the
+            // question belongs at the send, where it is the last moment it can
+            // still be answered no.
+            let keys = self.marked_keys();
+            self.enqueue(Step {
+                keys,
+                change: Change::Remove,
+            });
+        }
+        None
+    }
+
+    /// The listing: moving through it, narrowing it, marking it, and opening
+    /// what the cursor is on.
+    fn on_listing(&mut self, key: KeyEvent) -> Option<Action> {
+        let page = i32::from(self.page);
+        match key.code {
+            KeyCode::Char('/') => self.mode = Mode::Search,
+            KeyCode::Char('j') | KeyCode::Down => self.step(1),
+            KeyCode::Char('k') | KeyCode::Up => self.step(-1),
+            KeyCode::PageDown => self.step(page),
+            KeyCode::PageUp => self.step(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.jump(Edge::First),
+            KeyCode::Char('G') | KeyCode::End => self.jump(Edge::Last),
+            // Down the stack. The note gets a screen of its own rather than half
+            // of this one, which is what lets it be read at the width it was
+            // written at.
+            KeyCode::Enter => {
+                let id = self.selected()?.id.clone();
+                self.open(View::Note(id));
             }
             // Marking. `Space` is the one under the cursor; `*` is everything
             // the query is showing, which is what makes a search and a selection
@@ -492,24 +750,6 @@ impl App {
                 }
             }
             KeyCode::Char('*') => self.mark_shown(),
-            KeyCode::Char('Q') => {
-                self.mode = Mode::Queue;
-                self.queue_at = self.queue_at.min(self.queue.len().saturating_sub(1));
-            }
-            KeyCode::Char('j') | KeyCode::Down => self.step(1),
-            KeyCode::Char('k') | KeyCode::Up => self.step(-1),
-            KeyCode::PageDown => self.step(page),
-            KeyCode::PageUp => self.step(-page),
-            KeyCode::Char('g') | KeyCode::Home => self.jump(Edge::First),
-            KeyCode::Char('G') | KeyCode::End => self.jump(Edge::Last),
-            KeyCode::Tab => {
-                self.focus = match self.focus {
-                    Focus::List => Focus::Preview,
-                    Focus::Preview => Focus::List,
-                };
-            }
-            KeyCode::Char('h') | KeyCode::Left => self.focus = Focus::List,
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => self.focus = Focus::Preview,
             // The way back out of whatever narrowing is in force, one layer at a
             // time: the query first, and once there is no query, the marks. Two
             // things that both make the notebook smaller than it is, undone by
@@ -519,13 +759,30 @@ impl App {
             // The queue is not in this chain. Dropping work by pressing Escape
             // once too often is the sort of thing a queue exists to prevent.
             KeyCode::Esc => {
-                if self.search.is_empty() {
+                if self.top().search.is_empty() {
                     self.marks.clear();
                 } else {
-                    self.search.clear();
+                    self.top_mut().search.clear();
                     self.refilter();
                 }
-                self.focus = Focus::List;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// A note on a screen of its own: scrolling it, and closing it again.
+    fn on_note(&mut self, key: KeyEvent) -> Option<Action> {
+        let page = i32::from(self.page);
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.step(1),
+            KeyCode::Char('k') | KeyCode::Up => self.step(-1),
+            KeyCode::PageDown => self.step(page),
+            KeyCode::PageUp => self.step(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.jump(Edge::First),
+            KeyCode::Char('G') | KeyCode::End => self.jump(Edge::Last),
+            KeyCode::Esc => {
+                self.back();
             }
             _ => {}
         }
@@ -570,6 +827,9 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.queue_at = self.queue_at.saturating_sub(1),
             // Dropping an entry is the queue's whole point: what is waiting can
             // be reconsidered, which is what makes queueing safe to do quickly.
+            // A plain `d` here, unlike out on a screen, because nothing in this
+            // card can delete a note — dropping a queued change is the opposite
+            // of one.
             KeyCode::Char('d' | 'x') | KeyCode::Backspace => {
                 if self.queue_at < self.queue.len() {
                     self.queue.remove(self.queue_at);
@@ -652,27 +912,24 @@ impl App {
         match key.code {
             // The list is already narrowed, so there is nothing left to run:
             // this only hands the keyboard back to the list.
-            KeyCode::Enter => {
-                self.mode = Mode::Browse;
-                self.focus = Focus::List;
-            }
+            KeyCode::Enter => self.mode = Mode::Browse,
             // Leaving the query behind means leaving what it selected behind
             // too, which is what makes it an escape rather than a commit.
             KeyCode::Esc => {
-                self.search.clear();
+                self.top_mut().search.clear();
                 self.refilter();
                 self.mode = Mode::Browse;
             }
             KeyCode::Backspace => {
-                self.search.pop();
+                self.top_mut().search.pop();
                 self.refilter();
             }
-            // The cursor still moves while the query is being typed, so a hit
-            // can be read in the preview without stopping to leave the field.
+            // The cursor still moves while the query is being typed, so the
+            // listing can be walked without stopping to leave the field.
             KeyCode::Down => self.step(1),
             KeyCode::Up => self.step(-1),
             KeyCode::Char(c) => {
-                self.search.push(c);
+                self.top_mut().search.push(c);
                 self.refilter();
             }
             _ => {}
@@ -734,7 +991,7 @@ impl App {
             }),
             // The one prompt that answers to the marks: with a set picked out,
             // the tags it was given are queued against that set rather than run
-            // against the note the cursor happens to be on.
+            // against the note the screen happens to be about.
             Ask::Tags if !self.marks.is_empty() => {
                 let keys = self.marked_keys();
                 self.enqueue(Step {
@@ -776,7 +1033,7 @@ impl App {
         self.message = Some(match outcome {
             Ok(text) => {
                 let text = text.trim_end().to_string();
-                // A line is an acknowledgement and lives in the footer. More
+                // A line is an acknowledgement and lives on the status bar. More
                 // than a line has to be read, so it gets the card: `bulk` puts
                 // what it could not do underneath what it did, and that second
                 // part is the whole reason it is worth printing.
@@ -791,7 +1048,7 @@ impl App {
             Err(e) => {
                 // A card, and the whole of it: an editor that saved a broken
                 // frontmatter block is told where the file was left, and losing
-                // that to the width of a footer would be losing the part that
+                // that to the width of one line would be losing the part that
                 // says what to do next.
                 self.mode = Mode::Alert;
                 Message {
@@ -813,21 +1070,29 @@ impl App {
     /// What `a` needs: a note made and then left somewhere in a list of two
     /// hundred is a note you have to go and find.
     pub fn select_id(&mut self, id: &str) {
-        if let Some(at) = self.visible.iter().position(|&i| self.notes[i].id == id) {
+        if let Some(at) = self
+            .listing()
+            .visible
+            .iter()
+            .position(|&i| self.notes[i].id == id)
+        {
             self.select(at);
         }
     }
 
-    /// Moves the cursor, or the preview, by `delta` rows.
+    /// Moves the cursor, or the note on screen, by `delta` rows.
     fn step(&mut self, delta: i32) {
-        if self.focus == Focus::Preview && self.mode != Mode::Search {
-            self.scroll = scrolled(self.scroll, delta, self.preview_height());
+        if matches!(self.top().view, View::Note(_)) {
+            let max = self.reading_height();
+            let screen = self.top_mut();
+            screen.scroll = scrolled(screen.scroll, delta, max);
             return;
         }
-        let Some(at) = self.table.selected() else {
+        let listing = self.listing();
+        let Some(at) = listing.table.selected() else {
             return;
         };
-        let last = self.visible.len().saturating_sub(1);
+        let last = listing.visible.len().saturating_sub(1);
         let moved = match usize::try_from(delta) {
             Ok(down) => at.saturating_add(down).min(last),
             Err(_) => at.saturating_sub(delta.unsigned_abs() as usize),
@@ -836,36 +1101,39 @@ impl App {
     }
 
     fn jump(&mut self, edge: Edge) {
-        if self.focus == Focus::Preview && self.mode != Mode::Search {
-            self.scroll = match edge {
+        if matches!(self.top().view, View::Note(_)) {
+            let max = self.reading_height();
+            self.top_mut().scroll = match edge {
                 Edge::First => 0,
-                Edge::Last => self.preview_height(),
+                Edge::Last => max,
             };
             return;
         }
         match edge {
             Edge::First => self.select(0),
-            Edge::Last => self.select(self.visible.len().saturating_sub(1)),
+            Edge::Last => self.select(self.listing().visible.len().saturating_sub(1)),
         }
     }
 
-    /// How far the preview may be scrolled: its last line, so the note's end
-    /// can be brought to the top of the pane and no further.
+    /// How far the note may be scrolled: its last line, so its end can be
+    /// brought to the top of the screen and no further.
     ///
     /// Counted before wrapping, so a note of long lines can be scrolled less far
     /// than it is tall. Under-shooting leaves text reachable; over-shooting
     /// would scroll into blank space, which reads like a bug.
-    fn preview_height(&self) -> u16 {
-        self.preview.as_ref().map_or(0, |preview| {
-            preview.text.lines().count().saturating_sub(1) as u16
+    fn reading_height(&self) -> u16 {
+        self.reading.as_ref().map_or(0, |reading| {
+            reading.text.lines().count().saturating_sub(1) as u16
         })
     }
 
     fn select(&mut self, at: usize) {
-        if self.visible.is_empty() {
-            self.table.select(None);
+        let listing = self.listing_mut();
+        if listing.visible.is_empty() {
+            listing.table.select(None);
         } else {
-            self.table.select(Some(at.min(self.visible.len() - 1)));
+            let last = listing.visible.len() - 1;
+            listing.table.select(Some(at.min(last)));
         }
     }
 
@@ -884,27 +1152,32 @@ impl App {
     /// and-ed together, and a tag you can read in the listing is one you cannot
     /// filter by on the screen it is on. Same reasoning as the tags prompt.
     fn refilter(&mut self) {
-        let tokens = split_quoted(&self.search);
+        let tokens = split_quoted(&self.listing().search);
 
         if tokens.is_empty() {
-            self.error = None;
-            self.terms.clear();
-            self.visible = (0..self.notes.len()).collect();
+            let all = (0..self.notes.len()).collect();
+            let listing = self.listing_mut();
+            listing.error = None;
+            listing.terms.clear();
+            listing.visible = all;
             self.select(0);
             return;
         }
 
         match Query::parse(&tokens) {
             Ok(query) => {
-                self.error = None;
-                self.terms = query.excerpt_terms();
-                self.visible = self
+                let visible: Vec<usize> = self
                     .notes
                     .iter()
                     .enumerate()
                     .filter(|(_, file)| query.matches(&file.id, &file.note))
                     .map(|(at, _)| at)
                     .collect();
+                let terms = query.excerpt_terms();
+                let listing = self.listing_mut();
+                listing.error = None;
+                listing.terms = terms;
+                listing.visible = visible;
                 self.select(0);
             }
             // Half a query is the ordinary state of one being typed: `tag:`
@@ -912,7 +1185,7 @@ impl App {
             // leave the last good result under the cursor — emptying the list at
             // every other keystroke would make the query harder to type, which
             // is the opposite of what filtering as you go is for.
-            Err(e) => self.error = Some(e.to_string()),
+            Err(e) => self.listing_mut().error = Some(e.to_string()),
         }
     }
 }
@@ -989,6 +1262,14 @@ mod tests {
         }
     }
 
+    /// Opens the note under the cursor and gives it something to show, which is
+    /// what the runtime does between the keystroke and the frame.
+    fn read_it(app: &mut App, text: &str) {
+        app.on_key(key(KeyCode::Enter));
+        let (id, _) = app.reading_wanted().expect("a note screen wants its file");
+        app.set_reading(id, text.to_string());
+    }
+
     fn a_status() -> Status {
         Status {
             branch: "main".to_string(),
@@ -1050,8 +1331,10 @@ mod tests {
     }
 
     #[test]
-    fn it_opens_on_the_first_note() {
+    fn it_opens_on_the_listing_and_the_first_note() {
         let app = an_app();
+        assert_eq!(app.view(), &View::Notes);
+        assert_eq!(app.depth(), 1);
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
         assert_eq!(app.shown(), 3);
     }
@@ -1106,12 +1389,12 @@ mod tests {
         // to hold still across the keystroke that breaks the grammar.
         typing(&mut app, " O");
         let last_good = app.shown();
-        assert!(app.error.is_none());
+        assert!(app.error().is_none());
 
         // `OR` with nothing after it yet: the state every alternative passes
         // through on its way to being one.
         typing(&mut app, "R");
-        assert!(app.error.is_some());
+        assert!(app.error().is_some());
         assert_eq!(
             app.shown(),
             last_good,
@@ -1119,7 +1402,7 @@ mod tests {
         );
 
         typing(&mut app, " tag:q3");
-        assert!(app.error.is_none());
+        assert!(app.error().is_none());
         assert_eq!(app.shown(), 2);
     }
 
@@ -1133,7 +1416,7 @@ mod tests {
         app.on_key(key(KeyCode::Esc));
         assert_eq!(app.mode, Mode::Browse);
         assert_eq!(app.shown(), 3);
-        assert!(app.search.is_empty());
+        assert!(app.search().is_empty());
     }
 
     #[test]
@@ -1144,7 +1427,7 @@ mod tests {
         app.on_key(key(KeyCode::Enter));
 
         assert_eq!(app.mode, Mode::Browse);
-        assert_eq!(app.focus, Focus::List);
+        assert_eq!(app.depth(), 1, "leaving the field is not opening a note");
         assert_eq!(app.shown(), 1);
     }
 
@@ -1155,73 +1438,116 @@ mod tests {
         typing(&mut app, "tag:nothing");
         assert_eq!(app.shown(), 0);
         assert!(app.selected().is_none());
-        assert!(app.preview_wanted().is_none());
+        // And there is nothing to open, so nothing to read.
+        app.on_key(key(KeyCode::Enter));
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.depth(), 1);
+        assert!(app.reading_wanted().is_none());
     }
 
     #[test]
-    fn the_preview_follows_the_cursor() {
+    fn enter_opens_the_note_and_escape_closes_it_again() {
         let mut app = an_app();
-        assert_eq!(
-            app.preview_wanted(),
-            Some((
-                "aaaa1111".to_string(),
-                PathBuf::from("/notebook/aaaa1111-budget-review.md")
-            ))
-        );
-        app.set_preview("aaaa1111".to_string(), "one\ntwo\nthree\n".to_string());
-        assert!(app.preview_wanted().is_none());
-
         app.on_key(key(KeyCode::Char('j')));
+
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.view(), &View::Note("bbbb2222".to_string()));
+        assert_eq!(app.depth(), 2);
+        // The file the runtime should read, named the way the notebook names it.
         assert_eq!(
-            app.preview_wanted(),
+            app.reading_wanted(),
             Some((
                 "bbbb2222".to_string(),
                 PathBuf::from("/notebook/bbbb2222-meeting-notes.md")
             ))
         );
+        app.set_reading("bbbb2222".to_string(), "agenda\n".to_string());
+        assert!(app.reading_wanted().is_none());
+
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.view(), &View::Notes);
+        assert_eq!(app.depth(), 1);
+        // And it landed back on the note it was opened from, not at the top.
+        assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
     }
 
     #[test]
-    fn the_preview_scrolls_only_when_it_has_the_focus() {
+    fn the_listing_is_never_popped() {
         let mut app = an_app();
-        app.set_preview(
-            "aaaa1111".to_string(),
-            "one\ntwo\nthree\nfour\n".to_string(),
-        );
+        for _ in 0..5 {
+            app.on_key(key(KeyCode::Esc));
+        }
+        assert_eq!(app.depth(), 1);
+        assert_eq!(app.view(), &View::Notes);
+    }
+
+    #[test]
+    fn a_note_opened_from_a_query_keeps_what_the_query_picked_out() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "budget");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.terms(), ["budget"]);
+
+        // Opening the note that matched must not lose the reason it matched.
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.depth(), 2);
+        assert_eq!(app.terms(), ["budget"]);
+    }
+
+    #[test]
+    fn a_note_on_its_own_screen_scrolls_and_stops_at_the_end() {
+        let mut app = an_app();
+        read_it(&mut app, "one\ntwo\nthree\nfour\n");
+        assert_eq!(app.scroll(), 0);
 
         app.on_key(key(KeyCode::Char('j')));
-        assert_eq!(app.scroll, 0, "the list had the focus");
-
-        app.on_key(key(KeyCode::Tab));
-        assert_eq!(app.focus, Focus::Preview);
-        app.on_key(key(KeyCode::Char('j')));
-        assert_eq!(app.scroll, 1);
-        // And it stops at the end rather than running off into blank space.
+        assert_eq!(app.scroll(), 1);
         for _ in 0..20 {
             app.on_key(key(KeyCode::Char('j')));
         }
-        assert_eq!(app.scroll, 3);
+        assert_eq!(app.scroll(), 3, "it stops rather than running into blanks");
+
+        app.on_key(key(KeyCode::Char('g')));
+        assert_eq!(app.scroll(), 0);
     }
 
     #[test]
-    fn a_new_note_starts_at_its_top() {
+    fn the_listing_keeps_its_cursor_while_a_note_is_being_read() {
         let mut app = an_app();
-        app.set_preview("aaaa1111".to_string(), "one\ntwo\nthree\n".to_string());
-        app.on_key(key(KeyCode::Tab));
-        app.on_key(key(KeyCode::Char('j')));
-        assert_eq!(app.scroll, 1);
+        read_it(&mut app, "one\ntwo\nthree\nfour\n");
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Char('j')));
+        }
+        assert_eq!(app.scroll(), 3, "the note scrolled");
 
-        app.set_preview("bbbb2222".to_string(), "agenda\n".to_string());
-        assert_eq!(app.scroll, 0);
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(
+            app.selected().map(|f| f.id.as_str()),
+            Some("aaaa1111"),
+            "and the listing did not move underneath it"
+        );
     }
 
     #[test]
-    fn ctrl_d_moves_by_half_of_what_is_on_screen() {
+    fn a_note_starts_at_its_top() {
+        let mut app = an_app();
+        read_it(&mut app, "one\ntwo\nthree\n");
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.scroll(), 1);
+
+        // Another note in the same screen: a fresh file starts where it starts.
+        app.set_reading("bbbb2222".to_string(), "agenda\n".to_string());
+        assert_eq!(app.scroll(), 0);
+    }
+
+    #[test]
+    fn ctrl_f_moves_by_half_of_what_is_on_screen() {
         let mut app = an_app();
         app.set_page(4);
-        app.on_key(ctrl('d'));
+        app.on_key(ctrl('f'));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("cccc3333"));
-        app.on_key(ctrl('u'));
+        app.on_key(ctrl('b'));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
     }
 
@@ -1231,6 +1557,52 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), Some(Action::Quit));
         assert_eq!(app.on_key(key(KeyCode::Char('r'))), Some(Action::Reload));
         assert_eq!(app.on_key(ctrl('c')), Some(Action::Quit));
+    }
+
+    #[test]
+    fn the_keys_that_change_a_note_mean_the_same_on_the_note_itself() {
+        let mut app = an_app();
+        read_it(&mut app, "the q3 budget\n");
+
+        // The screen is about one note, so there is no cursor to consult and no
+        // second reading of what `e` is aimed at.
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('e'))),
+            Some(Action::Edit {
+                key: "aaaa1111".to_string(),
+                touch: Touch::Stamp,
+            })
+        );
+        app.on_key(key(KeyCode::Char('m')));
+        assert_eq!(app.mode, Mode::Ask(Ask::Retitle));
+        assert_eq!(app.input, "Budget review");
+        app.on_key(key(KeyCode::Esc));
+
+        app.on_key(ctrl('d'));
+        assert_eq!(app.mode, Mode::Confirm(What::Delete));
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('y'))),
+            Some(Action::Remove("aaaa1111".to_string()))
+        );
+    }
+
+    #[test]
+    fn deleting_the_note_you_are_reading_closes_its_screen() {
+        let mut app = an_app();
+        read_it(&mut app, "the q3 budget\n");
+        assert_eq!(app.depth(), 2);
+
+        // What the runtime does after a delete: the notebook is read again, and
+        // the note that had a screen is not in it.
+        app.replace(
+            a_status(),
+            vec![
+                a_note("bbbb2222", "meeting-notes", "Meeting notes", &["work"], "x"),
+                a_note("cccc3333", "reading-list", "Reading list", &[], "a book"),
+            ],
+        );
+        assert_eq!(app.depth(), 1, "a screen with nothing behind it is closed");
+        assert_eq!(app.view(), &View::Notes);
     }
 
     #[test]
@@ -1248,15 +1620,17 @@ mod tests {
         typing(&mut app, "budget");
 
         // Ctrl-D arrives as `Char('d')` with a modifier, and a query field that
-        // took it at face value would quietly become `budgetd`.
+        // took it at face value would quietly become `budgetd` — and this one
+        // now deletes a note when it is not in a field.
         app.on_key(ctrl('d'));
         app.on_key(ctrl('w'));
         app.on_key(ctrl('a'));
-        assert_eq!(app.search, "budget");
+        assert_eq!(app.search(), "budget");
+        assert_eq!(app.mode, Mode::Search, "and none of them left the field");
 
         // A capital is still a capital, though: shift is not a chord.
         app.on_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT));
-        assert_eq!(app.search, "budgetQ");
+        assert_eq!(app.search(), "budgetQ");
     }
 
     #[test]
@@ -1264,7 +1638,7 @@ mod tests {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('/')));
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), None);
-        assert_eq!(app.search, "q");
+        assert_eq!(app.search(), "q");
     }
 
     #[test]
@@ -1285,7 +1659,7 @@ mod tests {
         app.on_key(key(KeyCode::Char('j')));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
 
-        let mut notes = vec![
+        let notes = vec![
             a_note(
                 "aaaa1111",
                 "budget-review",
@@ -1307,21 +1681,34 @@ mod tests {
                 &[],
                 "a book about budgets",
             ),
+            a_note("dddd4444", "trip-plan", "Trip plan", &["work"], "flights"),
         ];
-        notes.push(a_note(
-            "dddd4444",
-            "trip-plan",
-            "Trip plan",
-            &["work"],
-            "flights",
-        ));
         app.replace(a_status(), notes);
 
-        assert_eq!(app.search, "tag:work");
+        assert_eq!(app.search(), "tag:work");
         assert_eq!(app.shown(), 3);
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
-        // The copy on screen was the reason to press the key, so it goes.
-        assert!(app.preview_wanted().is_some());
+    }
+
+    #[test]
+    fn a_reload_drops_the_copy_of_the_note_that_was_on_screen() {
+        let mut app = an_app();
+        read_it(&mut app, "the q3 budget\n");
+        assert!(app.reading_wanted().is_none(), "it has been read");
+
+        app.replace(
+            a_status(),
+            vec![a_note(
+                "aaaa1111",
+                "budget-review",
+                "Budget review",
+                &["work"],
+                "the q3 budget, revised",
+            )],
+        );
+        // The copy on screen was the reason to press the key, so it goes and the
+        // file is asked for again.
+        assert!(app.reading_wanted().is_some());
     }
 
     #[test]
@@ -1488,7 +1875,7 @@ mod tests {
         app.on_key(key(KeyCode::Char('/')));
         typing(&mut app, "tag:work OR tag:q3");
         assert_eq!(app.shown(), 2);
-        assert!(app.error.is_none());
+        assert!(app.error().is_none());
     }
 
     #[test]
@@ -1591,7 +1978,7 @@ mod tests {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('/')));
         typing(&mut app, "T");
-        assert_eq!(app.search, "T");
+        assert_eq!(app.search(), "T");
         assert_eq!(app.touch, Touch::Stamp);
 
         app.on_key(key(KeyCode::Esc));
@@ -1633,7 +2020,7 @@ mod tests {
     #[test]
     fn a_delete_is_asked_about_first() {
         let mut app = an_app();
-        assert_eq!(app.on_key(key(KeyCode::Char('d'))), None);
+        assert_eq!(app.on_key(ctrl('d')), None);
         assert_eq!(app.mode, Mode::Confirm(What::Delete));
 
         // Anything but `y` keeps the note — including the key that would have
@@ -1641,12 +2028,26 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Char('d'))), None);
         assert_eq!(app.mode, Mode::Browse);
 
-        app.on_key(key(KeyCode::Char('d')));
+        app.on_key(ctrl('d'));
         assert_eq!(
             app.on_key(key(KeyCode::Char('y'))),
             Some(Action::Remove("aaaa1111".to_string()))
         );
         assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn the_key_that_used_to_delete_says_where_the_deleting_went() {
+        let mut app = an_app();
+        assert_eq!(app.on_key(key(KeyCode::Char('d'))), None);
+        // Nothing opened, nothing queued, nothing gone — and a line saying why
+        // the key did not do what it used to.
+        assert_eq!(app.mode, Mode::Browse);
+        assert!(app.queue.is_empty());
+        assert_eq!(
+            app.message.as_ref().map(Message::line),
+            Some("delete is Ctrl-d")
+        );
     }
 
     #[test]
@@ -1657,10 +2058,13 @@ mod tests {
             a_status(),
             Vec::new(),
         );
-        for pressed in ['e', 'm', '#', 'd'] {
+        for pressed in ['e', 'm', '#'] {
             assert_eq!(app.on_key(key(KeyCode::Char(pressed))), None);
             assert_eq!(app.mode, Mode::Browse, "`{pressed}` opened something");
         }
+        assert_eq!(app.on_key(ctrl('d')), None);
+        assert_eq!(app.mode, Mode::Browse, "Ctrl-d opened something");
+
         // A note can still be made in an empty notebook — that is what one is
         // for.
         app.on_key(key(KeyCode::Char('a')));
@@ -1709,8 +2113,8 @@ mod tests {
         app.on_key(key(KeyCode::Char('j')));
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("bbbb2222"));
 
-        // What the runtime does after `d`: the notebook is read again, and the
-        // note that was under the cursor is not in it.
+        // What the runtime does after a delete: the notebook is read again, and
+        // the note that was under the cursor is not in it.
         app.replace(
             a_status(),
             vec![
@@ -1795,11 +2199,29 @@ mod tests {
         app.on_key(key(KeyCode::Enter));
 
         app.on_key(key(KeyCode::Esc));
-        assert!(app.search.is_empty(), "the query goes first");
+        assert!(app.search().is_empty(), "the query goes first");
         assert_eq!(app.marks.len(), 1, "and the marks are still there");
 
         app.on_key(key(KeyCode::Esc));
         assert!(app.marks.is_empty());
+    }
+
+    #[test]
+    fn escape_closes_the_note_before_it_touches_the_query() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('/')));
+        typing(&mut app, "tag:work");
+        app.on_key(key(KeyCode::Enter));
+        read_it(&mut app, "the q3 budget\n");
+
+        // The screen in front of you is what Escape is about. The narrowing
+        // underneath it is the next layer, not this one.
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.depth(), 1);
+        assert_eq!(app.search(), "tag:work");
+
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.search().is_empty());
     }
 
     #[test]
@@ -1843,7 +2265,7 @@ mod tests {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111", "cccc3333"]);
 
-        assert_eq!(app.on_key(key(KeyCode::Char('d'))), None);
+        assert_eq!(app.on_key(ctrl('d')), None);
         assert_eq!(app.mode, Mode::Browse, "queueing a delete deletes nothing");
         assert_eq!(app.queued_deletions(), 2);
 
@@ -1968,5 +2390,19 @@ mod tests {
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("aaaa1111"));
         app.select_id("dddd4444");
         assert_eq!(app.selected().map(|f| f.id.as_str()), Some("dddd4444"));
+    }
+
+    #[test]
+    fn the_crumbs_say_how_far_down_you_are() {
+        let mut app = an_app();
+        assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
+
+        read_it(&mut app, "the q3 budget\n");
+        // A note is named by its id here for the same reason it is named by its
+        // id in a listing, a link and a commit message.
+        assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes", "aaaa1111"]);
+
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.crumbs().collect::<Vec<_>>(), ["notes"]);
     }
 }

@@ -71,17 +71,32 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+fn ctrl(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+}
+
 fn typing(app: &mut App, text: &str) {
     for c in text.chars() {
         app.on_key(key(KeyCode::Char(c)));
     }
 }
 
+/// How many rows the standing header takes, which is where everything about the
+/// notebook and the session is said.
+const HEADER: usize = 5;
+
 /// One frame, as the lines a reader would see. Trailing blanks are cut so an
 /// assertion is about what was written, not about how wide the terminal was.
+///
+/// Tall enough for the standing header: on a shorter terminal it collapses to
+/// one line, and a test drawn there would be asserting about the fallback.
 fn screen(app: &mut App) -> Vec<String> {
-    tui::refresh_preview(app);
-    let mut terminal = Terminal::new(TestBackend::new(90, 14)).expect("test terminal");
+    screen_at(app, 90, 28)
+}
+
+fn screen_at(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    tui::refresh_reading(app);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     terminal
         .draw(|frame| tui::view::draw(frame, app))
         .expect("draw");
@@ -94,6 +109,13 @@ fn screen(app: &mut App) -> Vec<String> {
             line.trim_end().to_string()
         })
         .collect()
+}
+
+/// The note under the cursor, opened and drawn — what `Enter` gets you. The
+/// session is left on the note, the way pressing the key leaves it.
+fn opened(app: &mut App) -> Vec<String> {
+    app.on_key(key(KeyCode::Enter));
+    screen(app)
 }
 
 fn has_line_with(screen: &[String], needles: &[&str]) -> bool {
@@ -121,34 +143,100 @@ fn the_listing_names_a_note_the_way_every_other_listing_does() {
 }
 
 #[test]
-fn the_header_says_which_notebook_and_which_branch() {
+fn the_header_says_where_the_notebook_stands() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
     let screen = screen(&mut app);
+
+    // One fact to a line, always the same five in the same order, so the eye
+    // learns where each one is rather than reading a strip left to right.
+    //
+    // The branch is read back out of the status rather than named: what a fresh
+    // notebook's branch is called comes from whoever's `init.defaultBranch` is
+    // in force, so a literal here passes on the machine it was written on and
+    // fails on the next one.
+    let branch = app.status.branch.clone();
+    let head = &screen[..HEADER];
+    assert!(has_line_with(head, &["Notebook:", cmd::DEFAULT_NOTEBOOK]));
+    assert!(has_line_with(head, &["Branch:", &branch]));
+    assert!(has_line_with(head, &["Remote:", "none"]));
+    assert!(has_line_with(head, &["Notes:", "3 notes"]));
+    assert!(has_line_with(head, &["Changes:", "none"]));
+    // And the keys for the screen you are on, beside them.
+    assert!(has_line_with(head, &["<enter>", "read"]));
+    assert!(has_line_with(head, &["<ctrl-d>", "delete"]));
+}
+
+#[test]
+fn the_header_holds_still_while_the_session_changes_underneath_it() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let before = screen(&mut app)[..HEADER].to_vec();
+
+    // Marking, queueing and the flag are the only things that move while you
+    // sit there, and they are said on the title band for exactly this reason:
+    // in the block they widened it, which pushed the keys along and dropped the
+    // rightmost column — so marking a note hid the keys about marking.
+    app.on_key(key(KeyCode::Char('*')));
+    app.on_key(key(KeyCode::Char('T')));
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "+archive");
+    app.on_key(key(KeyCode::Enter));
+
+    let after = screen(&mut app);
+    assert_eq!(after[..HEADER], before[..], "the header moved");
+    assert!(has_line_with(&after, &["3 marks", "1 queued"]));
+    assert!(has_line_with(&after[..HEADER], &["<space>", "mark"]));
+}
+
+#[test]
+fn the_title_band_says_what_the_screen_is_of() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    assert!(has_line_with(&screen(&mut app), &["Notes(all)[3]"]));
+
+    // A note names itself the way every other listing names it: the id, then
+    // the title.
+    let id = app.selected().expect("a note").id.clone();
+    let opened = opened(&mut app);
     assert!(has_line_with(
-        &screen[..1],
-        &[cmd::DEFAULT_NOTEBOOK, "3 notes"]
+        &opened,
+        &[&format!("Note({id})"), "Budget review"]
     ));
 }
 
 #[test]
-fn the_preview_shows_the_note_the_cursor_is_on() {
+fn a_note_opens_on_a_screen_of_its_own_and_escape_comes_back() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
 
-    let first = screen(&mut app);
+    // Nothing of the note is on the listing: the row is the row `noda ls`
+    // prints, and reading it is a screen you go into.
+    let listing = screen(&mut app);
+    assert!(!has_line_with(&listing, &["the q3 budget is late"]));
+
+    let id = app.selected().expect("a note").id.clone();
+    let first = opened(&mut app);
     assert!(has_line_with(&first, &["the q3 budget is late"]));
     // The frontmatter is on screen too — dimmed, not hidden, exactly as
     // `noda show` prints it.
     assert!(has_line_with(&first, &["title: Budget review"]));
+    // And the trail says how far down you are, naming the note by its id.
+    assert!(has_line_with(&first, &["notes", &id]));
 
-    app.on_key(key(KeyCode::Char('j')));
-    let moved = screen(&mut app);
-    assert!(has_line_with(&moved, &["# Agenda"]));
+    app.on_key(key(KeyCode::Esc));
+    let back = screen(&mut app);
+    assert!(has_line_with(&back, &["Meeting notes"]));
     assert!(
-        !has_line_with(&moved, &["the q3 budget is late"]),
-        "the previous note's body is gone"
+        !has_line_with(&back, &["the q3 budget is late"]),
+        "the note's body went with its screen"
     );
+
+    // The next note down, and it is the one that opens.
+    app.on_key(key(KeyCode::Char('j')));
+    let moved = opened(&mut app);
+    assert!(has_line_with(&moved, &["# Agenda"]));
+    assert!(!has_line_with(&moved, &["the q3 budget is late"]));
 }
 
 #[test]
@@ -163,10 +251,10 @@ fn a_query_narrows_the_listing_as_it_is_typed() {
     assert!(has_line_with(&screen, &["Meeting notes"]));
     assert!(!has_line_with(&screen, &["Budget review"]));
     assert!(!has_line_with(&screen, &["Reading list"]));
-    // The query stays visible while it is being typed, and the count says what
-    // it left.
+    // The query stays visible while it is being typed, and the title band says
+    // what it narrowed to and how much it left.
     assert!(has_line_with(&screen, &["/tag:q3"]));
-    assert!(has_line_with(&screen, &["1/3"]));
+    assert!(has_line_with(&screen, &["Notes(tag:q3)[1]"]));
 }
 
 #[test]
@@ -200,7 +288,7 @@ fn a_query_that_matches_nothing_says_so() {
     let screen = screen(&mut app);
 
     assert!(has_line_with(&screen, &["nothing matches"]));
-    assert!(has_line_with(&screen, &["0/3"]));
+    assert!(has_line_with(&screen, &["Notes(tag:archived)[0]"]));
 }
 
 #[test]
@@ -212,12 +300,12 @@ fn the_help_card_lists_the_keys_and_goes_away_again() {
     let with_help = screen(&mut app);
     assert!(has_line_with(&with_help, &["keys"]));
     assert!(has_line_with(&with_help, &["quit"]));
-    // The card is as wide as its longest line. The search example is the one
+    // The card is as wide as its longest line. The filter example is the one
     // entry that says something the key beside it cannot, so a card that cut it
     // off would be dropping the only part worth reading twice.
     assert!(has_line_with(
         &with_help,
-        &["search: tag:work OR tag:q3 budget"]
+        &["filter: tag:work OR tag:q3 budget"]
     ));
 
     app.on_key(key(KeyCode::Esc));
@@ -287,7 +375,7 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
     let before = commits(&paths);
 
     mark_all_shown(&mut app);
-    assert!(has_line_with(&screen(&mut app)[..1], &["3 marked"]));
+    assert!(has_line_with(&screen(&mut app), &["3 marks"]));
 
     for tags in ["+archive", "-work"] {
         app.on_key(key(KeyCode::Char('#')));
@@ -299,7 +387,7 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
         );
     }
     assert_eq!(app.queue.len(), 2);
-    assert!(has_line_with(&screen(&mut app)[..1], &["2 queued"]));
+    assert!(has_line_with(&screen(&mut app), &["2 queued"]));
 
     app.on_key(key(KeyCode::Char('Q')));
     let queued = screen(&mut app);
@@ -317,13 +405,14 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
     );
     let after = screen(&mut app);
     assert!(has_line_with(&after, &["2 changes over 3 notes"]));
-    // In the pane that shows the file, because the listing's title column gives
-    // way to the tags when they grow.
-    assert!(has_line_with(&after, &["tags: [archive]"]));
     assert!(
         has_line_with(&after, &["[q3, archive]"]),
-        "and the other two"
+        "and the listing says so"
     );
+    // Read out of the file itself, on the screen that shows the file.
+    let file = opened(&mut app);
+    assert!(has_line_with(&file, &["tags: [archive]"]));
+    app.on_key(key(KeyCode::Esc));
     // Spent: the queue was carried out and the notes are no longer picked out.
     assert!(app.queue.is_empty());
     assert!(app.marks.is_empty());
@@ -379,7 +468,7 @@ fn marks_made_under_one_query_survive_the_next() {
 }
 
 #[test]
-fn a_tag_long_enough_to_fill_the_pane_does_not_take_the_title_with_it() {
+fn a_tag_long_enough_to_fill_the_listing_does_not_take_the_title_with_it() {
     let (_root, paths) = a_notebook();
     // The shape an import leaves behind, and wide enough to swallow a narrow
     // listing whole.
@@ -391,11 +480,15 @@ fn a_tag_long_enough_to_fill_the_pane_does_not_take_the_title_with_it() {
     )
     .expect("add");
     let mut app = tui::load(&paths).expect("load");
-    let screen = screen(&mut app);
+    // Narrow on purpose. The listing has the whole width now, so a tag list
+    // this long no longer starves the title at eighty columns — but a terminal
+    // is whatever size it is given, and the cap is what holds at the size where
+    // it still would.
+    let screen = screen_at(&mut app, 46, 28);
 
-    // Before the cap, a tag list this long took the whole pane and left the
-    // title column nothing at all. Now the title keeps its floor — enough to
-    // tell the notes apart — and the tags are what gets cut.
+    // Without the cap, a tag list this long takes the row whole and leaves the
+    // title column nothing at all. The title keeps its floor — enough to tell
+    // the notes apart — and the tags are what gets cut.
     for title in ["Budget rev", "Meeting no", "Reading li"] {
         assert!(has_line_with(&screen, &[title]), "{title}");
     }
@@ -421,7 +514,7 @@ fn a_tag_with_a_space_can_be_filtered_for_from_the_screen_it_is_on() {
     // The shell would keep this in one piece, and so does the field.
     typing(&mut app, "tag:\"24.04 Dark patterns\"");
     let screen = screen(&mut app);
-    assert!(has_line_with(&screen, &["1/4"]));
+    assert!(has_line_with(&screen, &["[1]"]));
     assert_eq!(
         app.selected().map(|f| f.note.title.clone()),
         Some("Ubuntu notes".to_string())
@@ -464,7 +557,7 @@ fn a_queued_delete_takes_every_note_it_was_aimed_at() {
     typing(&mut app, "tag:work");
     app.on_key(key(KeyCode::Enter));
     mark_all_shown(&mut app);
-    app.on_key(key(KeyCode::Char('d')));
+    app.on_key(ctrl('d'));
 
     app.on_key(key(KeyCode::Char('Q')));
     let queued = screen(&mut app);
@@ -507,13 +600,15 @@ fn a_tag_typed_at_the_prompt_is_on_the_note_afterwards() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
 
+    // The status line is `noda tag`'s own answer, not a sentence noda wrote
+    // twice. It is read first, because the next key is what takes it away.
     let after = screen(&mut app);
-    // Read out of the file the command wrote, in the pane that shows the file.
-    assert!(has_line_with(&after, &["tags: [work, urgent]"]));
-    // And the footer is `noda tag`'s own answer, not a sentence noda wrote
-    // twice.
     let id = app.selected().expect("a note").id.clone();
     assert!(has_line_with(&after, &[&id, "budget-review", "urgent"]));
+
+    // And read out of the file the command wrote, on the screen that shows it.
+    let file = opened(&mut app);
+    assert!(has_line_with(&file, &["tags: [work, urgent]"]));
 }
 
 #[test]
@@ -540,7 +635,7 @@ fn a_tag_with_a_space_in_it_can_be_removed_from_the_screen_it_is_on() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to remove");
     perform(&paths, &mut app, action);
 
-    let after = screen(&mut app);
+    let after = opened(&mut app);
     assert!(
         has_line_with(&after, &["tags: [work]"]),
         "the spaced tag is gone and the other one is not"
@@ -568,8 +663,8 @@ fn a_retitle_renames_the_note_and_keeps_the_cursor_on_it() {
     // The slug moved it down the listing; the id is what the cursor followed.
     assert_eq!(app.selected().map(|f| f.id.clone()), Some(id));
     assert!(
-        has_line_with(&after, &["title: Quarterly plan"]),
-        "the preview was read again from the file it is now in"
+        has_line_with(&opened(&mut app), &["title: Quarterly plan"]),
+        "and it is read from the file it is now in"
     );
 }
 
@@ -578,7 +673,13 @@ fn a_delete_is_asked_about_and_then_carried_out() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
 
+    // Behind a modifier: the plain key says where the deleting went and does
+    // nothing, which is what a key that used to remove a note has to do.
     app.on_key(key(KeyCode::Char('d')));
+    assert!(has_line_with(&screen(&mut app), &["delete is Ctrl-d"]));
+    assert_eq!(app.total(), 3);
+
+    app.on_key(ctrl('d'));
     let asked = screen(&mut app);
     assert!(has_line_with(&asked, &["delete this note?"]));
     assert!(has_line_with(&asked, &["Budget review"]));
@@ -638,12 +739,12 @@ fn t_holds_a_notes_own_updated_through_a_change() {
     assert_eq!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
 
     // Off, and the header says nothing about it.
-    assert!(!has_line_with(&screen(&mut app)[..1], &["keeping updated"]));
+    assert!(!has_line_with(&screen(&mut app), &["keeping updated"]));
 
     app.on_key(key(KeyCode::Char('T')));
     let with_flag = screen(&mut app);
     assert!(
-        has_line_with(&with_flag[..1], &["keeping updated"]),
+        has_line_with(&with_flag, &["keeping updated"]),
         "a setting you cannot see is one you forget you left on"
     );
 
@@ -652,7 +753,7 @@ fn t_holds_a_notes_own_updated_through_a_change() {
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
 
-    let after = screen(&mut app);
+    let after = opened(&mut app);
     assert!(
         has_line_with(&after, &["tags: [work, urgent]"]),
         "the change went in"
@@ -662,10 +763,11 @@ fn t_holds_a_notes_own_updated_through_a_change() {
         "updated: 2019-03-04T05:06:07Z",
         "the date the note came with is still the date it carries"
     );
+    app.on_key(key(KeyCode::Esc));
 
     // Off again, and the next change records itself as every other one does.
     app.on_key(key(KeyCode::Char('T')));
-    assert!(!has_line_with(&screen(&mut app)[..1], &["keeping updated"]));
+    assert!(!has_line_with(&screen(&mut app), &["keeping updated"]));
     app.on_key(key(KeyCode::Char('#')));
     typing(&mut app, "-urgent");
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");

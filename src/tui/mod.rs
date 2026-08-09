@@ -1,24 +1,30 @@
-//! `noda tui` — the notebook as one screen: the listing on the left, the note
-//! under the cursor on the right, and the query language `noda search` takes in
-//! the line along the bottom.
+//! `noda tui` — the notebook as a screen you can go into and come back out of:
+//! the listing, whatever the cursor was on, and the query language `noda search`
+//! takes in the line along the bottom.
 //!
 //! It exists for the one thing a command cannot do, which is stay. Reading a
 //! notebook is `ls`, then `show`, then `ls` again to find where you were; here
-//! the listing does not go away while the note is read, and a query narrows it
-//! as it is typed rather than once it is finished.
+//! the listing keeps its place while a note is read, and a query narrows it as
+//! it is typed rather than once it is finished.
+//!
+//! A screen is the whole width and there is a stack of them. That is what lets a
+//! note be read at the width it was written at, and what leaves room for a
+//! screen to be about something a listing cannot hold — the pane the note used
+//! to share with the listing was never going to be wide enough for either.
 //!
 //! It changes notes by asking the commands to. Every command that changes a
 //! note validates it, stamps it and commits it, and there must not be a second
-//! implementation of what a change means — so `e` runs `noda edit`, `d` runs
-//! `noda rm`, and what comes back is the line that command would have printed.
-//! Nothing in this module writes a note itself.
+//! implementation of what a change means — so `e` runs `noda edit`, `Ctrl-d`
+//! runs `noda rm`, and what comes back is the line that command would have
+//! printed. Nothing in this module writes a note itself.
 //!
-//! The three parts are kept apart so that most of this can be tested with no
-//! terminal in the room: [`app`] is the state and takes no input but keystrokes,
-//! [`view`] turns that state into a frame, and this module is the only place
+//! The parts are kept apart so that most of this can be tested with no terminal
+//! in the room: [`app`] is the state and takes no input but keystrokes, [`view`]
+//! and [`frame`] turn that state into a frame, and this module is the only place
 //! that opens a repository, reads a file, runs a command or touches a terminal.
 
 pub mod app;
+mod frame;
 mod theme;
 pub mod view;
 
@@ -108,7 +114,7 @@ pub fn reload(paths: &Paths, app: &mut App) -> Result<()> {
 
 fn browse(paths: &Paths, terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
-        refresh_preview(app);
+        refresh_reading(app);
         terminal.draw(|frame| view::draw(frame, app))?;
         // Blocking: a browser has nothing to do between keystrokes, and polling
         // to find that out would keep a laptop awake for the privilege.
@@ -234,23 +240,28 @@ fn in_the_foreground<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T)
     Ok(out)
 }
 
-/// Brings the preview into step with the cursor.
+/// Reads the file behind a note that has just been opened on a screen of its
+/// own.
 ///
 /// The file is read rather than the note re-rendered from memory, for the reason
 /// `noda show` reads it: what is on screen should be what is on disk, down to a
 /// frontmatter field noda does not interpret.
 ///
-/// A file that cannot be read puts the reason in the pane instead of ending the
-/// session. It is one note out of a notebook, and it will more often be a note
-/// deleted from another window than anything worth quitting over.
+/// Once per screen rather than once per keystroke. Moving the cursor down a
+/// listing reads nothing at all now — the file is asked for when a note is
+/// opened, which is when somebody has said they want to read it.
+///
+/// A file that cannot be read puts the reason on the screen instead of ending
+/// the session. It is one note out of a notebook, and it will more often be a
+/// note deleted from another window than anything worth quitting over.
 ///
 /// Public because it is the one step between a keystroke and a frame that the
 /// state cannot take for itself: a test that draws a screen has to take it too.
-pub fn refresh_preview(app: &mut App) {
-    let Some((id, path)) = app.preview_wanted() else {
+pub fn refresh_reading(app: &mut App) {
+    let Some((id, path)) = app.reading_wanted() else {
         return;
     };
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| format!("{}: {e}\n", path.display()));
-    app.set_preview(id, text);
+    app.set_reading(id, text);
 }

@@ -1,37 +1,31 @@
 //! Drawing one frame.
 //!
+//! Every screen is the same five bands — the header, what this screen is of, the
+//! screen itself, how deep you are, and what was last said — and only the middle
+//! one is drawn here. The rest is [`super::frame`], which is what makes a screen
+//! added later look like the ones already there rather than like itself.
+//!
 //! The listing is the same row `noda ls` prints — the id, the title, then the
 //! tags — for the reason that row was settled on in the first place: a note is
 //! named the same way wherever it is named, so what you read here is what you
-//! would have read in a pipe. The flags that extend it are not repeated; a
-//! browser has a whole pane in which to show the note itself, which is what
-//! `-l`'s extra columns were standing in for.
+//! would have read in a pipe. It gets the whole width now, which is the width
+//! the row was designed for.
 //!
-//! The preview is `noda show`: the frontmatter dimmed, the note's own text left
+//! A note is `noda show`: the frontmatter dimmed, the note's own text left
 //! alone. The one thing painted over the prose is the search match, and that is
 //! the exception `noda search` already makes when it quotes a hit back.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Padding, Paragraph, Row, Table, Wrap};
 
-use super::app::{App, Focus, Mode, What};
+use super::app::{App, Mode, View, What};
+use super::frame::{self, card, plural};
 use super::theme;
-use crate::cmd::{Touch, find_ignoring_case};
+use crate::cmd::find_ignoring_case;
 use crate::style as palette;
-
-/// What the footer says there is to press. Ordered by how soon somebody needs
-/// it, not alphabetically, and short enough to leave the count its corner on a
-/// terminal eighty columns wide.
-const HINTS: &str = "j/k move   / search   Tab preview   e edit   a new   ? keys   q quit";
-
-/// What it says instead once notes are marked. The keys that changed their aim
-/// are the ones worth naming, and the count on the right is already saying how
-/// many are picked out.
-const HINTS_MARKED: &str =
-    "Space mark   * all shown   # tag   d delete   Q queue   Esc unmark   ? keys";
 
 /// How wide the key column on the help card is, so the descriptions line up: the
 /// longest set of keys on one row, which is what the column is for.
@@ -47,140 +41,76 @@ const UNMARKED: &str = "  ";
 const COLUMN_GAP: usize = 2;
 const TITLE_FLOOR: usize = 10;
 
+/// How far the body is held off either edge, so nothing on it is written into
+/// the corner of the terminal.
+const PADDING: u16 = 1;
+
+/// What the card has to say that the band along the top does not.
+///
+/// The keys for the screen you are on are up there, named and always visible, so
+/// this is the rest: how to move, what the filter takes, and the two keys that
+/// open and close a screen. Ten rows and a border, which is what fits on a
+/// terminal short enough to have made the point once already.
 const KEYS: &[(&str, &str)] = &[
-    ("j / k, ↓ / ↑", "move"),
-    ("Ctrl-d / Ctrl-u, g / G", "half a screen · first / last"),
-    ("Tab, h / l", "list ↔ preview"),
-    ("/", "search: tag:work OR tag:q3 budget"),
-    ("Enter", "read the note · in a query, keep it"),
-    ("Esc", "drop the query · then the marks"),
-    // Paired, the way the movement keys are: the card has to fit on a short
-    // terminal, and a key list whose last line is cut off is a key list that
-    // has stopped saying how to quit.
+    ("j / k, ↓ / ↑", "move · scroll"),
+    ("ctrl-f / ctrl-b, g / G", "half a screen · first / last"),
+    ("enter, esc", "open it · back out of it"),
+    ("/", "filter: tag:work OR tag:q3 budget"),
+    ("space, *", "mark this one · mark all the filter shows"),
     ("e, a", "edit in $EDITOR · new note"),
     ("m, #", "retitle · tags: +work -\"two words\""),
-    ("d, T", "delete (after a y) · leave updated alone"),
-    ("Space, *", "mark this one · mark all the query shows"),
+    ("ctrl-d, T", "delete (after a y) · leave updated alone"),
     ("Q", "the queue: what is waiting · send it"),
-    ("r, q / Ctrl-C", "read the notebook again · quit"),
+    ("r, q / ctrl-c", "read the notebook again · quit"),
 ];
 
-pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [header, body, footer] = Layout::vertical([
+pub fn draw(f: &mut Frame, app: &mut App) {
+    let area = f.area();
+    let [header, title, body, crumbs, status] = ratatui::layout::Layout::vertical([
+        Constraint::Length(frame::header_rows(area.height)),
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
+        Constraint::Length(1),
     ])
-    .areas(frame.area());
-    // The list gets the smaller half: it holds one line per note, and the pane
-    // beside it holds a whole note.
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)]).areas(body);
+    .areas(area);
 
-    app.set_page(left.height);
-    draw_header(frame, header, app);
-    draw_list(frame, left, app);
-    draw_preview(frame, right, app);
-    draw_footer(frame, footer, app);
+    app.set_page(body.height);
+    frame::draw_header(f, header, app);
+    frame::draw_title(f, title, app);
+    if matches!(app.view(), View::Notes) {
+        draw_listing(f, body, app);
+    } else {
+        draw_note(f, body, app);
+    }
+    frame::draw_crumbs(f, crumbs, app);
+    if let Some(x) = frame::draw_status(f, status, app) {
+        f.set_cursor_position((x, status.y));
+    }
     // Over the top of all of it, and only ever one of them: a card is what the
     // keyboard is doing, so there is nothing else it could be doing at the time.
     match app.mode {
-        Mode::Help => draw_help(frame, frame.area()),
-        Mode::Confirm(what) => draw_confirm(frame, frame.area(), app, what),
-        Mode::Queue => draw_queue(frame, frame.area(), app),
-        Mode::Alert => draw_alert(frame, frame.area(), app),
+        Mode::Help => draw_help(f, area),
+        Mode::Confirm(what) => draw_confirm(f, area, app, what),
+        Mode::Queue => draw_queue(f, area, app),
+        Mode::Alert => draw_alert(f, area, app),
         _ => {}
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let muted = theme::from(palette::MUTED);
-    let counts = format!(
-        "{} {}",
-        app.status.notes,
-        if app.status.notes == 1 {
-            "note"
-        } else {
-            "notes"
-        }
-    );
-    let mut spans = vec![
-        Span::styled(
-            app.notebook.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("  ({})  ", app.status.branch), muted),
-        Span::raw(counts),
-    ];
-    if app.status.files > 0 {
-        spans.push(Span::styled(
-            format!(
-                "  {} {}",
-                app.status.files,
-                if app.status.files == 1 {
-                    "file"
-                } else {
-                    "files"
-                }
-            ),
-            muted,
-        ));
-    }
-    // Compact where `noda status` is wordy: this is a strip along the top of a
-    // screen somebody is reading notes on, not the answer to "where do I stand".
-    let changes = match app.status.uncommitted {
-        0 => String::new(),
-        1 => "  1 uncommitted".to_string(),
-        n => format!("  {n} uncommitted"),
-    };
-    if !changes.is_empty() {
-        spans.push(Span::styled(changes, theme::from(palette::MATCH)));
-    }
-    if let Some((ahead, behind)) = app.status.drift
-        && (ahead > 0 || behind > 0)
-    {
-        spans.push(Span::styled(format!("  ↑{ahead} ↓{behind}"), muted));
-    }
-    // Said only while it is on, and said in the strip that is always there: the
-    // default needs no announcement, and a setting that changes what the next
-    // change records is one you have to be able to see you left on.
-    if app.touch == Touch::Keep {
-        spans.push(Span::styled(
-            "  keeping updated",
-            theme::from(palette::MATCH),
-        ));
-    }
-    // The two counts that say what the next keystroke will aim at, and what is
-    // waiting to be sent. Both are the sort of state a browser must not keep to
-    // itself: `#` means something different with notes marked, and a queue you
-    // have forgotten about is a queue you will send by accident.
-    if !app.marks.is_empty() {
-        spans.push(Span::styled(
-            format!("  {} marked", app.marks.len()),
-            theme::from(palette::MATCH),
-        ));
-    }
-    if !app.queue.is_empty() {
-        spans.push(Span::styled(
-            format!("  {} queued", app.queue.len()),
-            theme::from(palette::TAGS),
-        ));
-    }
-    frame.render_widget(Line::from(spans), area);
-}
-
-fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
+fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     if app.shown() == 0 {
         let nothing = if app.total() == 0 {
             "this notebook has no notes yet"
         } else {
             "nothing matches"
         };
-        frame.render_widget(
+        f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 nothing,
                 theme::from(palette::MUTED),
-            ))),
+            )))
+            .block(Block::new().padding(Padding::horizontal(PADDING))),
             area,
         );
         return;
@@ -189,7 +119,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
     // Taken out and put back so the rows may borrow the notes while ratatui
     // writes this frame's scroll offset into the state. They are different
     // fields, but the borrow checker only sees `app`.
-    let mut state = std::mem::take(&mut app.table);
+    let mut state = app.take_table();
 
     // The mark lives in front of the id rather than in a column of its own, and
     // it is as wide when there is nothing to show as when there is: a listing
@@ -204,12 +134,16 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
     // As wide as the longest tag list, unless that would starve the title.
     //
     // A tag may be a sentence — `24.04 Dark patterns` is what an import leaves
-    // behind — and a column sized to the longest one can take a narrow pane
+    // behind — and a column sized to the longest one can take a narrow screen
     // whole, leaving the title nothing at all. So the title is given a floor
     // first and the tags get what is left: a note is found by its title, and a
     // cut tag list still says there are tags. Short tag lists, which is nearly
     // all of them, are not affected by this at all.
-    let room = (area.width as usize).saturating_sub(id_width + 2 * COLUMN_GAP + TITLE_FLOOR);
+    // Measured against what the row actually gets, which is the width less the
+    // padding on either side of it. Counting the padding as usable is how the
+    // title ends up one column short of the floor it was promised.
+    let inner = (area.width as usize).saturating_sub(2 * PADDING as usize);
+    let room = inner.saturating_sub(id_width + 2 * COLUMN_GAP + TITLE_FLOOR);
     let tag_width = app
         .rows()
         .map(|file| tags(&file.note.tags).chars().count())
@@ -217,6 +151,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or(0)
         .min(room);
 
+    let terms = app.terms().to_vec();
     let rows: Vec<Row> = app
         .rows()
         .map(|file| {
@@ -230,7 +165,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 ]),
                 // The title is the column the eye lands on, so it is the one
                 // left uncoloured — the same reason `noda ls` leaves it alone.
-                marked(&file.note.title, &app.terms, Style::default()),
+                marked(&file.note.title, &terms, Style::default()),
                 Line::from(Span::styled(
                     tags(&file.note.tags),
                     theme::from(palette::TAGS),
@@ -239,11 +174,6 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    let selected = match app.focus {
-        Focus::List => Style::default().add_modifier(Modifier::REVERSED),
-        // The cursor is still there, just not what the keys are steering.
-        Focus::Preview => Style::default().add_modifier(Modifier::BOLD),
-    };
     let table = Table::new(
         rows,
         [
@@ -252,101 +182,33 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             Constraint::Length(tag_width as u16),
         ],
     )
+    .block(Block::new().padding(Padding::horizontal(PADDING)))
     .column_spacing(COLUMN_GAP as u16)
-    .row_highlight_style(selected)
+    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
     .highlight_symbol("");
 
-    frame.render_stateful_widget(table, area, &mut state);
-    app.table = state;
+    f.render_stateful_widget(table, area, &mut state);
+    app.put_table(state);
 }
 
-fn draw_preview(frame: &mut Frame, area: Rect, app: &App) {
-    let block = Block::new()
-        .borders(Borders::LEFT)
-        .border_style(theme::from(palette::MUTED))
-        .padding(ratatui::widgets::Padding::horizontal(1));
-    let Some(preview) = &app.preview else {
-        frame.render_widget(block, area);
+fn draw_note(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::new().padding(Padding::horizontal(PADDING));
+    let Some(reading) = &app.reading else {
+        f.render_widget(block, area);
         return;
     };
-    frame.render_widget(
-        Paragraph::new(lines(&preview.text, &app.terms))
+    f.render_widget(
+        Paragraph::new(lines(&reading.text, app.terms()))
             .block(block)
             // Wrapped rather than cut: a note is prose, and a reader who has to
             // scroll sideways to finish a sentence is not reading.
             .wrap(Wrap { trim: false })
-            .scroll((app.scroll, 0)),
+            .scroll((app.scroll(), 0)),
         area,
     );
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let muted = theme::from(palette::MUTED);
-    let count = format!("{}/{}", app.shown(), app.total());
-
-    let (left, cursor) = match (&app.message, app.mode) {
-        (_, Mode::Search) => {
-            let typed = Span::raw(app.search.as_str());
-            let width = 1 + typed.width() as u16;
-            (
-                Line::from(vec![Span::styled("/", muted), typed]),
-                Some(area.x + width),
-            )
-        }
-        // The prompt takes the line the query would have had. Both are one
-        // field along the bottom of the same screen, and a browser with two
-        // places to type would be a browser you had to look at to find out
-        // where your keystrokes were going.
-        (_, Mode::Ask(what)) => {
-            let label = Span::styled(format!("{}  ", what.prompt()), muted);
-            let typed = Span::raw(app.input.as_str());
-            let width = label.width() as u16 + typed.width() as u16;
-            (Line::from(vec![label, typed]), Some(area.x + width))
-        }
-        // What the last command said, in place of the hints. It is the answer to
-        // the key that was just pressed, and the next key takes it away again.
-        (Some(said), _) => (Line::from(Span::raw(said.line())), None),
-        _ if app.error.is_some() || !app.search.is_empty() => (
-            Line::from(vec![
-                Span::styled("/", muted),
-                Span::styled(app.search.as_str(), muted),
-            ]),
-            None,
-        ),
-        // With a set picked out, the keys that matter are the ones whose aim has
-        // just changed. A hint line that went on describing the other reading
-        // would be describing a browser you are no longer using.
-        _ if !app.marks.is_empty() => (Line::from(Span::styled(HINTS_MARKED, muted)), None),
-        _ => (Line::from(Span::styled(HINTS, muted)), None),
-    };
-
-    // The right-hand end says how much of the notebook is on the left; a query
-    // that is not one yet says why instead, because that is the more urgent
-    // answer and there is only the one line. A prompt puts the part of the
-    // answer that cannot be guessed from its name there, for the same reason.
-    let right = match (&app.error, app.mode) {
-        (Some(message), _) => {
-            Line::from(Span::styled(message.clone(), theme::from(palette::INVALID)))
-        }
-        (None, Mode::Ask(what)) if !what.hint().is_empty() => {
-            Line::from(Span::styled(what.hint(), muted))
-        }
-        _ => Line::from(Span::styled(count, muted)),
-    };
-
-    let [left_area, right_area] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(right.width() as u16),
-    ])
-    .areas(area);
-    frame.render_widget(left, left_area);
-    frame.render_widget(right, right_area);
-    if let Some(x) = cursor {
-        frame.set_cursor_position((x, area.y));
-    }
-}
-
-fn draw_help(frame: &mut Frame, area: Rect) {
+fn draw_help(f: &mut Frame, area: Rect) {
     let keys: Vec<Line> = KEYS
         .iter()
         .map(|(key, what)| {
@@ -356,16 +218,16 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             ])
         })
         .collect();
-    card(frame, area, " keys ", keys, theme::from(palette::MUTED));
+    card(f, area, " keys ", keys, theme::from(palette::MUTED));
 }
 
 /// The question `noda rm` does not ask.
 ///
-/// At a prompt a delete is a command you typed on purpose; here it is one key
-/// next to another, so it is asked for. It cannot be asked for the way the rest
-/// of noda asks — the terminal is in raw mode, and a command reading a line from
-/// stdin would be reading the keystrokes out from under the browser.
-fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, what: What) {
+/// At a prompt a delete is a command you typed on purpose; here it is one chord,
+/// so it is asked for. It cannot be asked for the way the rest of noda asks —
+/// the terminal is in raw mode, and a command reading a line from stdin would be
+/// reading the keystrokes out from under the browser.
+fn draw_confirm(f: &mut Frame, area: Rect, app: &App, what: What) {
     let muted = theme::from(palette::MUTED);
     let queued = || {
         // The queue is described by what it will do, not by how many keys were
@@ -419,18 +281,18 @@ fn draw_confirm(frame: &mut Frame, area: Rect, app: &App, what: What) {
         Line::default(),
         Line::from(Span::styled(keys, muted)),
     ];
-    card(frame, area, title, lines, muted);
+    card(f, area, title, lines, muted);
 }
 
 /// What is waiting to be sent, and what can be done about it.
 ///
 /// Each line is the same sentence the commit message will use, so what is read
 /// before sending is what the history says afterwards.
-fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_queue(f: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let mut lines: Vec<Line> = if app.queue.is_empty() {
         vec![Line::from(Span::styled(
-            "nothing queued — mark some notes, then # or d",
+            "nothing queued — mark some notes, then # or ctrl-d",
             muted,
         ))]
     } else {
@@ -449,19 +311,19 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &App) {
     };
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
-        "Enter  send, in one commit       d  drop this one       Esc  back",
+        "enter  send, in one commit       d  drop this one       esc  back",
         muted,
     )));
-    card(frame, area, " queued ", lines, muted);
+    card(f, area, " queued ", lines, muted);
 }
 
-/// Why a command would not do what it was asked, or what it had to say that a
-/// footer could not hold.
+/// Why a command would not do what it was asked, or what it had to say that one
+/// line could not hold.
 ///
-/// A card rather than the footer, because the part worth reading is the part
+/// A card rather than the status bar, because the part worth reading is the part
 /// that does not fit: `edit` says where it left a file whose frontmatter no
 /// longer parses, and `bulk` says what it could not do underneath what it did.
-fn draw_alert(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_alert(f: &mut Frame, area: Rect, app: &App) {
     let Some(said) = &app.message else {
         return;
     };
@@ -471,53 +333,7 @@ fn draw_alert(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         (" done ", theme::from(palette::MUTED))
     };
-    card(frame, area, title, lines, border);
-}
-
-/// `1 note` / `3 notes`, the way `cmd` says it.
-fn plural(n: usize, thing: &str) -> String {
-    if n == 1 {
-        format!("1 {thing}")
-    } else {
-        format!("{n} {thing}s")
-    }
-}
-
-/// A card in the middle of the screen, as wide as what is on it.
-///
-/// Measured rather than guessed, and measured after the lines are built: a card
-/// that cut the help's search example off would be losing the one thing on it
-/// that cannot be worked out from the key beside it. `Line::width` counts what a
-/// terminal will show, so an arrow counts once and not three times.
-///
-/// Clamped to the screen, and what does not fit is wrapped rather than cut — the
-/// same bargain the preview makes, and for the same reason: it is prose.
-fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border: Style) {
-    let width = (2 + lines.iter().map(Line::width).max().unwrap_or(0) as u16)
-        .max(title.chars().count() as u16 + 2)
-        .min(area.width);
-    // Counted after the clamp, so a line the screen was too narrow to hold is
-    // given the rows it will wrap onto rather than being pushed off the bottom.
-    let inner = width.saturating_sub(2).max(1);
-    let rows: u16 = lines
-        .iter()
-        .map(|line| (line.width() as u16).div_ceil(inner).max(1))
-        .sum();
-    let height = (rows + 2).min(area.height);
-    let [area] = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .areas(area);
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(area);
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::bordered().title(title).border_style(border)),
-        area,
-    );
+    card(f, area, title, lines, border);
 }
 
 /// A note's tags as the listing writes them, or nothing at all. Tags are the one
@@ -531,7 +347,7 @@ fn tags(tags: &[String]) -> String {
     }
 }
 
-/// The file as the preview shows it: the frontmatter pushed into the background
+/// The file as the screen shows it: the frontmatter pushed into the background
 /// so the note reads first, and the search terms picked out of the prose.
 fn lines<'a>(text: &'a str, terms: &[String]) -> Vec<Line<'a>> {
     let muted = theme::from(palette::MUTED);
@@ -549,7 +365,7 @@ fn lines<'a>(text: &'a str, terms: &[String]) -> Vec<Line<'a>> {
 
 /// Splits the file after the closing `---`. Nothing is dimmed when the block is
 /// not there to dim: `dim_frontmatter` makes the same judgement, and a file the
-/// preview cannot read this way is one the reader should see as it stands.
+/// screen cannot read this way is one the reader should see as it stands.
 fn split_frontmatter(text: &str) -> (&str, &str) {
     let Some(rest) = text.strip_prefix("---\n") else {
         return ("", text);
@@ -683,5 +499,16 @@ mod tests {
     fn tags_are_written_the_way_the_listing_writes_them() {
         assert_eq!(tags(&[]), "");
         assert_eq!(tags(&["work".to_string(), "q3".to_string()]), "[work, q3]");
+    }
+
+    #[test]
+    fn the_help_card_still_fits_a_short_terminal() {
+        // The card outgrew a twenty-four row terminal once; the keys moved into
+        // the header partly so it would not again. Ten rows and two of border.
+        assert!(KEYS.len() + 2 <= 14, "the card has {} rows", KEYS.len() + 2);
+        // And the column is as wide as the widest set of keys on it, or the
+        // descriptions stop lining up.
+        let widest = KEYS.iter().map(|(key, _)| key.chars().count()).max();
+        assert_eq!(widest, Some(KEY_COLUMN));
     }
 }
