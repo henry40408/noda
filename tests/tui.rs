@@ -361,6 +361,56 @@ fn a_query_narrows_the_listing_as_it_is_typed() {
     assert!(has_line_with(&screen, &["Notes  tag:q3  1"]));
 }
 
+/// Where the terminal's own cursor ended up, which is the one thing about a
+/// field that no test of the state machine can see.
+fn cursor_at(paths: &Paths, app: &mut App) -> (u16, u16) {
+    tui::refresh(paths, app);
+    let mut terminal = Terminal::new(TestBackend::new(90, 28)).expect("test terminal");
+    terminal
+        .draw(|frame| tui::view::draw(frame, app))
+        .expect("draw");
+    terminal.get_cursor_position().expect("cursor").into()
+}
+
+#[test]
+fn the_cursor_is_drawn_where_the_next_character_would_go() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('/')));
+    typing(&mut app, "tag:q3");
+    // Six characters typed, one column for the `/` in front of them.
+    let (x, y) = cursor_at(&paths, &mut app);
+    assert_eq!(x, 7);
+
+    // Back to the start of the line, and the cursor with it — it is the query
+    // that is being edited, not only added to.
+    app.on_key(ctrl('a'));
+    assert_eq!(cursor_at(&paths, &mut app), (1, y));
+    app.on_key(ctrl('f'));
+    assert_eq!(cursor_at(&paths, &mut app), (2, y));
+    // And what was typed is still all there behind it.
+    assert!(has_line_with(&screen(&paths, &mut app), &["/tag:q3"]));
+}
+
+#[test]
+fn the_cursor_counts_columns_and_not_characters() {
+    // A title in Chinese is two columns a character, and a cursor that counted
+    // characters would sit inside the one before it.
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('m')));
+    for _ in 0.."Budget review".len() {
+        app.on_key(key(KeyCode::Backspace));
+    }
+    typing(&mut app, "預算");
+    let (wide, _) = cursor_at(&paths, &mut app);
+    app.on_key(key(KeyCode::Left));
+    let (back, _) = cursor_at(&paths, &mut app);
+    assert_eq!(wide - back, 2, "one character back is two columns back");
+}
+
 #[test]
 fn an_unfinished_query_says_why_instead_of_emptying_the_screen() {
     let (_root, paths) = a_notebook();

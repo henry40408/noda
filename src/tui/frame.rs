@@ -653,10 +653,16 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
         frame.render_widget(Line::from(Span::styled(waiting, muted)), area);
         return None;
     }
+    // Where the cursor goes is measured from what is to the *left* of it rather
+    // than from the whole line: the two are the same only while it is at the end
+    // of what has been typed, and a cursor drawn at the end of a line somebody
+    // is editing the middle of would be pointing at the wrong character with
+    // every keystroke. Measured in columns and not characters, because a title
+    // in Chinese is two columns a character.
     let (left, cursor) = match (&app.message, app.mode) {
         (_, Mode::Command) => {
-            let typed = Span::raw(app.input.as_str());
-            let width = 1 + typed.width() as u16;
+            let typed = Span::raw(app.input.text());
+            let width = 1 + Span::raw(app.input.before()).width() as u16;
             (
                 Line::from(vec![Span::styled(":", muted), typed]),
                 Some(area.x + width),
@@ -664,7 +670,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
         }
         (_, Mode::Search) => {
             let typed = Span::raw(app.search());
-            let width = 1 + typed.width() as u16;
+            let width = 1 + Span::raw(app.search_before()).width() as u16;
             (
                 Line::from(vec![Span::styled("/", muted), typed]),
                 Some(area.x + width),
@@ -672,8 +678,8 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
         }
         (_, Mode::Ask(what)) => {
             let label = Span::styled(format!("{}  ", what.prompt()), muted);
-            let typed = Span::raw(app.input.as_str());
-            let width = label.width() as u16 + typed.width() as u16;
+            let typed = Span::raw(app.input.text());
+            let width = label.width() as u16 + Span::raw(app.input.before()).width() as u16;
             (Line::from(vec![label, typed]), Some(area.x + width))
         }
         // What the last command said, in its own words. The next key takes it
