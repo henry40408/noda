@@ -31,7 +31,7 @@ pub fn targets(body: &str) -> BTreeSet<String> {
         let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event else {
             continue;
         };
-        if let Some(path) = local_path(&dest_url) {
+        if let Some(path) = target(&dest_url) {
             found.insert(path);
         }
     }
@@ -68,7 +68,7 @@ pub fn rewrite(body: &str, old: &str, new: &str) -> Option<String> {
         let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event else {
             continue;
         };
-        if local_path(&dest_url).as_deref() != Some(old) {
+        if target(&dest_url).as_deref() != Some(old) {
             continue;
         }
         // A reference-style usage carries the destination it resolved to, but
@@ -80,7 +80,7 @@ pub fn rewrite(body: &str, old: &str, new: &str) -> Option<String> {
     }
 
     for (dest, span) in &definitions {
-        if local_path(dest).as_deref() == Some(old)
+        if target(dest).as_deref() == Some(old)
             && let Some(span) = locate(body, span, dest)
         {
             edits.push((span, encoded.as_str()));
@@ -162,7 +162,14 @@ fn encode_destination(name: &str) -> String {
 
 /// The notebook-relative file a destination names, or `None` when it does not
 /// name one.
-fn local_path(dest: &str) -> Option<String> {
+///
+/// Public because `web` asks the same question one destination at a time, and
+/// for a stricter reason than `targets` has: what comes back is the only thing
+/// the server will open on a reader's behalf. A second implementation of "is
+/// this path inside the notebook" is exactly the kind of thing that gets one of
+/// the two wrong — and the one that would be wrong is the one facing the
+/// network.
+pub fn target(dest: &str) -> Option<String> {
     // A fragment alone points inside this very document, and a scheme points at
     // something noda does not own — neither is a file in the notebook.
     if dest.is_empty() || dest.starts_with('#') || has_scheme(dest) {
@@ -183,24 +190,34 @@ fn local_path(dest: &str) -> Option<String> {
     normalize(&percent_decode(path))
 }
 
-/// Whether the destination starts with a URL scheme (`https:`, `mailto:`, …).
+/// The URL scheme a destination carries — `https`, `mailto`, `javascript` — or
+/// `None` when it carries none.
 ///
-/// Spelled out rather than looked for as `://`, because `mailto:` and `tel:`
-/// carry no slashes and are just as much somebody else's.
-fn has_scheme(dest: &str) -> bool {
+/// Read out rather than looked for as `://`, because `mailto:` and `tel:` carry
+/// no slashes and are just as much somebody else's.
+///
+/// What the name is, and not merely that there is one, because that is the
+/// question the web pages have to ask: `https:` is a link to follow and
+/// `javascript:` is a script to run, and telling them apart is the whole of
+/// what stops a note from being able to execute anything.
+pub fn scheme(dest: &str) -> Option<&str> {
     let mut chars = dest.char_indices();
     match chars.next() {
         Some((_, first)) if first.is_ascii_alphabetic() => {}
-        _ => return false,
+        _ => return None,
     }
     for (index, ch) in chars {
         match ch {
-            ':' => return index > 0,
+            ':' if index > 0 => return Some(&dest[..index]),
             c if c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.' => {}
-            _ => return false,
+            _ => return None,
         }
     }
-    false
+    None
+}
+
+fn has_scheme(dest: &str) -> bool {
+    scheme(dest).is_some()
 }
 
 /// Decodes `%XX` escapes. A destination is percent-encoded, so a filename with a

@@ -571,7 +571,11 @@ impl Notebook {
     /// which note it is, and the commands that only need to know *which* — `rm`,
     /// `log`, `diff`, `restore` — must keep working on exactly the file someone
     /// is reaching for those commands to fix.
-    fn named_files(&self) -> Result<Vec<(String, String)>> {
+    /// Public for `web`, which needs the same thing for the same reason: to
+    /// turn `[the plan](k3f9m2p1-the-plan.md)` in a body into a link to that
+    /// note, it has to know which filenames are notes — and rendering one note
+    /// is not a reason to open and parse every other one.
+    pub fn named_files(&self) -> Result<Vec<(String, String)>> {
         let mut found = Vec::new();
         for entry in std::fs::read_dir(&self.path)? {
             let entry = entry?;

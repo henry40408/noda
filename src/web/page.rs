@@ -47,6 +47,17 @@ pub struct Row {
     pub updated: Option<String>,
 }
 
+/// A file the notebook holds that is not a note, as the files page lists it.
+pub struct Held {
+    pub name: String,
+    pub size: u64,
+    /// What the server will say it is — the same answer the download itself
+    /// carries, so the page cannot promise one thing and the file be another.
+    pub kind: String,
+    /// How many notes link to it. Zero is what `doctor --links` calls an orphan.
+    pub used: usize,
+}
+
 /// A note, as its own page shows it.
 pub struct Reading {
     pub id: String,
@@ -54,7 +65,12 @@ pub struct Reading {
     pub title: String,
     pub tags: Vec<String>,
     pub updated: Option<String>,
-    pub body: String,
+    /// The body, **already HTML** — `web::render::body` made it, and it is the
+    /// one string on any of these pages that is written out as it stands. The
+    /// field is not called `body` for that reason: `escape(&reading.body)` was
+    /// the right line while a note was shown as text, and it should not be
+    /// possible to leave it there by accident now that it is not.
+    pub rendered: String,
 }
 
 impl Row {
@@ -372,6 +388,72 @@ pub fn listing(
     )
 }
 
+/// Everything the notebook holds that is not a note.
+///
+/// One row per file, saying the three things that are true of it: how big it
+/// is, what it will arrive as, and how many notes point at it. The last is the
+/// one worth the walk — a file nothing points at is what `doctor --links` calls
+/// an orphan, and this is the same question answered in the same way rather
+/// than a second opinion about it.
+pub fn files(book: &str, held: &[Held]) -> String {
+    let body = if held.is_empty() {
+        "<div class=\"empty\"><b>No files yet</b>Run <code>noda file add diagram.png</code> \
+         in a terminal to put one here.</div>"
+            .to_string()
+    } else {
+        let mut out = String::new();
+        for file in held {
+            let under = [
+                size(file.size),
+                escape(&file.kind),
+                match file.used {
+                    0 => "nothing links to it".to_string(),
+                    used => format!("in {}", plural(used, "note")),
+                },
+            ]
+            .join("<span class=\"sep\">·</span>");
+            let _ = write!(
+                out,
+                "<a class=\"row\" href=\"/nb/{}/f/{}\"><div class=\"title mono\">{}</div>\
+                 <div class=\"under\">{under}</div></a>",
+                escape(book),
+                escape(&file.name),
+                escape(&file.name)
+            );
+        }
+        out
+    };
+
+    shell(
+        &format!("Files — {book} — noda"),
+        &format!(
+            "<header class=\"topbar\">{}<span class=\"here\">Files</span>\
+             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>",
+            back(&format!("/nb/{}", escape(book)), book),
+            held.len()
+        ),
+    )
+}
+
+/// A file's size, in the units a person would say it in.
+///
+/// Powers of two and one decimal place, which is what every file manager shows;
+/// a notebook's attachments are pictures and PDFs, and knowing one is 4.2 MB
+/// rather than 4,404,019 bytes is the whole of what this line is for.
+fn size(bytes: u64) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a rounded size is the point; a notebook holds no file where the lost bits show"
+    )]
+    let value = bytes as f64;
+    match bytes {
+        0..1024 => format!("{bytes} B"),
+        1024..1_048_576 => format!("{:.1} KB", value / 1024.0),
+        1_048_576..1_073_741_824 => format!("{:.1} MB", value / 1_048_576.0),
+        _ => format!("{:.1} GB", value / 1_073_741_824.0),
+    }
+}
+
 /// One note.
 pub fn note(book: &str, reading: &Reading) -> String {
     let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
@@ -410,7 +492,7 @@ pub fn note(book: &str, reading: &Reading) -> String {
             escape(&reading.title),
             escape(&reading.id),
             escape(&reading.slug),
-            escape(&reading.body),
+            reading.rendered,
         ),
     )
 }
@@ -549,6 +631,13 @@ pub fn renaming(book: &str, about: &About, title: &str, problem: Option<&str>) -
 /// A ticked box per tag it has, and a field for ones it does not. The form says
 /// what should survive; working out the `+`s and `-`s from that is the server's
 /// job, because `+work -q3` is a notation for somebody with a keyboard.
+///
+/// **The field takes as many tags as you can type into it**, because it is cut
+/// by `query::split` — the same splitter the search box and the `:` prompt use,
+/// so a space separates and a quote holds one together. It says so, and shows a
+/// quoted tag in the placeholder rather than describing one: the field read as
+/// a one-tag field for as long as its label was singular, which made a thing
+/// the server had always done impossible to find.
 pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>) -> String {
     let mut boxes = String::new();
     for (n, tag) in tags.iter().enumerate() {
@@ -574,8 +663,11 @@ pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>
         &refusal(problem),
         &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/tags\">{held}\
-             <div><label for=\"a\">Add a tag</label>\
-             <input id=\"a\" type=\"text\" name=\"add\" placeholder=\"ops\"></div>\
+             <div><label for=\"a\">Add tags</label>\
+             <input id=\"a\" type=\"text\" name=\"add\" \
+             placeholder=\"ops docs &quot;24.04 Dark patterns&quot;\">\
+             <small class=\"hint\">Separated by spaces. Quote one that has a space in it.\
+             </small></div>\
              <div class=\"buttons\"><button class=\"go\" type=\"submit\">Save</button>\
              <a class=\"button\" href=\"{}\">Cancel</a></div></form>",
             about.at(book),
@@ -687,6 +779,9 @@ a{color:inherit;text-decoration:none}\
 -webkit-tap-highlight-color:transparent}\
 .row:active{background:var(--press)}\
 .row .title{font-family:var(--read);font-size:17px;line-height:1.32}\
+/* A filename is the machine's, not the reader's — the same rule the note page \
+   follows when it sets the id and the slug in monospace. */\
+.row .title.mono{font-family:var(--mono);font-size:15px}\
 .row .name{font-size:15px}\
 .row .under{margin-top:4px;font-size:12.5px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}\
 .row .under:empty{display:none}\
@@ -702,8 +797,55 @@ font-weight:600;letter-spacing:-0.01em}\
 .filename .slug{color:var(--id-dim)}\
 .filename .ext{color:var(--punct)}\
 .note-meta{margin-top:8px;font-size:12.5px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}\
-.body{padding:16px;font-family:var(--read);font-size:17px;line-height:1.62;white-space:pre-wrap;\
+.body{padding:16px;font-family:var(--read);font-size:17px;line-height:1.62;\
 overflow-wrap:break-word}\
+/* A rendered note. One size ladder, one rhythm, and every block the same \
+   distance from the next — a page of prose has one job and the styling of it \
+   should be boring. The measure is set further down, on the wide screen, and \
+   on the element that is actually read. */\
+.body>:first-child{margin-top:0}\
+.body>:last-child{margin-bottom:0}\
+.body h1,.body h2,.body h3,.body h4{font-family:var(--read);font-weight:600;\
+line-height:1.25;letter-spacing:-0.01em;margin:1.5em 0 .5em}\
+.body h1{font-size:1.24em}\
+.body h2{font-size:1.12em}\
+.body h3{font-size:1em}\
+.body h4{font-size:.94em;color:var(--muted)}\
+.body p{margin:0 0 .9em}\
+.body ul,.body ol{margin:0 0 .9em;padding-left:1.4em}\
+.body li{margin:.25em 0}\
+.body li p{margin:0}\
+/* `noda todo` reads these boxes across the whole notebook, so they are boxes \
+   here too. Disabled, because ticking one has to be a commit — the same reason \
+   the CLI has no `todo done`. */\
+.body li input[type=checkbox]{width:16px;height:16px;margin:0 .45em 0 0;\
+accent-color:var(--tag);vertical-align:-2px}\
+.body a{color:var(--tag);text-decoration:underline;text-underline-offset:3px;\
+text-decoration-thickness:1px}\
+/* The one distinction the body draws, and it is the palette's own rule: colour \
+   marks what a thing is. A link in the id's colour stays inside the notebook; \
+   a link in the tag's colour leaves it. Same face, same size — a reader who \
+   never notices loses nothing, and one who does can tell before pressing. */\
+.body a.note{color:var(--id)}\
+.body code{font-family:var(--mono);font-size:.85em;background:var(--bg-sunk);\
+border:1px solid var(--rule);border-radius:5px;padding:1px 5px}\
+.body pre{background:var(--bg-sunk);border:1px solid var(--rule);border-radius:10px;\
+padding:12px 14px;margin:0 0 .9em;overflow-x:auto}\
+.body pre code{background:none;border:0;padding:0;font-size:14px;line-height:1.55}\
+.body blockquote{margin:0 0 .9em;padding:.1em 0 .1em 14px;\
+border-left:3px solid var(--rule);color:var(--muted)}\
+.body blockquote p:last-child{margin:0}\
+.body img{max-width:100%;height:auto;display:block;border-radius:10px;margin:0 0 .9em}\
+.body hr{border:0;border-top:1px solid var(--rule);margin:1.5em 0}\
+/* The table scrolls inside itself rather than widening the page. A phone is \
+   narrower than three columns of anything, and the alternative is a note whose \
+   every paragraph is cut off because one table was wide. */\
+.body table{display:block;width:fit-content;max-width:100%;overflow-x:auto;\
+border-collapse:collapse;margin:0 0 .9em;font-size:.92em}\
+.body th,.body td{border-bottom:1px solid var(--rule);padding:8px 12px 8px 0;\
+text-align:left;vertical-align:top}\
+.body th{font-family:var(--mono);font-size:.8em;font-weight:600;color:var(--muted);\
+letter-spacing:.03em;text-transform:uppercase}\
 .empty{padding:28px 18px;color:var(--muted)}\
 .empty b{display:block;font-family:var(--read);font-size:19px;color:var(--text);\
 font-weight:600;margin-bottom:8px}\
@@ -721,6 +863,11 @@ align-items:center;justify-content:center;gap:4px;color:var(--muted);\
 .actionbar span{font-size:11.5px;letter-spacing:0.02em}\
 form.write{padding:16px;display:flex;flex-direction:column;gap:16px}\
 form.write label{font-size:12.5px;color:var(--punct);display:block;margin-bottom:6px}\
+/* Under the field, not above it: what a field takes is read after the reader \
+   has seen the field, and a label that tried to hold this would stop being a \
+   name for the thing. */\
+form.write .hint{display:block;margin-top:6px;font-size:12.5px;color:var(--muted);\
+line-height:1.45}\
 form.write input[type=text],form.write textarea{width:100%;padding:12px 14px;border-radius:10px;\
 border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);font-size:16px}\
 form.write input[type=text]{font-family:var(--mono);min-height:var(--tap)}\
@@ -793,11 +940,12 @@ mod tests {
         );
     }
 
-    /// The body reaches the page unaltered apart from escaping, so this is the
-    /// one that matters: a note holding raw HTML is a thing the importer
-    /// deliberately produces.
+    /// The body arrives already rendered and is written out as it stands — this
+    /// page escapes everything else and must not escape this. What keeps a
+    /// note's own raw HTML from becoming markup is a floor down, in `render`,
+    /// which is where the tests for it are.
     #[test]
-    fn a_body_holding_html_arrives_as_text() {
+    fn the_rendered_body_is_written_out_as_it_stands() {
         let page = note(
             "work",
             &Reading {
@@ -806,11 +954,10 @@ mod tests {
                 title: "Notes".into(),
                 tags: vec![],
                 updated: None,
-                body: "a <div class=\"raw\">html</div> here".into(),
+                rendered: "<p>a <em>rendered</em> note</p>".into(),
             },
         );
-        assert!(page.contains("&lt;div class=&quot;raw&quot;&gt;"), "{page}");
-        assert!(!page.contains("<div class=\"raw\">"), "{page}");
+        assert!(page.contains("<p>a <em>rendered</em> note</p>"), "{page}");
     }
 
     /// A listing shows the day. Showing the minute would mean either printing a
@@ -838,7 +985,7 @@ mod tests {
                 title: "Notes".into(),
                 tags: vec![],
                 updated: Some("2026-08-15T09:54:23Z".into()),
-                body: String::new(),
+                rendered: String::new(),
             },
         );
         assert!(page.contains("updated 2026-08-15T09:54:23Z"), "{page}");
@@ -889,7 +1036,7 @@ mod tests {
                 title: "Budget review".into(),
                 tags: vec!["work".into()],
                 updated: Some("2026-08-15T16:59:00Z".into()),
-                body: "late".into(),
+                rendered: "late".into(),
             },
         );
         assert!(page.contains(">em0xvn4e</span>"), "{page}");
