@@ -45,7 +45,8 @@ impl Drop for TempRoot {
     }
 }
 
-/// A notebook holding four notes. The last one carries raw HTML on purpose:
+/// A notebook holding five notes, two files, and one note that embeds one of
+/// them. One note carries raw HTML on purpose:
 /// `noda import tiddlywiki` deliberately leaves such bodies alone, so a note
 /// that is markup is an ordinary note and not a hypothetical.
 fn a_notebook() -> (TempRoot, Paths) {
@@ -75,6 +76,26 @@ fn a_notebook() -> (TempRoot, Paths) {
         Some("Raw html import"),
         Some("a <div class=\"x\">html</div> here"),
         &["ops".to_string()],
+    )
+    .expect("add");
+
+    // Two files, because the two answers a file can get are different: a `.png`
+    // is shown where it stands and a `.svg` is not, and the difference is the
+    // whole of what `holding` decides.
+    let source = root.0.join("rack.png");
+    std::fs::write(&source, b"\x89PNG\r\n\x1a\nnot really").expect("write a png");
+    cmd::file_add(&paths, &[source], None).expect("file add");
+    let vector = root.0.join("plan.svg");
+    std::fs::write(&vector, "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").expect("write svg");
+    cmd::file_add(&paths, &[vector], None).expect("file add");
+
+    // A note that points at one of them, which is what makes the count on the
+    // files page a fact about this notebook rather than a hardcoded zero.
+    cmd::add(
+        &paths,
+        Some("The rack"),
+        Some("it looks like ![the rack](rack.png)"),
+        &[],
     )
     .expect("add");
     (root, paths)
@@ -126,11 +147,25 @@ struct Answer {
     status: u16,
     location: Option<String>,
     body: String,
+    /// The header block as it arrived. Kept whole rather than parsed into a map:
+    /// what the tests below ask of it is whether a particular line was said, and
+    /// a file's answer is carried entirely by its headers.
+    head: String,
 }
 
 impl Answer {
     fn says(&self, needle: &str) -> bool {
         self.body.contains(needle)
+    }
+
+    /// One header, by name.
+    fn header(&self, name: &str) -> Option<String> {
+        self.head.lines().find_map(|line| {
+            let (found, value) = line.split_once(':')?;
+            found
+                .eq_ignore_ascii_case(name)
+                .then(|| value.trim().to_string())
+        })
     }
 
     /// What every timestamp on the page actually reads as.
@@ -295,6 +330,7 @@ impl Serving {
             status,
             location,
             body: body.to_string(),
+            head: head.to_string(),
         }
     }
 }
@@ -320,7 +356,7 @@ fn the_front_page_lists_the_notebooks() {
     // The remote's standing in git's own words, not a verb asking whether you
     // would like to sync.
     assert!(answer.says("no remote"), "{}", answer.body);
-    assert!(answer.says("4 notes"), "{}", answer.body);
+    assert!(answer.says("5 notes"), "{}", answer.body);
 }
 
 #[test]
@@ -341,7 +377,7 @@ fn the_listing_names_every_note() {
     // `Z` cut off to fit a row reads as a local one — wrong by whatever the
     // reader's offset is, and wrong in a way nothing on the page admits to.
     let stamps = answer.stamps();
-    assert_eq!(stamps.len(), 4, "{stamps:?}");
+    assert_eq!(stamps.len(), 5, "{stamps:?}");
     for stamp in &stamps {
         assert_eq!(stamp.len(), 10, "{stamp} is not just a day");
         assert!(!stamp.contains(':'), "{stamp} has a clock in it");
@@ -366,7 +402,7 @@ fn a_query_narrows_the_listing_and_marks_what_matched() {
     assert!(!answer.says("Reading list"), "{}", answer.body);
     // What was filtered away is still named, so an empty-looking notebook is
     // never a mystery.
-    assert!(answer.says("of 4"), "{}", answer.body);
+    assert!(answer.says("of 5"), "{}", answer.body);
 }
 
 /// The reason `query::split` moved out of the browser: this box is the third
@@ -435,20 +471,164 @@ fn the_note_page_names_the_file_and_stamps_it_whole() {
     assert!(answer.says("Z</span>"), "{}", answer.body);
 }
 
-/// `noda import tiddlywiki` leaves raw HTML in a body on purpose. It reaches
-/// this page as text or it is an injection.
+/// `noda import tiddlywiki` leaves raw HTML in a body on purpose. Now that the
+/// page renders Markdown, it reaches the reader as a code block — escaped,
+/// shown and not run — or it is an injection.
 #[test]
-fn a_body_holding_markup_arrives_as_text() {
+fn a_body_holding_markup_arrives_as_code() {
     let (server, paths) = serving();
     let id = id_of(&paths, "raw-html-import");
     let answer = server.get(&format!("/nb/default/n/{id}"));
 
+    // Inline, because that is where this fixture's markup sits — mid-paragraph.
+    // A whole block of it becomes a fenced `language-html` block instead, which
+    // `web::render`'s own tests cover.
     assert!(
-        answer.says("&lt;div class=&quot;x&quot;&gt;"),
+        answer.says("<code>&lt;div class=\"x\"&gt;"),
         "{}",
         answer.body
     );
     assert!(!answer.says("<div class=\"x\">"), "{}", answer.body);
+}
+
+/// The files page is the notebook's other half: everything it holds that is
+/// not a note, with the count of notes pointing at each one — the same question
+/// `doctor --links` answers when it names orphans.
+#[test]
+fn the_files_page_lists_what_is_not_a_note() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default/files");
+
+    assert_eq!(answer.status, 200);
+    assert!(answer.says("rack.png"), "{}", answer.body);
+    assert!(answer.says("plan.svg"), "{}", answer.body);
+    assert!(
+        answer.says("href=\"/nb/default/f/rack.png\""),
+        "{}",
+        answer.body
+    );
+    // One note embeds the png and nothing points at the svg.
+    assert!(answer.says("in 1 note"), "{}", answer.body);
+    assert!(answer.says("nothing links to it"), "{}", answer.body);
+    // Notes have their own pages and are not listed here as files.
+    assert!(!answer.says(".md"), "{}", answer.body);
+}
+
+/// An image is shown where it stands. Anything that can carry a script is not,
+/// and SVG is the one that catches people out — it is a document, and a
+/// document served inline from this origin is a script on this page.
+#[test]
+fn a_file_is_served_and_only_the_safe_ones_are_shown_in_place() {
+    let (server, _paths) = serving();
+
+    let png = server.get("/nb/default/f/rack.png");
+    assert_eq!(png.status, 200);
+    assert!(png.body.contains("PNG"), "{:?}", png.body);
+    assert!(png.body.contains("not really"), "{:?}", png.body);
+    assert_eq!(png.header("content-type").as_deref(), Some("image/png"));
+    assert_eq!(
+        png.header("x-content-type-options").as_deref(),
+        Some("nosniff")
+    );
+    assert!(
+        png.header("content-disposition")
+            .is_some_and(|value| value.starts_with("inline")),
+        "{:?}",
+        png.header("content-disposition")
+    );
+
+    let svg = server.get("/nb/default/f/plan.svg");
+    assert_eq!(svg.status, 200);
+    assert!(
+        svg.header("content-disposition")
+            .is_some_and(|value| value.starts_with("attachment")),
+        "an svg must arrive as a download: {:?}",
+        svg.header("content-disposition")
+    );
+    // Nothing it could load, and nothing it could run, whatever a browser makes
+    // of it later.
+    assert!(
+        svg.header("content-security-policy")
+            .is_some_and(|value| value.contains("default-src 'none'")),
+        "{:?}",
+        svg.header("content-security-policy")
+    );
+}
+
+/// The one place noda opens a path somebody else named. `link::target` is the
+/// gate, and it is the same gate `doctor` and `file mv` resolve links with.
+#[test]
+fn a_file_request_cannot_climb_out_of_the_notebook() {
+    let (server, _paths) = serving();
+
+    for path in [
+        "/nb/default/f/..%2f..%2f..%2fetc%2fpasswd",
+        "/nb/default/f/%2Fetc%2Fpasswd",
+        "/nb/default/f/nothing-here.png",
+    ] {
+        let answer = server.get(path);
+        assert_eq!(answer.status, 404, "{path} was answered:\n{}", answer.body);
+    }
+}
+
+/// A note is read at its own address, rendered. Answering for it as a file too
+/// would be a second, unrendered way to read one — and the way that skips every
+/// decision the renderer makes.
+#[test]
+fn a_note_is_not_served_as_a_file() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let answer = server.get(&format!("/nb/default/f/{id}-budget-review.md"));
+    assert_eq!(answer.status, 404, "{}", answer.body);
+}
+
+/// The body is Markdown and arrives rendered: a heading is a heading, and a
+/// link to another note points at that note's address rather than at a `.md`
+/// file that means nothing to a browser.
+#[test]
+fn a_note_body_is_rendered_and_its_links_point_at_notes() {
+    let (server, paths) = serving();
+    let budget = id_of(&paths, "budget-review");
+    let meeting = id_of(&paths, "meeting-notes");
+
+    // Written the way a note on a git host writes it: a relative filename.
+    let saved = server.post(
+        &format!("/nb/default/n/{meeting}/edit"),
+        &[
+            (
+                "fingerprint",
+                &server.fingerprint_on(&format!("/nb/default/n/{meeting}/edit")),
+            ),
+            (
+                "body",
+                &format!("# Agenda\n\nsee [the budget]({budget}-budget-review.md)\n"),
+            ),
+        ],
+    );
+    assert_eq!(saved.status, 303);
+
+    let answer = server.get(&format!("/nb/default/n/{meeting}"));
+    assert!(answer.says("<h1>Agenda</h1>"), "{}", answer.body);
+    assert!(
+        answer.says(&format!("href=\"/nb/default/n/{budget}\"")),
+        "{}",
+        answer.body
+    );
+    assert!(!answer.says("budget-review.md"), "{}", answer.body);
+}
+
+/// An embedded image is fetched from the notebook, which is what makes the
+/// files route load-bearing rather than a download page.
+#[test]
+fn an_embedded_image_points_at_the_file_route() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "the-rack");
+    let answer = server.get(&format!("/nb/default/n/{id}"));
+    assert!(
+        answer.says("<img src=\"/nb/default/f/rack.png\""),
+        "{}",
+        answer.body
+    );
 }
 
 #[test]
@@ -601,6 +781,30 @@ fn ticking_the_boxes_is_what_says_which_tags_stay() {
         "work should have gone:\n{}",
         note.body
     );
+}
+
+/// One field, as many tags as fit in it — cut by `query::split`, so a space
+/// separates and a quote holds a tag together. The server could always do this;
+/// what it could not do was say so, which is why the label is plural and the
+/// placeholder shows a quoted tag.
+#[test]
+fn the_add_field_takes_more_than_one_tag() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "meeting-notes");
+
+    let saved = server.post(
+        &format!("/nb/default/n/{id}/tags"),
+        &[("keep", "work"), ("add", "docs infra \"loud neighbours\"")],
+    );
+    assert_eq!(saved.status, 303);
+
+    let note = server.get(&format!("/nb/default/n/{id}"));
+    for tag in ["work", "docs", "infra", "loud neighbours"] {
+        assert!(note.says(tag), "{tag} is missing:\n{}", note.body);
+    }
+
+    let form = server.get(&format!("/nb/default/n/{id}/tags"));
+    assert!(form.says("Add tags"), "{}", form.body);
 }
 
 /// A tag row is a box beside a word, centred against each other. The rule that

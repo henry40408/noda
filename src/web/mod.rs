@@ -26,8 +26,10 @@
 
 pub mod guard;
 pub mod page;
+pub mod render;
 pub mod theme;
 
+use std::fmt::Write;
 use std::sync::Arc;
 
 use axum::Router;
@@ -125,6 +127,11 @@ fn router(server: Shared) -> Router {
     Router::new()
         .route("/", get(front))
         .route("/nb/{book}", get(listing))
+        .route("/nb/{book}/files", get(files))
+        // One path segment, not a wildcard: a notebook is a flat directory, and
+        // a route that could match `a/b` would be inviting a path to be
+        // assembled out of pieces nobody checked.
+        .route("/nb/{book}/f/{name}", get(held))
         .route("/nb/{book}/new", get(new_form).post(new_note))
         .route("/nb/{book}/n/{key}", get(reading))
         // One shape for all of them: `GET` shows the form, `POST` does the
@@ -181,6 +188,20 @@ enum Answer {
     /// One address per page: an id prefix and a slug both land on the id.
     Elsewhere(String),
     Missing(String, String),
+    /// A file the notebook holds, as its bytes. The only answer here that is
+    /// not a page noda wrote.
+    Held(Held),
+}
+
+/// A file on its way out, and the two decisions that go with it.
+struct Held {
+    bytes: Vec<u8>,
+    /// What it is, as far as noda is willing to say.
+    kind: &'static str,
+    /// Whether the browser may show it where it stands. Only the formats that
+    /// cannot carry a script may — see `holding`.
+    inline: bool,
+    name: String,
 }
 
 /// Runs the blocking half of a request and turns what it decided into a response.
@@ -203,6 +224,7 @@ where
             html(page::failure(&heading, &detail)),
         )
             .into_response(),
+        Ok(Ok(Answer::Held(held))) => held.into_response(),
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             html(page::failure("Something went wrong", &e.to_string())),
@@ -218,6 +240,85 @@ where
             )),
         )
             .into_response(),
+    }
+}
+
+impl IntoResponse for Held {
+    fn into_response(self) -> Response {
+        // `filename*=UTF-8''…` and not a bare `filename=`: an attachment's name
+        // is the whole of its identity here, and the notebook's own files are
+        // allowed to be called `réunion.pdf`.
+        let disposition = format!(
+            "{}; filename*=UTF-8''{}",
+            if self.inline { "inline" } else { "attachment" },
+            encoded_name(&self.name)
+        );
+        (
+            [
+                (header::CONTENT_TYPE, self.kind.to_string()),
+                // Never let the browser decide it knows better what this is.
+                // Everything below rests on the type noda declared.
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+                (header::CONTENT_DISPOSITION, disposition),
+                // A file the notebook holds is not a page: it loads nothing,
+                // runs nothing and frames nothing. Said out loud so that a
+                // format which turns out to be able to do any of those — SVG is
+                // the one everybody finds out about — cannot.
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    "default-src 'none'; sandbox".to_string(),
+                ),
+            ],
+            self.bytes,
+        )
+            .into_response()
+    }
+}
+
+/// A filename as `filename*` takes it: percent-encoded, every byte that is not
+/// plainly safe spelled out.
+fn encoded_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            other => {
+                let _ = write!(out, "%{other:02X}");
+            }
+        }
+    }
+    out
+}
+
+/// What noda is willing to say a file is, and whether a browser may show it
+/// where it stands.
+///
+/// **A list of what may be shown, never of what may not.** An attachment is a
+/// file somebody put in a notebook, served from the same origin as every page
+/// here — so anything shown inline that can carry a script is a script running
+/// on this page. Two formats catch people out: SVG is a document and runs
+/// script, and HTML is obviously one. Both are served, and both arrive as a
+/// download rather than a view. Anything not named is `application/octet-stream`
+/// and a download, which is the direction an unknown format should fall in.
+fn holding(name: &str) -> (&'static str, bool) {
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "png" => ("image/png", true),
+        "jpg" | "jpeg" => ("image/jpeg", true),
+        "gif" => ("image/gif", true),
+        "webp" => ("image/webp", true),
+        "avif" => ("image/avif", true),
+        // Text cannot execute, and a notebook is full of it: a `.txt` beside a
+        // note is the one attachment you want to read without saving it first.
+        "txt" | "md" | "csv" | "log" => ("text/plain; charset=utf-8", true),
+        "pdf" => ("application/pdf", false),
+        "svg" => ("image/svg+xml", false),
+        _ => ("application/octet-stream", false),
     }
 }
 
@@ -357,6 +458,7 @@ async fn reading(
 
         let text = std::fs::read_to_string(notebook.note_path(&id, &slug))?;
         let note = Note::parse(&text).map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+        let around = render::Around::of(&book, &notebook.named_files()?);
         Ok(Answer::Page(page::note(
             &book,
             &page::Reading {
@@ -365,9 +467,101 @@ async fn reading(
                 title: note.title,
                 tags: note.tags,
                 updated: note.updated,
-                body: note.body,
+                rendered: render::body(&note.body, &around),
             },
         )))
+    })
+    .await
+}
+
+/// Everything the notebook holds that is not a note.
+///
+/// The count of notes pointing at each one is the same judgement `doctor
+/// --links` reports as orphans, made with the same function — `link::targets`
+/// — so a file this page says nothing points at is exactly a file `doctor`
+/// would name. Saying it twice in two ways would be worse than not saying it.
+async fn files(State(server): State<Shared>, Path(book): Path<String>) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let (notes, held) = notebook.inventory()?;
+        let mut used: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for file in &notes {
+            for target in crate::link::targets(&file.note.body) {
+                *used.entry(target).or_default() += 1;
+            }
+        }
+
+        let mut rows = Vec::new();
+        for name in held {
+            let size = std::fs::metadata(notebook.path.join(&name))
+                .map(|meta| meta.len())
+                .unwrap_or_default();
+            let (kind, _) = holding(&name);
+            rows.push(page::Held {
+                used: used.get(&name).copied().unwrap_or_default(),
+                name,
+                size,
+                // Without the parameters: `text/plain; charset=utf-8` is what
+                // the download says because a browser needs the encoding, and
+                // `text/plain` is what the row says because a reader does not.
+                kind: kind.split(';').next().unwrap_or(kind).to_string(),
+            });
+        }
+        Ok(Answer::Page(page::files(&book, &rows)))
+    })
+    .await
+}
+
+/// One of those files, as its bytes.
+///
+/// **The only place noda opens a path a reader named**, which is why the path
+/// goes through `link::target` before anything touches the disk: it is what
+/// decides that `../../.ssh/id_rsa` names nothing in the notebook. A note is
+/// never served from here — a `.md` file has a page of its own, and answering
+/// for it here would be a second, unrendered way to read a note.
+async fn held(
+    State(server): State<Shared>,
+    Path((book, name)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let nothing = || {
+            Ok(Answer::Missing(
+                "No such file".to_string(),
+                format!("{book} holds no file called {name}."),
+            ))
+        };
+        // Resolved as a link destination because that is what it was: the page
+        // that sent the reader here wrote this URL from a destination in a
+        // note's body, and the same rules have to answer both.
+        let Some(path) = crate::link::target(&name) else {
+            return nothing();
+        };
+        let on_disk = notebook.path.join(&path);
+        // Exactly as the notebook itself decides what is a note — `strip_suffix(".md")`,
+        // case and all. A case-insensitive test here would refuse to serve a
+        // file called `NOTES.MD`, which the notebook holds as an attachment and
+        // will happily list on the files page.
+        #[expect(
+            clippy::case_sensitive_file_extension_comparisons,
+            reason = "matches Notebook::inventory, which is what decides this everywhere else"
+        )]
+        let is_note = path.ends_with(".md");
+        if is_note || !on_disk.is_file() {
+            return nothing();
+        }
+
+        let (kind, inline) = holding(&path);
+        Ok(Answer::Held(Held {
+            bytes: std::fs::read(&on_disk)?,
+            kind,
+            inline,
+            name: path,
+        }))
     })
     .await
 }

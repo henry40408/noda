@@ -41,14 +41,22 @@ git2 = { version = "0.21.0", default-features = false, features = [
     "ssh",
     "vendored-openssl",
 ] }
-# The parser and nothing else: the default features add getopts and an HTML
-# renderer, which are what pulldown-cmark's own example CLI uses. noda reads the
-# event stream and renders nothing.
+# The parser, plus the HTML renderer that `noda web` hands its events to. Not
+# `getopts`, which is only there for pulldown-cmark's own example CLI.
+#
+# `html` pulls in one crate, `pulldown-cmark-escape`, from the same project. The
+# alternative was to write the renderer here, and it would have been a second
+# implementation of tables, entities and tight lists in exchange for nothing:
+# what noda actually needs to decide is which destinations may be followed and
+# what raw HTML turns into, and both of those are decided by rewriting the
+# events *before* they are rendered. Policy here, rendering there.
 #
 # A hand-rolled regex would not do. It cannot resolve reference-style links, and
 # it cannot tell that a link inside a code fence is not a link — and both of
 # those are how an attachment gets reported as an orphan when it is not one.
-pulldown-cmark = { version = "0.13.4", default-features = false }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = [
+    "html",
+] }
 # `noda import` reads a JSON export somebody else's program wrote. noda writes
 # its own JSON by hand — one object of five string fields does not justify a
 # crate — but reading is the other direction: a hand-written parser for a file

@@ -914,6 +914,10 @@ tags ticked on and off, and it can be deleted. Every one of those runs the comma
 it — the same `add`, `mv`, `tag` and `rm` the terminal calls — so what a change *means* has
 one implementation, and each lands as its own commit with the same message it would have had.
 
+The tags form ticks off what should go and takes the new ones in one field, separated by
+spaces — `ops docs "24.04 Dark patterns"` adds three, quoted the way the `:` prompt and the
+search box quote, and the whole change is one commit.
+
 **An edit carries the note's fingerprint, and a stale one is refused.** The form remembers
 what the file hashed to when the page was drawn; if it hashes to something else by the time
 you save, nothing is written and the page comes back with both versions on it — what is saved
@@ -925,8 +929,26 @@ The fingerprint is the file's git blob id and not its `updated` stamp, because `
 exists — a note's content can change without its stamp moving, which is exactly the case that
 version marker would be wrong in.
 
-Rendering Markdown, following links between notes, showing attachments, and syncing are not
-there yet.
+**A note is rendered, and its links go where they went on disk.** A relative link to another
+note — `[the plan](k3f9m2p1-the-plan.md)`, the spelling that works on a git host and in any
+editor — becomes a link to that note's page, coloured the way an id is coloured everywhere
+else in noda, so a link that stays inside the notebook looks different from one that leaves.
+A link to anything else the notebook holds becomes a download, and an image is shown where it
+stands.
+
+`/nb/<book>/files` lists everything that is not a note: how big it is, what it will arrive as,
+and how many notes point at it — a file nothing points at is exactly what `doctor --links`
+calls an orphan.
+
+Two things a note's body cannot do, both on purpose. **Raw HTML is shown as a code block**
+rather than rendered: `noda import tiddlywiki` deliberately leaves markup it could not convert
+in the body, so that markup is the only copy of what the note said, and dropping it would lose
+it. **A destination carrying a scheme noda does not serve — `javascript:` first among them —
+keeps its words and loses its link.** Files are served with `nosniff` and a content policy that
+loads nothing, and only the formats that cannot carry a script are shown in place: SVG is a
+document that runs script, so it arrives as a download.
+
+Syncing from the browser is not there yet.
 
 ### Action items
 
