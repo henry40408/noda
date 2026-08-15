@@ -187,6 +187,10 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
     std::fs::write(config.join("config.toml"), "sign = false\n")?;
 
     run(binary, root, &["init"])?;
+    // Two unticked boxes and a ticked one, so the todo screen has something to
+    // order and something to leave out. The dates are absurd on purpose:
+    // `due:2000-01-01` is late whenever the suite runs and `due:2999-12-31` is
+    // not, so what the scenarios read is the comparison and not the clock.
     run(
         binary,
         root,
@@ -194,7 +198,10 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
             "add",
             "Budget review",
             "-c",
-            "the q3 budget is late",
+            "the q3 budget is late\n\n\
+             - [ ] chase the marketing line due:2000-01-01\n\
+             - [ ] send the draft to Ana due:2999-12-31\n\
+             - [x] pull the ledger export\n",
             "--tag",
             "work",
         ],
@@ -213,7 +220,39 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
             "24.04 Dark patterns",
         ],
     )?;
-    run(binary, root, &["add", "Reading list", "-c", "a book"])?;
+    // One note pointing at another, which is the only way a backlink can exist.
+    // The destination is asked for rather than spelled out: an id is minted, so
+    // a fixture that wrote one down would be a fixture that could not be built
+    // twice — the standing rule about test ids, one layer up.
+    //
+    // It points at the meeting notes and not at the budget, and that is not
+    // arbitrary: a destination is a *filename*, so a note linking to
+    // `…-budget-review.md` holds the word "budget" in its body and turns up in
+    // a search for it. One scenario in `searching.feature` asks for exactly the
+    // note that would then be wrong.
+    let notes = capture(binary, root, &["path", "meeting-notes"])?;
+    let notes = Path::new(notes.trim())
+        .file_name()
+        .context("noda path did not answer with a filename")?
+        .to_string_lossy()
+        .to_string();
+    run(
+        binary,
+        root,
+        &[
+            "add",
+            "Reading list",
+            "-c",
+            &format!("a book, and [the notes]({notes})"),
+        ],
+    )?;
+    // A file, and a note that points at it. The files screen counts what points
+    // at each one and that count is the only door to a file's backlinks — a file
+    // has no page of its own — so a notebook with no files at all could not
+    // exercise it.
+    let png = root.join("rack.png");
+    std::fs::write(&png, b"\x89PNG\r\n\x1a\nnot really")?;
+    run(binary, root, &["file", "add", &png.to_string_lossy()])?;
     run(
         binary,
         root,
@@ -221,7 +260,7 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
             "add",
             "Markup import",
             "-c",
-            "a <b>bold</b> here",
+            "a <b>bold</b> here, and ![the rack](rack.png)",
             "--tag",
             "ops",
         ],
@@ -230,6 +269,16 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
 }
 
 fn run(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
+    capture(binary, root, args).map(|_| ())
+}
+
+/// The same, kept for what it printed.
+///
+/// Only the fixture needs this, and only to ask noda where it just put
+/// something. Reading a command's output is otherwise a thing to avoid — what
+/// `cmd` prints is written for a person — but `noda path` exists precisely to be
+/// read by another program, and its whole answer is one path.
+fn capture(binary: &Path, root: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new(binary)
         .args(args)
         .envs(xdg(root))
@@ -242,7 +291,7 @@ fn run(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// All four, `XDG_STATE_HOME` included: the active-notebook pointer lives in

@@ -164,6 +164,82 @@ impl Page<'_> {
         Ok(())
     }
 
+    /// Presses the round button that writes a new note.
+    ///
+    /// By its label and not its words, because it has none: it is one icon, and
+    /// what says what it is for is the `aria-label` a screen reader reads. A
+    /// test that reached for it by class would be agreeing with the stylesheet
+    /// instead of with the reader.
+    ///
+    /// # Errors
+    ///
+    /// Fails when this screen offers no way to write.
+    pub async fn tap_write(&self) -> Result<()> {
+        self.driver()
+            .find(By::Css("[aria-label='New note']"))
+            .await
+            .context("this screen offers no way to write a note")?
+            .click()
+            .await?;
+        Ok(())
+    }
+
+    /// What the bar says you are standing on, if anything.
+    ///
+    /// `aria-current` is the whole answer — the marked item is marked with the
+    /// attribute a screen reader reads for the same fact, and the colour hangs
+    /// off it. Asking for the attribute is asking the same question the reader's
+    /// software asks.
+    ///
+    /// **One round trip, absent as `None`.** A screen with nothing marked is the
+    /// ordinary case on the listing, not an error, and "not there yet" must
+    /// never be thrown at the retry loop as a failure.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried at all.
+    pub async fn marked_place(&self) -> Result<Option<String>> {
+        let found = self
+            .0
+            .measure(
+                "const at = document.querySelector('.actionbar a[aria-current]');\
+                 return at ? at.innerText.trim() : null;",
+            )
+            .await?;
+        Ok(found.as_str().map(std::string::ToString::to_string))
+    }
+
+    /// The words of the first row, or `None` when there are none yet.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn first_row(&self) -> Result<Option<String>> {
+        Ok(self.rows().await?.into_iter().next())
+    }
+
+    /// Whether the page draws this text as a date that has gone by.
+    ///
+    /// The class and not the colour: what the palette resolves to is
+    /// `web/theme.rs`'s answer and reading a computed colour here would be a
+    /// second copy of it. What this screen has to get right is which of the two
+    /// a date is, and that is the class it is given.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn is_overdue(&self, text: &str) -> Result<bool> {
+        let found = self
+            .0
+            .measure(&format!(
+                "return Array.from(document.querySelectorAll('.overdue'))\
+                 .some(e => e.innerText.includes({}));",
+                serde_json::to_string(text).unwrap_or_default()
+            ))
+            .await?;
+        Ok(found.as_bool().unwrap_or(false))
+    }
+
     /// Presses the way back.
     ///
     /// # Errors
@@ -283,6 +359,14 @@ impl Page<'_> {
                 const wide = {wide}, tall = {tall};
                 const short = [];
                 for (const el of document.querySelectorAll('a, input, button')) {{
+                    // A thing that cannot be pressed is not a control. The
+                    // checkboxes a rendered note draws are the case: `noda todo`
+                    // reads those boxes across the whole notebook, and ticking
+                    // one here would have to be a commit — so they arrive
+                    // disabled, exactly as the CLI has no `todo done`. They are
+                    // 16 pixels of typography inside a sentence, and a rule
+                    // about thumbs has nothing to say about them.
+                    if (el.disabled) {{ continue; }}
                     // What a thumb actually presses. A checkbox inside a label
                     // is 22 pixels of ink inside whatever the label is, and the
                     // label is the target: pressing it toggles the box. Measuring

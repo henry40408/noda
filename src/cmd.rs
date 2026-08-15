@@ -1650,9 +1650,7 @@ fn missing_file(notes: &[notebook::NoteFile], name: &str, instead: &str) -> Erro
 /// Refuses a name that would read as a note which had lost its frontmatter, and
 /// which `doctor` would then report as broken from the moment it appeared.
 fn refuse_a_notes_name(name: &str) -> Result<()> {
-    if let Some(stem) = name.strip_suffix(".md")
-        && note::split_stem(stem).is_some()
-    {
+    if note::names_a_note(name) {
         return Err(Error::msg(format!(
             "{name} claims a note's id — a file noda would then report as a broken note"
         )));
@@ -2699,7 +2697,7 @@ pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
         // Never truncated. A real action item is a sentence, and a list that
         // cuts the sentence off is a list you have to open the note to read.
         let due = match &item.due {
-            Some(due) if due.as_str() < today => style::paint(style::OVERDUE, due),
+            Some(due) if item.overdue(today) => style::paint(style::OVERDUE, due),
             Some(due) => style::paint(style::MUTED, due),
             None => " ".repeat(DATE_WIDTH),
         };

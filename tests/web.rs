@@ -89,6 +89,11 @@ fn a_notebook() -> (TempRoot, Paths) {
     std::fs::write(&vector, "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").expect("write svg");
     cmd::file_add(&paths, &[vector], None).expect("file add");
 
+    // And a third file that happens to be Markdown. `README.md` is not a note —
+    // its stem carries no id — and the whole point of it here is that the web
+    // side must not decide otherwise from the suffix alone.
+    cmd::readme(&paths, false).expect("readme");
+
     // A note that points at one of them, which is what makes the count on the
     // files page a fact about this notebook rather than a hardcoded zero.
     cmd::add(
@@ -496,7 +501,7 @@ fn a_body_holding_markup_arrives_as_code() {
 /// `doctor --links` answers when it names orphans.
 #[test]
 fn the_files_page_lists_what_is_not_a_note() {
-    let (server, _paths) = serving();
+    let (server, paths) = serving();
     let answer = server.get("/nb/default/files");
 
     assert_eq!(answer.status, 200);
@@ -510,8 +515,20 @@ fn the_files_page_lists_what_is_not_a_note() {
     // One note embeds the png and nothing points at the svg.
     assert!(answer.says("in 1 note"), "{}", answer.body);
     assert!(answer.says("nothing links to it"), "{}", answer.body);
+    // Markdown is not the test — a name that carries an id is. `README.md` is a
+    // file the notebook holds and so belongs here, offered like any other.
+    assert!(
+        answer.says("href=\"/nb/default/f/README.md\""),
+        "{}",
+        answer.body
+    );
     // Notes have their own pages and are not listed here as files.
-    assert!(!answer.says(".md"), "{}", answer.body);
+    let id = id_of(&paths, "budget-review");
+    assert!(
+        !answer.says(&format!("{id}-budget-review.md")),
+        "{}",
+        answer.body
+    );
 }
 
 /// An image is shown where it stands. Anything that can carry a script is not,
@@ -580,6 +597,24 @@ fn a_note_is_not_served_as_a_file() {
     let id = id_of(&paths, "budget-review");
     let answer = server.get(&format!("/nb/default/f/{id}-budget-review.md"));
     assert_eq!(answer.status, 404, "{}", answer.body);
+}
+
+/// The other half of that rule, and the half a suffix test gets wrong: Markdown
+/// the notebook holds as a file is served like any other file. `README.md` is
+/// the one every notebook can have — the files page lists it and links to it,
+/// and refusing it here made that link a dead end.
+#[test]
+fn a_markdown_file_that_is_not_a_note_is_served() {
+    let (server, _paths) = serving();
+
+    let answer = server.get("/nb/default/f/README.md");
+    assert_eq!(answer.status, 200, "{}", answer.body);
+    assert!(answer.says("default"), "{}", answer.body);
+
+    // And the same name resolves on the way to its backlinks, which asks the
+    // question of a file rather than opening it.
+    let links = server.get("/nb/default/f/README.md/backlinks");
+    assert_eq!(links.status, 200, "{}", links.body);
 }
 
 /// The body is Markdown and arrives rendered: a heading is a heading, and a
@@ -915,10 +950,247 @@ fn no_page_carries_a_script() {
     for path in &[
         "/".to_string(),
         "/nb/default".to_string(),
+        "/nb/default/tags".to_string(),
+        "/nb/default/todo".to_string(),
+        "/nb/default/files".to_string(),
         format!("/nb/default/n/{id}"),
+        format!("/nb/default/n/{id}/backlinks"),
+        "/nb/default/f/rack.png/backlinks".to_string(),
     ] {
         let answer = server.get(path);
         assert!(!answer.says("<script"), "{path} carries a script");
         assert!(!answer.says("onclick"), "{path} carries a handler");
+    }
+}
+
+/// Every tag, commonest first, each a way into the listing rather than a report.
+#[test]
+fn the_tags_screen_counts_them_and_leads_into_the_listing() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default/tags");
+
+    assert_eq!(answer.status, 200);
+    // `work` is on two of the fixture's notes and `ops` on one, so `work` comes
+    // first — a tag list sorted by name would bury the tags a notebook runs on.
+    assert!(answer.says("2 notes"), "{}", answer.body);
+    assert!(
+        answer.body.find(">work<") < answer.body.find(">ops<"),
+        "{}",
+        answer.body
+    );
+    // The row narrows the listing. A tag with a space in it arrives quoted, or
+    // the field it lands in would split it into terms and find nothing at all.
+    assert!(
+        answer.says("q=tag%3Awork"),
+        "no plain tag query: {}",
+        answer.body
+    );
+    assert!(
+        answer.says("q=tag%3A%2224.04%20Dark%20patterns%22"),
+        "no quoted tag query: {}",
+        answer.body
+    );
+}
+
+/// The list `noda todo` prints, in the same order, with the same idea of late.
+///
+/// The dates are absurd on purpose. `due:2000-01-01` is overdue whenever this
+/// test runs and `due:2999-12-31` is not, so what is asserted is the comparison
+/// rather than the clock the machine happens to have.
+#[test]
+fn the_todo_screen_lists_unticked_boxes_soonest_first() {
+    let (server, paths) = serving();
+    cmd::add(
+        &paths,
+        Some("Chores"),
+        Some("- [ ] much later due:2999-12-31\n- [ ] long overdue due:2000-01-01\n- [x] done\n"),
+        &[],
+    )
+    .expect("add");
+    let answer = server.get("/nb/default/todo");
+
+    assert_eq!(answer.status, 200);
+    assert!(answer.says("long overdue"), "{}", answer.body);
+    // A ticked box is finished, and a list of what is done is not what this is.
+    assert!(!answer.says(">done<"), "{}", answer.body);
+    assert!(
+        answer.body.find("long overdue") < answer.body.find("much later"),
+        "{}",
+        answer.body
+    );
+    assert!(
+        answer.says("<span class=\"overdue\">2000-01-01</span>"),
+        "{}",
+        answer.body
+    );
+    assert!(
+        answer.says("<span class=\"when\">2999-12-31</span>"),
+        "{}",
+        answer.body
+    );
+    // The `due:` term is lifted out of the words, so the date is not said twice.
+    assert!(!answer.says("due:2000-01-01"), "{}", answer.body);
+    // Which note it is written in, by title — the row goes there.
+    assert!(answer.says("Chores"), "{}", answer.body);
+}
+
+/// What points at a note, which is the half nothing else could tell you.
+#[test]
+fn a_notes_backlinks_are_what_points_at_it() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    cmd::add(
+        &paths,
+        Some("Pointer"),
+        Some(&format!("see [the budget]({id}-budget-review.md)")),
+        &[],
+    )
+    .expect("add");
+
+    let answer = server.get(&format!("/nb/default/n/{id}/backlinks"));
+    assert_eq!(answer.status, 200);
+    assert!(answer.says("Pointer"), "{}", answer.body);
+    assert!(answer.says("What links to"), "{}", answer.body);
+    // A note that points at nothing here is not listed.
+    assert!(!answer.says("Reading list"), "{}", answer.body);
+}
+
+/// **The reason this is worth a screen.** The match is on the id in the
+/// destination, so a retitle does not silence it — and just after a retitle is
+/// exactly when the links pointing at a note are worth looking at, because every
+/// Markdown renderer now shows them broken.
+#[test]
+fn a_backlink_survives_a_retitle() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    cmd::add(
+        &paths,
+        Some("Pointer"),
+        Some(&format!("see [the budget]({id}-budget-review.md)")),
+        &[],
+    )
+    .expect("add");
+    cmd::mv(
+        &paths,
+        &id,
+        "Something else entirely",
+        false,
+        cmd::Touch::Stamp,
+    )
+    .expect("mv");
+
+    let answer = server.get(&format!("/nb/default/n/{id}/backlinks"));
+    assert_eq!(answer.status, 200);
+    assert!(answer.says("Pointer"), "{}", answer.body);
+    assert!(answer.says("Something else entirely"), "{}", answer.body);
+}
+
+/// A file's backlinks, which is the only way to ask a file that question: an
+/// attachment has no page of its own, so the count on the files page is the door.
+#[test]
+fn a_files_backlinks_are_reached_from_the_count_beside_it() {
+    let (server, _paths) = serving();
+    let files = server.get("/nb/default/files");
+
+    assert!(
+        files.says("href=\"/nb/default/f/rack.png/backlinks\""),
+        "{}",
+        files.body
+    );
+    // Nothing points at the svg, so the words stay words. A link to a page that
+    // can only say "nothing links here" is a press that tells you nothing.
+    assert!(files.says("nothing links to it"), "{}", files.body);
+    assert!(!files.says("plan.svg/backlinks"), "{}", files.body);
+
+    let answer = server.get("/nb/default/f/rack.png/backlinks");
+    assert_eq!(answer.status, 200);
+    assert!(answer.says("The rack"), "{}", answer.body);
+}
+
+/// A note is not a file here, exactly as it is not one at `/f/`: it has a page
+/// of its own, and its backlinks are on that page's screen.
+#[test]
+fn a_note_is_not_asked_for_backlinks_as_if_it_were_a_file() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let answer = server.get(&format!("/nb/default/f/{id}-budget-review.md/backlinks"));
+    assert_eq!(answer.status, 404);
+    // Nor can the question be used to walk out of the notebook.
+    assert_eq!(
+        server
+            .get("/nb/default/f/..%2F..%2Fetc%2Fpasswd/backlinks")
+            .status,
+        404
+    );
+}
+
+/// The bar is the same three places on all four notebook screens, and says which
+/// one you are on — with `aria-current`, so the stylesheet and a screen reader
+/// are told the same fact once.
+#[test]
+fn the_notebook_screens_share_one_bar_that_says_where_you_are() {
+    let (server, _paths) = serving();
+    for (path, here) in [
+        ("/nb/default", None),
+        ("/nb/default/tags", Some("/nb/default/tags")),
+        ("/nb/default/todo", Some("/nb/default/todo")),
+        ("/nb/default/files", Some("/nb/default/files")),
+    ] {
+        let answer = server.get(path);
+        for place in ["/nb/default/tags", "/nb/default/todo", "/nb/default/files"] {
+            assert!(
+                answer.says(&format!("href=\"{place}\"")),
+                "{path} does not offer {place}: {}",
+                answer.body
+            );
+        }
+        match here {
+            // The listing is where the bar leads *from*, so nothing is marked.
+            // The attribute is asked for with its value: the stylesheet inlined
+            // into every page names the bare attribute in a selector, so the
+            // shorter needle is on all of them.
+            None => assert!(
+                !answer.says("aria-current=\"page\""),
+                "{path}: {}",
+                answer.body
+            ),
+            Some(place) => assert!(
+                answer.says(&format!("href=\"{place}\" aria-current=\"page\"")),
+                "{path} does not mark itself: {}",
+                answer.body
+            ),
+        }
+        // One action, off the row of places.
+        assert!(
+            answer.says("class=\"fab\" href=\"/nb/default/new\""),
+            "{path} has no way to write: {}",
+            answer.body
+        );
+    }
+}
+
+/// The wide layout puts one column down the middle by capping `main`, so a page
+/// whose body is outside `main` runs the whole width of a monitor. Every form
+/// page did until the element was put back.
+#[test]
+fn every_page_keeps_its_body_inside_the_column() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    for path in &[
+        "/nb/default".to_string(),
+        "/nb/default/tags".to_string(),
+        "/nb/default/todo".to_string(),
+        "/nb/default/files".to_string(),
+        "/nb/default/new".to_string(),
+        format!("/nb/default/n/{id}"),
+        format!("/nb/default/n/{id}/edit"),
+        format!("/nb/default/n/{id}/tags"),
+        format!("/nb/default/n/{id}/rename"),
+        format!("/nb/default/n/{id}/delete"),
+        format!("/nb/default/n/{id}/backlinks"),
+    ] {
+        let answer = server.get(path);
+        assert_eq!(answer.status, 200, "{path}");
+        assert!(answer.says("<main"), "{path} has no main: {}", answer.body);
     }
 }

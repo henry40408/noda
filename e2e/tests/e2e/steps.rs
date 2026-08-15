@@ -257,6 +257,56 @@ async fn untick(world: &mut NodaWorld, tag: String) -> Result<()> {
     world.page()?.untick(&tag).await
 }
 
+#[when("I press the button to write")]
+async fn press_write(world: &mut NodaWorld) -> Result<()> {
+    world.page()?.tap_write().await
+}
+
+#[then(expr = "the bar marks {string}")]
+async fn bar_marks(world: &mut NodaWorld, place: String) -> Result<()> {
+    eventually(&format!("the bar to mark {place:?}"), || async {
+        Ok(world.page()?.marked_place().await?.as_deref() == Some(place.as_str()))
+    })
+    .await
+}
+
+#[then(expr = "the bar does not mark {string}")]
+async fn bar_does_not_mark(world: &mut NodaWorld, place: String) -> Result<()> {
+    eventually(&format!("the bar to leave {place:?} unmarked"), || async {
+        Ok(world.page()?.marked_place().await?.as_deref() != Some(place.as_str()))
+    })
+    .await
+}
+
+/// The listing, where nothing is marked because it is what the bar leads from.
+#[then("the bar marks nothing")]
+async fn bar_marks_nothing(world: &mut NodaWorld) -> Result<()> {
+    eventually("the bar to mark nothing", || async {
+        Ok(world.page()?.marked_place().await?.is_none())
+    })
+    .await
+}
+
+#[then(expr = "the first row is {string}")]
+async fn first_row_is(world: &mut NodaWorld, what: String) -> Result<()> {
+    eventually(&format!("{what:?} to be the first row"), || async {
+        Ok(world
+            .page()?
+            .first_row()
+            .await?
+            .is_some_and(|row| row.contains(&what)))
+    })
+    .await
+}
+
+#[then(expr = "{string} is marked overdue")]
+async fn marked_overdue(world: &mut NodaWorld, text: String) -> Result<()> {
+    eventually(&format!("{text:?} to be marked overdue"), || async {
+        world.page()?.is_overdue(&text).await
+    })
+    .await
+}
+
 #[then(expr = "the page says {string}")]
 async fn page_says(world: &mut NodaWorld, text: String) -> Result<()> {
     eventually(&format!("the page to say {text:?}"), || async {

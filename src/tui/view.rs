@@ -535,7 +535,7 @@ fn todo_rows(app: &App) -> Sheet {
         .filter_map(|task| {
             let file = app.note_at(task.note)?;
             let due = match &task.item.due {
-                Some(due) if due.as_str() < app.today() => {
+                Some(due) if task.item.overdue(app.today()) => {
                     Span::styled(due.clone(), theme::from(palette::OVERDUE))
                 }
                 Some(due) => Span::styled(due.clone(), muted),
