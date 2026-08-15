@@ -70,6 +70,23 @@ toml_edit = "0.25.13"
 # left is the widgets, the layout solver and the crossterm backend.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 
+# Only the browser's end-to-end tests use these, so they cost the shipped binary
+# and its cold start nothing.
+#
+# The reason a crate is needed at all rather than sixty lines of FFI: opening a
+# pty is `openpty(3)`, and `unsafe_code = "deny"` is a line above. portable-pty
+# is wezterm's own pty layer, so it is what a real terminal emulator uses.
+#
+# vt100 is the other half. A pty hands back a byte stream, and what a test wants
+# to assert on is the screen those bytes leave behind — so something has to keep
+# the grid, honour the cursor moves and the erases, and answer "what does row 9
+# say now". That is a terminal emulator's state machine; writing a partial one
+# was how this was done before, and a partial one is wrong about exactly the
+# things (wrapping, scroll regions) that a layout bug hides behind.
+[dev-dependencies]
+portable-pty = "0.9.0"
+vt100 = "0.16.2"
+
 # Lints encoded in-manifest so `cargo build`/`cargo clippy` and IDEs apply them
 # without extra flags (CI additionally runs `clippy --all-targets -- -D warnings`,
 # which promotes every one of these warnings to a hard error). Kept 1:1 with the
