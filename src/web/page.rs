@@ -737,11 +737,15 @@ font-weight:600;flex:1}\
 .ticks{display:flex;flex-direction:column}\
 /* The whole row, not the words. A label is what a thumb presses to toggle the \
    box inside it, so it is the label that has to be a target — and on a phone \
-   the row is the shape a list of choices takes. */\
-.tick{display:flex;align-items:center;gap:12px;min-height:var(--tap);color:var(--tag);\
-font-size:16px;margin:0;width:100%;padding:0 2px;border-bottom:1px solid var(--rule)}\
-.tick:last-child{border-bottom:0}\
-.tick input{width:22px;height:22px;accent-color:var(--tag)}\
+   the row is the shape a list of choices takes. The selector names the form as \
+   well as the class because `form.write label` above is the more specific of \
+   the two otherwise, and a row left as a block puts the box and its tag on a \
+   shared baseline instead of a common centre. */\
+form.write label.tick{display:flex;align-items:center;gap:12px;min-height:var(--tap);\
+color:var(--tag);font-size:16px;margin:0;width:100%;padding:0 2px;\
+border-bottom:1px solid var(--rule)}\
+form.write label.tick:last-child{border-bottom:0}\
+.tick input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--tag)}\
 .said{padding:12px 16px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:13px}\
 .said b{color:var(--text);font-weight:600}\
 .said.bad{color:var(--alert)}\

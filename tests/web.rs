@@ -603,6 +603,24 @@ fn ticking_the_boxes_is_what_says_which_tags_stay() {
     );
 }
 
+/// A tag row is a box beside a word, centred against each other. The rule that
+/// makes it one has to out-specify `form.write label` above it, which is the
+/// field-label rule and says `display:block`; a bare `.tick` loses that contest,
+/// and the row falls back to a baseline with the box and its tag jammed
+/// together. The assertion is on the selector because that is where it broke.
+#[test]
+fn a_tag_row_centres_its_box_against_its_name() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "meeting-notes");
+
+    let form = server.get(&format!("/nb/default/n/{id}/tags"));
+    assert!(
+        form.says("form.write label.tick{display:flex"),
+        "the row rule is out-specified:\n{}",
+        form.body
+    );
+}
+
 #[test]
 fn a_note_can_be_renamed_and_keeps_its_address() {
     let (server, paths) = serving();
