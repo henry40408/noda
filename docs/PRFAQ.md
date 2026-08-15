@@ -109,9 +109,16 @@ stamp `updated`, commit) has exactly one implementation and it is the one every 
 already uses. Nothing in the browser writes a note itself.
 
 **Q: What about a web UI?**
-Planned. The v1 focus is the CLI. A `noda web` local server that serves the same notebook
-over a browser is on the roadmap; because storage is just git, the web UI reads the exact
-same files.
+`noda web` serves the notebooks over HTTP, for reading them from a phone. It renders on the
+server and needs no JavaScript; because storage is just git, it reads the exact same files
+the CLI does. It reads them today — editing, Markdown rendering, attachments and syncing
+from the browser are still to come.
+
+There is no password on it, deliberately: it listens on your own machine until told
+otherwise, and the way to reach it from elsewhere is a tailnet or something in front of it
+that already does authentication. What it does carry is the two protections that need no
+account — it refuses requests that say they came from another site, and it answers to a
+hostname only when started with that name.
 
 ---
 

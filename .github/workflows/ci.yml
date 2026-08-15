@@ -42,6 +42,29 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run
 
+  e2e:
+    name: browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: |
+            .
+            e2e
+      # `e2e/` is its own workspace, so its lints are its own job as well —
+      # sharing this one's build is what keeps that from costing a second
+      # compile of thirtyfour.
+      - run: cargo fmt --check --manifest-path e2e/Cargo.toml
+      - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
+      # Built here rather than left to the suite, so a compile error in noda
+      # itself is reported as a compile error rather than as a browser that
+      # found nothing listening.
+      - run: cargo build
+      # The runner image carries Google Chrome; the driver manager downloads
+      # only the matching chromedriver, never a browser.
+      - run: cargo test --manifest-path e2e/Cargo.toml --test e2e
+
   deny:
     name: supply chain
     runs-on: ubuntu-latest

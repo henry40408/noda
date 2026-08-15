@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use noda::{Paths, cmd, tui};
+use noda::{Paths, cmd, tui, web};
 
 /// What `noda ls --sort` accepts. `cmd::Sort` has a fourth variant for the
 /// order a listing comes in when the flag is absent, which is not something to
@@ -179,6 +179,25 @@ enum Command {
     /// runs the ones that have no key, under the names they already have — so
     /// what a change means is written down in exactly one place.
     Tui,
+    /// Serve the notebooks in a browser, for reading them from a phone.
+    ///
+    /// There is no password on this. It is meant to be reached over a tailnet or
+    /// from behind something that already does authentication, and the defaults
+    /// are set for that: it listens on this machine only until told otherwise,
+    /// and it answers to a hostname only when told to.
+    Web {
+        /// Address to listen on. Give `0.0.0.0:8080` to reach it from elsewhere
+        /// — and read the paragraph above before you do.
+        #[arg(short, long, default_value = "127.0.0.1:8080", value_name = "ADDR")]
+        listen: String,
+        /// A hostname to answer to, repeatable.
+        ///
+        /// Addresses and `localhost` need no permission. A *name* does, because
+        /// a name is what an attacker needs for a DNS rebinding attack — so a
+        /// reverse proxy or a tailnet name has to be named here.
+        #[arg(long = "allow-host", value_name = "NAME")]
+        allow_host: Vec<String>,
+    },
     /// Show commit history for the notebook, or for one note.
     Log {
         /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
@@ -514,6 +533,7 @@ fn run() -> noda::Result<()> {
         } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Tui => tui::run(&paths)?,
+        Command::Web { listen, allow_host } => web::serve(&paths, listen, allow_host)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Backlinks { key, json, quiet } => cmd::backlinks(
             &paths,
