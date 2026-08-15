@@ -8,7 +8,7 @@ Feature: Writing from a phone
 
   Scenario: A note can be written, start to finish
     Given I open the notebook
-    When I press "New"
+    When I press the button to write
     And I write "Written on a train" as the title
     And I write "the meeting is moved" as the body
     And I submit "Add note"
@@ -17,7 +17,7 @@ Feature: Writing from a phone
 
   Scenario: Every control on the new-note form can be pressed
     Given I open the notebook
-    When I press "New"
+    When I press the button to write
     Then no control is smaller than 48 by 48
     And the page does not scroll sideways
     And no field is smaller than 16 pixels

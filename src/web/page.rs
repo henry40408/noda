@@ -58,6 +58,39 @@ pub struct Held {
     pub used: usize,
 }
 
+/// One tag, and how many notes carry it.
+pub struct Tally {
+    pub tag: String,
+    pub notes: usize,
+}
+
+/// One unticked box, and the note that holds it.
+///
+/// The note is named by title rather than by filename: this is a list of things
+/// to do, and which file a task is written in is the answer to a second
+/// question. The id is still the address the row links to.
+pub struct Task {
+    pub id: String,
+    pub title: String,
+    /// The item's own words, with the `due:` term already lifted out of them.
+    pub text: String,
+    pub due: Option<String>,
+    /// Whether that date has gone past — worked out against the reader's own
+    /// day, which is a thing only the server knows.
+    pub overdue: bool,
+}
+
+/// What a backlinks page is about: a note, or one of the notebook's files.
+pub struct Subject {
+    /// What to call it — a note's title, a file's name.
+    pub what: String,
+    /// Where it is, for the way back.
+    pub at: String,
+    /// Whether the name is the machine's rather than the reader's. A filename is
+    /// set in monospace wherever it appears, and a title never is.
+    pub mono: bool,
+}
+
 /// A note, as its own page shows it.
 pub struct Reading {
     pub id: String,
@@ -175,7 +208,7 @@ fn highlight(text: &str, terms: &[String]) -> String {
 /// part you read, the tags are. That is the same judgement here, so it is the
 /// same function: the brackets are dropped on a page that has room to separate
 /// things by position, and the join keeps the comma the CLI uses.
-fn tags(tags: &[String]) -> String {
+fn tag_line(tags: &[String]) -> String {
     if tags.is_empty() {
         return String::new();
     }
@@ -242,14 +275,19 @@ impl About {
 /// slot it has. Adding it changed nothing above it — a fixed strip at the foot
 /// of a page is an extension, not a rearrangement, which is the rule this
 /// project applies to a listing's row and applies here to its chrome.
-fn action_bar(items: &[(&str, &str, String)]) -> String {
+fn action_bar(items: &[(&str, &str, String, bool)]) -> String {
     let mut out = String::from("<nav class=\"actionbar\">");
-    for (icon, label, href) in items {
+    for (icon, label, href, here) in items {
         let _ = write!(
             out,
-            "<a href=\"{}\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
+            "<a href=\"{}\"{}><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
              <span>{label}</span></a>",
-            escape(href)
+            escape(href),
+            // `aria-current` and not a class, because it is what the attribute
+            // is for: a screen reader says "current page" and the stylesheet
+            // hangs the brighter colour off the same fact. One statement, read
+            // two ways.
+            if *here { " aria-current=\"page\"" } else { "" }
         );
     }
     out.push_str("</nav>");
@@ -260,6 +298,16 @@ const NEW: &str = "<path d=\"M12 4.5v15M4.5 12h15\"/>";
 const EDIT: &str = "<path d=\"M4 20h4L19 9l-4-4L4 16z\"/>";
 const TAGS: &str = "<path d=\"M4 4h7l9 9-7 7-9-9z\"/><circle cx=\"8\" cy=\"8\" r=\"1.4\"/>";
 const RENAME: &str = "<path d=\"M4 7V5h16v2\"/><path d=\"M12 5v14\"/><path d=\"M9 19h6\"/>";
+/// A box with a tick in it, which is what a todo *is* here — the GFM checkbox
+/// every other Markdown reader draws.
+const TODO: &str = "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"3.5\"/><path d=\"M8.5 12.2l2.6 2.6 4.6-5.4\"/>";
+/// A paperclip: what the notebook holds that is not a note, in the shape
+/// everything on a phone uses for exactly that.
+const FILES: &str = "<path d=\"M18.5 10.5 11 18a4 4 0 0 1-5.7-5.7l7.8-7.8a2.6 2.6 0 0 1 3.7 3.7\
+ l-7.7 7.7a1.2 1.2 0 0 1-1.7-1.7l7.1-7.1\"/>";
+/// An arrow arriving at a line, because backlinks are the inbound half. The
+/// line is the note being pointed at, and the arrow is everything pointing.
+const LINKS: &str = "<path d=\"M19 5v14\"/><path d=\"M4 12h11\"/><path d=\"M11 8l4 4-4 4\"/>";
 
 /// The back chevron, and the only icon PR 1 has.
 ///
@@ -269,6 +317,50 @@ const RENAME: &str = "<path d=\"M4 7V5h16v2\"/><path d=\"M12 5v14\"/><path d=\"M
 /// notebook. It is also why it can be given a stroke width at all.
 const BACK: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M15 4.5 7.5 12 15 19.5\"/></svg>";
+
+/// Which of the notebook's screens is being drawn, so the bar can say so.
+///
+/// `Notes` is the listing, and it is deliberately not on the bar: the bar holds
+/// the three places you go *from* the listing, and the way back to it is the
+/// chevron every screen already carries in the same corner. So on the listing
+/// nothing is marked, and on the other three exactly one thing is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum At {
+    Notes,
+    Tags,
+    Todo,
+    Files,
+}
+
+/// The bar every notebook-level screen carries, and the one button that is not
+/// on it.
+///
+/// **Three places and one action, told apart by not being in the same row.**
+/// Tags, Todo and Files are somewhere to go; New is something to do, and a row
+/// that mixes the two is a row you have to read rather than aim at. The button
+/// is lifted off it and set where a thumb already rests.
+///
+/// The bar is the same three on all four screens, because a bar whose contents
+/// changed from screen to screen would be worse than no bar. It is also how the
+/// files page stopped being reachable only by typing its address, which is what
+/// it was until this existed.
+fn notebook_bar(book: &str, here: At) -> String {
+    let at = escape(book);
+    // Wrapped together, and the wrapper is what sticks to the bottom rather
+    // than the bar inside it. The button has to travel with the bar: on a
+    // screen with little on it the bar has not stuck to anything yet and sits
+    // under the last row, and a button pinned to the window would be floating on
+    // its own in the space below.
+    format!(
+        "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
+         <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
+        action_bar(&[
+            (TAGS, "Tags", format!("/nb/{at}/tags"), here == At::Tags),
+            (TODO, "Todo", format!("/nb/{at}/todo"), here == At::Todo),
+            (FILES, "Files", format!("/nb/{at}/files"), here == At::Files),
+        ])
+    )
+}
 
 fn back(href: &str, label: &str) -> String {
     format!(
@@ -341,7 +433,7 @@ pub fn listing(
     } else {
         let mut out = String::new();
         for row in rows {
-            let under = [tags(&row.tags), when(row.updated.as_deref())]
+            let under = [tag_line(&row.tags), when(row.updated.as_deref())]
                 .into_iter()
                 .filter(|piece| !piece.is_empty())
                 .collect::<Vec<_>>()
@@ -383,7 +475,7 @@ pub fn listing(
                 "<p class=\"problem\">{}</p>",
                 escape(why)
             )),
-            action_bar(&[(NEW, "New", format!("/nb/{}/new", escape(book)))])
+            notebook_bar(book, At::Notes)
         ),
     )
 }
@@ -403,19 +495,32 @@ pub fn files(book: &str, held: &[Held]) -> String {
     } else {
         let mut out = String::new();
         for file in held {
-            let under = [
-                size(file.size),
-                escape(&file.kind),
-                match file.used {
-                    0 => "nothing links to it".to_string(),
-                    used => format!("in {}", plural(used, "note")),
-                },
-            ]
-            .join("<span class=\"sep\">·</span>");
+            let under = [size(file.size), escape(&file.kind)].join("<span class=\"sep\">·</span>");
+            // Two targets in one row, side by side rather than nested — a link
+            // inside a link is not a thing HTML has. The row is the file and
+            // goes to the file; the count is a question about it and goes to
+            // the answer. It is the only way a notebook's own files can be asked
+            // what points at them, since a file has no page of its own.
+            //
+            // **Zero is not a link.** What `doctor --links` calls an orphan is
+            // said in the same words it has always been said in, and it stays
+            // text: a link whose destination is a page saying "nothing links
+            // here" is a press that cannot tell you anything you had not already
+            // read.
+            let asks = match file.used {
+                0 => "<span class=\"aside\">nothing links to it</span>".to_string(),
+                used => format!(
+                    "<a class=\"aside\" href=\"/nb/{}/f/{}/backlinks\">in {}</a>",
+                    escape(book),
+                    escape(&file.name),
+                    plural(used, "note")
+                ),
+            };
             let _ = write!(
                 out,
-                "<a class=\"row\" href=\"/nb/{}/f/{}\"><div class=\"title mono\">{}</div>\
-                 <div class=\"under\">{under}</div></a>",
+                "<div class=\"row split\">\
+                 <a class=\"most\" href=\"/nb/{}/f/{}\"><div class=\"title mono\">{}</div>\
+                 <div class=\"under\">{under}</div></a>{asks}</div>",
                 escape(book),
                 escape(&file.name),
                 escape(&file.name)
@@ -428,9 +533,10 @@ pub fn files(book: &str, held: &[Held]) -> String {
         &format!("Files — {book} — noda"),
         &format!(
             "<header class=\"topbar\">{}<span class=\"here\">Files</span>\
-             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>",
+             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>{}",
             back(&format!("/nb/{}", escape(book)), book),
-            held.len()
+            held.len(),
+            notebook_bar(book, At::Files)
         ),
     )
 }
@@ -454,10 +560,157 @@ fn size(bytes: u64) -> String {
     }
 }
 
+/// Every tag in the notebook, commonest first.
+///
+/// The browser's order, for the browser's reason: sorted by name alone, the four
+/// tags a notebook actually runs on are buried under every one-off ever typed.
+/// Alphabetical within a count, so the list does not reshuffle between visits.
+///
+/// A row is a link into the listing, narrowed to that tag — which is what makes
+/// this a way of getting somewhere rather than a report. `query::scoped` writes
+/// the query, because the field it lands in splits the way a shell does and a
+/// tag with a space in it has to arrive quoted.
+pub fn tags(book: &str, tallies: &[Tally]) -> String {
+    let body = if tallies.is_empty() {
+        "<div class=\"empty\"><b>No tags yet</b>Tags come from a note's frontmatter. \
+         Open a note and press Tags to add one.</div>"
+            .to_string()
+    } else {
+        let mut out = String::new();
+        for tally in tallies {
+            let _ = write!(
+                out,
+                "<a class=\"row\" href=\"/nb/{}?q={}\"><div class=\"name tags\">{}</div>\
+                 <div class=\"under\"><span class=\"when\">{}</span></div></a>",
+                escape(book),
+                escape(&crate::web::encoded(&crate::query::scoped(&tally.tag))),
+                escape(&tally.tag),
+                plural(tally.notes, "note")
+            );
+        }
+        out
+    };
+
+    shell(
+        &format!("Tags — {book} — noda"),
+        &format!(
+            "<header class=\"topbar\">{}<span class=\"here\">Tags</span>\
+             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>{}",
+            back(&format!("/nb/{}", escape(book)), book),
+            tallies.len(),
+            notebook_bar(book, At::Tags)
+        ),
+    )
+}
+
+/// Everything in the notebook that is not done.
+///
+/// `todo::order` puts the rows in order — soonest first, undated last — because
+/// `noda todo` and the browser print this same list, and one that came out
+/// differently depending on which you asked would read as a bug in whichever you
+/// asked second.
+///
+/// There is no way to tick a box here, and that is not an omission. An item
+/// inside a note has no address: line numbers move and text prefixes collide,
+/// and giving each one an id would turn the file into a noda-only format, which
+/// is the thing choosing GFM checkboxes was meant to avoid. The row goes to the
+/// note, where the box is a character you can type an `x` into.
+pub fn todo(book: &str, tasks: &[Task]) -> String {
+    let body = if tasks.is_empty() {
+        "<div class=\"empty\"><b>Nothing to do</b>An unticked <code>- [ ]</code> in any note \
+         turns up here, with a <code>due:2026-08-20</code> if you give it one.</div>"
+            .to_string()
+    } else {
+        let mut out = String::new();
+        for task in tasks {
+            let due = match &task.due {
+                Some(due) if task.overdue => {
+                    format!("<span class=\"overdue\">{}</span>", escape(due))
+                }
+                Some(due) => format!("<span class=\"when\">{}</span>", escape(due)),
+                None => String::new(),
+            };
+            let under = [
+                due,
+                format!("<span class=\"in\">{}</span>", escape(&task.title)),
+            ]
+            .into_iter()
+            .filter(|piece| !piece.is_empty())
+            .collect::<Vec<_>>()
+            .join("<span class=\"sep\">·</span>");
+            let _ = write!(
+                out,
+                "<a class=\"row\" href=\"/nb/{}/n/{}\"><div class=\"title\">{}</div>\
+                 <div class=\"under\">{under}</div></a>",
+                escape(book),
+                escape(&task.id),
+                escape(&task.text)
+            );
+        }
+        out
+    };
+
+    shell(
+        &format!("Todo — {book} — noda"),
+        &format!(
+            "<header class=\"topbar\">{}<span class=\"here\">Todo</span>\
+             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>{}",
+            back(&format!("/nb/{}", escape(book)), book),
+            tasks.len(),
+            notebook_bar(book, At::Todo)
+        ),
+    )
+}
+
+/// What links to a note, or to one of the notebook's files.
+///
+/// Inbound only, which is why it is not called "links". What a note points at is
+/// in the note and every Markdown reader renders it; what points *at* the note
+/// is the half nothing else could tell you — and on a phone, where there is no
+/// `noda backlinks` to type, it is the half that has nowhere else to come from.
+pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
+    let body = if rows.is_empty() {
+        format!(
+            "<div class=\"empty\"><b>Nothing links here</b>\
+             No note in {} points at {}.</div>",
+            escape(book),
+            escape(&subject.what)
+        )
+    } else {
+        let mut out = String::new();
+        for row in rows {
+            let under = tag_line(&row.tags);
+            let _ = write!(
+                out,
+                "<a class=\"row\" href=\"/nb/{}/n/{}\"><div class=\"title\">{}</div>\
+                 <div class=\"under\">{under}</div></a>",
+                escape(book),
+                escape(&row.id),
+                escape(&row.title)
+            );
+        }
+        out
+    };
+
+    shell(
+        &format!("Links to {} — noda", subject.what),
+        &format!(
+            "<header class=\"topbar\">{}<span class=\"here\">Backlinks</span>\
+             <span class=\"count\">{}</span></header>\
+             <main class=\"rows\">\
+             <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}</main>",
+            back(&subject.at, &subject.what),
+            rows.len(),
+            if subject.mono { "mono" } else { "subject" },
+            escape(&subject.what)
+        ),
+    )
+}
+
 /// One note.
 pub fn note(book: &str, reading: &Reading) -> String {
     let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
-    let meta = [tags(&reading.tags), updated(reading.updated.as_deref())]
+    let meta = [tag_line(&reading.tags), updated(reading.updated.as_deref())]
         .into_iter()
         .filter(|piece| !piece.is_empty())
         .collect::<Vec<_>>()
@@ -469,10 +722,13 @@ pub fn note(book: &str, reading: &Reading) -> String {
     // is proportionate rather than invented.
     let perilous =
         format!("<p class=\"perilous\"><a href=\"{at}/delete\">Delete this note</a></p>");
+    // Nothing marked as current: a note's bar is four things to do *to* the note
+    // you are already on, and there is no "here" among them to be at.
     let bar = action_bar(&[
-        (EDIT, "Edit", format!("{at}/edit")),
-        (TAGS, "Tags", format!("{at}/tags")),
-        (RENAME, "Rename", format!("{at}/rename")),
+        (EDIT, "Edit", format!("{at}/edit"), false),
+        (TAGS, "Tags", format!("{at}/tags"), false),
+        (RENAME, "Rename", format!("{at}/rename"), false),
+        (LINKS, "Links", format!("{at}/backlinks"), false),
     ]);
     let home = format!("/nb/{}", escape(book));
 
@@ -499,11 +755,18 @@ pub fn note(book: &str, reading: &Reading) -> String {
 
 /// What every form page is wrapped in: a bar with a way back, an optional line
 /// saying what went wrong, and the form itself.
+///
+/// **`<main>` around both, and it is not decoration.** The wide layout puts one
+/// column down the middle of the screen by capping `main`, so anything outside
+/// it runs the whole width of a monitor — which is what every form page did
+/// until now: a topbar neatly in its column with a textarea stretching past it
+/// on both sides. The element was missing, not the rule.
 fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
     shell(
         &format!("{title} — noda"),
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">{}</span></header>{said}{form}",
+            "<header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
+             <main>{said}{form}</main>",
             back(back_to, book),
             escape(title)
         ),
@@ -788,6 +1051,23 @@ a{color:inherit;text-decoration:none}\
 .tags{color:var(--tag)}\
 .sep{color:var(--punct)}\
 .when{color:var(--muted)}\
+/* A due date that has gone by. The one colour in noda that marks what a thing \
+   means rather than what it is, and `style.rs` argues for the exception where \
+   the colour is chosen. */\
+.overdue{color:var(--overdue)}\
+/* Which note a task is written in — the answer to a second question, so it \
+   steps back from the task itself. */\
+.row .in{color:var(--muted)}\
+/* A row with two destinations: the thing, and one question about it. The \
+   question is a tap target in its own right, which is why it is as tall as the \
+   row rather than as tall as its words. */\
+.row.split{display:flex;align-items:stretch;gap:12px;padding:0}\
+.row.split .most{flex:1 1 auto;min-width:0;padding:12px 0 12px 16px}\
+.row.split .aside{flex:0 0 auto;display:flex;align-items:center;padding:0 16px;\
+color:var(--muted);font-size:12.5px;-webkit-tap-highlight-color:transparent}\
+.row.split .aside:active{background:var(--press)}\
+.subject{font-family:var(--read)}\
+.mono{font-family:var(--mono)}\
 mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}\
 .note-head{padding:18px 16px 16px;border-bottom:1px solid var(--rule)}\
 .note-head h1{font-family:var(--read);font-size:24px;line-height:1.24;margin:0 0 10px;\
@@ -861,6 +1141,28 @@ align-items:center;justify-content:center;gap:4px;color:var(--muted);\
 .actionbar a:active{background:var(--press)}\
 .actionbar svg{width:26px;height:26px}\
 .actionbar span{font-size:11.5px;letter-spacing:0.02em}\
+/* Where you are, said by the attribute a screen reader reads for the same \
+   fact. Brighter rather than another hue: the palette's colours mark what a \
+   thing is, and this marks which one of them you are standing on. */\
+.actionbar a[aria-current]{color:var(--text)}\
+/* The one action, lifted off the row of places. It sits above the bar and to \
+   the right, where a thumb already is, and it is the only round thing on any \
+   of these pages — a shape nothing else uses cannot be mistaken for a row. */\
+.foot{position:sticky;bottom:0;z-index:2}\
+.foot .actionbar{position:static}\
+.fab{position:absolute;right:16px;bottom:calc(100% + 16px);\
+width:56px;height:56px;border-radius:28px;background:var(--id);color:var(--bg);\
+display:flex;align-items:center;justify-content:center;\
+/* Not a shadow: this stylesheet separates things with a 1px rule and never \
+   with depth. A ring of the page's own background is the same idea said in \
+   the one language the rest of the page speaks. */\
+box-shadow:0 0 0 5px var(--bg);-webkit-tap-highlight-color:transparent}\
+.fab svg{width:26px;height:26px;stroke-width:2.4}\
+.fab:active{background:var(--id-dim)}\
+/* Room under the last row, so the button never covers the end of a list. The \
+   button is 56px tall and stands 16px clear of the bar, so 72 is what it \
+   occupies and 76 is that with a hair to spare. */\
+body:has(.fab) main{padding-bottom:76px}\
 form.write{padding:16px;display:flex;flex-direction:column;gap:16px}\
 form.write label{font-size:12.5px;color:var(--punct);display:block;margin-bottom:6px}\
 /* Under the field, not above it: what a field takes is read after the reader \
@@ -912,6 +1214,12 @@ text-decoration:underline;text-underline-offset:3px;font-size:14px}\
    line and go to the right of the title. Same information, same order — the \
    rule `-l` follows on the CLI's own row. */\
 .row{display:flex;align-items:baseline;gap:18px;min-height:0;padding:14px 20px}\
+.row.split .most{display:flex;align-items:baseline;gap:18px;padding:14px 0 14px 20px}\
+.row.split .aside{padding:0 20px}\
+/* The button follows the column rather than the window: on a wide screen the \
+   content stops at 900px, and a button pinned to the far corner would be a \
+   button somewhere else on the page. */\
+.fab{right:max(16px,calc(50% - 450px + 16px))}\
 .row .title,.row .name{flex:1 1 auto}\
 .row .under{margin:0;flex:0 0 auto}\
 .topbar,.searchbar{padding-left:20px;padding-right:20px}\

@@ -136,6 +136,13 @@ fn properties(terminal: &Terminal) -> String {
         ("--tag", fill(style::TAGS, terminal)),
         ("--punct", fill(style::TAGS_PUNCT, terminal)),
         ("--alert", fill(style::INVALID, terminal)),
+        // The same red as `--alert` today, and a property of its own anyway.
+        // `style.rs` names `OVERDUE` separately because it is the one colour
+        // there that marks what a thing *means* rather than what it is — an
+        // exception it argues for in writing. A stylesheet that spelled it
+        // `--alert` would have quietly dropped the argument, and the next person
+        // to want a late date in amber would have to find it again.
+        ("--overdue", fill(style::OVERDUE, terminal)),
     ] {
         let _ = write!(css, "{name}:{value};");
     }

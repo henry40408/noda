@@ -940,6 +940,24 @@ stands.
 and how many notes point at it — a file nothing points at is exactly what `doctor --links`
 calls an orphan.
 
+**Three screens beyond the listing, on a bar along the bottom.** `/nb/<book>/tags` is every
+tag with how many notes carry it, commonest first, and pressing one narrows the listing to it
+— quoted where the tag has a space in it, because the search field splits the way a shell
+does. `/nb/<book>/todo` is `noda todo` on a phone: every unticked box in the notebook, soonest
+due first, a passed date in red, and the row goes to the note the box is written in. There is
+no way to tick one, for the reason there is no `noda done` — an item inside a note has no
+address, and giving each one an id would turn the file into a noda-only format.
+
+`/nb/<book>/n/<id>/backlinks` is what points *at* a note, reached from `Links` on the note's
+own bar; the count beside a file on the files page is the same question asked of a file, which
+is the only way to ask it since a file has no page of its own. Both match on the id in the
+destination rather than on the filename, so a retitle does not silence them — which is exactly
+when the answer is wanted, because every Markdown renderer now shows those links broken.
+
+A screen of its own rather than a strip on the note's page, and the reason is the one `ls` and
+`todo` already follow: reading a note opens one file, and answering "what links here" parses
+every note in the notebook. One press must not quietly cost the other.
+
 Two things a note's body cannot do, both on purpose. **Raw HTML is shown as a code block**
 rather than rendered: `noda import tiddlywiki` deliberately leaves markup it could not convert
 in the body, so that markup is the only copy of what the note said, and dropping it would lose

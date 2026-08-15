@@ -128,12 +128,20 @@ fn router(server: Shared) -> Router {
         .route("/", get(front))
         .route("/nb/{book}", get(listing))
         .route("/nb/{book}/files", get(files))
+        // The three screens that are about the notebook rather than about one
+        // note. Each is a walk of every note's body, which is why none of them
+        // is a column on the listing — the same line `ls` holds against new
+        // columns and `todo` was made a command of its own by.
+        .route("/nb/{book}/tags", get(tags))
+        .route("/nb/{book}/todo", get(todo))
         // One path segment, not a wildcard: a notebook is a flat directory, and
         // a route that could match `a/b` would be inviting a path to be
         // assembled out of pieces nobody checked.
         .route("/nb/{book}/f/{name}", get(held))
+        .route("/nb/{book}/f/{name}/backlinks", get(file_backlinks))
         .route("/nb/{book}/new", get(new_form).post(new_note))
         .route("/nb/{book}/n/{key}", get(reading))
+        .route("/nb/{book}/n/{key}/backlinks", get(note_backlinks))
         // One shape for all of them: `GET` shows the form, `POST` does the
         // thing, and both live at the address of the thing they are about. No
         // JavaScript is involved in any of it, so a form is the only way a
@@ -251,7 +259,7 @@ impl IntoResponse for Held {
         let disposition = format!(
             "{}; filename*=UTF-8''{}",
             if self.inline { "inline" } else { "attachment" },
-            encoded_name(&self.name)
+            encoded(&self.name)
         );
         (
             [
@@ -275,9 +283,15 @@ impl IntoResponse for Held {
     }
 }
 
-/// A filename as `filename*` takes it: percent-encoded, every byte that is not
-/// plainly safe spelled out.
-fn encoded_name(name: &str) -> String {
+/// A value as a URL takes it: percent-encoded, every byte that is not plainly
+/// safe spelled out.
+///
+/// Two callers, and the wider of the two decides the rule. `filename*` needs a
+/// notebook's own `réunion.pdf` to survive a header; a query string needs
+/// `tag:"24.04 Dark patterns"` to survive a link on the tags page — quotes,
+/// colon, spaces and all. Escaping everything but the unreserved set is correct
+/// in both places, and one function is one thing to get right.
+pub(crate) fn encoded(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for byte in name.bytes() {
         match byte {
@@ -510,6 +524,166 @@ async fn files(State(server): State<Shared>, Path(book): Path<String>) -> Respon
             });
         }
         Ok(Answer::Page(page::files(&book, &rows)))
+    })
+    .await
+}
+
+/// Every tag in the notebook, and how many notes carry it.
+///
+/// `notebook::tag_tally` counts and orders it, which is where the browser's tag
+/// screen gets the same list. Nothing is decided here — this hands it a walk of
+/// the notes and hands the answer to a page.
+async fn tags(State(server): State<Shared>, Path(book): Path<String>) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let tallies = crate::notebook::tag_tally(&notebook.notes()?)
+            .into_iter()
+            .map(|(tag, notes)| page::Tally { tag, notes })
+            .collect::<Vec<_>>();
+        Ok(Answer::Page(page::tags(&book, &tallies)))
+    })
+    .await
+}
+
+/// Everything in the notebook that is not done.
+///
+/// The same list `noda todo` prints, from the same two functions: `todo::items`
+/// finds the boxes and `todo::order` puts them in order. What this adds is the
+/// note's title beside each one — a listing on a phone has room for the words a
+/// terminal spends on a filename, and "which note is this in" is better answered
+/// by the title than by the slug.
+///
+/// **`cmd::today` decides what is late, and it is the local date.** Nobody
+/// writes `due:2026-08-20` meaning UTC. East of UTC an item that went overdue at
+/// midnight would otherwise stay unmarked until morning, which is exactly when a
+/// todo list is read.
+async fn todo(State(server): State<Shared>, Path(book): Path<String>) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let today = cmd::today()?;
+        let mut found = Vec::new();
+        for file in notebook.notes()? {
+            for item in crate::todo::items(&file.note.body) {
+                found.push((
+                    file.id.clone(),
+                    file.slug.clone(),
+                    file.note.title.clone(),
+                    item,
+                ));
+            }
+        }
+        found.sort_by(|(_, left_slug, _, left), (_, right_slug, _, right)| {
+            crate::todo::order((left_slug, left), (right_slug, right))
+        });
+
+        let tasks = found
+            .into_iter()
+            .map(|(id, _, title, item)| page::Task {
+                overdue: item.overdue(&today),
+                id,
+                title,
+                text: item.text,
+                due: item.due,
+            })
+            .collect::<Vec<_>>();
+        Ok(Answer::Page(page::todo(&book, &tasks)))
+    })
+    .await
+}
+
+/// What links to a note.
+///
+/// `backlinks_to_note` answers it, which is what `noda backlinks` asks too — and
+/// the match is on the id in the destination rather than on the filename, so the
+/// answer survives a retitle. That is the whole reason this is worth a screen:
+/// after `mv`, every Markdown renderer sees a broken link where noda still sees
+/// an unambiguous one.
+async fn note_backlinks(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/backlinks")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let note = Note::parse(&std::fs::read_to_string(notebook.note_path(&id, &slug))?)
+            .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+        let rows = notebook
+            .backlinks_to_note(&id)?
+            .iter()
+            .map(page::Row::of)
+            .collect::<Vec<_>>();
+        Ok(Answer::Page(page::backlinks(
+            &book,
+            &page::Subject {
+                what: note.title,
+                at: format!("/nb/{book}/n/{id}"),
+                mono: false,
+            },
+            &rows,
+        )))
+    })
+    .await
+}
+
+/// What links to one of the notebook's files.
+///
+/// The same question as above asked of a different kind of thing, which is why
+/// `noda backlinks` takes either. The difference is that a file has no id to
+/// fall back on: its name is the whole of its identity, and this is the screen
+/// that shows what a `file mv` without `--update-links` would leave pointing at
+/// nothing.
+///
+/// The name goes through `link::target` first, exactly as the download does. It
+/// is the same reader-supplied path, and the fact that this one only counts
+/// notes rather than opening the file is not a reason to check it less.
+async fn file_backlinks(
+    State(server): State<Shared>,
+    Path((book, name)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let nothing = || {
+            Ok(Answer::Missing(
+                "No such file".to_string(),
+                format!("{book} holds no file called {name}."),
+            ))
+        };
+        let Some(path) = crate::link::target(&name) else {
+            return nothing();
+        };
+        // A note is not a file here, the same way it is not one at `/f/`: it has
+        // a page of its own, and its backlinks are on that page's own screen.
+        #[expect(
+            clippy::case_sensitive_file_extension_comparisons,
+            reason = "matches Notebook::inventory, which is what decides this everywhere else"
+        )]
+        let is_note = path.ends_with(".md");
+        if is_note || !notebook.path.join(&path).is_file() {
+            return nothing();
+        }
+
+        let rows = notebook
+            .backlinks_to_file(&path)?
+            .iter()
+            .map(page::Row::of)
+            .collect::<Vec<_>>();
+        Ok(Answer::Page(page::backlinks(
+            &book,
+            &page::Subject {
+                at: format!("/nb/{}/files", encoded(&book)),
+                what: path,
+                mono: true,
+            },
+            &rows,
+        )))
     })
     .await
 }
