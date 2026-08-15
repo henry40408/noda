@@ -80,6 +80,22 @@ pub fn split(text: &str) -> Vec<String> {
     pieces
 }
 
+/// The query that narrows a listing to one tag, written so that `split` gives it
+/// back whole.
+///
+/// The inverse of the function above, and here for the same reason: every screen
+/// that lists tags offers to filter by one, and a tag may contain a space —
+/// `tag:24.04 Dark patterns` is three terms and-ed together, which finds nothing
+/// at all. The browser's tag screen worked this out once on its own; the web's
+/// asks here instead, so there is one answer to be wrong.
+pub fn scoped(tag: &str) -> String {
+    if tag.contains(char::is_whitespace) {
+        format!("tag:\"{tag}\"")
+    } else {
+        format!("tag:{tag}")
+    }
+}
+
 /// A parsed query: groups that must all match, each satisfied by any one of its
 /// terms.
 pub struct Query {

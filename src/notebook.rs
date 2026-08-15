@@ -1861,6 +1861,35 @@ pub fn linked_note_id(target: &str) -> Option<String> {
     Some(note::normalize_id(id))
 }
 
+/// Every tag these notes carry, commonest first, with how many carry it.
+///
+/// A free function for the reason the two below are: the browser already holds
+/// the notes and the web has just read them, and neither should walk a
+/// directory again to count what is in its hand.
+///
+/// **The order is here rather than in whoever draws it.** Commonest first is a
+/// judgement about what a tag list is for — sorted by name alone, the four tags
+/// a notebook actually runs on are buried under every one-off ever typed — and
+/// two screens showing the same list in two orders would read as a bug in
+/// whichever was opened second. Alphabetical within a count, so it does not
+/// reshuffle between visits.
+pub fn tag_tally(notes: &[NoteFile]) -> Vec<(String, usize)> {
+    let mut counted: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for file in notes {
+        for tag in &file.note.tags {
+            *counted.entry(tag.as_str()).or_default() += 1;
+        }
+    }
+    let mut tallies: Vec<(String, usize)> = counted
+        .into_iter()
+        .map(|(tag, notes)| (tag.to_string(), notes))
+        .collect();
+    tallies.sort_by(|(left_tag, left), (right_tag, right)| {
+        right.cmp(left).then_with(|| left_tag.cmp(right_tag))
+    });
+    tallies
+}
+
 /// Whether this note's body links to the note `id` names.
 ///
 /// A free function rather than a method, and this is the reason: the browser

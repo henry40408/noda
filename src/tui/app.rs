@@ -26,7 +26,7 @@
 //! instead of once per query — which is the whole point of typing into a filter
 //! rather than into a shell.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -770,31 +770,16 @@ impl App {
                 });
                 Some(Content::Todo(tasks))
             }
-            View::Tags => {
-                let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
-                for file in &self.notes {
-                    for tag in &file.note.tags {
-                        *counted.entry(tag.as_str()).or_default() += 1;
-                    }
-                }
-                let mut tallies: Vec<Tally> = counted
+            // Counted and ordered by `notebook`, not here. Commonest first is a
+            // judgement about what a tag list is for, and the web's tag screen
+            // shows the same list — two orders for one list would read as a bug
+            // in whichever was opened second.
+            View::Tags => Some(Content::Tags(
+                notebook::tag_tally(&self.notes)
                     .into_iter()
-                    .map(|(tag, notes)| Tally {
-                        tag: tag.to_string(),
-                        notes,
-                    })
-                    .collect();
-                // Commonest first, and alphabetical within a count. A tag list
-                // sorted by name alone buries the four tags a notebook actually
-                // runs on under every one-off ever typed.
-                tallies.sort_by(|left, right| {
-                    right
-                        .notes
-                        .cmp(&left.notes)
-                        .then_with(|| left.tag.cmp(&right.tag))
-                });
-                Some(Content::Tags(tallies))
-            }
+                    .map(|(tag, notes)| Tally { tag, notes })
+                    .collect(),
+            )),
             // Asked of `notebook` rather than worked out here. What counts as a
             // link — the id in the destination, not the filename, so an answer
             // survives a retitle — is written down once, and this is the same
@@ -1569,17 +1554,12 @@ impl App {
 
     /// Back to the listing, narrowed to one tag.
     ///
-    /// Quoted when the tag has a space in it, because the listing's query field
-    /// splits the way a shell would — `tag:24.04 Dark patterns` is three terms
-    /// and-ed together, and would find nothing at all.
+    /// `query::scoped` writes the query, quotes and all: the listing's field
+    /// splits the way a shell would, and the web's tag screen has to narrow the
+    /// same listing the same way.
     fn scope(&mut self, tag: &str) {
         while self.back() {}
-        let query = if tag.contains(char::is_whitespace) {
-            format!("tag:\"{tag}\"")
-        } else {
-            format!("tag:{tag}")
-        };
-        self.top_mut().search.set(query);
+        self.top_mut().search.set(query::scoped(tag));
         self.refilter();
     }
 

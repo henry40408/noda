@@ -23,6 +23,22 @@ pub struct Item {
     pub due: Option<String>,
 }
 
+impl Item {
+    /// Whether the date has gone past, given what day it is where the reader is.
+    ///
+    /// A string comparison, which is exactly right and only because the shape is
+    /// fixed: `YYYY-MM-DD` sorts as text the way it sorts as a date, and that is
+    /// the whole reason `split_due` accepts one spelling and no other.
+    ///
+    /// `today` is passed in rather than read here, because whose today it is
+    /// matters — the *local* date, since nobody writes `due:2026-08-10` meaning
+    /// UTC. `cmd::today` is where that is worked out, and all three screens that
+    /// mark an item late get it from there.
+    pub fn overdue(&self, today: &str) -> bool {
+        self.due.as_deref().is_some_and(|due| due < today)
+    }
+}
+
 /// Every unticked checkbox in `body`, in the order they are written.
 ///
 /// Ticked ones are left out. A finished item stays exactly where its author

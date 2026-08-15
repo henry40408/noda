@@ -2699,7 +2699,7 @@ pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
         // Never truncated. A real action item is a sentence, and a list that
         // cuts the sentence off is a list you have to open the note to read.
         let due = match &item.due {
-            Some(due) if due.as_str() < today => style::paint(style::OVERDUE, due),
+            Some(due) if item.overdue(today) => style::paint(style::OVERDUE, due),
             Some(due) => style::paint(style::MUTED, due),
             None => " ".repeat(DATE_WIDTH),
         };
