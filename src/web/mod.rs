@@ -39,7 +39,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
-use crate::note::Note;
+use crate::note::{self, Note};
 use crate::notebook::Notebook;
 use crate::query::{self, Query};
 use crate::{Error, Paths, Result, cmd};
@@ -661,12 +661,7 @@ async fn file_backlinks(
         };
         // A note is not a file here, the same way it is not one at `/f/`: it has
         // a page of its own, and its backlinks are on that page's own screen.
-        #[expect(
-            clippy::case_sensitive_file_extension_comparisons,
-            reason = "matches Notebook::inventory, which is what decides this everywhere else"
-        )]
-        let is_note = path.ends_with(".md");
-        if is_note || !notebook.path.join(&path).is_file() {
+        if note::names_a_note(&path) || !notebook.path.join(&path).is_file() {
             return nothing();
         }
 
@@ -716,16 +711,13 @@ async fn held(
             return nothing();
         };
         let on_disk = notebook.path.join(&path);
-        // Exactly as the notebook itself decides what is a note — `strip_suffix(".md")`,
-        // case and all. A case-insensitive test here would refuse to serve a
-        // file called `NOTES.MD`, which the notebook holds as an attachment and
-        // will happily list on the files page.
-        #[expect(
-            clippy::case_sensitive_file_extension_comparisons,
-            reason = "matches Notebook::inventory, which is what decides this everywhere else"
-        )]
-        let is_note = path.ends_with(".md");
-        if is_note || !on_disk.is_file() {
+        // Exactly as the notebook itself decides what is a note: a stem that
+        // splits into an id and a slug, case and all. The suffix on its own is
+        // not the test — `README.md` is a file the files page lists and offers,
+        // and refusing it here would be a link the reader can see and cannot
+        // follow. A case-insensitive test would go wrong the other way, refusing
+        // a file called `NOTES.MD` that the notebook holds as an attachment.
+        if note::names_a_note(&path) || !on_disk.is_file() {
             return nothing();
         }
 

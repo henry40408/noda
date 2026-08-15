@@ -89,6 +89,11 @@ fn a_notebook() -> (TempRoot, Paths) {
     std::fs::write(&vector, "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").expect("write svg");
     cmd::file_add(&paths, &[vector], None).expect("file add");
 
+    // And a third file that happens to be Markdown. `README.md` is not a note —
+    // its stem carries no id — and the whole point of it here is that the web
+    // side must not decide otherwise from the suffix alone.
+    cmd::readme(&paths, false).expect("readme");
+
     // A note that points at one of them, which is what makes the count on the
     // files page a fact about this notebook rather than a hardcoded zero.
     cmd::add(
@@ -496,7 +501,7 @@ fn a_body_holding_markup_arrives_as_code() {
 /// `doctor --links` answers when it names orphans.
 #[test]
 fn the_files_page_lists_what_is_not_a_note() {
-    let (server, _paths) = serving();
+    let (server, paths) = serving();
     let answer = server.get("/nb/default/files");
 
     assert_eq!(answer.status, 200);
@@ -510,8 +515,20 @@ fn the_files_page_lists_what_is_not_a_note() {
     // One note embeds the png and nothing points at the svg.
     assert!(answer.says("in 1 note"), "{}", answer.body);
     assert!(answer.says("nothing links to it"), "{}", answer.body);
+    // Markdown is not the test — a name that carries an id is. `README.md` is a
+    // file the notebook holds and so belongs here, offered like any other.
+    assert!(
+        answer.says("href=\"/nb/default/f/README.md\""),
+        "{}",
+        answer.body
+    );
     // Notes have their own pages and are not listed here as files.
-    assert!(!answer.says(".md"), "{}", answer.body);
+    let id = id_of(&paths, "budget-review");
+    assert!(
+        !answer.says(&format!("{id}-budget-review.md")),
+        "{}",
+        answer.body
+    );
 }
 
 /// An image is shown where it stands. Anything that can carry a script is not,
@@ -580,6 +597,24 @@ fn a_note_is_not_served_as_a_file() {
     let id = id_of(&paths, "budget-review");
     let answer = server.get(&format!("/nb/default/f/{id}-budget-review.md"));
     assert_eq!(answer.status, 404, "{}", answer.body);
+}
+
+/// The other half of that rule, and the half a suffix test gets wrong: Markdown
+/// the notebook holds as a file is served like any other file. `README.md` is
+/// the one every notebook can have — the files page lists it and links to it,
+/// and refusing it here made that link a dead end.
+#[test]
+fn a_markdown_file_that_is_not_a_note_is_served() {
+    let (server, _paths) = serving();
+
+    let answer = server.get("/nb/default/f/README.md");
+    assert_eq!(answer.status, 200, "{}", answer.body);
+    assert!(answer.says("default"), "{}", answer.body);
+
+    // And the same name resolves on the way to its backlinks, which asks the
+    // question of a file rather than opening it.
+    let links = server.get("/nb/default/f/README.md/backlinks");
+    assert_eq!(links.status, 200, "{}", links.body);
 }
 
 /// The body is Markdown and arrives rendered: a heading is a heading, and a

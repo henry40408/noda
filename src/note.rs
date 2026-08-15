@@ -256,6 +256,18 @@ pub fn split_stem(stem: &str) -> Option<(&str, &str)> {
     Some((id, slug))
 }
 
+/// Whether a filename is one a note lives under.
+///
+/// The `.md` suffix alone does not decide it. A notebook is one flat directory
+/// and holds Markdown that is not a note — `README.md` above all, which `noda
+/// readme` writes for a git host to show — and only a stem that splits into an
+/// id and a slug names a note. This is the test `Notebook::inventory` applies
+/// when it sorts the directory into notes and files, so anything that has only
+/// a name and needs the same answer must ask it here rather than re-deciding.
+pub fn names_a_note(name: &str) -> bool {
+    name.strip_suffix(".md").and_then(split_stem).is_some()
+}
+
 /// Whether a string could be an id noda minted: long enough, and drawn entirely
 /// from the alphabet ids use.
 pub fn is_id_shaped(text: &str) -> bool {
