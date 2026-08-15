@@ -1,0 +1,233 @@
+//! The server under test, and the notebook it serves.
+//!
+//! Both are built here rather than committed. A notebook is a git repository,
+//! and a git repository inside this one is a thing to have to explain to every
+//! tool that walks the tree — so the fixture is made the way a person makes one,
+//! by running the binary: `init`, then `add` a few times. That also keeps the
+//! fixture honest, because anything that changes what `add` writes changes what
+//! these tests read.
+//!
+//! **Nothing here asserts on an id.** Ids are minted, so a fixture built by
+//! running `add` cannot know them in advance; the features name notes by their
+//! titles, which is what a reader sees anyway.
+//!
+//! The binary is spawned directly rather than through `cargo run`, so the PID
+//! held here is the server's own — killing `cargo` would leave the server it
+//! spawned holding the port.
+
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail};
+
+/// Fixed, so a developer can leave a server running between runs and so the
+/// features can name URLs without asking anything at runtime.
+pub const PORT: u16 = 8799;
+
+/// What every navigation is relative to.
+pub const BASE_URL: &str = "http://127.0.0.1:8799";
+
+/// The notebook the features are written against.
+pub const NOTEBOOK: &str = "default";
+
+const STARTUP_TIMEOUT: Duration = Duration::from_mins(1);
+
+/// A running server, and the temporary notebook it is reading.
+///
+/// Killed and removed when dropped — unless the port was already open before
+/// the suite started, in which case somebody else's server is left alone.
+pub struct Server {
+    child: Option<Child>,
+    root: Option<PathBuf>,
+}
+
+impl Server {
+    /// Starts a server on a fresh notebook, or adopts one already listening.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the binary cannot be built or spawned, when the fixture
+    /// notebook cannot be written, or when the server does not start listening.
+    pub fn start() -> Result<Self> {
+        if port_is_open() {
+            return Ok(Self {
+                child: None,
+                root: None,
+            });
+        }
+
+        let binary = ensure_binary()?;
+        let root = std::env::temp_dir().join(format!("noda-e2e-{}", std::process::id()));
+        std::fs::create_dir_all(&root)?;
+        // Bound before anything else can fail, so a half-built fixture is still
+        // cleaned up when the error propagates.
+        let mut server = Self {
+            child: None,
+            root: Some(root.clone()),
+        };
+
+        write_notebook(&binary, &root)?;
+
+        server.child = Some(
+            Command::new(&binary)
+                .args(["web", "--listen", &format!("127.0.0.1:{PORT}")])
+                .envs(xdg(&root))
+                // Inherited, so a refusal to start is visible in the test output
+                // rather than swallowed into a pipe nobody reads.
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .with_context(|| format!("spawning {} web", binary.display()))?,
+        );
+
+        wait_until_listening()?;
+        Ok(server)
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(root) = self.root.as_ref() {
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+}
+
+/// The four notebook-worth of notes the features read.
+///
+/// One of them holds markup, because `noda import tiddlywiki` deliberately
+/// leaves such bodies alone: a note that is markup is an ordinary note here and
+/// not a hypothetical. One carries a tag with a space in it, for the same
+/// reason — that shape comes out of a real import.
+fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
+    let config = root.join("config/noda");
+    std::fs::create_dir_all(&config)?;
+    // libgit2 reads the developer's real git config, so a machine that signs
+    // its commits would send every commit here to gpg.
+    std::fs::write(config.join("config.toml"), "sign = false\n")?;
+
+    run(binary, root, &["init"])?;
+    run(
+        binary,
+        root,
+        &[
+            "add",
+            "Budget review",
+            "-c",
+            "the q3 budget is late",
+            "--tag",
+            "work",
+        ],
+    )?;
+    run(
+        binary,
+        root,
+        &[
+            "add",
+            "Meeting notes",
+            "-c",
+            "the budget, again",
+            "--tag",
+            "work",
+            "--tag",
+            "24.04 Dark patterns",
+        ],
+    )?;
+    run(binary, root, &["add", "Reading list", "-c", "a book"])?;
+    run(
+        binary,
+        root,
+        &[
+            "add",
+            "Markup import",
+            "-c",
+            "a <b>bold</b> here",
+            "--tag",
+            "ops",
+        ],
+    )?;
+    Ok(())
+}
+
+fn run(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
+    let output = Command::new(binary)
+        .args(args)
+        .envs(xdg(root))
+        .output()
+        .with_context(|| format!("running {} {args:?}", binary.display()))?;
+    if !output.status.success() {
+        bail!(
+            "{} {args:?} failed: {}",
+            binary.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+/// All four, `XDG_STATE_HOME` included: the active-notebook pointer lives in
+/// state rather than in data, and a run that missed it would reach past this
+/// fixture and rewrite the real one.
+fn xdg(root: &Path) -> [(&'static str, PathBuf); 4] {
+    [
+        ("XDG_CONFIG_HOME", root.join("config")),
+        ("XDG_DATA_HOME", root.join("data")),
+        ("XDG_STATE_HOME", root.join("state")),
+        ("XDG_CACHE_HOME", root.join("cache")),
+    ]
+}
+
+/// Path to the binary, building it when it is not there.
+///
+/// The debug one on purpose. The release profile is tuned for size and cold
+/// start — fat LTO, one codegen unit — which costs minutes and answers a
+/// question no browser is asking. What is under test here is what the pages
+/// say, and both profiles say the same thing.
+fn ensure_binary() -> Result<PathBuf> {
+    let binary = repo_root().join("target/debug/noda");
+    if binary.is_file() {
+        return Ok(binary);
+    }
+
+    eprintln!("e2e: {} is missing — building it", binary.display());
+    let status = Command::new("cargo")
+        .current_dir(repo_root())
+        .arg("build")
+        .status()
+        .context("running `cargo build`")?;
+    if !status.success() {
+        bail!("`cargo build` failed with {status}");
+    }
+    if !binary.is_file() {
+        bail!("`cargo build` did not produce {}", binary.display());
+    }
+    Ok(binary)
+}
+
+fn wait_until_listening() -> Result<()> {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if port_is_open() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    bail!("noda web did not start listening on 127.0.0.1:{PORT} within {STARTUP_TIMEOUT:?}")
+}
+
+fn port_is_open() -> bool {
+    TcpStream::connect(("127.0.0.1", PORT)).is_ok()
+}
+
+/// The repository root — the parent of this crate's directory.
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("e2e/ always has a parent")
+}

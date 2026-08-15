@@ -37,6 +37,49 @@
 use crate::note::{self, Note};
 use crate::{Error, Result};
 
+/// One line of typing split into the tokens `parse` wants, the way a shell would
+/// split it: on whitespace, but not inside quotes.
+///
+/// The module comment above says one token per argument *so that the shell's
+/// quoting is the only quoting*. That holds at a command line and nowhere else:
+/// every other place a query is typed — the browser's `/`, its `:` prompt, the
+/// web listing's search box — is a single field with no shell in front of it, so
+/// each has to do the shell's half of the job as well. Doing it here is what
+/// keeps them from doing it three different ways; the browser's fields already
+/// grew this bug once, and were fixed one field at a time.
+///
+/// What it buys concretely: a tag may contain a space — `24.04 Dark patterns` is
+/// the sort of thing a `TiddlyWiki` import leaves behind — so `tag:"24.04 Dark
+/// patterns"` has to survive as one token or the tag is unreachable from the one
+/// screen showing it.
+///
+/// Either quote character, because both are what the hands reach for. An
+/// unclosed quote runs to the end rather than being an error: the line is being
+/// typed, and the character that would close it is usually the next one.
+pub fn split(text: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(open) if c == open => quote = None,
+            None if c == '"' || c == '\'' => quote = Some(c),
+            // Only outside the quotes does a space end a piece. Inside them it
+            // is part of the value, which is the whole point.
+            None if c.is_whitespace() => {
+                if !piece.is_empty() {
+                    pieces.push(std::mem::take(&mut piece));
+                }
+            }
+            _ => piece.push(c),
+        }
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+    pieces
+}
+
 /// A parsed query: groups that must all match, each satisfied by any one of its
 /// terms.
 pub struct Query {
@@ -187,6 +230,31 @@ fn contains_ignoring_case(haystack: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Written for the browser's prompts, kept when the splitter moved here: a
+    /// field standing in for argv is now three fields, and this is the one
+    /// account of what they all do.
+    #[test]
+    fn a_field_splits_the_way_a_shell_does() {
+        assert_eq!(split("+work -q3"), vec!["+work", "-q3"]);
+        assert_eq!(split("  +work   "), vec!["+work"]);
+        assert!(split("   ").is_empty());
+        // Either quote, and the quotes around the name rather than around the
+        // whole piece — the `-` in front of them is what says remove.
+        assert_eq!(split("-'a b' +c"), vec!["-a b", "+c"]);
+        assert_eq!(split("-\"a b\""), vec!["-a b"]);
+        // Quoted whole, which is what a hand used to a shell may well type.
+        assert_eq!(split("\"-a b\""), vec!["-a b"]);
+        // Half-typed: the line is still being written, so the quote that has not
+        // been closed yet takes the rest rather than failing.
+        assert_eq!(split("-\"a b"), vec!["-a b"]);
+        // What the web listing's box is for: a tag with a space in it survives
+        // as one term, so it can be filtered by from the screen showing it.
+        assert_eq!(
+            split("tag:\"24.04 Dark patterns\" budget"),
+            vec!["tag:24.04 Dark patterns", "budget"]
+        );
+    }
 
     fn query(text: &str) -> Query {
         let tokens: Vec<String> = text.split(' ').map(str::to_string).collect();

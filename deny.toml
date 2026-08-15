@@ -30,6 +30,13 @@ allow = [
     # conditions on distributing a binary — and OSI approved.
     "Zlib",
     "Unicode-3.0",
+    # matchit, which is axum's router. Its licence is `MIT AND BSD-3-Clause`:
+    # the crate is MIT, and the routing algorithm it is a port of came from a Go
+    # library that is BSD-3-Clause, so both travel with it. Permissive in the
+    # same way the rest of this list is — attribution, and a clause saying the
+    # authors' names may not be used to endorse what is built on it — with no
+    # condition on distributing a binary.
+    "BSD-3-Clause",
 ]
 confidence-threshold = 0.8
 

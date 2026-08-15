@@ -70,6 +70,38 @@ toml_edit = "0.25.13"
 # left is the widgets, the layout solver and the crossterm backend.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 
+# `noda web`. The cost lands on every other command — a bigger binary is more of
+# it to page in, and a quick `noda ls` is mostly page-in — so it is measured on
+# every change to this section and reported, not assumed. See the README's
+# cold-start note and scripts/bench-coldstart.sh.
+#
+# Why an async stack for a program whose every request is blocking file and
+# libgit2 work: the small synchronous HTTP crates are all unmaintained
+# (tiny_http's last release is 2022, rouille's 2023), and this is a server whose
+# parser meets input nobody here controls. Between "the shape fits" and "someone
+# is still fixing it", the second wins.
+#
+# The mismatch is paid for honestly rather than hidden: `git2::Repository` is
+# `!Send`, so it cannot be held across an await at all, and every handler does
+# its work inside `spawn_blocking`. That is not a workaround — opening the
+# notebook per request is what a `!Send` handle requires anyway.
+#
+# Features: `http1` and `tokio` are the server, `query` is the `?q=` on the
+# listing. No `json` (nothing here speaks it), no `tracing`, no `http2` — a
+# notebook on a tailnet is not multiplexing streams.
+axum = { version = "0.8.9", default-features = false, features = [
+    "http1",
+    "tokio",
+    "query",
+] }
+# The runtime and nothing else: no timers, no signals, no process spawning. The
+# blocking pool that `rt-multi-thread` brings is the part that matters, because
+# that is where every one of these handlers actually runs.
+tokio = { version = "1.53.1", default-features = false, features = [
+    "rt-multi-thread",
+    "net",
+] }
+
 # Only the browser's end-to-end tests use these, so they cost the shipped binary
 # and its cold start nothing.
 #

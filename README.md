@@ -870,6 +870,49 @@ $ noda tui | less
 noda: noda tui needs a terminal at both ends; `noda ls`, `noda search` and `noda show` are the ones to redirect
 ```
 
+### In a browser
+
+`noda web` serves the notebooks over HTTP, so a phone can read them. It renders on the
+server and needs no JavaScript at all: the search box is a form, every row is a link.
+
+```
+$ noda web
+noda is at http://127.0.0.1:8080
+```
+
+Every notebook is named in the URL — `/nb/work` for the listing, `/nb/work/n/k3f9m2p1` for a
+note — and the active-notebook pointer is never consulted. That pointer belongs to a shell
+session, and a browser tab that quietly changed which notebook it was showing because
+something happened in a terminal would be worse than a longer address. A note's slug and any
+prefix of its id both redirect to the id, so a bookmark survives a retitle.
+
+**There is no password on it, and there is not going to be one.** It is meant to be reached
+over a tailnet or from behind something that already does authentication, and both of those
+do that job better than a notebook could. What follows from that is the whole of its security
+model:
+
+- It listens on **this machine only** until told otherwise. `--listen 0.0.0.0:8080` opens it
+  to the network, and says so on the way up.
+- It refuses a request whose `Origin` is another site. There is no session to be missing, so
+  without that check a page on any other site could make your browser commit to your
+  notebook.
+- It answers to **addresses and `localhost` freely, and to a hostname only when told**.
+  That is the DNS-rebinding half: an attacker who points `evil.example` at `127.0.0.1` sends
+  requests your browser considers same-origin — `Origin` and `Host` agree, because both say
+  `evil.example` — and the only thing that gives it away is that a rebinding attack needs a
+  *name*. So a name has to be asked for:
+
+```sh
+noda web --listen 0.0.0.0:8080 --allow-host noda.tail1234.ts.net
+```
+
+  Behind a reverse proxy, name whatever the browser puts in the address bar. The refusal says
+  exactly what to add.
+
+What it shows today is the notebooks, a notebook's notes with the same query language
+`noda search` takes, and one note's text. Rendering Markdown, following links between notes,
+showing attachments, writing, and syncing are not there yet.
+
 ### Action items
 
 A todo is a GFM checkbox in a note's body — not a note, and not a file of its own:
@@ -1324,8 +1367,10 @@ pointer, and the editor's scratch buffer are kept out of your synced data on pur
 
 ## Roadmap
 
-- **Web UI** — `noda web` serves the active notebook in the browser, reading the same
-  git-backed files. (v1 is CLI-only.)
+- **The web UI reads; it does not yet write.** `noda web` is here — see
+  [In a browser](#in-a-browser) — and shows the notebooks, a notebook's notes and one note's
+  text. Rendering Markdown, showing attachments, editing, and syncing from the browser are
+  still to come.
 - Encrypted notebooks are under consideration.
 
 ## Building from source
