@@ -80,6 +80,26 @@ fn a_notebook() -> (TempRoot, Paths) {
     (root, paths)
 }
 
+/// Percent-encoding, for the handful of characters a test actually sends.
+///
+/// Not a general encoder: a test that needed one would be a test whose fixture
+/// had got away from it.
+fn urlencode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            b' ' => out.push('+'),
+            _ => {
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
+}
+
 /// The id of the note with this slug, read off the filename.
 ///
 /// An id is minted, so it cannot be spelled out in a test — the standing rule
@@ -182,9 +202,46 @@ impl Serving {
         self.request(path, &[])
     }
 
+    /// A form, submitted the way a browser submits one.
+    ///
+    /// `application/x-www-form-urlencoded` and nothing else: there is no script
+    /// on any of these pages, so a form is the only thing that can ask for a
+    /// change, and this is the only shape a form without a file in it sends.
+    fn post(&self, path: &str, fields: &[(&str, &str)]) -> Answer {
+        let body = fields
+            .iter()
+            .map(|(name, value)| format!("{}={}", urlencode(name), urlencode(value)))
+            .collect::<Vec<_>>()
+            .join("&");
+        self.send("POST", path, &[], Some(&body))
+    }
+
+    /// The fingerprint a form was handed, so a test can send it back — or send
+    /// back a stale one on purpose.
+    fn fingerprint_on(&self, path: &str) -> String {
+        let body = self.get(path).body;
+        let at = body
+            .find("name=\"fingerprint\" value=\"")
+            .unwrap_or_else(|| panic!("no fingerprint on {path}:\n{body}"));
+        let rest = &body[at + "name=\"fingerprint\" value=\"".len()..];
+        rest.split_once('"')
+            .map(|(value, _)| value.to_string())
+            .expect("an unterminated attribute")
+    }
+
     /// A request with headers of the caller's choosing, `Host` included — which
     /// is the whole point of writing these by hand.
     fn request(&self, path: &str, headers: &[(&str, &str)]) -> Answer {
+        self.send("GET", path, headers, None)
+    }
+
+    fn send(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> Answer {
         let mut socket =
             TcpStream::connect(("127.0.0.1", self.port)).expect("connect to the server");
         let host = headers
@@ -195,7 +252,15 @@ impl Serving {
                 |(_, v)| (*v).to_string(),
             );
 
-        let mut wire = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n");
+        let mut wire = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n");
+        if let Some(body) = body {
+            let _ = write!(
+                wire,
+                "Content-Type: application/x-www-form-urlencoded\r\n\
+                 Content-Length: {}\r\n",
+                body.len()
+            );
+        }
         for (name, value) in headers {
             if !name.eq_ignore_ascii_case("host") {
                 let _ = write!(wire, "{name}: {value}\r\n");
@@ -204,6 +269,9 @@ impl Serving {
         // Closed by the server when it is done, which is what makes "read to the
         // end" a complete answer without parsing a length.
         wire.push_str("Connection: close\r\n\r\n");
+        if let Some(body) = body {
+            wire.push_str(body);
+        }
         socket.write_all(wire.as_bytes()).expect("write a request");
 
         let mut raw = Vec::new();
@@ -438,6 +506,181 @@ fn a_hostname_that_was_asked_for_is_admitted() {
 fn an_ordinary_navigation_is_answered() {
     let (server, _paths) = serving();
     assert_eq!(server.get("/").status, 200);
+}
+
+/// A note written from a phone, end to end: the form, the commit, the redirect
+/// to the note that now exists.
+#[test]
+fn a_note_can_be_written_from_the_browser() {
+    let (server, paths) = serving();
+    let made = server.post(
+        "/nb/default/new",
+        &[
+            ("title", "From the phone"),
+            ("tags", "web ops"),
+            ("body", "first line\r\nsecond line"),
+        ],
+    );
+    assert_eq!(made.status, 303);
+    let at = made.location.expect("somewhere to go");
+    assert!(at.starts_with("/nb/default/n/"), "{at}");
+
+    let note = server.get(&at);
+    assert_eq!(note.status, 200);
+    assert!(note.says("From the phone"), "{}", note.body);
+    assert!(note.says("second line"), "{}", note.body);
+
+    // What a `<textarea>` sends, gone by the time it reaches the file. The
+    // HTML specification says a form normalises line breaks to CRLF, so this is
+    // every browser rather than a quirk of one.
+    let written = std::fs::read_to_string(paths.notebooks_dir().join("default").join(format!(
+        "{}.md",
+        at.rsplit('/').next().map(|id| format!("{id}-from-the-phone")).unwrap()
+    )))
+    .expect("the note that was just written");
+    assert!(!written.contains('\r'), "{written:?}");
+}
+
+/// The optimistic lock, and the whole reason it is a content hash: a stale form
+/// is refused, and nothing on disk moves.
+#[test]
+fn an_edit_against_a_stale_note_is_refused_and_loses_nothing() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let stale = server.fingerprint_on(&format!("/nb/default/n/{id}/edit"));
+
+    // Somebody else saves first — a terminal in another window, which is the
+    // case this exists for.
+    let landed = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[("fingerprint", &stale), ("body", "what the terminal wrote")],
+    );
+    assert_eq!(landed.status, 303);
+
+    // Now the phone submits the form it was given before any of that.
+    let refused = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[("fingerprint", &stale), ("body", "what the phone wrote")],
+    );
+    assert_eq!(refused.status, 200, "a refusal is a page, not a redirect");
+    assert!(
+        refused.says("changed while you were writing"),
+        "{}",
+        refused.body
+    );
+    // Both versions are on that page: what is saved, and what they typed — the
+    // second still in a box they can edit.
+    assert!(refused.says("what the terminal wrote"), "{}", refused.body);
+    assert!(refused.says("what the phone wrote"), "{}", refused.body);
+
+    let on_disk = server.get(&format!("/nb/default/n/{id}"));
+    assert!(on_disk.says("what the terminal wrote"), "{}", on_disk.body);
+    assert!(!on_disk.says("what the phone wrote"), "{}", on_disk.body);
+}
+
+/// The tags form says which tags survived; the `+`s and `-`s are the server's
+/// problem. One submit is one commit, which is why the boxes are a form rather
+/// than a row of links.
+#[test]
+fn ticking_the_boxes_is_what_says_which_tags_stay() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "meeting-notes");
+
+    let saved = server.post(
+        &format!("/nb/default/n/{id}/tags"),
+        // `work` was ticked off; `24.04 Dark patterns` stays; `ops` is new.
+        &[("keep", "24.04 Dark patterns"), ("add", "ops")],
+    );
+    assert_eq!(saved.status, 303);
+
+    let note = server.get(&format!("/nb/default/n/{id}"));
+    assert!(note.says("24.04 Dark patterns"), "{}", note.body);
+    assert!(note.says("ops"), "{}", note.body);
+    assert!(
+        !note.says(">work<"),
+        "work should have gone:\n{}",
+        note.body
+    );
+}
+
+#[test]
+fn a_note_can_be_renamed_and_keeps_its_address() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let saved = server.post(
+        &format!("/nb/default/n/{id}/rename"),
+        &[("title", "Budget review 2026")],
+    );
+    assert_eq!(saved.status, 303);
+    // The id never moves, so the address the browser was on is still the note's.
+    assert_eq!(
+        saved.location.as_deref(),
+        Some(&*format!("/nb/default/n/{id}"))
+    );
+
+    let note = server.get(&format!("/nb/default/n/{id}"));
+    assert!(note.says("Budget review 2026"), "{}", note.body);
+    // The slug half of the filename, in its own span — the id and the slug are
+    // coloured differently on purpose, so the string is never contiguous.
+    assert!(note.says(">-budget-review-2026</span>"), "{}", note.body);
+}
+
+/// A refusal comes back to the form with the reason on it, not as a 500 and not
+/// as an empty form.
+#[test]
+fn a_refused_change_is_handed_back_with_the_reason() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let refused = server.post(&format!("/nb/default/n/{id}/rename"), &[("title", "  ")]);
+    assert_eq!(refused.status, 200);
+    assert!(refused.says("a note needs a title"), "{}", refused.body);
+    assert!(refused.says("<form"), "the form should still be there");
+}
+
+#[test]
+fn a_note_can_be_deleted_and_the_commit_that_removed_it_stays() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "reading-list");
+
+    let gone = server.post(&format!("/nb/default/n/{id}/delete"), &[]);
+    assert_eq!(gone.status, 303);
+    assert_eq!(gone.location.as_deref(), Some("/nb/default"));
+    assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 404);
+
+    let listing = server.get("/nb/default");
+    assert!(!listing.says("Reading list"), "{}", listing.body);
+}
+
+/// A `GET` never changes anything. Every form is a `POST`, so a link a
+/// prefetcher or a crawler follows cannot commit to the notebook.
+#[test]
+fn asking_to_delete_only_asks() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "reading-list");
+
+    let asked = server.get(&format!("/nb/default/n/{id}/delete"));
+    assert_eq!(asked.status, 200);
+    assert!(asked.says("Delete"), "{}", asked.body);
+    // Still there.
+    assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
+}
+
+/// The guard is in front of the writes too, and it always was — which is why it
+/// shipped in the pull request before them.
+#[test]
+fn another_site_cannot_write_either() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let refused = server.send(
+        "POST",
+        &format!("/nb/default/n/{id}/delete"),
+        &[("Origin", "https://elsewhere.example")],
+        Some(""),
+    );
+    assert_eq!(refused.status, 403);
+    assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
 }
 
 /// Nothing on any of these pages needs a script, and this is the assertion that

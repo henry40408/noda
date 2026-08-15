@@ -109,10 +109,15 @@ stamp `updated`, commit) has exactly one implementation and it is the one every 
 already uses. Nothing in the browser writes a note itself.
 
 **Q: What about a web UI?**
-`noda web` serves the notebooks over HTTP, for reading them from a phone. It renders on the
-server and needs no JavaScript; because storage is just git, it reads the exact same files
-the CLI does. It reads them today — editing, Markdown rendering, attachments and syncing
-from the browser are still to come.
+`noda web` serves the notebooks over HTTP, for reading and writing them from a phone. It
+renders on the server and needs no JavaScript; because storage is just git, it works on the
+exact same files the CLI does, and every change runs the command the terminal would have run
+— so each lands as its own commit with the message it would have had. Markdown rendering,
+attachments and syncing from the browser are still to come.
+
+An edit carries the note's git blob id and a stale one is refused, with both versions handed
+back so nothing typed is lost. The blob id and not the `updated` stamp: `--no-touch` exists
+precisely so content can change without that stamp moving.
 
 There is no password on it, deliberately: it listens on your own machine until told
 otherwise, and the way to reach it from elsewhere is a tailnet or something in front of it

@@ -196,6 +196,35 @@ pub fn set_field(text: &str, key: &str, value: &str) -> Option<String> {
     Some(out)
 }
 
+/// The note with its body replaced and its frontmatter block left exactly as it
+/// was found.
+///
+/// [`set_field`]'s sibling, and for the same reason. Rebuilding the file from a
+/// parsed [`Note`] would put noda's own fields back in noda's own order — which
+/// is right when noda is writing a note it made, and wrong when it is changing
+/// one somebody else's program wrote. A note that arrived from elsewhere carries
+/// fields and an arrangement that are the only copy of themselves.
+///
+/// Line endings are normalised, because the one caller that has a body to hand
+/// rather than a file is a browser, and a `<textarea>` submits `CRLF` — that is
+/// what the HTML specification says a form does, not a quirk. Writing those
+/// through would put a carriage return at the end of every line of every note
+/// edited from a phone, invisibly, for ever.
+pub fn set_body(text: &str, body: &str) -> Option<String> {
+    let (frontmatter, _) = split_frontmatter(text)?;
+    let mut out = String::from("---\n");
+    out.push_str(frontmatter);
+    // The same shape `render` writes: the closing delimiter, one blank line,
+    // then the body. A reader should not be able to tell which of the two wrote
+    // the file.
+    out.push_str("---\n\n");
+    out.push_str(body.replace("\r\n", "\n").trim_start_matches('\n'));
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
+}
+
 fn parse_tags(value: &str) -> Vec<String> {
     value
         .trim_start_matches('[')
@@ -344,6 +373,43 @@ fn random_bits() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frontmatter comes back byte for byte, arrangement and unknown fields
+    /// included. Anything less and a note that arrived from another program is
+    /// quietly rewritten the first time it is edited from a browser.
+    #[test]
+    fn set_body_keeps_the_frontmatter_exactly() {
+        let text = "---\nweird: yes\ntitle: Kept\nsomebody-elses: field\n---\n\nold body\n";
+        let out = set_body(text, "new body").unwrap();
+        assert_eq!(
+            out,
+            "---\nweird: yes\ntitle: Kept\nsomebody-elses: field\n---\n\nnew body\n"
+        );
+    }
+
+    /// What a `<textarea>` actually submits. The HTML specification says a form
+    /// normalises line breaks to `CRLF`, so this is every browser, not one.
+    #[test]
+    fn set_body_takes_the_carriage_returns_out() {
+        let text = "---\ntitle: T\n---\n\nold\n";
+        let out = set_body(text, "one\r\ntwo\r\n").unwrap();
+        assert_eq!(out, "---\ntitle: T\n---\n\none\ntwo\n");
+        assert!(!out.contains('\r'), "{out:?}");
+    }
+
+    #[test]
+    fn set_body_gives_up_on_a_file_with_no_frontmatter() {
+        assert!(set_body("just a markdown file\n", "x").is_none());
+    }
+
+    /// A body emptied on purpose is a body: the note goes on existing, and the
+    /// file still parses.
+    #[test]
+    fn set_body_accepts_nothing_at_all() {
+        let out = set_body("---\ntitle: T\n---\n\nsomething\n", "").unwrap();
+        assert_eq!(out, "---\ntitle: T\n---\n\n");
+        assert!(Note::parse(&out).is_ok());
+    }
 
     #[test]
     fn slugify_collapses_punctuation_and_lowercases() {

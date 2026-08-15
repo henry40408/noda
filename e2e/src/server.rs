@@ -34,6 +34,60 @@ pub const NOTEBOOK: &str = "default";
 
 const STARTUP_TIMEOUT: Duration = Duration::from_mins(1);
 
+/// The notebook the fixture was built in, and the commit it was built to.
+///
+/// Set once at start-up and read by [`reset`] after every scenario. A pair of
+/// statics rather than something threaded through the world, because the hook
+/// that resets is cucumber's and takes what cucumber gives it.
+static FIXTURE: std::sync::OnceLock<(PathBuf, String)> = std::sync::OnceLock::new();
+
+/// Puts the notebook back the way the fixture left it.
+///
+/// **Called after every scenario, and the suite is wrong without it.** The
+/// scenarios share one notebook and some of them now write to it: one renames a
+/// note, one takes a tag off another, one rewrites a body. Run once they happen
+/// to pass, because the features that read come before the features that write;
+/// run twice — which is what the scripted and script-less passes are — the
+/// second pass opens a notebook the first one edited and fails on notes that are
+/// no longer called what they were called.
+///
+/// Resetting is cheaper than a notebook per scenario and says the same thing: a
+/// scenario's `Given` is either true or the scenario is not testing what it
+/// says. `git` is shelled out to rather than linked, because this is a test
+/// harness restoring a fixture and `reset --hard` is exactly the sentence.
+///
+/// # Errors
+///
+/// Fails when git refuses, which means the fixture is not recoverable and every
+/// scenario after this one would be reporting on the wrong notebook.
+pub fn reset() -> Result<()> {
+    let Some((notebook, head)) = FIXTURE.get() else {
+        // No fixture was built: a server was adopted rather than started, so
+        // whatever it is serving is not ours to put back.
+        return Ok(());
+    };
+    for args in [
+        vec!["reset", "--hard", head.as_str()],
+        // Untracked files a scenario made and did not commit — a half-written
+        // note left by a step that failed part way.
+        vec!["clean", "-fd"],
+    ] {
+        let done = Command::new("git")
+            .arg("-C")
+            .arg(notebook)
+            .args(&args)
+            .output()
+            .with_context(|| format!("running git {args:?}"))?;
+        if !done.status.success() {
+            bail!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&done.stderr)
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A running server, and the temporary notebook it is reading.
 ///
 /// Killed and removed when dropped — unless the port was already open before
@@ -69,6 +123,26 @@ impl Server {
         };
 
         write_notebook(&binary, &root)?;
+
+        // Where the fixture stands before any scenario has touched it. Every
+        // scenario is put back to exactly this.
+        let notebook = root.join("data/noda/notebooks/default");
+        let head = Command::new("git")
+            .arg("-C")
+            .arg(&notebook)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .context("reading the fixture's HEAD")?;
+        if !head.status.success() {
+            bail!(
+                "git rev-parse failed: {}",
+                String::from_utf8_lossy(&head.stderr)
+            );
+        }
+        let _ = FIXTURE.set((
+            notebook,
+            String::from_utf8_lossy(&head.stdout).trim().to_string(),
+        ));
 
         server.child = Some(
             Command::new(&binary)

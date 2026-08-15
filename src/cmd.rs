@@ -193,15 +193,42 @@ pub fn add(
 
     // Checked before the editor opens: nobody should compose a note only to be
     // told afterwards that its title or its tags cannot be written down.
+    // `add_in` checks them again, because it is reachable on its own.
     if let Some(title) = title {
         note::validate_title(title)?;
     }
-    let tags = clean_tags(tags)?;
+    clean_tags(tags)?;
 
     let body = match content {
         Some(text) => text.to_string(),
         None => compose_in_editor(paths, title)?,
     };
+    add_in(&notebook, title, &body, tags)
+}
+
+/// `add`, in a notebook the caller already has open and with the body already
+/// written.
+///
+/// The notebook is passed rather than named because the caller that needs this
+/// has one open: `noda web` opens a notebook per request, and having `cmd` open
+/// a second handle on the same repository to do the writing would be two
+/// handles where the point is that there is one.
+///
+/// No editor here, which is the other half of the difference. `$EDITOR` is how a
+/// body is composed at a terminal; a browser arrives with the body already in
+/// hand, and a command that might open an editor is not one a web request can
+/// call.
+pub fn add_in(
+    notebook: &Notebook,
+    title: Option<&str>,
+    body: &str,
+    tags: &[String],
+) -> Result<String> {
+    if let Some(title) = title {
+        note::validate_title(title)?;
+    }
+    let tags = clean_tags(tags)?;
+    let body = body.replace("\r\n", "\n");
     let title = match title {
         Some(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => derive_title(&body)
@@ -683,8 +710,13 @@ fn dim_frontmatter(text: &str) -> String {
 /// error — it just leaves nothing to commit.
 pub fn tag(paths: &Paths, key: &str, changes: &[String], touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
+    tag_in(&notebook, key, changes, touch)
+}
+
+/// `tag`, in a notebook the caller already has open.
+pub fn tag_in(notebook: &Notebook, key: &str, changes: &[String], touch: Touch) -> Result<String> {
     let edits = parse_tags(changes, Some(key))?;
-    let done = apply_tags(&notebook, key, &edits, touch)?;
+    let done = apply_tags(notebook, key, &edits, touch)?;
     if done.changed {
         notebook.commit(&done.paths(), &format!("tag: {}", done.slug))?;
     }
@@ -823,9 +855,39 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str, touch: Touch) -> Result
     let before = std::fs::read_to_string(&located.path)?;
 
     run_editor(editor, &located.path)?;
+    settle(&notebook, &located, &before, touch)
+}
 
+/// Replaces a note's body with `body`, in a notebook the caller already has open.
+///
+/// What `edit` is for a terminal, for a caller that has no editor to hand: a
+/// browser arrives with the new text already typed. Everything after the write
+/// is `edit`'s own — the same parse, the same refusal, the same stamp, the same
+/// commit — because what a change *means* has one implementation and this is
+/// not a second one.
+///
+/// Only the body. The frontmatter is left exactly as it was found, so a note
+/// that came from another program keeps its fields and their arrangement; the
+/// title and the tags have their own commands, and reaching them by rewriting a
+/// block of YAML in a `<textarea>` is not an interface.
+pub fn rewrite_in(notebook: &Notebook, key: &str, body: &str, touch: Touch) -> Result<String> {
+    let located = locate(notebook, key)?;
+    let before = std::fs::read_to_string(&located.path)?;
+    let after = note::set_body(&before, body)
+        .ok_or_else(|| Error::msg(format!("{}: not a note", located.path.display())))?;
+    std::fs::write(&located.path, &after)?;
+    settle(notebook, &located, &before, touch)
+}
+
+/// What happens to a note once its file has been changed: read it back, refuse
+/// it if it is no longer a note, stamp it, commit it.
+///
+/// Shared by the two ways a body gets rewritten, which is the whole reason it
+/// exists. `edit` hands the file to `$EDITOR` and `rewrite_in` writes it
+/// directly, and after that moment there is nothing left to tell them apart.
+fn settle(notebook: &Notebook, located: &Located, before: &str, touch: Touch) -> Result<String> {
     let after = std::fs::read_to_string(&located.path)?;
-    if after == before {
+    if after == *before {
         return Ok(format!("{}  (unchanged)", located.slug));
     }
 
@@ -885,7 +947,18 @@ pub fn mv(
     touch: Touch,
 ) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    let located = locate(&notebook, key)?;
+    mv_in(&notebook, key, new_title, update_links, touch)
+}
+
+/// `mv`, in a notebook the caller already has open.
+pub fn mv_in(
+    notebook: &Notebook,
+    key: &str,
+    new_title: &str,
+    update_links: bool,
+    touch: Touch,
+) -> Result<String> {
+    let located = locate(notebook, key)?;
     let mut note = located.note;
 
     let title = new_title.trim();
@@ -925,7 +998,7 @@ pub fn mv(
         let (notes, _) = notebook.inventory()?;
         let id = note::normalize_id(&located.id);
         let found = retarget_links(
-            &notebook,
+            notebook,
             &notes,
             |target| notebook::linked_note_id(target).as_deref() == Some(id.as_str()),
             &file,
@@ -959,7 +1032,12 @@ pub fn mv(
 /// `git revert` brings the note back with its id intact.
 pub fn rm(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    let done = apply_remove(&notebook, key)?;
+    rm_in(&notebook, key)
+}
+
+/// `rm`, in a notebook the caller already has open.
+pub fn rm_in(notebook: &Notebook, key: &str) -> Result<String> {
+    let done = apply_remove(notebook, key)?;
     notebook.commit(&done.paths(), &format!("rm: {}", done.slug))?;
     Ok(done.summary)
 }
