@@ -144,10 +144,14 @@ fn properties(terminal: &Terminal) -> String {
 
 /// Both themes, as a browser picks between them.
 ///
-/// Light on the bare selector and dark inside the query, so a browser that says
-/// nothing gets the light one. There is no toggle and no stored preference: the
-/// reader has already told their phone which they want, and a notebook is not
-/// the place to ask again.
+/// Light on the bare selector and dark inside the query. Not because the bare
+/// one is a fallback for a browser that has no preference — there is no such
+/// browser, `no-preference` having left the specification years ago and every
+/// engine reporting one or the other — but because light is the shorter way to
+/// write it: the query then holds only what differs.
+///
+/// There is no toggle and no stored preference: the reader has already told
+/// their phone which they want, and a notebook is not the place to ask again.
 pub fn stylesheet() -> String {
     format!(
         ":root{{{}}}@media (prefers-color-scheme:dark){{:root{{{}}}}}",

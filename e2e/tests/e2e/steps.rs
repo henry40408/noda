@@ -184,6 +184,56 @@ async fn field_is_big_enough(world: &mut NodaWorld, least: f64) -> Result<()> {
     Ok(())
 }
 
+/// The rule the CLI already follows, one medium over: given room, a row
+/// *extends*. The tags and the day leave the second line and go to the right of
+/// the title — same information, same order.
+#[then("the row's tags sit beside the title")]
+async fn tags_beside(world: &mut NodaWorld) -> Result<()> {
+    let (title, _, _) = world.page()?.box_of(".row .title").await?;
+    let (under, _, _) = world.page()?.box_of(".row .under").await?;
+    anyhow::ensure!(
+        under > title,
+        "the tags start at {under} and the title at {title} — they are still stacked"
+    );
+    Ok(())
+}
+
+#[then("the row's tags sit under the title")]
+async fn tags_under(world: &mut NodaWorld) -> Result<()> {
+    let (title, _, _) = world.page()?.box_of(".row .title").await?;
+    let (under, _, _) = world.page()?.box_of(".row .under").await?;
+    anyhow::ensure!(
+        (under - title).abs() < 1.0,
+        "the tags start at {under} and the title at {title} — they are not stacked"
+    );
+    Ok(())
+}
+
+#[then("the content is narrower than the window")]
+async fn content_is_narrow(world: &mut NodaWorld) -> Result<()> {
+    let (_, width, window) = world.page()?.box_of("main").await?;
+    anyhow::ensure!(
+        width < window,
+        "the content is {width} wide in a {window} window — a line that long is not read, it is scanned"
+    );
+    Ok(())
+}
+
+/// The margin left over has to fall on both sides.
+///
+/// A column that stops short of the right edge and hugs the left is not a
+/// narrower page, it is a lopsided one.
+#[then("the content is centred")]
+async fn content_is_centred(world: &mut NodaWorld) -> Result<()> {
+    let (left, width, window) = world.page()?.box_of("main").await?;
+    let right = window - left - width;
+    anyhow::ensure!(
+        (left - right).abs() <= 2.0,
+        "there is {left} to the left of the content and {right} to the right of it"
+    );
+    Ok(())
+}
+
 #[then("the page does not scroll sideways")]
 async fn no_sideways(world: &mut NodaWorld) -> Result<()> {
     anyhow::ensure!(

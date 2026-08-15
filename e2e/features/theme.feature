@@ -15,10 +15,6 @@ Feature: The notebook follows the phone
     When I open the notebook
     Then the page is light
 
-  Scenario: A phone with no preference gets the light one
-    Given I open the notebook
-    Then the page is light
-
   Scenario: A note is dark too, not only the listing
     Given my phone prefers a dark theme
     When I open the notebook

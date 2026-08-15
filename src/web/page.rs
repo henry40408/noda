@@ -443,12 +443,25 @@ text-decoration:underline;text-underline-offset:3px}\
 .empty code{color:var(--id)}\
 :focus-visible{outline:2px solid var(--tag);outline-offset:-2px}\
 @media (min-width:720px){\
-main{max-width:68ch}\
-.topbar,.searchbar{max-width:68ch}\
-.row{display:flex;align-items:baseline;gap:18px;min-height:0;padding:14px 18px}\
+/* One column for the whole interface, and the room left over falls on both \
+   sides. A `max-width` without a margin is not a narrower page, it is a page \
+   pushed against the left edge of a monitor. */\
+.topbar,.searchbar,main{max-width:900px;margin-inline:auto}\
+/* The row extends rather than stacking: the tags and the day leave the second \
+   line and go to the right of the title. Same information, same order — the \
+   rule `-l` follows on the CLI's own row. */\
+.row{display:flex;align-items:baseline;gap:18px;min-height:0;padding:14px 20px}\
 .row .title,.row .name{flex:1 1 auto}\
 .row .under{margin:0;flex:0 0 auto}\
-.body{font-size:18px}}\
+.topbar,.searchbar{padding-left:20px;padding-right:20px}\
+.topbar .back{margin-left:-12px}\
+.note-head{padding:22px 20px 18px}\
+/* A measure, and measured in the font it is set in. `ch` and `em` are relative \
+   to the element's own type — putting the reading measure on `main`, which is \
+   set in the monospace the chrome uses, sized a column of prose by a font the \
+   prose is not in. It is the body that is read, so it is the body that is \
+   capped. */\
+.body{font-size:18px;max-width:36em;padding:20px}}\
 ";
 
 #[cfg(test)]

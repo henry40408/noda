@@ -277,6 +277,39 @@ impl Page<'_> {
         Ok(colour.as_str().unwrap_or_default().to_string())
     }
 
+    /// Where something sits in the viewport: its left edge, its width, and how
+    /// wide the viewport is.
+    ///
+    /// All three, because every question worth asking about a wide layout is
+    /// about a relationship — is the column narrower than the window, is it
+    /// centred in what is left over, does this piece start to the right of that
+    /// one. A width on its own answers none of them.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run or nothing matches.
+    pub async fn box_of(&self, selector: &str) -> Result<(f64, f64, f64)> {
+        let measured = self
+            .0
+            .measure(&format!(
+                "const el = document.querySelector('{selector}');
+                 if (!el) {{ return null; }}
+                 const r = el.getBoundingClientRect();
+                 return [r.left, r.width, window.innerWidth];"
+            ))
+            .await?;
+        let numbers = measured
+            .as_array()
+            .with_context(|| format!("nothing matches {selector}"))?;
+        let at = |i: usize| {
+            numbers
+                .get(i)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0)
+        };
+        Ok((at(0), at(1), at(2)))
+    }
+
     /// Whether the page scrolls sideways.
     ///
     /// A phone with a horizontal scrollbar is a layout that did not fit, and it
