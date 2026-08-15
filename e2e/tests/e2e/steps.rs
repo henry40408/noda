@@ -234,6 +234,59 @@ async fn content_is_centred(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
+#[when(expr = "I write {string} as the title")]
+async fn write_title(world: &mut NodaWorld, text: String) -> Result<()> {
+    world.page()?.fill("title", &text).await
+}
+
+/// `\n` in the feature means a new line in the box. Gherkin has no way to write
+/// one inside a quoted string, and what is being checked in the scenario that
+/// uses it is precisely that several lines survive the trip.
+#[when(expr = "I write {string} as the body")]
+async fn write_body(world: &mut NodaWorld, text: String) -> Result<()> {
+    world.page()?.fill("body", &text.replace("\\n", "\n")).await
+}
+
+#[when(expr = "I submit {string}")]
+async fn submit(world: &mut NodaWorld, what: String) -> Result<()> {
+    world.page()?.submit(&what).await
+}
+
+#[when(expr = "I untick {string}")]
+async fn untick(world: &mut NodaWorld, tag: String) -> Result<()> {
+    world.page()?.untick(&tag).await
+}
+
+#[then(expr = "the page says {string}")]
+async fn page_says(world: &mut NodaWorld, text: String) -> Result<()> {
+    eventually(&format!("the page to say {text:?}"), || async {
+        Ok(world.page()?.text().await?.contains(&text))
+    })
+    .await
+}
+
+#[then(expr = "the page does not say {string}")]
+async fn page_does_not_say(world: &mut NodaWorld, text: String) -> Result<()> {
+    eventually(&format!("the page to stop saying {text:?}"), || async {
+        Ok(!world.page()?.text().await?.contains(&text))
+    })
+    .await
+}
+
+/// Below sixteen pixels, iOS Safari zooms the whole page the moment a field
+/// takes focus. It is a rule about a browser nobody here is running, which is
+/// exactly why it needs a test that reads the computed value.
+#[then(expr = "no field is smaller than {int} pixels")]
+async fn fields_are_big_enough(world: &mut NodaWorld, least: f64) -> Result<()> {
+    let small = world.page()?.fields_under(least).await?;
+    anyhow::ensure!(
+        small.is_empty(),
+        "a phone will zoom in on these: {}",
+        small.join("; ")
+    );
+    Ok(())
+}
+
 #[then("the page does not scroll sideways")]
 async fn no_sideways(world: &mut NodaWorld) -> Result<()> {
     anyhow::ensure!(

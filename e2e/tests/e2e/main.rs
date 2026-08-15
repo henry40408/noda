@@ -82,6 +82,11 @@ async fn run() -> usize {
                 if let Some(world) = world {
                     world.close().await.expect("could not close the session");
                 }
+                // The notebook goes back to what the fixture built, because some
+                // of these scenarios write to it. Without this the second pass
+                // opens a notebook the first one edited, and fails on notes that
+                // are no longer called what they were called.
+                noda_e2e::server::reset().expect("could not put the notebook back");
             })
         })
         .run(FEATURES)

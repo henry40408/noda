@@ -46,6 +46,39 @@ use crate::{Error, Paths, Result, cmd};
 struct Server {
     paths: Paths,
     guard: guard::Guard,
+    /// Held for the whole of any request that writes.
+    ///
+    /// Reads can happen at once and do; writes cannot. Two commits racing in one
+    /// repository meet at `index.lock`, and what comes back is libgit2 saying a
+    /// file exists — a true statement about a lock file and no help at all to
+    /// somebody who pressed Save.
+    ///
+    /// A `std::sync::Mutex` and not tokio's, because it is only ever taken
+    /// inside `spawn_blocking`: the thing it guards is blocking work, and a lock
+    /// that could be held across an await would be a lock held while a request
+    /// is doing nothing.
+    ///
+    /// It does **not** lock the notebook against the world. A terminal in
+    /// another window is writing to the same repository and always could be;
+    /// that is what the fingerprint below is for.
+    writing: std::sync::Mutex<()>,
+}
+
+/// What a note's file hashes to, as git would hash it.
+///
+/// The optimistic lock. A form carries the fingerprint the note had when the
+/// page was drawn, and the write refuses if it no longer matches — so an edit
+/// begun on a phone at breakfast cannot silently flatten one made at a terminal
+/// at lunch.
+///
+/// **The blob id and not the `updated` stamp.** noda has `--no-touch`, which
+/// exists precisely so that a note's content can change without its `updated`
+/// moving; a session of small corrections to imported notes is the case it was
+/// built for. A version marker that goes wrong exactly when somebody is making
+/// many small edits is a version marker that fails in the situation it exists
+/// for. Content hashes change when content changes, and never otherwise.
+fn fingerprint(path: &std::path::Path) -> Result<String> {
+    Ok(git2::Oid::hash_file(git2::ObjectType::Blob, path)?.to_string())
 }
 
 type Shared = Arc<Server>;
@@ -60,6 +93,7 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String]) -> Result<String> {
     let server = Arc::new(Server {
         paths: paths.clone(),
         guard: guard::Guard::new(allow),
+        writing: std::sync::Mutex::new(()),
     });
 
     // Built by hand rather than with `#[tokio::main]`: `main` is a clap match
@@ -91,7 +125,23 @@ fn router(server: Shared) -> Router {
     Router::new()
         .route("/", get(front))
         .route("/nb/{book}", get(listing))
+        .route("/nb/{book}/new", get(new_form).post(new_note))
         .route("/nb/{book}/n/{key}", get(reading))
+        // One shape for all of them: `GET` shows the form, `POST` does the
+        // thing, and both live at the address of the thing they are about. No
+        // JavaScript is involved in any of it, so a form is the only way a
+        // browser can ask for a change at all — and a `GET` that changed
+        // something would be a link a prefetcher could press.
+        .route("/nb/{book}/n/{key}/edit", get(edit_form).post(edit_note))
+        .route(
+            "/nb/{book}/n/{key}/rename",
+            get(rename_form).post(rename_note),
+        )
+        .route("/nb/{book}/n/{key}/tags", get(tags_form).post(tag_note))
+        .route(
+            "/nb/{book}/n/{key}/delete",
+            get(delete_form).post(delete_note),
+        )
         .layer(middleware::from_fn_with_state(
             Arc::clone(&server),
             admitted,
@@ -322,6 +372,322 @@ async fn reading(
     .await
 }
 
+async fn new_form(State(server): State<Shared>, Path(book): Path<String>) -> Response {
+    answer(move || {
+        if open(&server.paths, &book)?.is_none() {
+            return Ok(missing_notebook(&book));
+        }
+        Ok(Answer::Page(page::composing(
+            &book,
+            &page::Draft::default(),
+            None,
+        )))
+    })
+    .await
+}
+
+async fn new_note(
+    State(server): State<Shared>,
+    Path(book): Path<String>,
+    form: String,
+) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let draft = page::Draft {
+            title: parameter(Some(&form), "title"),
+            tags: parameter(Some(&form), "tags"),
+            body: parameter(Some(&form), "body"),
+        };
+        let tags = query::split(&draft.tags);
+        let title = draft.title.trim();
+        let title = (!title.is_empty()).then_some(title);
+
+        let _writing = server.writing.lock();
+        // Which ids existed a moment ago, so the new one can be told from them.
+        // Not by reading the id out of what `add` printed: that answer is
+        // written for a person, and a caller that parses it has quietly made the
+        // wording of a message into an interface. The browser answers the same
+        // question the same way.
+        let before = notebook.taken_ids()?;
+        if let Err(e) = cmd::add_in(&notebook, title, &draft.body, &tags) {
+            return Ok(Answer::Page(page::composing(
+                &book,
+                &draft,
+                Some(&e.to_string()),
+            )));
+        }
+        let after = notebook.taken_ids()?;
+        match after.difference(&before).next() {
+            Some(id) => Ok(back_to_note(&book, id)),
+            // It was added and something took it away between the two reads.
+            // Nothing is wrong with the note; there is just nowhere to send you.
+            None => Ok(Answer::Elsewhere(format!("/nb/{book}"))),
+        }
+    })
+    .await
+}
+
+async fn edit_form(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/edit")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let path = notebook.note_path(&id, &slug);
+        let note = Note::parse(&std::fs::read_to_string(&path)?)
+            .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+        Ok(Answer::Page(page::editing(
+            &book,
+            &page::About::of(&id, &slug, &note.title),
+            &note.body,
+            &fingerprint(&path)?,
+            None,
+        )))
+    })
+    .await
+}
+
+async fn edit_note(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+    form: String,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/edit")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let body = parameter(Some(&form), "body");
+        let was = parameter(Some(&form), "fingerprint");
+
+        let _writing = server.writing.lock();
+        let path = notebook.note_path(&id, &slug);
+        let now = fingerprint(&path)?;
+        if now != was {
+            // Nothing has been written. What the reader typed is handed back to
+            // them on top of what is on disk, because the only thing worse than
+            // overwriting somebody's work is losing the work of the person
+            // standing in front of you to avoid it.
+            let theirs = Note::parse(&std::fs::read_to_string(&path)?)
+                .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+            return Ok(Answer::Page(page::clashed(
+                &book,
+                &page::About::of(&id, &slug, &theirs.title),
+                &theirs.body,
+                &body,
+                &now,
+            )));
+        }
+        match cmd::rewrite_in(&notebook, &id, &body, cmd::Touch::Stamp) {
+            Ok(_) => Ok(back_to_note(&book, &id)),
+            Err(e) => Ok(Answer::Page(page::editing(
+                &book,
+                &page::About::of(&id, &slug, ""),
+                &body,
+                &now,
+                Some(&e.to_string()),
+            ))),
+        }
+    })
+    .await
+}
+
+async fn rename_form(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/rename")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let note = Note::parse(&std::fs::read_to_string(notebook.note_path(&id, &slug))?)
+            .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+        Ok(Answer::Page(page::renaming(
+            &book,
+            &page::About::of(&id, &slug, &note.title),
+            &note.title,
+            None,
+        )))
+    })
+    .await
+}
+
+async fn rename_note(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+    form: String,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/rename")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let title = parameter(Some(&form), "title");
+        let _writing = server.writing.lock();
+        // `update_links: false`, the same call the browser's `m` makes. Rewriting
+        // the prose of notes nobody pointed at is a thing to ask for out loud,
+        // and there is no way to ask for it here yet.
+        match cmd::mv_in(&notebook, &id, &title, false, cmd::Touch::Stamp) {
+            Ok(_) => Ok(back_to_note(&book, &id)),
+            Err(e) => Ok(Answer::Page(page::renaming(
+                &book,
+                &page::About::of(&id, &slug, &title),
+                &title,
+                Some(&e.to_string()),
+            ))),
+        }
+    })
+    .await
+}
+
+async fn tags_form(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/tags")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let note = Note::parse(&std::fs::read_to_string(notebook.note_path(&id, &slug))?)
+            .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+        Ok(Answer::Page(page::tagging(
+            &book,
+            &page::About::of(&id, &slug, &note.title),
+            &note.tags,
+            None,
+        )))
+    })
+    .await
+}
+
+async fn tag_note(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+    form: String,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/tags")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let note = Note::parse(&std::fs::read_to_string(notebook.note_path(&id, &slug))?)
+            .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+
+        // A ticked box arrives, an unticked one does not, so what the form says
+        // is which tags survived — and the change is the difference between that
+        // and what the note holds. Worked out here rather than asked of the
+        // reader: `+work -q3` is the command line's way of saying it, and a
+        // command line is where somebody has a keyboard.
+        let kept = parameters(&form, "keep");
+        let mut changes: Vec<String> = note
+            .tags
+            .iter()
+            .filter(|tag| !kept.contains(tag))
+            .map(|tag| format!("-{tag}"))
+            .collect();
+        for added in query::split(&parameter(Some(&form), "add")) {
+            changes.push(format!("+{added}"));
+        }
+        if changes.is_empty() {
+            return Ok(back_to_note(&book, &id));
+        }
+
+        let _writing = server.writing.lock();
+        match cmd::tag_in(&notebook, &id, &changes, cmd::Touch::Stamp) {
+            Ok(_) => Ok(back_to_note(&book, &id)),
+            Err(e) => Ok(Answer::Page(page::tagging(
+                &book,
+                &page::About::of(&id, &slug, &note.title),
+                &note.tags,
+                Some(&e.to_string()),
+            ))),
+        }
+    })
+    .await
+}
+
+async fn delete_form(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/delete")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let note = Note::parse(&std::fs::read_to_string(notebook.note_path(&id, &slug))?)
+            .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
+        Ok(Answer::Page(page::deleting(
+            &book,
+            &page::About::of(&id, &slug, &note.title),
+        )))
+    })
+    .await
+}
+
+async fn delete_note(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let (notebook, id, _slug) = match aim(&server.paths, &book, &key, "/delete")? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let _writing = server.writing.lock();
+        cmd::rm_in(&notebook, &id)?;
+        // Not to the note: it is gone. The listing is where you were before you
+        // opened it.
+        Ok(Answer::Elsewhere(format!("/nb/{book}")))
+    })
+    .await
+}
+
+/// A note the caller can act on: the notebook open, and the note located.
+///
+/// Every write handler starts here, and every one of them needs the same three
+/// refusals first — no such notebook, no such note, and an address that is not
+/// the note's own. Written once so a route added later cannot get two of the
+/// three right.
+enum Aimed {
+    At(Notebook, String, String),
+    Missing(Answer),
+}
+
+fn aim(paths: &Paths, book: &str, key: &str, tail: &str) -> Result<Aimed> {
+    let Some(notebook) = open(paths, book)? else {
+        return Ok(Aimed::Missing(missing_notebook(book)));
+    };
+    let Ok((id, slug)) = notebook.resolve(key) else {
+        return Ok(Aimed::Missing(Answer::Missing(
+            "No such note".to_string(),
+            format!("Nothing in {book} is called {key}."),
+        )));
+    };
+    if key != id {
+        return Ok(Aimed::Missing(Answer::Elsewhere(format!(
+            "/nb/{book}/n/{id}{tail}"
+        ))));
+    }
+    Ok(Aimed::At(notebook, id, slug))
+}
+
+/// Where a change goes when it worked: back to the note it changed.
+///
+/// `303` and not `200`, so a reload does not offer to send the form again. This
+/// is the whole of why a write is a `POST` followed by a redirect rather than a
+/// page in its own right.
+fn back_to_note(book: &str, id: &str) -> Answer {
+    Answer::Elsewhere(format!("/nb/{book}/n/{id}"))
+}
+
 /// The notebook by that name, or `None` when there is not one.
 ///
 /// Told apart from a notebook that exists and will not open: the first is a
@@ -359,6 +725,22 @@ fn parameter(query: Option<&str>, name: &str) -> String {
         }
     }
     String::new()
+}
+
+/// Every value sent under `name`, in the order they were sent.
+///
+/// A form with several boxes ticked sends the name once per box, which is how
+/// the tags screen says which tags are still wanted. There is no other way for a
+/// form to say "these, and not those" — a checkbox that is not ticked is not
+/// sent at all, so what arrives is a list of what survived rather than a list of
+/// changes.
+fn parameters(body: &str, name: &str) -> Vec<String> {
+    body.split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (decode(key) == name).then(|| decode(value))
+        })
+        .collect()
 }
 
 fn decode(value: &str) -> String {

@@ -185,6 +185,66 @@ fn shell(title: &str, body: &str) -> String {
     )
 }
 
+/// A note being written, as the form holds it.
+///
+/// Kept as the strings that were typed rather than as anything parsed, because
+/// its other job is to be handed back when the write is refused: a reader who
+/// has been told a tag is not allowed should find their words where they left
+/// them, not an empty form.
+#[derive(Default)]
+pub struct Draft {
+    pub title: String,
+    pub tags: String,
+    pub body: String,
+}
+
+/// Which note a form is about.
+pub struct About {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+}
+
+impl About {
+    pub fn of(id: &str, slug: &str, title: &str) -> About {
+        About {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            title: title.to_string(),
+        }
+    }
+
+    fn at(&self, book: &str) -> String {
+        format!("/nb/{}/n/{}", escape(book), escape(&self.id))
+    }
+}
+
+/// The bar along the bottom, and the reason it exists at all.
+///
+/// PR 1 shipped without one, because there was nothing to put in it and two
+/// greyed-out buttons are not a design. It arrives now with something in every
+/// slot it has. Adding it changed nothing above it — a fixed strip at the foot
+/// of a page is an extension, not a rearrangement, which is the rule this
+/// project applies to a listing's row and applies here to its chrome.
+fn action_bar(items: &[(&str, &str, String)]) -> String {
+    let mut out = String::from("<nav class=\"actionbar\">");
+    for (icon, label, href) in items {
+        let _ = write!(
+            out,
+            "<a href=\"{}\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
+             <span>{label}</span></a>",
+            escape(href)
+        );
+    }
+    out.push_str("</nav>");
+    out
+}
+
+const NEW: &str = "<path d=\"M12 4.5v15M4.5 12h15\"/>";
+const EDIT: &str = "<path d=\"M4 20h4L19 9l-4-4L4 16z\"/>";
+const TAGS: &str = "<path d=\"M4 4h7l9 9-7 7-9-9z\"/><circle cx=\"8\" cy=\"8\" r=\"1.4\"/>";
+const RENAME: &str = "<path d=\"M4 7V5h16v2\"/><path d=\"M12 5v14\"/><path d=\"M9 19h6\"/>";
+
 /// The back chevron, and the only icon PR 1 has.
 ///
 /// Inline SVG rather than a character like `‹`: a glyph is whatever the reader's
@@ -298,7 +358,7 @@ pub fn listing(
              placeholder=\"tag:work OR tag:q3 budget\" \
              autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" \
              enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}</form>\
-             <main class=\"rows\">{body}</main>",
+             <main class=\"rows\">{body}</main>{}",
             back("/", "the notebooks"),
             escape(book),
             escape(book),
@@ -306,18 +366,33 @@ pub fn listing(
             problem.map_or_else(String::new, |why| format!(
                 "<p class=\"problem\">{}</p>",
                 escape(why)
-            ))
+            )),
+            action_bar(&[(NEW, "New", format!("/nb/{}/new", escape(book)))])
         ),
     )
 }
 
 /// One note.
 pub fn note(book: &str, reading: &Reading) -> String {
+    let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
     let meta = [tags(&reading.tags), updated(reading.updated.as_deref())]
         .into_iter()
         .filter(|piece| !piece.is_empty())
         .collect::<Vec<_>>()
         .join("<span class=\"sep\">·</span>");
+
+    // Past the end of the note, and quiet. Deleting is the one thing here that
+    // cannot be undone by doing it again, so it is the one thing not on the bar
+    // under a thumb — you scroll the whole note to reach it, and that friction
+    // is proportionate rather than invented.
+    let perilous =
+        format!("<p class=\"perilous\"><a href=\"{at}/delete\">Delete this note</a></p>");
+    let bar = action_bar(&[
+        (EDIT, "Edit", format!("{at}/edit")),
+        (TAGS, "Tags", format!("{at}/tags")),
+        (RENAME, "Rename", format!("{at}/rename")),
+    ]);
+    let home = format!("/nb/{}", escape(book));
 
     shell(
         &format!("{} — noda", reading.title),
@@ -328,13 +403,207 @@ pub fn note(book: &str, reading: &Reading) -> String {
              <div class=\"filename\"><span class=\"id\">{}</span>\
              <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
              <div class=\"note-meta\">{meta}</div></div>\
-             <div class=\"body\">{}</div></main>",
-            back(&format!("/nb/{}", escape(book)), book),
+             <div class=\"body\">{}</div>\
+             {perilous}</main>{bar}",
+            back(&home, book),
             escape(book),
             escape(&reading.title),
             escape(&reading.id),
             escape(&reading.slug),
-            escape(&reading.body)
+            escape(&reading.body),
+        ),
+    )
+}
+
+/// What every form page is wrapped in: a bar with a way back, an optional line
+/// saying what went wrong, and the form itself.
+fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
+    shell(
+        &format!("{title} — noda"),
+        &format!(
+            "<header class=\"topbar\">{}<span class=\"here\">{}</span></header>{said}{form}",
+            back(back_to, book),
+            escape(title)
+        ),
+    )
+}
+
+/// Why a change was refused, said where the change was typed.
+fn refusal(problem: Option<&str>) -> String {
+    problem.map_or_else(String::new, |why| {
+        format!("<p class=\"said bad\">{}</p>", escape(why))
+    })
+}
+
+/// A new note.
+pub fn composing(book: &str, draft: &Draft, problem: Option<&str>) -> String {
+    form_page(
+        book,
+        "New note",
+        &format!("/nb/{}", escape(book)),
+        &refusal(problem),
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"/nb/{}/new\">\
+             <div><label for=\"t\">Title</label>\
+             <input id=\"t\" type=\"text\" name=\"title\" value=\"{}\" \
+             placeholder=\"Leave it empty to take the first line\"></div>\
+             <div><label for=\"g\">Tags</label>\
+             <input id=\"g\" type=\"text\" name=\"tags\" value=\"{}\" placeholder=\"work q3\"></div>\
+             <div><label for=\"b\">Note</label>\
+             <textarea id=\"b\" name=\"body\" autofocus>{}</textarea></div>\
+             <div class=\"buttons\"><button class=\"go\" type=\"submit\">Add note</button>\
+             <a class=\"button\" href=\"/nb/{}\">Cancel</a></div></form>",
+            escape(book),
+            escape(&draft.title),
+            escape(&draft.tags),
+            escape(&draft.body),
+            escape(book)
+        ),
+    )
+}
+
+/// A note's body, in a box.
+///
+/// `was` is the fingerprint the file had when this page was drawn, carried
+/// through the form so the write can tell whether anything happened in between.
+pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option<&str>) -> String {
+    form_page(
+        book,
+        &about.title,
+        &about.at(book),
+        &format!(
+            "{}<p class=\"said\">Editing the body. The title and the tags have their own screens.</p>",
+            refusal(problem)
+        ),
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"{}/edit\">\
+             <input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
+             <div><textarea name=\"body\" autofocus>{}</textarea></div>\
+             <div class=\"buttons\"><button class=\"go\" type=\"submit\">Save</button>\
+             <a class=\"button\" href=\"{}\">Cancel</a></div></form>",
+            about.at(book),
+            escape(was),
+            escape(body),
+            about.at(book)
+        ),
+    )
+}
+
+/// The note changed under the reader, and neither version has been lost.
+///
+/// What is on disk is shown first and cannot be typed into; what they wrote is
+/// underneath and still can be. That arrangement is the whole answer: it needs
+/// no "keep mine" button, because saving *is* keeping theirs and cancelling is
+/// discarding it, and it leaves room for the only thing a person can do that a
+/// program cannot — decide what the two versions together should say.
+pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -> String {
+    form_page(
+        book,
+        &about.title,
+        &about.at(book),
+        "<p class=\"said bad\"><b>This note changed while you were writing.</b> \
+         Nothing has been overwritten.</p>",
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"{}/edit\">\
+             <input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
+             <div><label>Saved now</label><pre class=\"theirs\">{}</pre></div>\
+             <div><label for=\"b\">What you wrote</label>\
+             <textarea id=\"b\" name=\"body\" autofocus>{}</textarea></div>\
+             <div class=\"buttons\"><button class=\"go\" type=\"submit\">Save</button>\
+             <a class=\"button\" href=\"{}\">Cancel</a></div></form>",
+            about.at(book),
+            escape(now),
+            escape(theirs),
+            escape(mine),
+            about.at(book)
+        ),
+    )
+}
+
+/// A new title.
+pub fn renaming(book: &str, about: &About, title: &str, problem: Option<&str>) -> String {
+    form_page(
+        book,
+        "Rename",
+        &about.at(book),
+        &format!(
+            "{}<p class=\"said\">The id never moves, so links and bookmarks survive. \
+             The filename follows the title.</p>",
+            refusal(problem)
+        ),
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"{}/rename\">\
+             <div><label for=\"t\">Title</label>\
+             <input id=\"t\" type=\"text\" name=\"title\" value=\"{}\" autofocus></div>\
+             <div class=\"buttons\"><button class=\"go\" type=\"submit\">Rename</button>\
+             <a class=\"button\" href=\"{}\">Cancel</a></div></form>",
+            about.at(book),
+            escape(title),
+            about.at(book)
+        ),
+    )
+}
+
+/// Which tags the note should end up with.
+///
+/// A ticked box per tag it has, and a field for ones it does not. The form says
+/// what should survive; working out the `+`s and `-`s from that is the server's
+/// job, because `+work -q3` is a notation for somebody with a keyboard.
+pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>) -> String {
+    let mut boxes = String::new();
+    for (n, tag) in tags.iter().enumerate() {
+        let _ = write!(
+            boxes,
+            "<label class=\"tick\" for=\"t{n}\">\
+             <input id=\"t{n}\" type=\"checkbox\" name=\"keep\" value=\"{}\" checked>\
+             <span>{}</span></label>",
+            escape(tag),
+            escape(tag)
+        );
+    }
+    let held = if tags.is_empty() {
+        "<p class=\"said\">This note has no tags yet.</p>".to_string()
+    } else {
+        format!("<div><label>On this note</label><div class=\"ticks\">{boxes}</div></div>")
+    };
+
+    form_page(
+        book,
+        "Tags",
+        &about.at(book),
+        &refusal(problem),
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"{}/tags\">{held}\
+             <div><label for=\"a\">Add a tag</label>\
+             <input id=\"a\" type=\"text\" name=\"add\" placeholder=\"ops\"></div>\
+             <div class=\"buttons\"><button class=\"go\" type=\"submit\">Save</button>\
+             <a class=\"button\" href=\"{}\">Cancel</a></div></form>",
+            about.at(book),
+            about.at(book)
+        ),
+    )
+}
+
+/// The last chance to not.
+///
+/// It says what git makes true — the note can be brought back — because that is
+/// the difference between this and every other notes application, and a warning
+/// that overstates the danger teaches people to click through warnings.
+pub fn deleting(book: &str, about: &About) -> String {
+    form_page(
+        book,
+        "Delete",
+        &about.at(book),
+        "",
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"{}/delete\">\
+             <p class=\"said\"><b>Delete {}?</b> The file goes and the commit that \
+             removed it stays, so <code>noda restore</code> brings it back with its id.</p>\
+             <div class=\"buttons\"><button class=\"danger\" type=\"submit\">Delete</button>\
+             <a class=\"button\" href=\"{}\">Keep it</a></div></form>",
+            about.at(book),
+            escape(&about.title),
+            about.at(book)
         ),
     )
 }
@@ -442,6 +711,47 @@ font-weight:600;margin-bottom:8px}\
 text-decoration:underline;text-underline-offset:3px}\
 .empty code{color:var(--id)}\
 :focus-visible{outline:2px solid var(--tag);outline-offset:-2px}\
+.actionbar{position:sticky;bottom:0;display:flex;border-top:1px solid var(--rule);\
+background:var(--bg-sunk);padding-bottom:env(safe-area-inset-bottom,0px)}\
+.actionbar a{flex:1;min-height:64px;padding:9px 0 10px;display:flex;flex-direction:column;\
+align-items:center;justify-content:center;gap:4px;color:var(--muted);\
+-webkit-tap-highlight-color:transparent}\
+.actionbar a:active{background:var(--press)}\
+.actionbar svg{width:26px;height:26px}\
+.actionbar span{font-size:11.5px;letter-spacing:0.02em}\
+form.write{padding:16px;display:flex;flex-direction:column;gap:16px}\
+form.write label{font-size:12.5px;color:var(--punct);display:block;margin-bottom:6px}\
+form.write input[type=text],form.write textarea{width:100%;padding:12px 14px;border-radius:10px;\
+border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);font-size:16px}\
+form.write input[type=text]{font-family:var(--mono);min-height:var(--tap)}\
+form.write textarea{font-family:var(--read);font-size:17px;line-height:1.6;min-height:300px;\
+resize:vertical}\
+.buttons{display:flex;gap:10px}\
+button,.button{min-height:var(--tap);padding:0 20px;border-radius:10px;\
+border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);\
+font-family:var(--mono);font-size:15px;display:inline-flex;align-items:center;\
+justify-content:center}\
+button.go{background:var(--id);border-color:var(--id);color:var(--bg);font-weight:600;flex:1}\
+button.danger{background:var(--alert);border-color:var(--alert);color:var(--bg);\
+font-weight:600;flex:1}\
+.ticks{display:flex;flex-direction:column}\
+/* The whole row, not the words. A label is what a thumb presses to toggle the \
+   box inside it, so it is the label that has to be a target — and on a phone \
+   the row is the shape a list of choices takes. */\
+.tick{display:flex;align-items:center;gap:12px;min-height:var(--tap);color:var(--tag);\
+font-size:16px;margin:0;width:100%;padding:0 2px;border-bottom:1px solid var(--rule)}\
+.tick:last-child{border-bottom:0}\
+.tick input{width:22px;height:22px;accent-color:var(--tag)}\
+.said{padding:12px 16px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:13px}\
+.said b{color:var(--text);font-weight:600}\
+.said.bad{color:var(--alert)}\
+.said.bad b{color:var(--alert)}\
+.theirs{margin:0;padding:14px;border:1px solid var(--rule);border-radius:10px;\
+background:var(--bg-sunk);font-family:var(--read);font-size:16px;line-height:1.55;\
+white-space:pre-wrap;overflow-wrap:break-word}\
+.perilous{padding:8px 16px 24px;margin:0}\
+.perilous a{color:var(--alert);display:inline-flex;align-items:center;min-height:var(--tap);\
+text-decoration:underline;text-underline-offset:3px;font-size:14px}\
 @media (min-width:720px){\
 /* One column for the whole interface, and the room left over falls on both \
    sides. A `max-width` without a margin is not a narrower page, it is a page \

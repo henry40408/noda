@@ -112,6 +112,58 @@ impl Page<'_> {
         Ok(())
     }
 
+    /// Types into the field with this `name`.
+    ///
+    /// By `name` and not by label: the name is what the form sends, so it is the
+    /// thing the server and the test are actually agreeing about. A label is
+    /// prose and gets rewritten.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page has no such field.
+    pub async fn fill(&self, name: &str, value: &str) -> Result<()> {
+        let field = self
+            .driver()
+            .find(By::Css(format!("[name='{name}']")))
+            .await
+            .with_context(|| format!("this page has no field called {name}"))?;
+        field.clear().await?;
+        field.send_keys(value).await?;
+        Ok(())
+    }
+
+    /// Presses the button whose words are `what`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no button says it.
+    pub async fn submit(&self, what: &str) -> Result<()> {
+        let target = format!("//button[contains(., {})]", xpath_string(what));
+        self.driver()
+            .find(By::XPath(&target))
+            .await
+            .with_context(|| format!("no button on this page says {what:?}"))?
+            .click()
+            .await?;
+        Ok(())
+    }
+
+    /// Unticks the box for a tag.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the note does not carry that tag.
+    pub async fn untick(&self, tag: &str) -> Result<()> {
+        let box_for = format!("input[name='keep'][value='{tag}']");
+        self.driver()
+            .find(By::Css(&box_for))
+            .await
+            .with_context(|| format!("no box for the tag {tag:?}"))?
+            .click()
+            .await?;
+        Ok(())
+    }
+
     /// Presses the way back.
     ///
     /// # Errors
@@ -147,40 +199,53 @@ impl Page<'_> {
         Ok(())
     }
 
+    /// What the element matching `selector` reads as, or nothing when the page
+    /// has no such element.
+    ///
+    /// **Absent is a value here, not an error.** A step that has just submitted
+    /// a form is asking a page that may still be the previous one, and a `find`
+    /// that fails with "no such element" turns "not yet" into a failure the
+    /// retry loop cannot see past. One round trip, and `null` for missing.
+    ///
+    /// `innerText` and not `textContent`, because it is the rendered form —
+    /// which is what makes a body holding `<b>bold</b>` read back with its angle
+    /// brackets exactly when the page escaped them.
+    async fn reads(&self, selector: &str) -> Result<String> {
+        let text = self
+            .0
+            .measure(&format!(
+                "const el = document.querySelector('{selector}');
+                 return el ? el.innerText : '';"
+            ))
+            .await?;
+        Ok(text.as_str().unwrap_or_default().to_string())
+    }
+
     /// The heading of a note.
     ///
     /// # Errors
     ///
-    /// Fails when the page has no heading.
+    /// Fails when the page cannot be queried.
     pub async fn heading(&self) -> Result<String> {
-        Ok(self.driver().find(By::Css("h1")).await?.text().await?)
+        self.reads("h1").await
     }
 
     /// The filename line under the heading.
     ///
     /// # Errors
     ///
-    /// Fails when the page has no filename.
+    /// Fails when the page cannot be queried.
     pub async fn filename(&self) -> Result<String> {
-        Ok(self
-            .driver()
-            .find(By::Css(".filename"))
-            .await?
-            .text()
-            .await?)
+        self.reads(".filename").await
     }
 
     /// A note's body, as text.
     ///
-    /// `WebDriver`'s "Get Element Text" is already the rendered form, so a body
-    /// holding `<b>bold</b>` reads back with the angle brackets in it exactly
-    /// when the page escaped them — which is the assertion worth making.
-    ///
     /// # Errors
     ///
-    /// Fails when the page has no body.
+    /// Fails when the page cannot be queried.
     pub async fn body(&self) -> Result<String> {
-        Ok(self.driver().find(By::Css(".body")).await?.text().await?)
+        self.reads(".body").await
     }
 
     /// Whatever the page is saying went wrong, if anything.
@@ -218,17 +283,67 @@ impl Page<'_> {
                 const wide = {wide}, tall = {tall};
                 const short = [];
                 for (const el of document.querySelectorAll('a, input, button')) {{
-                    const r = el.getBoundingClientRect();
+                    // What a thumb actually presses. A checkbox inside a label
+                    // is 22 pixels of ink inside whatever the label is, and the
+                    // label is the target: pressing it toggles the box. Measuring
+                    // the input would report a control nobody aims at.
+                    const target = el.closest('label') || el;
+                    const r = target.getBoundingClientRect();
                     // Nothing is measured that nobody can reach: a control laid
                     // out to nothing is not a small target, it is no target.
                     if (r.width === 0 && r.height === 0) {{ continue; }}
                     if (r.width < wide || r.height < tall) {{
-                        const what = (el.textContent || el.getAttribute('aria-label') || el.tagName)
-                            .trim().slice(0, 40);
+                        const what = (target.textContent || el.getAttribute('aria-label')
+                            || el.name || el.tagName).trim().slice(0, 40);
                         short.push(`${{what}} — ${{Math.round(r.width)}}x${{Math.round(r.height)}}`);
                     }}
                 }}
                 return short;
+                "
+            ))
+            .await?;
+        Ok(measured
+            .as_array()
+            .context("the measuring script did not answer with a list")?
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default().to_string())
+            .collect())
+    }
+
+    /// Everything on the page, as a reader would read it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn text(&self) -> Result<String> {
+        let text = self.0.measure("return document.body.innerText;").await?;
+        Ok(text.as_str().unwrap_or_default().to_string())
+    }
+
+    /// Every field a phone would zoom in on, with the size it is set at.
+    ///
+    /// Generalises the search field's rule to the forms: any field below sixteen
+    /// pixels makes iOS Safari scale the page up on focus, and a reader who has
+    /// just started typing then has to pinch their way back out.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the measuring script does not run.
+    pub async fn fields_under(&self, least: f64) -> Result<Vec<String>> {
+        let measured = self
+            .0
+            .measure(&format!(
+                r"
+                const least = {least};
+                const small = [];
+                for (const el of document.querySelectorAll('input, textarea, select')) {{
+                    if (el.type === 'hidden' || el.type === 'checkbox') {{ continue; }}
+                    const size = parseFloat(getComputedStyle(el).fontSize);
+                    if (size < least) {{
+                        small.push(`${{el.name || el.type}} — ${{size}}px`);
+                    }}
+                }}
+                return small;
                 "
             ))
             .await?;

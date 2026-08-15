@@ -909,9 +909,24 @@ noda web --listen 0.0.0.0:8080 --allow-host noda.tail1234.ts.net
   Behind a reverse proxy, name whatever the browser puts in the address bar. The refusal says
   exactly what to add.
 
-What it shows today is the notebooks, a notebook's notes with the same query language
-`noda search` takes, and one note's text. Rendering Markdown, following links between notes,
-showing attachments, writing, and syncing are not there yet.
+It writes as well as reads: a note can be started, its body rewritten, its title changed, its
+tags ticked on and off, and it can be deleted. Every one of those runs the command that does
+it — the same `add`, `mv`, `tag` and `rm` the terminal calls — so what a change *means* has
+one implementation, and each lands as its own commit with the same message it would have had.
+
+**An edit carries the note's fingerprint, and a stale one is refused.** The form remembers
+what the file hashed to when the page was drawn; if it hashes to something else by the time
+you save, nothing is written and the page comes back with both versions on it — what is saved
+now, above what you typed, still in a box you can edit. That is the whole reason for the check:
+an edit begun on a phone at breakfast must not flatten one made at a terminal at lunch, and a
+refusal that threw away what you had just written would only be a politer way of losing it.
+
+The fingerprint is the file's git blob id and not its `updated` stamp, because `--no-touch`
+exists — a note's content can change without its stamp moving, which is exactly the case that
+version marker would be wrong in.
+
+Rendering Markdown, following links between notes, showing attachments, and syncing are not
+there yet.
 
 ### Action items
 
@@ -1367,10 +1382,8 @@ pointer, and the editor's scratch buffer are kept out of your synced data on pur
 
 ## Roadmap
 
-- **The web UI reads; it does not yet write.** `noda web` is here — see
-  [In a browser](#in-a-browser) — and shows the notebooks, a notebook's notes and one note's
-  text. Rendering Markdown, showing attachments, editing, and syncing from the browser are
-  still to come.
+- **The web UI reads and writes.** `noda web` is here — see [In a browser](#in-a-browser).
+  Rendering Markdown, showing attachments, and syncing from the browser are still to come.
 - Encrypted notebooks are under consideration.
 
 ## Building from source
