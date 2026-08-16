@@ -5,20 +5,27 @@
 //! `cargo test --test e2e` from `e2e/`.
 //!
 //! **Every scenario runs twice — once with the page's own scripts enabled and
-//! once with them disabled — and has to pass both ways.** Not a tag on selected
-//! scenarios, because there is nothing here that is only true one way: "it works
-//! with JavaScript off" is the contract for the whole interface, and the moment
-//! it becomes a property of particular scenarios it becomes a property of
+//! once with them disabled — and has to pass both ways.** "It works with
+//! JavaScript off" is the contract for the whole interface, and the moment it
+//! becomes a property of particular scenarios it becomes a property of
 //! whichever ones somebody remembered.
 //!
-//! PR 1 ships no script at all, so today the two passes are trivially the same.
-//! That is the argument for fixing it in place now rather than later: the
-//! contract is easy to keep while it is free and hard to recover once there is
-//! an enhancement layer to hide behind.
+//! One exception, and it arrived with the enhancement layer that this file
+//! spent six pull requests keeping honest: a scenario tagged `@scripted` runs
+//! only in the scripted pass. It has to, because what it describes is the
+//! shortcut — filtering as you type, polling instead of reloading — and with
+//! scripts off there is nothing to observe, not a different outcome.
+//!
+//! The tag is deliberately narrow, and the narrowing is what keeps it from
+//! being the escape hatch the paragraph above was written to prevent: **it buys
+//! a scenario the right to be about the shortcut, never the right to be the
+//! only account of the result.** Every claim about what an answer *is* — which
+//! rows a query allows, what the page says about them — is also made by an
+//! untagged scenario that goes through the form. If a `@scripted` scenario is
+//! ever the only place a result is asserted, the scriptless path has stopped
+//! being tested and the tag is how it happened.
 
 mod steps;
-
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use cucumber::World as _;
 use cucumber::writer::Stats as _;
@@ -28,11 +35,8 @@ use noda_e2e::world::NodaWorld;
 
 const FEATURES: &str = "features";
 
-/// Which pass is under way.
-///
-/// A global rather than something threaded through, because the only thing that
-/// reads it is the `before` hook, which cucumber calls with a fixed signature.
-static SCRIPTS_RUN: AtomicBool = AtomicBool::new(true);
+/// The tag that means "this scenario is about the shortcut".
+const ONLY_SCRIPTED: &str = "scripted";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,12 +44,10 @@ async fn main() -> anyhow::Result<()> {
     let _server = Server::start()?;
 
     eprintln!("\n── with the page's scripts enabled");
-    SCRIPTS_RUN.store(true, Ordering::Relaxed);
-    let scripted = run().await;
+    let scripted = run(Scripting::Enabled).await;
 
     eprintln!("\n── with the page's scripts disabled");
-    SCRIPTS_RUN.store(false, Ordering::Relaxed);
-    let plain = run().await;
+    let plain = run(Scripting::Disabled).await;
 
     // Both passes run before either can fail the process: knowing that the
     // script-less run broke *and* that the scripted one did not is the whole
@@ -56,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// One pass over every feature, reporting how many ways it failed.
-async fn run() -> usize {
+async fn run(scripting: Scripting) -> usize {
     let writer = NodaWorld::cucumber()
         // One browser at a time. The scenarios share a server and a notebook,
         // and a second Chromium buys less than it costs.
@@ -64,13 +66,8 @@ async fn run() -> usize {
         // A skipped step is a step whose definition somebody deleted. Silence
         // there reads as a pass.
         .fail_on_skipped()
-        .before(|_feature, _rule, _scenario, world| {
+        .before(move |_feature, _rule, _scenario, world| {
             Box::pin(async move {
-                let scripting = if SCRIPTS_RUN.load(Ordering::Relaxed) {
-                    Scripting::Enabled
-                } else {
-                    Scripting::Disabled
-                };
                 world
                     .open(scripting)
                     .await
@@ -89,7 +86,13 @@ async fn run() -> usize {
                 noda_e2e::server::reset().expect("could not put the notebook back");
             })
         })
-        .run(FEATURES)
+        // The scriptless pass skips what only exists when scripts run. Written
+        // as "unless it is tagged" rather than as a list of features, so that a
+        // scenario opts itself in where it is read.
+        .filter_run(FEATURES, move |_feature, _rule, scenario| {
+            scripting == Scripting::Enabled
+                || !scenario.tags.iter().any(|tag| tag == ONLY_SCRIPTED)
+        })
         .await;
 
     writer.failed_steps() + writer.parsing_errors() + writer.hook_errors()
