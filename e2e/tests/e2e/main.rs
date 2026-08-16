@@ -90,8 +90,7 @@ async fn run(scripting: Scripting) -> usize {
         // as "unless it is tagged" rather than as a list of features, so that a
         // scenario opts itself in where it is read.
         .filter_run(FEATURES, move |_feature, _rule, scenario| {
-            scripting == Scripting::Enabled
-                || !scenario.tags.iter().any(|tag| tag == ONLY_SCRIPTED)
+            scripting == Scripting::Enabled || !scenario.tags.iter().any(|tag| tag == ONLY_SCRIPTED)
         })
         .await;
 
