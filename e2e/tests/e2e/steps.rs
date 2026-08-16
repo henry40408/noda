@@ -105,6 +105,72 @@ async fn no_row(world: &mut NodaWorld, what: String) -> Result<()> {
     .await
 }
 
+#[when(expr = "I type {string} into the search field")]
+async fn type_search(world: &mut NodaWorld, query: String) -> Result<()> {
+    world.page()?.type_search(&query).await
+}
+
+/// A row the query excluded: on the page, and not on the screen.
+///
+/// The two halves are the point. `I do not see a row for` above already says
+/// the second, and on its own it would pass just as well against a listing that
+/// had left the note out — which is the design this replaced.
+#[then(expr = "the page holds a hidden row for {string}")]
+async fn hidden_row(world: &mut NodaWorld, what: String) -> Result<()> {
+    let hidden = world.page()?.hidden_rows().await?;
+    anyhow::ensure!(
+        hidden.iter().any(|row| row.contains(&what)),
+        "no hidden row for {what:?}; the page holds {hidden:?}"
+    );
+    Ok(())
+}
+
+#[then(expr = "the address carries the search {string}")]
+async fn address_carries(world: &mut NodaWorld, query: String) -> Result<()> {
+    eventually(&format!("the address to carry {query:?}"), || async {
+        Ok(world.page()?.searched().await? == Some(query.clone()))
+    })
+    .await
+}
+
+#[then("the address carries no search")]
+async fn address_carries_nothing(world: &mut NodaWorld) -> Result<()> {
+    let sent = world.page()?.searched().await?;
+    anyhow::ensure!(sent.is_none(), "the query was sent after all: {sent:?}");
+    Ok(())
+}
+
+#[then("the listing says it filtered by title and tag")]
+async fn says_partial(world: &mut NodaWorld) -> Result<()> {
+    eventually("the remark under the field", || async {
+        Ok(world
+            .page()?
+            .hint()
+            .await?
+            .is_some_and(|said| said.contains("title and tag")))
+    })
+    .await
+}
+
+#[then("the listing says nothing about whose answer it is")]
+async fn says_nothing_partial(world: &mut NodaWorld) -> Result<()> {
+    let hint = world.page()?.hint().await?;
+    anyhow::ensure!(
+        hint.is_none(),
+        "the listing called a whole answer partial: {hint:?}"
+    );
+    Ok(())
+}
+
+#[then("the page is not reloading itself")]
+async fn not_reloading(world: &mut NodaWorld) -> Result<()> {
+    anyhow::ensure!(
+        !world.page()?.reloads_itself().await?,
+        "the script left the meta refresh in place, so the page is doing both"
+    );
+    Ok(())
+}
+
 #[then(expr = "I am at {string}")]
 async fn at(world: &mut NodaWorld, path: String) -> Result<()> {
     eventually(&format!("the address to become {path:?}"), || async {

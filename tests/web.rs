@@ -163,6 +163,25 @@ impl Answer {
         self.body.contains(needle)
     }
 
+    /// Whether the row naming `title` is one the query let through.
+    ///
+    /// **"Not on the page" stopped being the question when the enhancement
+    /// layer arrived.** Every row of the notebook is on every listing now; the
+    /// ones the query excludes arrive with `hidden` on them, so that the script
+    /// can widen a query as well as narrow one without a second copy of the
+    /// notes to filter from. `None` when no row names it at all, which is a
+    /// different failure and should read as one.
+    fn row(&self, title: &str) -> Option<bool> {
+        self.body
+            .split("<a class=\"row\"")
+            .skip(1)
+            .find(|row| {
+                row.split_once("</a>")
+                    .is_some_and(|(row, _)| row.contains(title))
+            })
+            .map(|row| !row.starts_with(" hidden"))
+    }
+
     /// One header, by name.
     fn header(&self, name: &str) -> Option<String> {
         self.head.lines().find_map(|line| {
@@ -447,7 +466,7 @@ fn a_query_narrows_the_listing_and_marks_what_matched() {
     let answer = server.get("/nb/default?q=budget");
     assert_eq!(answer.status, 200);
     assert!(answer.says("<mark>Budget</mark> review"), "{}", answer.body);
-    assert!(!answer.says("Reading list"), "{}", answer.body);
+    assert_eq!(answer.row("Reading list"), Some(false), "{}", answer.body);
     // What was filtered away is still named, so an empty-looking notebook is
     // never a mystery.
     assert!(answer.says("of 5"), "{}", answer.body);
@@ -460,8 +479,8 @@ fn a_quoted_tag_survives_a_real_query_string() {
     let (server, _paths) = serving();
     let answer = server.get("/nb/default?q=tag%3A%2224.04+Dark+patterns%22");
     assert_eq!(answer.status, 200);
-    assert!(answer.says("Meeting notes"), "{}", answer.body);
-    assert!(!answer.says("Budget review"), "{}", answer.body);
+    assert_eq!(answer.row("Meeting notes"), Some(true), "{}", answer.body);
+    assert_eq!(answer.row("Budget review"), Some(false), "{}", answer.body);
 }
 
 /// Half a query is what every query looks like on the way to being one, so the
@@ -983,16 +1002,22 @@ fn another_site_cannot_write_either() {
     assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
 }
 
-/// Nothing on any of these pages needs a script, and this is the assertion that
-/// keeps it that way: the enhancement layer arrives later and must stay an
-/// enhancement.
+/// Only two pages carry a script, and this is the assertion that keeps the
+/// number down.
+///
+/// It began life as "no page carries a script" and held for six pull requests,
+/// which was the point of writing it that early: the scriptless path was
+/// finished before anything could quietly start leaning on the other one. What
+/// replaces it is the same claim narrowed rather than dropped — a script is
+/// allowed exactly where it removes a wait the design named in advance, and
+/// nowhere else. A screen that grows one later has to come here and argue for
+/// it.
 #[test]
-fn no_page_carries_a_script() {
+fn only_the_two_screens_that_wait_carry_a_script() {
     let (server, paths) = serving();
     let id = id_of(&paths, "budget-review");
     for path in &[
         "/".to_string(),
-        "/nb/default".to_string(),
         "/nb/default/tags".to_string(),
         "/nb/default/todo".to_string(),
         "/nb/default/files".to_string(),
@@ -1002,7 +1027,32 @@ fn no_page_carries_a_script() {
     ] {
         let answer = server.get(path);
         assert!(!answer.says("<script"), "{path} carries a script");
-        assert!(!answer.says("onclick"), "{path} carries a handler");
+    }
+
+    // The listing, which can narrow itself without asking; and the network
+    // screen, which can ask for news without reloading whole.
+    for path in ["/nb/default", "/nb/default/status"] {
+        assert!(server.get(path).says("<script>"), "{path} lost its script");
+    }
+
+    // Not one handler attribute anywhere, on either kind of page. Every
+    // listener the enhancement layer sets is set from inside its own script, so
+    // there is no markup on any of these pages whose behaviour depends on
+    // JavaScript being there to receive it.
+    for path in &[
+        "/".to_string(),
+        "/nb/default".to_string(),
+        "/nb/default/status".to_string(),
+        format!("/nb/default/n/{id}"),
+    ] {
+        assert!(
+            !server.get(path).says("onclick"),
+            "{path} carries a handler"
+        );
+        assert!(
+            !server.get(path).says("oninput"),
+            "{path} carries a handler"
+        );
     }
 }
 
@@ -1255,7 +1305,11 @@ fn the_status_screen_says_where_a_notebook_stands() {
     // Nothing has been asked for, so there is nothing to report and nothing to
     // come back for.
     assert!(!answer.says("said working"), "{}", answer.body);
-    assert!(!answer.says("http-equiv=\"refresh\""), "{}", answer.body);
+    assert!(
+        !answer.says("<meta http-equiv=\"refresh\""),
+        "{}",
+        answer.body
+    );
 
     // And asking again does not start anything: only a POST does, which is what
     // makes the reload a slow network invites harmless.
@@ -1326,7 +1380,7 @@ fn a_sync_answers_before_it_finishes_and_says_how_it_went() {
     assert!(done.says("push:"), "{}", done.body);
     assert!(!done.says("said bad"), "{}", done.body);
     // Finished means finished: nothing left asking the browser to come back.
-    assert!(!done.says("http-equiv=\"refresh\""), "{}", done.body);
+    assert!(!done.says("<meta http-equiv=\"refresh\""), "{}", done.body);
     // The drift is re-read rather than remembered, so the screen agrees with
     // the repository it just changed.
     assert!(done.says("in sync"), "{}", done.body);
@@ -1351,7 +1405,7 @@ fn a_push_with_nowhere_to_send_it_says_so() {
     let done = server.settled("/nb/default/status");
     assert!(done.says("said bad"), "{}", done.body);
     assert!(done.says("remote"), "{}", done.body);
-    assert!(!done.says("http-equiv=\"refresh\""), "{}", done.body);
+    assert!(!done.says("<meta http-equiv=\"refresh\""), "{}", done.body);
 }
 
 /// Three errands, and the route does not invent a fourth.

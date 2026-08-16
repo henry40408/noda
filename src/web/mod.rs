@@ -27,6 +27,7 @@
 pub mod guard;
 pub mod page;
 pub mod render;
+pub mod script;
 pub mod theme;
 pub mod work;
 
@@ -438,7 +439,6 @@ async fn listing(
         // order that came out differently depending on where you asked would be
         // two features wearing one name.
         cmd::sort_notes(&mut notes, cmd::Sort::default());
-        let total = notes.len();
         // For the chip in the corner of the bar. `drift` and not `status`: the
         // full status walks the working tree twice more — once for the notes
         // this handler has already read and once for a whole `git status` — and
@@ -460,41 +460,36 @@ async fn listing(
         // listing starts in, and running it through the parser put a red line
         // about "something to look for" on top of a page nobody had asked
         // anything of yet.
+        // Every note becomes a row, and the query decides which of them the page
+        // shows rather than which of them the page has. The excluded ones ride
+        // along `hidden`, which is what lets the enhancement layer widen a query
+        // as well as narrow one — see `page::Row::shown`.
+        let mut rows = notes.iter().map(page::Row::of).collect::<Vec<_>>();
         let tokens = query::split(&typed);
         if tokens.is_empty() {
-            let rows = notes.iter().map(page::Row::of).collect::<Vec<_>>();
             return Ok(Answer::Page(page::listing(
                 &book,
                 &rows,
                 &typed,
-                total,
                 &[],
                 None,
                 &drift,
             )));
         }
-        let (rows, terms, problem) = match Query::parse(&tokens) {
+        let (terms, problem) = match Query::parse(&tokens) {
             Ok(query) => {
-                let terms = query.excerpt_terms();
-                let rows = notes
-                    .iter()
-                    .filter(|file| query.matches(&file.id, &file.note))
-                    .map(page::Row::of)
-                    .collect::<Vec<_>>();
-                (rows, terms, None)
+                for (row, file) in rows.iter_mut().zip(notes.iter()) {
+                    row.shown = query.matches(&file.id, &file.note);
+                }
+                (query.excerpt_terms(), None)
             }
-            Err(e) => (
-                notes.iter().map(page::Row::of).collect(),
-                Vec::new(),
-                Some(e.to_string()),
-            ),
+            Err(e) => (Vec::new(), Some(e.to_string())),
         };
 
         Ok(Answer::Page(page::listing(
             &book,
             &rows,
             &typed,
-            total,
             &terms,
             problem.as_deref(),
             &drift,

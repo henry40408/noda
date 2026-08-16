@@ -58,7 +58,7 @@ impl Page<'_> {
         Ok(self.driver().current_url().await?.path().to_string())
     }
 
-    /// Every row on the page, as the text a reader sees.
+    /// Every row a reader can see, as the text they see.
     ///
     /// **One round trip, not one per row.** Finding the rows and then asking
     /// each for its text is two visits to a page that may navigate between them,
@@ -67,13 +67,49 @@ impl Page<'_> {
     /// Reading them in a single script removes the window rather than retrying
     /// around it.
     ///
+    /// **The visibility filter is not tidiness, it is correctness.** A listing
+    /// now carries every note whatever the query says and hides the excluded
+    /// ones, and `innerText` falls back to `textContent` on an element that is
+    /// not being rendered — so without the filter every step asking whether a
+    /// row is on the screen would answer yes for all of them, forever, in both
+    /// passes. `offsetParent` is the cheap form of the question and it is the
+    /// right one here: nothing in this interface is `position: fixed`.
+    ///
     /// # Errors
     ///
     /// Fails when the page cannot be queried.
     pub async fn rows(&self) -> Result<Vec<String>> {
         let rows = self
             .0
-            .measure("return Array.from(document.querySelectorAll('.row')).map(e => e.innerText);")
+            .measure(
+                "return Array.from(document.querySelectorAll('.row'))
+                 .filter(e => e.offsetParent !== null).map(e => e.innerText);",
+            )
+            .await?;
+        Ok(rows
+            .as_array()
+            .context("the page did not answer with a list of rows")?
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default().to_string())
+            .collect())
+    }
+
+    /// Every row the query excluded: on the page, not on the screen.
+    ///
+    /// `textContent` and not `innerText` — the whole question is about elements
+    /// that are not being rendered, and `innerText` is defined in terms of what
+    /// rendering produced.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn hidden_rows(&self) -> Result<Vec<String>> {
+        let rows = self
+            .0
+            .measure(
+                "return Array.from(document.querySelectorAll('.row'))
+                 .filter(e => e.offsetParent === null).map(e => e.textContent);",
+            )
             .await?;
         Ok(rows
             .as_array()
@@ -285,6 +321,101 @@ impl Page<'_> {
         field.send_keys(query).await?;
         field.send_keys(Key::Enter).await?;
         Ok(())
+    }
+
+    /// Types a query into the search field and stops there.
+    ///
+    /// The whole of what the enhancement layer is for: with the page's scripts
+    /// on, the listing has already answered by the time this returns, and the
+    /// server has not been asked anything. With them off nothing happens at
+    /// all, which is the other half of the same contract.
+    ///
+    /// Real keystrokes rather than setting `value` and firing an event: what is
+    /// under test includes that the field is reachable and that the listener is
+    /// on the thing a person actually types into.
+    ///
+    /// **And real backspaces rather than `clear()`, which is the whole reason
+    /// this is not two lines.** `clear()` empties the field without delivering
+    /// an `input` event, so a listener hears nothing — which made "delete what
+    /// you typed and watch the rows come back" pass against a script that never
+    /// ran. Erasing the way a person erases is the only version that tests
+    /// what the scenario says it tests.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page has no search field.
+    pub async fn type_search(&self, query: &str) -> Result<()> {
+        let field = self
+            .driver()
+            .find(By::Css("input[name='q']"))
+            .await
+            .context("this page has no search field")?;
+        let held = field.value().await?.unwrap_or_default();
+        for _ in 0..held.chars().count() {
+            field.send_keys(Key::Backspace).await?;
+        }
+        if !query.is_empty() {
+            field.send_keys(query).await?;
+        }
+        Ok(())
+    }
+
+    /// What the address carries as the search, if anything.
+    ///
+    /// Separate from `path`, which deliberately drops the query string: most
+    /// scenarios are about where they landed, and only these are about whether
+    /// anything was sent at all.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the browser cannot be asked where it is.
+    pub async fn searched(&self) -> Result<Option<String>> {
+        Ok(self
+            .driver()
+            .current_url()
+            .await?
+            .query_pairs()
+            .find(|(name, _)| name == "q")
+            .map(|(_, value)| value.to_string()))
+    }
+
+    /// What the listing says about whose answer is on the screen, or nothing
+    /// when it is not saying anything.
+    ///
+    /// Absent and hidden are one answer, because they are one fact: the remark
+    /// does not apply. Which of the two it is on any given page is the server's
+    /// business and not a feature file's.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn hint(&self) -> Result<Option<String>> {
+        let said = self
+            .0
+            .measure(
+                "const hint = document.querySelector('.searchbar .hint');
+                 return hint && hint.offsetParent !== null ? hint.innerText : null;",
+            )
+            .await?;
+        Ok(said.as_str().map(str::to_string))
+    }
+
+    /// Whether the page is asking the browser to reload it.
+    ///
+    /// The scriptless network screen steers by `<meta refresh>`; the script's
+    /// first act is to take it off and poll instead. So this is the one
+    /// observable difference between the two ways of waiting, and it is the
+    /// difference the feature file names.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn reloads_itself(&self) -> Result<bool> {
+        let meta = self
+            .0
+            .measure("return !!document.querySelector('meta[http-equiv=\"refresh\"]');")
+            .await?;
+        Ok(meta.as_bool().unwrap_or(false))
     }
 
     /// What the element matching `selector` reads as, or nothing when the page

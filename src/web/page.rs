@@ -23,7 +23,7 @@
 use std::fmt::Write;
 
 use crate::notebook::NoteFile;
-use crate::web::theme;
+use crate::web::{script, theme};
 
 /// A notebook, as the front page lists it.
 pub struct Book {
@@ -45,6 +45,19 @@ pub struct Row {
     pub title: String,
     pub tags: Vec<String>,
     pub updated: Option<String>,
+    /// Whether the query lets this row through.
+    ///
+    /// **Every row of the notebook is on the listing whatever is typed** — the
+    /// excluded ones arrive with `hidden` on them rather than being left out.
+    /// A page that omitted them would be a page the enhancement layer could
+    /// only ever narrow further, because a script cannot put back a row the
+    /// server never sent; and then filtering-as-you-type would need a second
+    /// copy of the list to filter *from*, which is the copy that goes stale.
+    ///
+    /// `hidden` is not a class. It is the attribute every browser's own
+    /// stylesheet already hides, so the scriptless page gets the same answer
+    /// from the same markup with nothing of noda's involved.
+    pub shown: bool,
 }
 
 /// A file the notebook holds that is not a note, as the files page lists it.
@@ -113,6 +126,7 @@ impl Row {
             title: file.note.title.clone(),
             tags: file.note.tags.clone(),
             updated: file.note.updated.clone(),
+            shown: true,
         }
     }
 }
@@ -222,7 +236,18 @@ fn tag_line(tags: &[String]) -> String {
 /// costs a round trip on the first view of every session, plus a question about
 /// invalidating it that nothing here is big enough to be worth asking.
 fn shell(title: &str, body: &str) -> String {
-    dressed(title, None, body)
+    dressed(title, None, "", body)
+}
+
+/// The shell, plus the script that makes this page quicker and nothing else.
+///
+/// Inline, for the same reason the stylesheet is: one request answers a whole
+/// page. It goes at the end of the body rather than in the head, because it
+/// reads the rows and there is no `defer` on an inline script — and because a
+/// script that runs after the page is drawn cannot delay the page being drawn,
+/// which is the only guarantee that matters to something optional.
+fn scripted(title: &str, script: &str, body: &str) -> String {
+    dressed(title, None, script, body)
 }
 
 /// The shell, plus the one thing a page may ask the browser to do on its own.
@@ -232,15 +257,20 @@ fn shell(title: &str, body: &str) -> String {
 /// full reload of a page that is a few hundred bytes, which is the cost of not
 /// requiring a script to find out whether a push finished — and the same reload
 /// the reader would perform by hand, so nothing new can go wrong in it.
-fn dressed(title: &str, again_in: Option<u32>, body: &str) -> String {
+fn dressed(title: &str, again_in: Option<u32>, script: &str, body: &str) -> String {
     let refresh = again_in.map_or_else(String::new, |seconds| {
         format!("<meta http-equiv=\"refresh\" content=\"{seconds}\">\n")
     });
+    let enhancement = if script.is_empty() {
+        String::new()
+    } else {
+        script::tag(script)
+    };
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         {refresh}<title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n{}</body>\n</html>\n",
+         {refresh}<title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n{}{enhancement}</body>\n</html>\n",
         escape(title),
         theme::stylesheet(),
         CSS,
@@ -464,49 +494,68 @@ pub fn listing(
     book: &str,
     rows: &[Row],
     query: &str,
-    total: usize,
     terms: &[String],
     problem: Option<&str>,
     drift: &str,
 ) -> String {
-    let body = if rows.is_empty() && !query.is_empty() {
-        format!(
-            "<div class=\"empty\"><b>No notes match {}</b>\
+    let total = rows.len();
+    let shown = rows.iter().filter(|row| row.shown).count();
+
+    let mut body = String::new();
+    for row in rows {
+        let under = [tag_line(&row.tags), when(row.updated.as_deref())]
+            .into_iter()
+            .filter(|piece| !piece.is_empty())
+            .collect::<Vec<_>>()
+            .join("<span class=\"sep\">·</span>");
+        let _ = write!(
+            body,
+            "<a class=\"row\"{} href=\"/nb/{}/n/{}\"><div class=\"title\">{}</div>\
+             <div class=\"under\">{under}</div></a>",
+            if row.shown { "" } else { " hidden" },
+            escape(book),
+            escape(&row.id),
+            // Marked only on the rows that are being shown for a reason. A
+            // hidden row carries its title unmarked, which is the state the
+            // script would put it in anyway when it lets the row back through
+            // for a different query.
+            if row.shown {
+                highlight(&row.title, terms)
+            } else {
+                escape(&row.title)
+            }
+        );
+    }
+
+    // An empty notebook and an empty result are different sentences, and only
+    // the second one is ever hidden: the first is the whole state of the
+    // notebook, and no amount of typing changes it.
+    if total == 0 {
+        body.push_str(
+            "<div class=\"empty\"><b>No notes yet</b>Run <code>noda add \"First note\"</code> \
+             in a terminal to start one.</div>",
+        );
+    } else {
+        let _ = write!(
+            body,
+            "<div class=\"empty\"{}><b>No notes match <span class=\"asked\">{}</span></b>\
              This notebook holds {}. <a href=\"/nb/{}\">Clear the search</a> to see them.</div>",
+            if shown > 0 { " hidden" } else { "" },
             escape(query),
             plural(total, "note"),
             escape(book)
-        )
-    } else if rows.is_empty() {
-        "<div class=\"empty\"><b>No notes yet</b>Run <code>noda add \"First note\"</code> in a terminal to start one.</div>".to_string()
-    } else {
-        let mut out = String::new();
-        for row in rows {
-            let under = [tag_line(&row.tags), when(row.updated.as_deref())]
-                .into_iter()
-                .filter(|piece| !piece.is_empty())
-                .collect::<Vec<_>>()
-                .join("<span class=\"sep\">·</span>");
-            let _ = write!(
-                out,
-                "<a class=\"row\" href=\"/nb/{}/n/{}\"><div class=\"title\">{}</div>\
-                 <div class=\"under\">{under}</div></a>",
-                escape(book),
-                escape(&row.id),
-                highlight(&row.title, terms)
-            );
-        }
-        out
-    };
+        );
+    }
 
     let counted = if query.is_empty() {
         total.to_string()
     } else {
-        format!("{} of {}", rows.len(), total)
+        format!("{shown} of {total}")
     };
 
-    shell(
+    scripted(
         &format!("{book} — noda"),
+        script::LISTING,
         &format!(
             "<header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
              <span class=\"count\">{counted}</span></header>\
@@ -514,13 +563,18 @@ pub fn listing(
              <input type=\"search\" name=\"q\" value=\"{}\" \
              placeholder=\"tag:work OR tag:q3 budget\" \
              autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" \
-             enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}</form>\
+             enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}</form>\
              <main class=\"rows\">{body}</main>{}",
             back("/", "the notebooks"),
             escape(book),
             drift_chip(book, drift),
             escape(book),
             escape(query),
+            // Written by the server and hidden by the server, so that the only
+            // thing the script does with it is decide when it applies. A
+            // sentence that exists only inside a script is a sentence nothing
+            // else can test the wording of.
+            hint(),
             problem.map_or_else(String::new, |why| format!(
                 "<p class=\"problem\">{}</p>",
                 escape(why)
@@ -528,6 +582,17 @@ pub fn listing(
             notebook_bar(book, At::Notes)
         ),
     )
+}
+
+/// What the listing says while the script is answering instead of the server.
+///
+/// Shown only when the two answers can differ — a bare word or `text:` reads
+/// the body, and the body is not on the page. It names both halves: what has
+/// been narrowed, and the key that finishes the job. Hidden the rest of the
+/// time, including on every scriptless page, where it is never true.
+fn hint() -> String {
+    "<p class=\"hint\" hidden>Filtered by title and tag — press ⏎ to search the text.</p>"
+        .to_string()
 }
 
 /// Everything the notebook holds that is not a note.
@@ -1156,6 +1221,7 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     dressed(
         &format!("Status — {book} — noda"),
         busy.then_some(2),
+        script::STANDING,
         &format!(
             "<header class=\"topbar\">{}<span class=\"here\">Status</span>\
              <span class=\"count\">{at}</span></header>\
@@ -1220,6 +1286,13 @@ fn plural(count: usize, thing: &str) -> String {
 /// leaves the reader pinching their way back out.
 const CSS: &str = "\
 *{box-sizing:border-box}\
+/* The browser's own `[hidden]{display:none}` loses to any author rule that \
+   sets `display` — `.row{display:block}` is the same specificity and an author \
+   rule beats a user-agent one, so a listing's excluded rows were `hidden` in \
+   the DOM and drawn on the screen. This is not a preference about how to hide \
+   things; it is the one declaration that makes the attribute mean what it \
+   says, wherever it is put and whatever else styles the element. */\
+[hidden]{display:none!important}\
 :root{--tap:48px;\
 --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,'Cascadia Mono',Consolas,monospace;\
 --read:ui-serif,Charter,'Iowan Old Style',Georgia,'Songti TC','Noto Serif CJK TC',serif}\
@@ -1241,6 +1314,11 @@ border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);\
 font-family:var(--mono);font-size:16px}\
 .searchbar input::placeholder{color:var(--punct)}\
 .problem{margin:8px 2px 0;font-size:12.5px;color:var(--alert)}\
+/* What the script is answering while the server has not been asked. It sits \
+   where a complaint would, because it is the same kind of remark about the \
+   same field — and it is the chrome's grey rather than a hue, since nothing \
+   in this palette colours a state. */\
+.searchbar .hint{margin:8px 2px 0;font-size:12.5px;color:var(--muted)}\
 a{color:inherit;text-decoration:none}\
 .row{display:block;min-height:64px;padding:12px 16px;border-bottom:1px solid var(--rule);\
 -webkit-tap-highlight-color:transparent}\
@@ -1562,19 +1640,94 @@ mod tests {
         assert_eq!(out, "<mark>budgeting</mark>");
     }
 
+    /// A row, as a listing test needs one.
+    fn row(id: &str, title: &str, shown: bool) -> Row {
+        Row {
+            id: id.into(),
+            title: title.into(),
+            tags: vec!["work".into()],
+            updated: Some("2026-08-12T08:03:00Z".into()),
+            shown,
+        }
+    }
+
     #[test]
     fn a_filtered_listing_says_what_it_is_hiding() {
-        let page = listing("work", &[], "tag:ghost", 12, &[], None, "in sync");
-        assert!(page.contains("No notes match tag:ghost"), "{page}");
+        let rows = (0..12)
+            .map(|n| row(&format!("k3f{n}"), "Budget review", false))
+            .collect::<Vec<_>>();
+        let page = listing("work", &rows, "tag:ghost", &[], None, "in sync");
+        assert!(
+            page.contains("No notes match <span class=\"asked\">tag:ghost"),
+            "{page}"
+        );
         assert!(page.contains("12 notes"), "{page}");
         assert!(page.contains("href=\"/nb/work\""), "{page}");
     }
 
+    /// **The rows the query excluded are still on the page.** A listing the
+    /// script could only ever narrow further would make filtering-as-you-type
+    /// need a second copy of the notes to filter from, and that copy is the one
+    /// that goes stale. `hidden` is the browser's own attribute, so the
+    /// scriptless page hides them with nothing of noda's involved.
+    #[test]
+    fn an_excluded_row_rides_along_hidden_and_unmarked() {
+        let rows = [
+            row("k3f9", "Budget review", true),
+            row("em0x", "Reading list", false),
+        ];
+        let page = listing(
+            "work",
+            &rows,
+            "budget",
+            &["budget".to_string()],
+            None,
+            "in sync",
+        );
+        assert!(
+            page.contains("<a class=\"row\" href=\"/nb/work/n/k3f9\""),
+            "{page}"
+        );
+        assert!(
+            page.contains("<a class=\"row\" hidden href=\"/nb/work/n/em0x\""),
+            "{page}"
+        );
+        // The one that is shown says why it is; the one that is not carries its
+        // title as it stands, which is the state the script would put it in
+        // anyway when a different query lets it back through.
+        assert!(page.contains("<mark>Budget</mark>"), "{page}");
+        assert!(page.contains(">Reading list</div>"), "{page}");
+        // And the count is of what is on the screen, out of what is on the page.
+        assert!(page.contains(">1 of 2<"), "{page}");
+    }
+
     #[test]
     fn an_empty_notebook_says_what_to_do_instead_of_nothing() {
-        let page = listing("work", &[], "", 0, &[], None, "in sync");
+        let page = listing("work", &[], "", &[], None, "in sync");
         assert!(page.contains("No notes yet"), "{page}");
         assert!(page.contains("noda add"), "{page}");
+        // Not the other empty. A notebook with nothing in it is not a query
+        // that found nothing, and no amount of typing turns one into the other.
+        assert!(!page.contains("No notes match"), "{page}");
+    }
+
+    /// The listing carries the sentence and the sentence is switched off. What
+    /// the script decides is *when* it applies — never what it says, because a
+    /// sentence living inside a script is one nothing else can test the wording
+    /// of.
+    #[test]
+    fn the_hint_is_written_by_the_page_and_hidden_by_it() {
+        let page = listing(
+            "work",
+            &[row("k3f9", "Budget review", true)],
+            "",
+            &[],
+            None,
+            "in sync",
+        );
+        assert!(page.contains("<p class=\"hint\" hidden>"), "{page}");
+        assert!(page.contains("press ⏎ to search the text"), "{page}");
+        assert!(page.contains("<script>"), "{page}");
     }
 
     /// The signature: the id and the slug drawn as the one filename they are.
@@ -1606,8 +1759,9 @@ mod tests {
             title: "Reading list".into(),
             tags: vec![],
             updated: Some("2026-08-12T08:03:00Z".into()),
+            shown: true,
         }];
-        let page = listing("work", &rows, "", 1, &[], None, "in sync");
+        let page = listing("work", &rows, "", &[], None, "in sync");
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
         // The clock is not in a listing at all, in either spelling.
@@ -1616,7 +1770,7 @@ mod tests {
 
     #[test]
     fn every_page_carries_both_themes_and_the_viewport() {
-        let page = listing("work", &[], "", 0, &[], None, "in sync");
+        let page = listing("work", &[], "", &[], None, "in sync");
         assert!(page.contains("width=device-width"), "{page}");
         assert!(page.contains("prefers-color-scheme:dark"), "{page}");
         assert!(page.contains("--tap:48px"), "{page}");

@@ -873,7 +873,9 @@ noda: noda tui needs a terminal at both ends; `noda ls`, `noda search` and `noda
 ### In a browser
 
 `noda web` serves the notebooks over HTTP, so a phone can read them. It renders on the
-server and needs no JavaScript at all: the search box is a form, every row is a link.
+server and works with JavaScript turned off: the search box is a form, every row is a link.
+A script is laid over that on two screens and nothing depends on it — see [the last
+section](#and-a-script-on-top-that-nothing-depends-on).
 
 ```
 $ noda web
@@ -974,7 +976,8 @@ status` prints, none of them fetched, with `Sync`, `Pull` and `Push` under them.
 A sync is a fetch over somebody's network, so it takes as long as it takes. Pressing starts it
 and answers straight away; the screen you land on says what is happening and brings itself
 back for news every couple of seconds until it stops. That is a `<meta http-equiv="refresh">`
-and no script, like everything else here. Two things follow from the shape:
+where no script is running, and the same interval fetched and swapped in where one is. Two
+things follow from the shape:
 
 - **A reload cannot start it again.** Only the `POST` begins anything, and what you are left
   holding is a `GET` — so the refresh a slow network invites is a question rather than a
@@ -989,6 +992,24 @@ One errand per notebook at a time, and it takes the same write lock a Save takes
 landing halfway through somebody pressing Save is what that lock is there for. The lock is per
 notebook, so a remote that has gone quiet slows nothing down but the notebook whose remote it
 is.
+
+#### And a script on top, that nothing depends on
+
+Two screens carry one. The listing filters as you type, and the network screen asks for its
+own page instead of reloading whole. Both are shortcuts: they remove a wait, never add an
+ability, and with scripts off every screen does what it always did.
+
+The listing can do that because it already holds every note it has — the rows a query
+excludes are on the page with `hidden` on them, in both directions, which is what lets a
+script put one back. So filtering is the same operation the server did, on the same markup.
+
+What it cannot do is read a body. A bare word searches titles, tags **and bodies** on the
+server, and the page carries no bodies — so when a query holds one, the listing says under
+the field that it filtered by title and tag, and the search key finishes the job. What is on
+the screen is right and possibly short, never wrong: a title-or-tag hit is always a text hit
+too. A *negated* bare word inverts that — `-budget` would **keep** a row whose body the script
+cannot see — so there the filter stands aside and waits for the key, as it does for a query
+half typed.
 
 ### Action items
 
