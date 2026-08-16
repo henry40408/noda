@@ -222,11 +222,25 @@ fn tag_line(tags: &[String]) -> String {
 /// costs a round trip on the first view of every session, plus a question about
 /// invalidating it that nothing here is big enough to be worth asking.
 fn shell(title: &str, body: &str) -> String {
+    dressed(title, None, body)
+}
+
+/// The shell, plus the one thing a page may ask the browser to do on its own.
+///
+/// `<meta http-equiv="refresh">` is how a page with no JavaScript comes back for
+/// news, and the network screen is the only page here that has any. It is a
+/// full reload of a page that is a few hundred bytes, which is the cost of not
+/// requiring a script to find out whether a push finished — and the same reload
+/// the reader would perform by hand, so nothing new can go wrong in it.
+fn dressed(title: &str, again_in: Option<u32>, body: &str) -> String {
+    let refresh = again_in.map_or_else(String::new, |seconds| {
+        format!("<meta http-equiv=\"refresh\" content=\"{seconds}\">\n")
+    });
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n{}</body>\n</html>\n",
+         {refresh}<title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n{}</body>\n</html>\n",
         escape(title),
         theme::stylesheet(),
         CSS,
@@ -959,6 +973,144 @@ pub fn deleting(book: &str, about: &About) -> String {
             about.at(book),
             escape(&about.title),
             about.at(book)
+        ),
+    )
+}
+
+/// Where a notebook stands, and what its remote knows about it.
+///
+/// The same facts `noda status` prints, already in words: which branch, how much
+/// is uncommitted, whether there is a remote and how far the two have drifted.
+/// Worked out by the caller rather than here, on the rule the rest of this file
+/// keeps — the page arranges what it is given and decides nothing.
+pub struct Standing {
+    pub branch: String,
+    pub notes: usize,
+    pub files: usize,
+    /// Files differing from `HEAD`. What a sync would commit before it pulls.
+    pub uncommitted: usize,
+    pub remote: Option<String>,
+    /// How far apart the two are, in words: `2 to push, 1 to pull`.
+    pub drift: String,
+    /// One line per kind, as `doctor` would name them.
+    pub problems: Vec<String>,
+}
+
+/// An errand as the page needs to say it: what it is, and how it went.
+pub struct Errand<'a> {
+    /// `Syncing` / `Pulling` / `Pushing`.
+    pub doing: &'a str,
+    /// What it printed, or what went wrong. `None` while it is still going.
+    pub said: Option<&'a str>,
+    pub failed: bool,
+    pub seconds: u64,
+}
+
+/// The network screen: where the notebook stands, and the three ways to move it.
+///
+/// **The buttons are `POST`s and the page is a `GET`, and that is the whole
+/// design.** A sync is a fetch over somebody's tailnet — it takes as long as it
+/// takes, and a request held open for it would leave a phone showing nothing.
+/// So the press starts the errand and the answer is a redirect back here, which
+/// means a reload asks how it is going rather than doing it again. While one is
+/// running the page brings itself back for news; when it stops, the refresh
+/// stops with it.
+pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
+    let mut rows = String::new();
+    let mut row = |name: &str, value: &str, mono: bool| {
+        let _ = write!(
+            rows,
+            "<div class=\"row\"><div class=\"name\">{}</div>\
+             <div class=\"under\"><span class=\"{}\">{}</span></div></div>",
+            escape(name),
+            if mono { "mono" } else { "when" },
+            escape(value)
+        );
+    };
+    row("Branch", &standing.branch, true);
+    row(
+        "Holds",
+        &if standing.files > 0 {
+            format!(
+                "{}, {}",
+                plural(standing.notes, "note"),
+                plural(standing.files, "file")
+            )
+        } else {
+            plural(standing.notes, "note")
+        },
+        false,
+    );
+    row(
+        "Changes",
+        // The same three answers `noda status` gives, in the same words.
+        &match standing.uncommitted {
+            0 => "clean".to_string(),
+            1 => "1 file uncommitted".to_string(),
+            n => format!("{n} files uncommitted"),
+        },
+        false,
+    );
+    match &standing.remote {
+        Some(url) => {
+            row("Remote", url, true);
+            row("Drift", &standing.drift, false);
+        }
+        // The remedy, not just the fact: a notebook with no remote cannot sync,
+        // and the command that gives it one is not on any screen here.
+        None => row(
+            "Remote",
+            "none — set one with `noda remote set <url>`",
+            false,
+        ),
+    }
+    for problem in &standing.problems {
+        row("Problem", problem, false);
+    }
+
+    let said = match errand {
+        None => String::new(),
+        Some(errand) => {
+            let class = if errand.failed { "said bad" } else { "said" };
+            match errand.said {
+                None => format!(
+                    "<p class=\"said working\"><b>{}…</b> {}</p>",
+                    escape(errand.doing),
+                    plural(errand.seconds as usize, "second")
+                ),
+                Some(said) => format!(
+                    "<p class=\"{class}\"><b>{}</b><span class=\"outcome\">{}</span></p>",
+                    escape(errand.doing),
+                    escape(said)
+                ),
+            }
+        }
+    };
+
+    // Disabled while one is running, and the reason is honesty rather than
+    // safety: a second press is already refused by the server, so what the
+    // greying out prevents is not a second sync but the belief that the first
+    // one did not land.
+    let busy = errand.is_some_and(|errand| errand.said.is_none());
+    let at = escape(book);
+    let mut buttons = String::new();
+    for (errand, label) in [("sync", "Sync"), ("pull", "Pull"), ("push", "Push")] {
+        let _ = write!(
+            buttons,
+            "<form method=\"post\" action=\"/nb/{at}/status/{errand}\">\
+             <button class=\"go\" type=\"submit\"{}>{label}</button></form>",
+            if busy { " disabled" } else { "" }
+        );
+    }
+
+    dressed(
+        &format!("Status — {book} — noda"),
+        busy.then_some(2),
+        &format!(
+            "<header class=\"topbar\">{}<span class=\"here\">Status</span></header>\
+             <main>{said}<div class=\"rows facts\">{rows}</div>\
+             <div class=\"buttons\">{buttons}</div></main>",
+            back(&format!("/nb/{at}"), book),
         ),
     )
 }

@@ -28,6 +28,7 @@ pub mod guard;
 pub mod page;
 pub mod render;
 pub mod theme;
+pub mod work;
 
 use std::fmt::Write;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 
 use crate::note::{self, Note};
 use crate::notebook::Notebook;
@@ -48,22 +49,57 @@ use crate::{Error, Paths, Result, cmd};
 struct Server {
     paths: Paths,
     guard: guard::Guard,
-    /// Held for the whole of any request that writes.
+    /// Held for the whole of any request that writes, by the notebook it writes
+    /// to.
     ///
-    /// Reads can happen at once and do; writes cannot. Two commits racing in one
-    /// repository meet at `index.lock`, and what comes back is libgit2 saying a
-    /// file exists — a true statement about a lock file and no help at all to
-    /// somebody who pressed Save.
+    /// Reads can happen at once and do; writes to one notebook cannot. Two
+    /// commits racing in one repository meet at `index.lock`, and what comes
+    /// back is libgit2 saying a file exists — a true statement about a lock file
+    /// and no help at all to somebody who pressed Save.
     ///
-    /// A `std::sync::Mutex` and not tokio's, because it is only ever taken
-    /// inside `spawn_blocking`: the thing it guards is blocking work, and a lock
-    /// that could be held across an await would be a lock held while a request
-    /// is doing nothing.
+    /// A `std::sync::Mutex` and not tokio's, because it is only ever taken off
+    /// the async threads: the thing it guards is blocking work, and a lock that
+    /// could be held across an await would be a lock held while a request is
+    /// doing nothing.
     ///
     /// It does **not** lock the notebook against the world. A terminal in
     /// another window is writing to the same repository and always could be;
     /// that is what the fingerprint below is for.
-    writing: std::sync::Mutex<()>,
+    writing: Locks,
+    /// What each notebook's `sync`, `pull` or `push` is doing — the one piece of
+    /// state that outlives a request here, because the errand does too.
+    errands: work::Errands,
+}
+
+/// One write lock per notebook.
+///
+/// It was a single lock over everything until a network errand held one for as
+/// long as a network takes, and the difference showed up at once: a notebook
+/// whose remote had gone quiet froze Save on every *other* notebook too, for
+/// however long libgit2 takes to give up on a host that is not answering.
+///
+/// Nothing was ever gained by that. `index.lock` is a file inside one
+/// repository, and two notebooks are two repositories with nothing between
+/// them. The lock belongs where the collision does.
+#[derive(Default)]
+struct Locks(std::sync::Mutex<std::collections::BTreeMap<String, Arc<std::sync::Mutex<()>>>>);
+
+impl Locks {
+    /// That notebook's lock, made if this is the first anyone has asked.
+    ///
+    /// An `Arc` out rather than a guard, because a guard would borrow the map —
+    /// and the map has to be free the moment this returns, or one notebook's
+    /// slow push would be holding the thing every other notebook has to go
+    /// through to find its own lock.
+    fn of(&self, book: &str) -> Arc<std::sync::Mutex<()>> {
+        Arc::clone(
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(book.to_string())
+                .or_default(),
+        )
+    }
 }
 
 /// What a note's file hashes to, as git would hash it.
@@ -95,7 +131,8 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String]) -> Result<String> {
     let server = Arc::new(Server {
         paths: paths.clone(),
         guard: guard::Guard::new(allow),
-        writing: std::sync::Mutex::new(()),
+        writing: Locks::default(),
+        errands: work::Errands::default(),
     });
 
     // Built by hand rather than with `#[tokio::main]`: `main` is a clap match
@@ -134,6 +171,12 @@ fn router(server: Shared) -> Router {
         // columns and `todo` was made a command of its own by.
         .route("/nb/{book}/tags", get(tags))
         .route("/nb/{book}/todo", get(todo))
+        // Where the notebook stands, and — under it, one segment down — the
+        // three things that change it. The screen is a `GET` and every errand is
+        // a `POST` to an address of its own, which is what makes a reload of the
+        // screen a question rather than a second push.
+        .route("/nb/{book}/status", get(status))
+        .route("/nb/{book}/status/{errand}", post(errand))
         // One path segment, not a wildcard: a notebook is a flat directory, and
         // a route that could match `a/b` would be inviting a path to be
         // assembled out of pieces nobody checked.
@@ -595,6 +638,99 @@ async fn todo(State(server): State<Shared>, Path(book): Path<String>) -> Respons
     .await
 }
 
+/// Where the notebook stands against its remote.
+///
+/// **Nothing here touches the network**, which is the same line `noda status`
+/// draws: the drift is measured against what the last fetch left behind, so the
+/// screen answers instantly on a train and the three buttons under it are the
+/// only things that go out. A page that quietly fetched before drawing itself
+/// would be a page that hangs, and it would make the Pull button a lie about
+/// what pressing it does.
+async fn status(State(server): State<Shared>, Path(book): Path<String>) -> Response {
+    answer(move || {
+        let Some(notebook) = open(&server.paths, &book)? else {
+            return Ok(missing_notebook(&book));
+        };
+        let status = notebook.status()?;
+        let report = server.errands.report(&book);
+        let errand = report.as_ref().map(|report| page::Errand {
+            doing: report.errand.doing(),
+            said: match &report.outcome {
+                None => None,
+                Some(work::Outcome::Went(said) | work::Outcome::Failed(said)) => {
+                    Some(said.as_str())
+                }
+            },
+            failed: matches!(report.outcome, Some(work::Outcome::Failed(_))),
+            seconds: report.took.as_secs(),
+        });
+        Ok(Answer::Page(page::standing(
+            &book,
+            &page::Standing {
+                branch: status.branch.clone(),
+                notes: status.notes,
+                files: status.files,
+                uncommitted: status.uncommitted,
+                remote: status.remote.clone(),
+                drift: standing(&status),
+                problems: status
+                    .problems
+                    .iter()
+                    .map(|(kind, subjects)| kind.describe(subjects.len()))
+                    .collect(),
+            },
+            errand.as_ref(),
+        )))
+    })
+    .await
+}
+
+/// Starts one of the three, and answers before it finishes.
+///
+/// The request does not wait, and the reader is sent back to the screen that
+/// says what is happening — so what they are holding afterwards is a `GET`, and
+/// the reload a slow network invites cannot start a second push.
+///
+/// Pressing again while one is running is not refused with an error. It is
+/// somebody who could not tell whether the first press landed, and the screen
+/// they are sent to is the answer to that question.
+async fn errand(
+    State(server): State<Shared>,
+    Path((book, which)): Path<(String, String)>,
+) -> Response {
+    answer(move || {
+        let Some(errand) = work::Errand::of(&which) else {
+            return Ok(Answer::Missing(
+                "No such errand".to_string(),
+                format!("There is nothing called {which} to do to a notebook."),
+            ));
+        };
+        if !Notebook::exists(&server.paths, &book) {
+            return Ok(missing_notebook(&book));
+        }
+        if server.errands.begin(&book, errand) {
+            let server = Arc::clone(&server);
+            let book = book.clone();
+            // A thread of its own, and not the blocking pool: that pool exists
+            // for work a request is waiting on, and this is the one piece of
+            // work here that no request waits on. It opens the notebook itself
+            // because a `Repository` cannot cross a thread, and it takes the
+            // write lock because a fetch that lands mid-commit is the collision
+            // the lock is for.
+            std::thread::spawn(move || {
+                let outcome = {
+                    let writing = server.writing.of(&book);
+                    let _writing = writing.lock();
+                    work::work(errand, Notebook::open(&server.paths, &book))
+                };
+                server.errands.finish(&book, outcome);
+            });
+        }
+        Ok(Answer::Elsewhere(format!("/nb/{}/status", encoded(&book))))
+    })
+    .await
+}
+
 /// What links to a note.
 ///
 /// `backlinks_to_note` answers it, which is what `noda backlinks` asks too — and
@@ -764,7 +900,8 @@ async fn new_note(
         let title = draft.title.trim();
         let title = (!title.is_empty()).then_some(title);
 
-        let _writing = server.writing.lock();
+        let writing = server.writing.of(&book);
+        let _writing = writing.lock();
         // Which ids existed a moment ago, so the new one can be told from them.
         // Not by reading the id out of what `add` printed: that answer is
         // written for a person, and a caller that parses it has quietly made the
@@ -825,7 +962,8 @@ async fn edit_note(
         let body = parameter(Some(&form), "body");
         let was = parameter(Some(&form), "fingerprint");
 
-        let _writing = server.writing.lock();
+        let writing = server.writing.of(&book);
+        let _writing = writing.lock();
         let path = notebook.note_path(&id, &slug);
         let now = fingerprint(&path)?;
         if now != was {
@@ -889,7 +1027,8 @@ async fn rename_note(
             Aimed::Missing(answer) => return Ok(answer),
         };
         let title = parameter(Some(&form), "title");
-        let _writing = server.writing.lock();
+        let writing = server.writing.of(&book);
+        let _writing = writing.lock();
         // `update_links: false`, the same call the browser's `m` makes. Rewriting
         // the prose of notes nobody pointed at is a thing to ask for out loud,
         // and there is no way to ask for it here yet.
@@ -959,7 +1098,8 @@ async fn tag_note(
             return Ok(back_to_note(&book, &id));
         }
 
-        let _writing = server.writing.lock();
+        let writing = server.writing.of(&book);
+        let _writing = writing.lock();
         match cmd::tag_in(&notebook, &id, &changes, cmd::Touch::Stamp) {
             Ok(_) => Ok(back_to_note(&book, &id)),
             Err(e) => Ok(Answer::Page(page::tagging(
@@ -1001,7 +1141,8 @@ async fn delete_note(
             Aimed::At(notebook, id, slug) => (notebook, id, slug),
             Aimed::Missing(answer) => return Ok(answer),
         };
-        let _writing = server.writing.lock();
+        let writing = server.writing.of(&book);
+        let _writing = writing.lock();
         cmd::rm_in(&notebook, &id)?;
         // Not to the note: it is gone. The listing is where you were before you
         // opened it.

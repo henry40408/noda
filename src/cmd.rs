@@ -3025,12 +3025,22 @@ pub fn remote_show(paths: &Paths) -> Result<String> {
 
 /// Fetches and integrates the remote branch.
 pub fn pull(paths: &Paths) -> Result<String> {
-    Notebook::open_active(paths)?.pull()
+    pull_in(&Notebook::open_active(paths)?)
+}
+
+/// `pull`, in a notebook the caller already has open.
+pub fn pull_in(notebook: &Notebook) -> Result<String> {
+    notebook.pull()
 }
 
 /// Sends the current branch to the remote.
 pub fn push(paths: &Paths) -> Result<String> {
-    Notebook::open_active(paths)?.push()
+    push_in(&Notebook::open_active(paths)?)
+}
+
+/// `push`, in a notebook the caller already has open.
+pub fn push_in(notebook: &Notebook) -> Result<String> {
+    notebook.push()
 }
 
 /// Commit, pull, push — in that order, so local work is never left behind by a
@@ -3041,7 +3051,16 @@ pub fn push(paths: &Paths) -> Result<String> {
 /// made such a disagreement permanent and remote. There is no index now, so
 /// there is nothing for the files to disagree with and nothing to guard.
 pub fn sync(paths: &Paths) -> Result<String> {
-    let notebook = Notebook::open_active(paths)?;
+    sync_in(&Notebook::open_active(paths)?)
+}
+
+/// `sync`, in a notebook the caller already has open.
+///
+/// The order is the whole of it, and it is the reason the browser calls this
+/// rather than the three steps in turn: a pull that ran before the commit would
+/// merge into a tree that does not hold what somebody typed a moment ago, and a
+/// push that ran before the pull would be refused by a remote that has moved.
+pub fn sync_in(notebook: &Notebook) -> Result<String> {
     let mut lines = Vec::new();
     if notebook.commit_all("sync: local changes")? {
         lines.push("commit: local changes".to_string());
