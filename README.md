@@ -966,7 +966,29 @@ keeps its words and loses its link.** Files are served with `nosniff` and a cont
 loads nothing, and only the formats that cannot carry a script are shown in place: SVG is a
 document that runs script, so it arrives as a download.
 
-Syncing from the browser is not there yet.
+**The notebook syncs from the browser, and the request does not wait for it.** The corner of
+the listing's bar carries where the notebook stands against its remote — `2 to push`, `in
+sync`, `never fetched` — and pressing it opens `/nb/<book>/status`: the same facts `noda
+status` prints, none of them fetched, with `Sync`, `Pull` and `Push` under them.
+
+A sync is a fetch over somebody's network, so it takes as long as it takes. Pressing starts it
+and answers straight away; the screen you land on says what is happening and brings itself
+back for news every couple of seconds until it stops. That is a `<meta http-equiv="refresh">`
+and no script, like everything else here. Two things follow from the shape:
+
+- **A reload cannot start it again.** Only the `POST` begins anything, and what you are left
+  holding is a `GET` — so the refresh a slow network invites is a question rather than a
+  second push. Pressing the button again while one is running is not an error either; it is
+  somebody who could not tell whether the first press landed, and the screen already answers
+  that.
+- **What it did stays until the next one.** `sync` prints three lines — the commit, the pull,
+  the push — and they are shown as they were printed. A screen that said nothing afterwards
+  would look like a screen that had ignored the button.
+
+One errand per notebook at a time, and it takes the same write lock a Save takes: a merge
+landing halfway through somebody pressing Save is what that lock is there for. The lock is per
+notebook, so a remote that has gone quiet slows nothing down but the notebook whose remote it
+is.
 
 ### Action items
 
@@ -1422,8 +1444,9 @@ pointer, and the editor's scratch buffer are kept out of your synced data on pur
 
 ## Roadmap
 
-- **The web UI reads and writes.** `noda web` is here — see [In a browser](#in-a-browser).
-  Rendering Markdown, showing attachments, and syncing from the browser are still to come.
+- **The web UI reads, writes and syncs.** `noda web` is here — see
+  [In a browser](#in-a-browser). What is left is the enhancement layer: filtering a listing as
+  you type, without giving up the form that works with no script at all.
 - Encrypted notebooks are under consideration.
 
 ## Building from source

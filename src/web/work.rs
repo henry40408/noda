@@ -78,6 +78,28 @@ impl Errand {
         }
     }
 
+    /// What to call it once it has.
+    pub fn done(self) -> &'static str {
+        match self {
+            Errand::Sync => "Synced",
+            Errand::Pull => "Pulled",
+            Errand::Push => "Pushed",
+        }
+    }
+
+    /// And what to call it when it did not.
+    ///
+    /// Named after the errand rather than apologising: "Push failed" is a fact
+    /// about what was attempted, and the line under it is the reason in the
+    /// words the command used.
+    pub fn stuck(self) -> &'static str {
+        match self {
+            Errand::Sync => "Sync failed",
+            Errand::Pull => "Pull failed",
+            Errand::Push => "Push failed",
+        }
+    }
+
     /// Runs it, in a notebook the caller already has open.
     ///
     /// Through `cmd` and not through `notebook`, on the rule the rest of the web

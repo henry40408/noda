@@ -398,7 +398,7 @@ async fn front(State(server): State<Shared>) -> Response {
             books.push(page::Book {
                 name,
                 notes: status.notes,
-                remote: standing(&status),
+                remote: standing(status.remote.as_deref(), status.drift),
             });
         }
         Ok(Answer::Page(page::notebooks(&books)))
@@ -412,8 +412,8 @@ async fn front(State(server): State<Shared>) -> Response {
 /// and this says whether there is anything to. The counts are already in
 /// `Status` — `noda status` prints them — so this is the same judgement said
 /// shorter, not a second one.
-fn standing(status: &crate::notebook::Status) -> String {
-    match (status.remote.as_ref(), status.drift) {
+fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
+    match (remote, drift) {
         (None, _) => "no remote".to_string(),
         (Some(_), None) => "never fetched".to_string(),
         (Some(_), Some((0, 0))) => "in sync".to_string(),
@@ -439,6 +439,15 @@ async fn listing(
         // two features wearing one name.
         cmd::sort_notes(&mut notes, cmd::Sort::default());
         let total = notes.len();
+        // For the chip in the corner of the bar. `drift` and not `status`: the
+        // full status walks the working tree twice more — once for the notes
+        // this handler has already read and once for a whole `git status` — and
+        // none of that is on the chip. What is left is two refs compared, which
+        // is what a listing can afford to pay on every visit.
+        let drift = standing(
+            notebook.remote_url().as_deref(),
+            notebook.drift(&notebook.branch()?)?,
+        );
 
         // A query is being typed, and half a query is what every query looks
         // like on the way to being one. So a query that does not parse says why
@@ -461,6 +470,7 @@ async fn listing(
                 total,
                 &[],
                 None,
+                &drift,
             )));
         }
         let (rows, terms, problem) = match Query::parse(&tokens) {
@@ -487,6 +497,7 @@ async fn listing(
             total,
             &terms,
             problem.as_deref(),
+            &drift,
         )))
     })
     .await
@@ -653,16 +664,24 @@ async fn status(State(server): State<Shared>, Path(book): Path<String>) -> Respo
         };
         let status = notebook.status()?;
         let report = server.errands.report(&book);
-        let errand = report.as_ref().map(|report| page::Errand {
-            doing: report.errand.doing(),
-            said: match &report.outcome {
-                None => None,
-                Some(work::Outcome::Went(said) | work::Outcome::Failed(said)) => {
-                    Some(said.as_str())
-                }
-            },
-            failed: matches!(report.outcome, Some(work::Outcome::Failed(_))),
-            seconds: report.took.as_secs(),
+        let errand = report.as_ref().map(|report| {
+            let failed = matches!(report.outcome, Some(work::Outcome::Failed(_)));
+            page::Errand {
+                doing: report.errand.doing(),
+                done: if failed {
+                    report.errand.stuck()
+                } else {
+                    report.errand.done()
+                },
+                said: match &report.outcome {
+                    None => None,
+                    Some(work::Outcome::Went(said) | work::Outcome::Failed(said)) => {
+                        Some(said.as_str())
+                    }
+                },
+                failed,
+                seconds: report.took.as_secs(),
+            }
         });
         Ok(Answer::Page(page::standing(
             &book,
@@ -672,7 +691,7 @@ async fn status(State(server): State<Shared>, Path(book): Path<String>) -> Respo
                 files: status.files,
                 uncommitted: status.uncommitted,
                 remote: status.remote.clone(),
-                drift: standing(&status),
+                drift: standing(status.remote.as_deref(), status.drift),
                 problems: status
                     .problems
                     .iter()
@@ -1327,17 +1346,7 @@ mod tests {
     /// `noda status` already answers this; the words are the only new part.
     #[test]
     fn a_notebook_says_where_it_stands_in_gits_own_words() {
-        let standing_of = |remote: Option<&str>, drift| {
-            standing(&crate::notebook::Status {
-                branch: "main".into(),
-                notes: 0,
-                files: 0,
-                uncommitted: 0,
-                remote: remote.map(std::string::ToString::to_string),
-                drift,
-                problems: Vec::new(),
-            })
-        };
+        let standing_of = standing;
         assert_eq!(standing_of(None, None), "no remote");
         assert_eq!(standing_of(Some("git@x:y.git"), None), "never fetched");
         assert_eq!(standing_of(Some("git@x:y.git"), Some((0, 0))), "in sync");

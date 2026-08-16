@@ -322,6 +322,35 @@ const FILES: &str = "<path d=\"M18.5 10.5 11 18a4 4 0 0 1-5.7-5.7l7.8-7.8a2.6 2.
 /// An arrow arriving at a line, because backlinks are the inbound half. The
 /// line is the note being pointed at, and the arrow is everything pointing.
 const LINKS: &str = "<path d=\"M19 5v14\"/><path d=\"M4 12h11\"/><path d=\"M11 8l4 4-4 4\"/>";
+/// Two arrows passing, one up and one down: what a notebook and its remote do to
+/// each other. Not a cloud — a notebook syncs with a repository somebody else's
+/// machine is holding, and half the time that machine is their own.
+const SYNC: &str = "<path d=\"M7 9l5-5 5 5\"/><path d=\"M12 4v10\"/>\
+<path d=\"M17 15l-5 5-5-5\"/><path d=\"M12 20V10\"/>";
+
+/// Where the notebook stands, in the corner of the screen you are already on.
+///
+/// It is the way to the network screen and it is also the answer that screen
+/// exists to give — "is there anything to sync" is worth knowing without
+/// pressing anything, and a notebook that is up to date should be able to say so
+/// without being asked twice.
+/// The pill inside is what is drawn; the link around it is what is pressed.
+/// Nothing on a phone may be smaller than 48px, and a 48px pill in a 56px bar
+/// would be a bar with a button wedged into it — so the target is the size the
+/// rule asks for and the ink is the size the design wants.
+///
+/// The label repeats the words because a narrow screen may have to shorten them:
+/// the text can end in an ellipsis and the label never does.
+fn drift_chip(book: &str, drift: &str) -> String {
+    format!(
+        "<a class=\"drift\" href=\"/nb/{}/status\" aria-label=\"Status: {}\">\
+         <span class=\"pill\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{SYNC}</svg>\
+         <span>{}</span></span></a>",
+        escape(book),
+        escape(drift),
+        escape(drift)
+    )
+}
 
 /// The back chevron, and the only icon PR 1 has.
 ///
@@ -426,6 +455,11 @@ pub fn notebooks(books: &[Book]) -> String {
 /// notes are left alone — the same call `style::INVALID` exists for in the
 /// browser: half a query is what every query looks like on the way to being
 /// one, and emptying the screen over an unfinished thought is not an answer.
+///
+/// `drift` is where the notebook stands against its remote, already in words. It
+/// rides in the corner of the bar as a link to the network screen — the one
+/// screen that is not on the bar along the bottom, because the bar holds places
+/// inside the notebook and this is about the notebook as a whole.
 pub fn listing(
     book: &str,
     rows: &[Row],
@@ -433,6 +467,7 @@ pub fn listing(
     total: usize,
     terms: &[String],
     problem: Option<&str>,
+    drift: &str,
 ) -> String {
     let body = if rows.is_empty() && !query.is_empty() {
         format!(
@@ -473,7 +508,7 @@ pub fn listing(
     shell(
         &format!("{book} — noda"),
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">{}</span>\
+            "<header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
              <span class=\"count\">{counted}</span></header>\
              <form class=\"searchbar\" method=\"get\" action=\"/nb/{}\">\
              <input type=\"search\" name=\"q\" value=\"{}\" \
@@ -483,6 +518,7 @@ pub fn listing(
              <main class=\"rows\">{body}</main>{}",
             back("/", "the notebooks"),
             escape(book),
+            drift_chip(book, drift),
             escape(book),
             escape(query),
             problem.map_or_else(String::new, |why| format!(
@@ -998,8 +1034,12 @@ pub struct Standing {
 
 /// An errand as the page needs to say it: what it is, and how it went.
 pub struct Errand<'a> {
-    /// `Syncing` / `Pulling` / `Pushing`.
+    /// `Syncing` / `Pulling` / `Pushing`, for while it is happening.
     pub doing: &'a str,
+    /// `Synced`, or `Sync failed`, for once it has. Chosen by the caller rather
+    /// than worked out here, because it is the same choice the failure colour
+    /// below is made from and one fact should be read once.
+    pub done: &'a str,
     /// What it printed, or what went wrong. `None` while it is still going.
     pub said: Option<&'a str>,
     pub failed: bool,
@@ -1070,21 +1110,26 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
 
     let said = match errand {
         None => String::new(),
-        Some(errand) => {
-            let class = if errand.failed { "said bad" } else { "said" };
-            match errand.said {
-                None => format!(
-                    "<p class=\"said working\"><b>{}…</b> {}</p>",
-                    escape(errand.doing),
-                    plural(errand.seconds as usize, "second")
-                ),
-                Some(said) => format!(
-                    "<p class=\"{class}\"><b>{}</b><span class=\"outcome\">{}</span></p>",
-                    escape(errand.doing),
-                    escape(said)
-                ),
-            }
-        }
+        Some(errand) => match errand.said {
+            // Still going, and how long it has been going. A count of seconds
+            // rather than a bar: nothing here knows how long a fetch will take,
+            // and a bar that guessed would be the only thing on these pages that
+            // is not true.
+            None => format!(
+                "<p class=\"said working\"><b>{}…</b> {}</p>",
+                escape(errand.doing),
+                plural(errand.seconds as usize, "second")
+            ),
+            // What the command printed, whole. Not summarised into a tick: the
+            // three lines `sync` prints are the difference between "it worked"
+            // and "it worked, and here is what it did".
+            Some(said) => format!(
+                "<p class=\"said{}\"><b>{}</b><span class=\"outcome\">{}</span></p>",
+                if errand.failed { " bad" } else { "" },
+                escape(errand.done),
+                escape(said)
+            ),
+        },
     };
 
     // Disabled while one is running, and the reason is honesty rather than
@@ -1098,7 +1143,12 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
         let _ = write!(
             buttons,
             "<form method=\"post\" action=\"/nb/{at}/status/{errand}\">\
-             <button class=\"go\" type=\"submit\"{}>{label}</button></form>",
+             <button class=\"{}\" type=\"submit\"{}>{label}</button></form>",
+            // The accent is on the one that is nearly always right, and the
+            // other two are ordinary buttons. Said in colour rather than in
+            // layout, so all three stay one row on a phone and three sensible
+            // widths on a monitor.
+            if errand == "sync" { "go" } else { "" },
             if busy { " disabled" } else { "" }
         );
     }
@@ -1107,10 +1157,12 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
         &format!("Status — {book} — noda"),
         busy.then_some(2),
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">Status</span></header>\
+            "<header class=\"topbar\">{}<span class=\"here\">Status</span>\
+             <span class=\"count\">{at}</span></header>\
              <main>{said}<div class=\"rows facts\">{rows}</div>\
-             <div class=\"buttons\">{buttons}</div></main>",
+             <div class=\"abreast\">{buttons}</div></main>{}",
             back(&format!("/nb/{at}"), book),
+            notebook_bar(book, At::Notes),
         ),
     )
 }
@@ -1351,6 +1403,46 @@ form.write label.tick:last-child{border-bottom:0}\
 .said b{color:var(--text);font-weight:600}\
 .said.bad{color:var(--alert)}\
 .said.bad b{color:var(--alert)}\
+/* Where the notebook stands against its remote, on the way to the screen that \
+   says the rest. Nothing in the palette marks a state — colour here says what a \
+   thing *is* — so the chip is the chrome's own grey and the words do the work. \
+   It is a link and not a badge, which is why it is the size of a target. */\
+.topbar .drift{margin-left:auto;flex:0 1 auto;min-width:0;display:inline-flex;\
+align-items:center;min-height:var(--tap);color:var(--text);\
+-webkit-tap-highlight-color:transparent}\
+.topbar .drift .pill{display:inline-flex;align-items:center;gap:6px;min-width:0;\
+min-height:32px;padding:0 11px;border:1px solid var(--rule);border-radius:999px;\
+font-size:12px}\
+.topbar .drift .pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+.topbar .drift svg{width:14px;height:14px;flex:0 0 auto;color:var(--muted)}\
+.topbar .drift:active .pill{background:var(--press)}\
+/* Named with the ancestor as well, so it beats `.topbar .count` on specificity \
+   rather than on which of them was written last. */\
+.topbar .drift+.count{margin-left:10px;padding-left:0}\
+/* The three errands, abreast. Sync carries the accent because it is the one \
+   that is nearly always right — commit, pull and push, in the order that keeps \
+   local work from being left behind. Pull and Push are for somebody who knows \
+   which half they want, and they are the same size because they are the same \
+   kind of thing. */\
+.abreast{display:flex;gap:10px;padding:18px 16px 22px}\
+.abreast form{flex:1;display:flex}\
+.abreast button{flex:1;padding:0 12px}\
+button[disabled]{opacity:.45}\
+/* What the command printed, in the face a command prints in — and one line per \
+   line, because `sync` says three things and a paragraph of them run together \
+   is a paragraph nobody reads. */\
+.outcome{display:block;margin-top:6px;font-family:var(--mono);font-size:12.5px;\
+line-height:1.5;white-space:pre-line;overflow-wrap:anywhere;color:var(--muted)}\
+.said.bad .outcome{color:var(--alert)}\
+/* The one thing on any of these pages that moves. It moves because a page which \
+   reloads itself every two seconds has to say whether it is doing anything \
+   before the reader reaches for the button again. */\
+.working b::after{content:\"\";display:inline-block;width:7px;height:7px;\
+border-radius:4px;background:var(--id);margin-left:9px;vertical-align:1px;\
+animation:breathe 1.4s ease-in-out infinite}\
+@keyframes breathe{0%,100%{opacity:.2}50%{opacity:1}}\
+/* Somebody who has asked their system not to see movement is asking about this. */\
+@media (prefers-reduced-motion:reduce){.working b::after{animation:none;opacity:.8}}\
 .theirs{margin:0;padding:14px;border:1px solid var(--rule);border-radius:10px;\
 background:var(--bg-sunk);font-family:var(--read);font-size:16px;line-height:1.55;\
 white-space:pre-wrap;overflow-wrap:break-word}\
@@ -1472,7 +1564,7 @@ mod tests {
 
     #[test]
     fn a_filtered_listing_says_what_it_is_hiding() {
-        let page = listing("work", &[], "tag:ghost", 12, &[], None);
+        let page = listing("work", &[], "tag:ghost", 12, &[], None, "in sync");
         assert!(page.contains("No notes match tag:ghost"), "{page}");
         assert!(page.contains("12 notes"), "{page}");
         assert!(page.contains("href=\"/nb/work\""), "{page}");
@@ -1480,7 +1572,7 @@ mod tests {
 
     #[test]
     fn an_empty_notebook_says_what_to_do_instead_of_nothing() {
-        let page = listing("work", &[], "", 0, &[], None);
+        let page = listing("work", &[], "", 0, &[], None, "in sync");
         assert!(page.contains("No notes yet"), "{page}");
         assert!(page.contains("noda add"), "{page}");
     }
@@ -1515,7 +1607,7 @@ mod tests {
             tags: vec![],
             updated: Some("2026-08-12T08:03:00Z".into()),
         }];
-        let page = listing("work", &rows, "", 1, &[], None);
+        let page = listing("work", &rows, "", 1, &[], None, "in sync");
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
         // The clock is not in a listing at all, in either spelling.
@@ -1524,7 +1616,7 @@ mod tests {
 
     #[test]
     fn every_page_carries_both_themes_and_the_viewport() {
-        let page = listing("work", &[], "", 0, &[], None);
+        let page = listing("work", &[], "", 0, &[], None, "in sync");
         assert!(page.contains("width=device-width"), "{page}");
         assert!(page.contains("prefers-color-scheme:dark"), "{page}");
         assert!(page.contains("--tap:48px"), "{page}");

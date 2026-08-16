@@ -1267,6 +1267,48 @@ fn the_status_screen_says_where_a_notebook_stands() {
     }
 }
 
+/// The way in, and the only thing on the listing that says anything about the
+/// remote. It is a link because it is a way somewhere, and it carries the answer
+/// because that saves going there at all.
+#[test]
+fn the_listing_says_where_the_notebook_stands_and_leads_to_the_rest() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default");
+    assert!(
+        answer.says("class=\"drift\" href=\"/nb/default/status\""),
+        "{}",
+        answer.body
+    );
+    assert!(answer.says(">no remote</span>"), "{}", answer.body);
+
+    // And with a remote it says the same thing `noda status` would.
+    let (server, _paths, _remote) = serving_with_a_remote();
+    assert!(
+        server.get("/nb/default").says(">never fetched</span>"),
+        "the chip did not follow the notebook"
+    );
+    server.post("/nb/default/status/sync", &[]);
+    server.settled("/nb/default/status");
+    assert!(
+        server.get("/nb/default").says(">in sync</span>"),
+        "the chip is stale after a sync"
+    );
+}
+
+/// The network screen is not on the bar — the bar holds places inside the
+/// notebook — but it carries the bar, so it is not a dead end.
+#[test]
+fn the_status_screen_is_not_a_dead_end() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default/status");
+    assert!(answer.says("class=\"actionbar\""), "{}", answer.body);
+    // `aria-current="page"` and not `aria-current`: the stylesheet embedded in
+    // every page names the attribute in a selector, so the shorter needle is
+    // always found and the assertion would never fail.
+    assert!(!answer.says("aria-current=\"page\""), "{}", answer.body);
+    assert!(answer.says("<main"), "{}", answer.body);
+}
+
 /// The whole shape of it: the press answers at once, the errand runs behind it,
 /// and what it printed is on the screen the reader was sent to.
 #[test]
