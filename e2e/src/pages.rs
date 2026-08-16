@@ -400,15 +400,6 @@ impl Page<'_> {
         Ok(said.as_str().map(str::to_string))
     }
 
-    /// The count in the corner of the bar.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
-    pub async fn count(&self) -> Result<String> {
-        Ok(self.reads(".topbar .count").await?)
-    }
-
     /// Whether the page is asking the browser to reload it.
     ///
     /// The scriptless network screen steers by `<meta refresh>`; the script's
