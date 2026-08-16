@@ -12,7 +12,7 @@
 use anyhow::{Context, Result};
 use thirtyfour::prelude::*;
 
-use crate::browser::Browser;
+use crate::browser::{Browser, WAIT_INTERVAL, WAIT_TIMEOUT};
 use crate::server::BASE_URL;
 
 /// A string literal `XPath` 1.0 will accept.
@@ -103,13 +103,36 @@ impl Page<'_> {
         // Quoted for XPath rather than interpolated: a title may hold an
         // apostrophe, and `concat` is the only way XPath 1.0 escapes one.
         let target = format!("//a[contains(., {})]", xpath_string(what));
-        self.driver()
-            .find(By::XPath(&target))
+        self.click(By::XPath(&target), &format!("a link naming {what:?}"))
             .await
-            .with_context(|| format!("nothing on this page names {what:?}"))?
-            .click()
-            .await?;
-        Ok(())
+    }
+
+    /// Finds a thing and presses it, treating a page that moved underneath as
+    /// "not yet".
+    ///
+    /// **A stale element is the same kind of answer as an element that is not
+    /// there.** The network screen brings itself back for news while an errand
+    /// is running, so a handle taken a moment ago can belong to a document that
+    /// has since been replaced — and a press that failed for that reason has not
+    /// failed, it has arrived between two versions of a page. The rule the rest
+    /// of this harness follows applies here too: one round trip, an answer that
+    /// can say "not yet", and a loop that can see it.
+    async fn click(&self, target: By, what: &str) -> Result<()> {
+        let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
+        let mut last;
+        loop {
+            match self.driver().find(target.clone()).await {
+                Ok(element) => match element.click().await {
+                    Ok(()) => return Ok(()),
+                    Err(e) => last = e.to_string(),
+                },
+                Err(e) => last = e.to_string(),
+            }
+            if std::time::Instant::now() >= deadline {
+                anyhow::bail!("could not press {what} within {WAIT_TIMEOUT:?}: {last}");
+            }
+            tokio::time::sleep(WAIT_INTERVAL).await;
+        }
     }
 
     /// Types into the field with this `name`.
@@ -139,13 +162,8 @@ impl Page<'_> {
     /// Fails when no button says it.
     pub async fn submit(&self, what: &str) -> Result<()> {
         let target = format!("//button[contains(., {})]", xpath_string(what));
-        self.driver()
-            .find(By::XPath(&target))
+        self.click(By::XPath(&target), &format!("a button saying {what:?}"))
             .await
-            .with_context(|| format!("no button on this page says {what:?}"))?
-            .click()
-            .await?;
-        Ok(())
     }
 
     /// Unticks the box for a tag.
@@ -246,13 +264,7 @@ impl Page<'_> {
     ///
     /// Fails when the page has no back control.
     pub async fn tap_back(&self) -> Result<()> {
-        self.driver()
-            .find(By::Css(".back"))
-            .await
-            .context("this page has no way back")?
-            .click()
-            .await?;
-        Ok(())
+        self.click(By::Css(".back"), "the way back").await
     }
 
     /// Types a query into the search field and sends it.

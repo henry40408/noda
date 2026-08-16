@@ -256,6 +256,24 @@ impl Serving {
         self.send("POST", path, &[], Some(&body))
     }
 
+    /// A page whose errand has stopped running.
+    ///
+    /// **"Not finished yet" is not a failure**, which is the rule the browser
+    /// tests learned the hard way: one round trip, an answer that can say "not
+    /// yet", and a loop that can see it. A network errand is the one thing here
+    /// that does not finish inside the request that started it, so this is the
+    /// only place a test has to wait at all.
+    fn settled(&self, path: &str) -> Answer {
+        for _ in 0..200 {
+            let answer = self.get(path);
+            if !answer.says("said working") {
+                return answer;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("the errand on {path} never finished");
+    }
+
     /// The fingerprint a form was handed, so a test can send it back — or send
     /// back a stale one on purpose.
     fn fingerprint_on(&self, path: &str) -> String {
@@ -350,6 +368,31 @@ impl Drop for Serving {
 fn serving() -> (Serving, Paths) {
     let (root, paths) = a_notebook();
     (Serving::start(root, &[]), paths)
+}
+
+/// The same notebook, wired to a bare repository standing in for a git host.
+///
+/// libgit2's local transport is the same push and fetch machinery HTTPS and SSH
+/// use, so a `sync` here goes through the real code without a network or
+/// credentials — which is what `tests/cli.rs` does for the same reason.
+fn serving_with_a_remote() -> (Serving, Paths, PathBuf) {
+    let (root, paths) = a_notebook();
+    let branch = noda::notebook::Notebook::open(&paths, "default")
+        .expect("open the notebook")
+        .branch()
+        .expect("its branch");
+
+    let remote = root.0.join("origin.git");
+    git2::Repository::init_bare(&remote)
+        .expect("init a bare remote")
+        // `main` or `master` depending on the machine's `init.defaultBranch`,
+        // so it is read off the notebook rather than assumed.
+        .set_head(&format!("refs/heads/{branch}"))
+        .expect("point the remote at that branch");
+    let url = remote.to_str().expect("utf-8 path").to_string();
+    cmd::remote_set(&paths, &url).expect("set the remote");
+
+    (Serving::start(root, &[]), paths, remote)
 }
 
 #[test]
@@ -1193,4 +1236,129 @@ fn every_page_keeps_its_body_inside_the_column() {
         assert_eq!(answer.status, 200, "{path}");
         assert!(answer.says("<main"), "{path} has no main: {}", answer.body);
     }
+}
+
+/// The facts `noda status` prints, on a screen instead of a terminal — and none
+/// of them fetched. A page that went to the network before drawing itself would
+/// hang exactly when the network is why you opened it.
+#[test]
+fn the_status_screen_says_where_a_notebook_stands() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default/status");
+    assert_eq!(answer.status, 200);
+    assert!(answer.says(">Holds</div>"), "{}", answer.body);
+    assert!(answer.says("5 notes, 3 files"), "{}", answer.body);
+    assert!(answer.says("clean"), "{}", answer.body);
+    // The remedy and not only the fact: the command that gives a notebook a
+    // remote is on no screen here.
+    assert!(answer.says("noda remote set"), "{}", answer.body);
+    // Nothing has been asked for, so there is nothing to report and nothing to
+    // come back for.
+    assert!(!answer.says("said working"), "{}", answer.body);
+    assert!(!answer.says("http-equiv=\"refresh\""), "{}", answer.body);
+
+    // And asking again does not start anything: only a POST does, which is what
+    // makes the reload a slow network invites harmless.
+    for _ in 0..3 {
+        assert!(
+            !server.get("/nb/default/status").says("class=\"said"),
+            "a GET started an errand"
+        );
+    }
+}
+
+/// The way in, and the only thing on the listing that says anything about the
+/// remote. It is a link because it is a way somewhere, and it carries the answer
+/// because that saves going there at all.
+#[test]
+fn the_listing_says_where_the_notebook_stands_and_leads_to_the_rest() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default");
+    assert!(
+        answer.says("class=\"drift\" href=\"/nb/default/status\""),
+        "{}",
+        answer.body
+    );
+    assert!(answer.says(">no remote</span>"), "{}", answer.body);
+
+    // And with a remote it says the same thing `noda status` would.
+    let (server, _paths, _remote) = serving_with_a_remote();
+    assert!(
+        server.get("/nb/default").says(">never fetched</span>"),
+        "the chip did not follow the notebook"
+    );
+    server.post("/nb/default/status/sync", &[]);
+    server.settled("/nb/default/status");
+    assert!(
+        server.get("/nb/default").says(">in sync</span>"),
+        "the chip is stale after a sync"
+    );
+}
+
+/// The network screen is not on the bar — the bar holds places inside the
+/// notebook — but it carries the bar, so it is not a dead end.
+#[test]
+fn the_status_screen_is_not_a_dead_end() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default/status");
+    assert!(answer.says("class=\"actionbar\""), "{}", answer.body);
+    // `aria-current="page"` and not `aria-current`: the stylesheet embedded in
+    // every page names the attribute in a selector, so the shorter needle is
+    // always found and the assertion would never fail.
+    assert!(!answer.says("aria-current=\"page\""), "{}", answer.body);
+    assert!(answer.says("<main"), "{}", answer.body);
+}
+
+/// The whole shape of it: the press answers at once, the errand runs behind it,
+/// and what it printed is on the screen the reader was sent to.
+#[test]
+fn a_sync_answers_before_it_finishes_and_says_how_it_went() {
+    let (server, _paths, remote) = serving_with_a_remote();
+    let answer = server.get("/nb/default/status");
+    assert!(answer.says("never fetched"), "{}", answer.body);
+
+    let started = server.post("/nb/default/status/sync", &[]);
+    assert_eq!(started.status, 303);
+    assert_eq!(started.location.as_deref(), Some("/nb/default/status"));
+
+    let done = server.settled("/nb/default/status");
+    assert_eq!(done.status, 200);
+    assert!(done.says("push:"), "{}", done.body);
+    assert!(!done.says("said bad"), "{}", done.body);
+    // Finished means finished: nothing left asking the browser to come back.
+    assert!(!done.says("http-equiv=\"refresh\""), "{}", done.body);
+    // The drift is re-read rather than remembered, so the screen agrees with
+    // the repository it just changed.
+    assert!(done.says("in sync"), "{}", done.body);
+
+    // And the notes are actually there, which is the only claim worth making
+    // about a push.
+    let there = git2::Repository::open_bare(&remote).expect("open the remote");
+    assert!(
+        there.head().expect("a branch").peel_to_commit().is_ok(),
+        "the remote has no commit on it"
+    );
+}
+
+/// A failure is reported in the words the command used, in the place the button
+/// was pressed. The notebook here has no remote at all, which is the commonest
+/// way a push cannot happen.
+#[test]
+fn a_push_with_nowhere_to_send_it_says_so() {
+    let (server, _paths) = serving();
+    assert_eq!(server.post("/nb/default/status/push", &[]).status, 303);
+
+    let done = server.settled("/nb/default/status");
+    assert!(done.says("said bad"), "{}", done.body);
+    assert!(done.says("remote"), "{}", done.body);
+    assert!(!done.says("http-equiv=\"refresh\""), "{}", done.body);
+}
+
+/// Three errands, and the route does not invent a fourth.
+#[test]
+fn there_is_nothing_called_fetch_to_do_to_a_notebook() {
+    let (server, _paths) = serving();
+    assert_eq!(server.post("/nb/default/status/fetch", &[]).status, 404);
+    assert_eq!(server.post("/nb/nowhere/status/sync", &[]).status, 404);
+    assert_eq!(server.get("/nb/nowhere/status").status, 404);
 }

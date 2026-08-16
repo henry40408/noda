@@ -34,12 +34,19 @@ pub const NOTEBOOK: &str = "default";
 
 const STARTUP_TIMEOUT: Duration = Duration::from_mins(1);
 
-/// The notebook the fixture was built in, and the commit it was built to.
+/// The notebook the fixture was built in, the commit it was built to, and the
+/// bare repository standing in for a git host.
 ///
-/// Set once at start-up and read by [`reset`] after every scenario. A pair of
-/// statics rather than something threaded through the world, because the hook
-/// that resets is cucumber's and takes what cucumber gives it.
-static FIXTURE: std::sync::OnceLock<(PathBuf, String)> = std::sync::OnceLock::new();
+/// Set once at start-up and read by [`reset`] after every scenario. A static
+/// rather than something threaded through the world, because the hook that
+/// resets is cucumber's and takes what cucumber gives it.
+struct Fixture {
+    notebook: PathBuf,
+    head: String,
+    remote: PathBuf,
+}
+
+static FIXTURE: std::sync::OnceLock<Fixture> = std::sync::OnceLock::new();
 
 /// Puts the notebook back the way the fixture left it.
 ///
@@ -61,31 +68,81 @@ static FIXTURE: std::sync::OnceLock<(PathBuf, String)> = std::sync::OnceLock::ne
 /// Fails when git refuses, which means the fixture is not recoverable and every
 /// scenario after this one would be reporting on the wrong notebook.
 pub fn reset() -> Result<()> {
-    let Some((notebook, head)) = FIXTURE.get() else {
+    let Some(fixture) = FIXTURE.get() else {
         // No fixture was built: a server was adopted rather than started, so
         // whatever it is serving is not ours to put back.
         return Ok(());
     };
+    let notebook = &fixture.notebook;
     for args in [
-        vec!["reset", "--hard", head.as_str()],
+        vec!["reset", "--hard", fixture.head.as_str()],
         // Untracked files a scenario made and did not commit — a half-written
         // note left by a step that failed part way.
         vec!["clean", "-fd"],
     ] {
-        let done = Command::new("git")
-            .arg("-C")
-            .arg(notebook)
-            .args(&args)
-            .output()
-            .with_context(|| format!("running git {args:?}"))?;
-        if !done.status.success() {
-            bail!(
-                "git {args:?} failed: {}",
-                String::from_utf8_lossy(&done.stderr)
-            );
-        }
+        git(notebook, &args)?;
+    }
+
+    // **The remote is fixture too, and forgetting that is the same trap the
+    // notebook itself set.** A scenario that syncs leaves commits on the bare
+    // repository and a tracking ref behind it, and "never fetched" is then a
+    // statement about the previous scenario rather than about a notebook that
+    // has not been anywhere. It passes on a single pass, because the scenario
+    // that reads comes before the scenario that syncs, and fails on the second
+    // — which is exactly why every scenario is run twice.
+    for refname in git(
+        notebook,
+        &["for-each-ref", "--format=%(refname)", "refs/remotes"],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect::<Vec<_>>()
+    {
+        git(notebook, &["update-ref", "-d", &refname])?;
+    }
+    bare_remote(&fixture.remote)?;
+    Ok(())
+}
+
+/// A bare repository standing in for a git host, made or made again.
+///
+/// libgit2's local transport is the same push and fetch machinery HTTPS and SSH
+/// use, so what the scenarios exercise is the real thing minus a network and a
+/// password.
+fn bare_remote(path: &Path) -> Result<()> {
+    if path.exists() {
+        std::fs::remove_dir_all(path).with_context(|| format!("clearing {}", path.display()))?;
+    }
+    std::fs::create_dir_all(path)?;
+    let done = Command::new("git")
+        .args(["init", "--bare", "-q"])
+        .arg(path)
+        .output()
+        .context("running git init --bare")?;
+    if !done.status.success() {
+        bail!(
+            "git init --bare failed: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
     }
     Ok(())
+}
+
+/// One git command in a repository, for what it printed.
+fn git(repo: &Path, args: &[&str]) -> Result<String> {
+    let done = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .with_context(|| format!("running git {args:?}"))?;
+    if !done.status.success() {
+        bail!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&done.stdout).into_owned())
 }
 
 /// A running server, and the temporary notebook it is reading.
@@ -127,22 +184,12 @@ impl Server {
         // Where the fixture stands before any scenario has touched it. Every
         // scenario is put back to exactly this.
         let notebook = root.join("data/noda/notebooks/default");
-        let head = Command::new("git")
-            .arg("-C")
-            .arg(&notebook)
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .context("reading the fixture's HEAD")?;
-        if !head.status.success() {
-            bail!(
-                "git rev-parse failed: {}",
-                String::from_utf8_lossy(&head.stderr)
-            );
-        }
-        let _ = FIXTURE.set((
+        let head = git(&notebook, &["rev-parse", "HEAD"])?.trim().to_string();
+        let _ = FIXTURE.set(Fixture {
             notebook,
-            String::from_utf8_lossy(&head.stdout).trim().to_string(),
-        ));
+            head,
+            remote: root.join("origin.git"),
+        });
 
         server.child = Some(
             Command::new(&binary)
@@ -265,6 +312,14 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
             "ops",
         ],
     )?;
+
+    // A remote it has never spoken to. Set and not synced, because that is the
+    // state the chip on the listing has to be able to say — a notebook wired up
+    // this morning and not yet pushed — and because a scenario that syncs should
+    // be starting from a notebook that has not.
+    let remote = root.join("origin.git");
+    bare_remote(&remote)?;
+    run(binary, root, &["remote", "set", &remote.to_string_lossy()])?;
     Ok(())
 }
 

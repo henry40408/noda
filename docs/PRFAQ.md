@@ -112,8 +112,10 @@ already uses. Nothing in the browser writes a note itself.
 `noda web` serves the notebooks over HTTP, for reading and writing them from a phone. It
 renders on the server and needs no JavaScript; because storage is just git, it works on the
 exact same files the CLI does, and every change runs the command the terminal would have run
-— so each lands as its own commit with the message it would have had. Markdown rendering,
-attachments and syncing from the browser are still to come.
+— so each lands as its own commit with the message it would have had. Notes are rendered,
+attachments are served, and the notebook syncs: pressing Sync starts it and answers straight
+away, and the screen you land on says how it is going until it stops. What is left is the
+enhancement layer — filtering as you type, over pages that already work without a script.
 
 An edit carries the note's git blob id and a stale one is refused, with both versions handed
 back so nothing typed is lost. The blob id and not the `updated` stamp: `--no-touch` exists

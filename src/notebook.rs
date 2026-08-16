@@ -337,14 +337,7 @@ impl Notebook {
         options.include_untracked(true).include_ignored(false);
         let uncommitted = self.repo.statuses(Some(&mut options))?.len();
 
-        let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
-        let drift = match (
-            self.repo.head()?.target(),
-            self.repo.refname_to_id(&tracking).ok(),
-        ) {
-            (Some(local), Some(upstream)) => Some(self.repo.graph_ahead_behind(local, upstream)?),
-            _ => None,
-        };
+        let drift = self.drift(&branch)?;
 
         Ok(Status {
             branch,
@@ -355,6 +348,27 @@ impl Notebook {
             drift,
             problems: scan.problems(),
         })
+    }
+
+    /// `(ahead, behind)` against what the last fetch left behind, or `None` when
+    /// there has never been one.
+    ///
+    /// Split out of `status` because it is the cheap half. `status` also walks
+    /// the working tree twice over — once for the notes and once for a full
+    /// `git status` — and a caller that only wants to say "2 to push" should not
+    /// pay for either. Nothing here goes to the network: this is a comparison of
+    /// two refs that are already on the disk.
+    pub fn drift(&self, branch: &str) -> Result<Option<(usize, usize)>> {
+        let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
+        match (
+            self.repo.head()?.target(),
+            self.repo.refname_to_id(&tracking).ok(),
+        ) {
+            (Some(local), Some(upstream)) => {
+                Ok(Some(self.repo.graph_ahead_behind(local, upstream)?))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Walks the working tree and sorts every `*.md` into the four cases.
