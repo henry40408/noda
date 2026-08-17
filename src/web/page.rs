@@ -417,16 +417,43 @@ enum At {
 /// changed from screen to screen would be worse than no bar. It is also how the
 /// files page stopped being reachable only by typing its address, which is what
 /// it was until this existed.
+///
+/// On a wide screen the same element is the rail down the left. Same links, same
+/// order, same markup — a bar and a rail are one strip of chrome with its width
+/// and its height swapped, and the stylesheet is where that swap belongs.
 fn notebook_bar(book: &str, here: At) -> String {
+    places(book, here, "foot")
+}
+
+/// The same bar on a page that already carries one of its own.
+///
+/// A note has four actions of its own and `backlinks` is read from a note, so on
+/// a phone there is no room for the notebook's three places as well — and they
+/// are not missing there: the chevron in the corner is the way to them, exactly
+/// as it was before this existed. Given a column, both fit, so this is the same
+/// bar marked as belonging to the wide layout alone.
+fn notebook_rail(book: &str) -> String {
+    // Nothing marked. A note is not one of the three places, which is the same
+    // answer the listing gets and for the same reason.
+    places(book, At::Notes, "foot wide-only")
+}
+
+fn places(book: &str, here: At, class: &str) -> String {
     let at = escape(book);
     // Wrapped together, and the wrapper is what sticks to the bottom rather
     // than the bar inside it. The button has to travel with the bar: on a
     // screen with little on it the bar has not stuck to anything yet and sits
     // under the last row, and a button pinned to the window would be floating on
     // its own in the space below.
+    //
+    // The button's label is in the markup even though a phone never draws it.
+    // The rail has room for the word and a stylesheet is not where a sentence
+    // lives — the same rule the search hint follows: written by the server,
+    // hidden by the server, so there is one copy of it and it can be tested.
     format!(
-        "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
-         <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
+        "<div class=\"{class}\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
+         <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg><span>New note</span>\
+         </a></div>",
         action_bar(&[
             (TAGS, "Tags", format!("/nb/{at}/tags"), here == At::Tags),
             (TODO, "Todo", format!("/nb/{at}/todo"), here == At::Todo),
@@ -813,11 +840,15 @@ pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
             "<header class=\"topbar\">{}<span class=\"here\">Backlinks</span>\
              <span class=\"count\">{}</span></header>\
              <main class=\"rows\">\
-             <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}</main>",
+             <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}</main>{}",
             back(&subject.at, &subject.what),
             rows.len(),
             if subject.mono { "mono" } else { "subject" },
-            escape(&subject.what)
+            escape(&subject.what),
+            // The rail, so the column stands in the same place it stood on the
+            // note this was reached from. A page whose content jumped sideways
+            // on the way in is a page that looks like it lost something.
+            notebook_rail(book)
         ),
     )
 }
@@ -839,13 +870,22 @@ pub fn note(book: &str, reading: &Reading) -> String {
         format!("<p class=\"perilous\"><a href=\"{at}/delete\">Delete this note</a></p>");
     // Nothing marked as current: a note's bar is four things to do *to* the note
     // you are already on, and there is no "here" among them to be at.
+    //
+    // **`Retag` and not `Tags`, and the wide layout is what forced it.** The
+    // notebook's rail carries a `Tags` of its own — every tag in the notebook,
+    // with counts — and on a wide screen both are on the page at once. Two links
+    // a finger apart, spelled the same, going to different places is not a thing
+    // context rescues: a screen reader says "Tags, link" twice, and so does the
+    // page. The other three here are verbs already, so the odd one out was the
+    // noun.
     let bar = action_bar(&[
         (EDIT, "Edit", format!("{at}/edit"), false),
-        (TAGS, "Tags", format!("{at}/tags"), false),
+        (TAGS, "Retag", format!("{at}/tags"), false),
         (RENAME, "Rename", format!("{at}/rename"), false),
         (LINKS, "Links", format!("{at}/backlinks"), false),
     ]);
     let home = format!("/nb/{}", escape(book));
+    let rail = notebook_rail(book);
 
     shell(
         &format!("{} — noda", reading.title),
@@ -857,7 +897,7 @@ pub fn note(book: &str, reading: &Reading) -> String {
              <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
              <div class=\"note-meta\">{meta}</div></div>\
              <div class=\"body\">{}</div>\
-             {perilous}</main>{bar}",
+             {perilous}</main>{bar}{rail}",
             back(&home, book),
             escape(book),
             escape(&reading.title),
@@ -876,14 +916,26 @@ pub fn note(book: &str, reading: &Reading) -> String {
 /// it runs the whole width of a monitor — which is what every form page did
 /// until now: a topbar neatly in its column with a textarea stretching past it
 /// on both sides. The element was missing, not the rule.
+///
+/// **The rail is here too, and the argument had to be made rather than assumed.**
+/// A form page has no bar on a phone, deliberately: you are doing one thing and
+/// there is one bottom edge. Left as it was on a wide screen it would be the one
+/// page with no rail, and a column centred in the whole window instead of in the
+/// room beside one sits 124px — half a rail — to the left of where it sat on the
+/// page you pressed Edit on. That jump is what a reader notices.
+/// The cost is that a link in the rail abandons what has been typed. It is not a
+/// new cost: the chevron in the corner of this very page already does that, in
+/// the same corner it does it in everywhere else, and every form here carries a
+/// Cancel that says so out loud.
 fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
     shell(
         &format!("{title} — noda"),
         &format!(
             "<header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
-             <main>{said}{form}</main>",
+             <main>{said}{form}</main>{}",
             back(back_to, book),
-            escape(title)
+            escape(title),
+            notebook_rail(book)
         ),
     )
 }
@@ -1441,6 +1493,15 @@ display:flex;align-items:center;justify-content:center;\
 box-shadow:0 0 0 5px var(--bg);-webkit-tap-highlight-color:transparent}\
 .fab svg{width:26px;height:26px;stroke-width:2.4}\
 .fab:active{background:var(--id-dim)}\
+/* The word the rail draws, on a screen that has no room for it. Written by the \
+   server and hidden by the server, which is the rule the search hint follows \
+   and for its reason: a sentence that exists only inside a stylesheet is a \
+   sentence nothing else can test the wording of. */\
+.fab span{display:none}\
+/* The notebook's bar on a page that carries a bar of its own. There is one \
+   bottom edge and a note's four actions have it, so on a phone this is not \
+   drawn at all — the rail is the only shape it ever takes. */\
+.foot.wide-only{display:none}\
 /* Room under the last row, so the button never covers the end of a list. The \
    button is 56px tall and stands 16px clear of the bar, so 72 is what it \
    occupies and 76 is that with a hair to spare. */\
@@ -1531,19 +1592,19 @@ text-decoration:underline;text-underline-offset:3px;font-size:14px}\
 /* One column for the whole interface, and the room left over falls on both \
    sides. A `max-width` without a margin is not a narrower page, it is a page \
    pushed against the left edge of a monitor. */\
-.topbar,.searchbar,main{max-width:900px;margin-inline:auto}\
+.topbar,.searchbar,main,body>.actionbar{max-width:900px;margin-inline:auto}\
 /* The row extends rather than stacking: the tags and the day leave the second \
    line and go to the right of the title. Same information, same order — the \
    rule `-l` follows on the CLI's own row. */\
 .row{display:flex;align-items:baseline;gap:18px;min-height:0;padding:14px 20px}\
 .row.split .most{display:flex;align-items:baseline;gap:18px;padding:14px 0 14px 20px}\
 .row.split .aside{padding:0 20px}\
-/* The button follows the column rather than the window: on a wide screen the \
-   content stops at 900px, and a button pinned to the far corner would be a \
-   button somewhere else on the page. */\
-.fab{right:max(16px,calc(50% - 450px + 16px))}\
-.row .title,.row .name{flex:1 1 auto}\
-.row .under{margin:0;flex:0 0 auto}\
+.row .title,.row .name{flex:1 1 auto;min-width:0}\
+/* Allowed to shrink, which it never had to do until the rail took 248px off \
+   the narrow end of this layout: a tag list and a day beside a title in 432px \
+   is the tightest a row here ever gets, and shrinking wraps it where refusing \
+   to would have widened the page instead. */\
+.row .under{margin:0;flex:0 1 auto;min-width:0}\
 .topbar,.searchbar{padding-left:20px;padding-right:20px}\
 .topbar .back{margin-left:-12px}\
 .note-head{padding:22px 20px 18px}\
@@ -1552,7 +1613,66 @@ text-decoration:underline;text-underline-offset:3px;font-size:14px}\
    set in the monospace the chrome uses, sized a column of prose by a font the \
    prose is not in. It is the body that is read, so it is the body that is \
    capped. */\
-.body{font-size:18px;max-width:36em;padding:20px}}\
+.body{font-size:18px;max-width:36em;padding:20px}\
+/* **The rail, and the two things it replaces.** A bar stuck to the bottom edge \
+   and a round button floating over the last row are the only parts of this \
+   interface that are there because of a thumb. On a monitor that bar is four \
+   icons 360px apart, which is not a bar; the button is a shape aimed at where a \
+   thumb rests, on a device that has no thumb on it. Given a column instead, the \
+   same three links in the same order are a rail — the strip turned through \
+   ninety degrees, and not one word of the markup different. \
+   \
+   **Width and not `pointer:coarse`, and a tablet is the reason.** An iPad in \
+   portrait is 834px of room *and* a touch screen, and the room is the thing it \
+   was short of. So this arrives with the extended row, at the one breakpoint \
+   this stylesheet already has, and nothing in the rail is smaller than \
+   `--tap`. */\
+body:has(.foot){padding-left:248px}\
+.foot{position:fixed;left:0;top:0;bottom:0;width:248px;z-index:3;\
+display:flex;flex-direction:column;gap:10px;padding:12px;\
+background:var(--bg-sunk);border-right:1px solid var(--rule)}\
+.foot.wide-only{display:flex}\
+.foot .actionbar{order:2;flex-direction:column;gap:2px;padding:0;\
+background:none;border-top:0}\
+.foot .actionbar a{flex:0 0 auto;flex-direction:row;justify-content:flex-start;\
+gap:14px;min-height:var(--tap);padding:0 14px;border-radius:8px}\
+.foot .actionbar span{font-size:14px;letter-spacing:0}\
+.foot .actionbar svg{width:20px;height:20px}\
+/* The button stops floating, takes its label with it, and sits above the three \
+   places rather than below them: it is the one thing on the rail that is an \
+   action rather than a destination, and the top is where the eye starts. */\
+.fab{position:static;order:1;width:auto;height:var(--tap);border-radius:10px;\
+justify-content:flex-start;gap:12px;padding:0 15px;box-shadow:none}\
+.fab span{display:inline;font-size:14px;font-weight:600}\
+body:has(.fab) main{padding-bottom:24px}\
+/* A note's own four actions, along the top of the note instead of the foot of \
+   the window. `order` on the body does it, so the markup never has to know \
+   which screen it is on — the same division of labour as the rail: one set of \
+   elements, two arrangements, and the arranging done where the width is known. */\
+body{display:flex;flex-direction:column}\
+.topbar{order:0}\
+body>.actionbar{order:1;position:static;justify-content:flex-end;gap:2px;\
+padding:5px 20px;background:none;border-top:0;\
+border-bottom:1px solid var(--rule)}\
+body>.actionbar a{flex:0 0 auto;flex-direction:row;gap:8px;\
+min-height:var(--tap);padding:0 12px;border-radius:8px}\
+body>.actionbar span{font-size:13px;letter-spacing:0}\
+body>.actionbar svg{width:18px;height:18px}\
+.searchbar{order:2}\
+main{order:3}\
+/* An auto inline margin turns cross-axis stretching off, so a capped element in \
+   a flex column shrinks to its own contents — which is how the whole layout \
+   collapsed into the middle of the screen the first time this was tried. */\
+.topbar,.searchbar,main,body>.actionbar{width:100%}}\
+/* The one thing a pointer has that a thumb does not: somewhere to be before it \
+   presses. Every other state in this stylesheet is `:active`, because that is \
+   all a touch screen can say — and `:hover` asked for unconditionally is the \
+   state that sticks to whatever a finger last touched. So it is asked for \
+   where it means something, and `--press` is the colour a row already goes. */\
+@media (hover:hover) and (min-width:720px){\
+.row:hover,.row.split .most:hover,.row.split .aside:hover,\
+.foot .actionbar a:hover,body>.actionbar a:hover{background:var(--press)}\
+.fab:hover{background:var(--id-dim)}}\
 ";
 
 #[cfg(test)]

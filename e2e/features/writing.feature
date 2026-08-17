@@ -30,17 +30,19 @@ Feature: Writing from a phone
     And the page does not scroll sideways
     And no field is smaller than 16 pixels
 
+  # `Retag` and not `Tags`: the notebook's own tag screen is on the bar under
+  # that name, and on a wide screen both are on the page at once.
   Scenario: Every control on the tags form can be pressed
     Given I open the notebook
     When I press "Budget review"
-    And I press "Tags"
+    And I press "Retag"
     Then no control is smaller than 48 by 48
     And no field is smaller than 16 pixels
 
   Scenario: A tag can be taken off by unticking it
     Given I open the notebook
     When I press "Meeting notes"
-    And I press "Tags"
+    And I press "Retag"
     And I untick "work"
     And I submit "Save"
     Then the note is headed "Meeting notes"

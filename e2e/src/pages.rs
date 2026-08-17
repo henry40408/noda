@@ -547,6 +547,29 @@ impl Page<'_> {
         Ok(text.as_str().unwrap_or_default().to_string())
     }
 
+    /// What one thing on the page reads, as a reader would read it.
+    ///
+    /// `innerText` and not `textContent`, and here that is the whole question: a
+    /// word the layout has switched off has not been said. The button to write
+    /// carries its label in the markup on every page, and only the rail has the
+    /// room to draw it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run or nothing matches.
+    pub async fn text_of(&self, selector: &str) -> Result<String> {
+        let text = self
+            .0
+            .measure(&format!(
+                "const el = document.querySelector('{selector}');
+                 return el ? el.innerText : null;"
+            ))
+            .await?;
+        text.as_str()
+            .map(str::to_string)
+            .with_context(|| format!("nothing matches {selector}"))
+    }
+
     /// Every field a phone would zoom in on, with the size it is set at.
     ///
     /// Generalises the search field's rule to the forms: any field below sixteen
@@ -650,6 +673,60 @@ impl Page<'_> {
                 .unwrap_or(0.0)
         };
         Ok((at(0), at(1), at(2)))
+    }
+
+    /// The rectangle something occupies: its left and top edges, then its width
+    /// and its height.
+    ///
+    /// `box_of` answers what a column asks — is it narrower than the window, is
+    /// it centred in it. This answers what a strip of chrome asks, and that
+    /// question is which way round the strip is: a bar along the bottom of a
+    /// phone and a rail down the side of a monitor are one element with its
+    /// width and its height swapped.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run or nothing matches.
+    pub async fn rect_of(&self, selector: &str) -> Result<(f64, f64, f64, f64)> {
+        let measured = self
+            .0
+            .measure(&format!(
+                "const el = document.querySelector('{selector}');
+                 if (!el) {{ return null; }}
+                 const r = el.getBoundingClientRect();
+                 return [r.left, r.top, r.width, r.height];"
+            ))
+            .await?;
+        let numbers = measured
+            .as_array()
+            .with_context(|| format!("nothing matches {selector}"))?;
+        let at = |i: usize| {
+            numbers
+                .get(i)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0)
+        };
+        Ok((at(0), at(1), at(2), at(3)))
+    }
+
+    /// How much of the window is taken by chrome standing to the left of the
+    /// content.
+    ///
+    /// The body's own padding, read as the browser computed it rather than as
+    /// the stylesheet promises it — which is the only honest way to ask, because
+    /// one declaration reserves the room and whether it applied is the whole
+    /// question. Zero on a phone, where the bar is along the bottom and nothing
+    /// stands beside anything.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run.
+    pub async fn gutter(&self) -> Result<f64> {
+        let width = self
+            .0
+            .measure("return parseFloat(getComputedStyle(document.body).paddingLeft) || 0;")
+            .await?;
+        Ok(width.as_f64().unwrap_or(0.0))
     }
 
     /// Whether the page scrolls sideways.

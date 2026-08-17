@@ -942,13 +942,27 @@ stands.
 and how many notes point at it — a file nothing points at is exactly what `doctor --links`
 calls an orphan.
 
-**Three screens beyond the listing, on a bar along the bottom.** `/nb/<book>/tags` is every
+**Three screens beyond the listing, on a bar of their own.** `/nb/<book>/tags` is every
 tag with how many notes carry it, commonest first, and pressing one narrows the listing to it
 — quoted where the tag has a space in it, because the search field splits the way a shell
 does. `/nb/<book>/todo` is `noda todo` on a phone: every unticked box in the notebook, soonest
 due first, a passed date in red, and the row goes to the note the box is written in. There is
 no way to tick one, for the reason there is no `noda done` — an item inside a note has no
 address, and giving each one an id would turn the file into a noda-only format.
+
+**On anything wider than a phone that bar is a rail down the left, and it is the same bar.**
+Same three links in the same order, with `New note` above them wearing the label it has been
+carrying all along and only has the room to draw here. What goes away is what a thumb was the
+only argument for: a strip stuck to the bottom edge, which on a monitor is four icons a hand
+apart, and a round button hovering over the last row of a list nobody is reaching for with a
+thumb. A note's own four actions move to the top of the note for the same reason, so both bars
+are on the screen together — which is why the note's tag screen is `Retag` there rather than a
+second thing called `Tags`.
+
+It arrives by width and not by whether the browser reports a mouse. A tablet held in two hands
+is a touch screen *and* eight hundred-odd pixels of room, and the room is the thing it was
+short of; so the rail is what it gets, and nothing in the rail is smaller than the 48px
+everything else here obeys.
 
 `/nb/<book>/n/<id>/backlinks` is what points *at* a note, reached from `Links` on the note's
 own bar; the count beside a file on the files page is the same question asked of a file, which

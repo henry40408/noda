@@ -1262,6 +1262,92 @@ fn the_notebook_screens_share_one_bar_that_says_where_you_are() {
     }
 }
 
+/// The rail is that same bar given a column, so the pages carrying a bar of
+/// their own carry this one as well. A note is where it matters: on a phone the
+/// notebook's three places are not on a note at all, because there is one bottom
+/// edge and the note's four actions have it.
+///
+/// What the stylesheet does with this — draw it as a rail, or not draw it — is
+/// not the question here. The question is whether it is in the markup to be
+/// drawn, because no media query can put back what the server never sent.
+#[test]
+fn the_pages_with_a_bar_of_their_own_carry_the_notebooks_places_too() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    for path in &[
+        format!("/nb/default/n/{id}"),
+        format!("/nb/default/n/{id}/backlinks"),
+        format!("/nb/default/n/{id}/edit"),
+        format!("/nb/default/n/{id}/rename"),
+        format!("/nb/default/n/{id}/tags"),
+        format!("/nb/default/n/{id}/delete"),
+        "/nb/default/new".to_string(),
+    ] {
+        let answer = server.get(path);
+        assert_eq!(answer.status, 200, "{path}");
+        assert!(
+            answer.says("class=\"foot wide-only\""),
+            "{path} has no rail: {}",
+            answer.body
+        );
+        for place in ["/nb/default/tags", "/nb/default/todo", "/nb/default/files"] {
+            assert!(
+                answer.says(&format!("href=\"{place}\"")),
+                "{path} does not offer {place}: {}",
+                answer.body
+            );
+        }
+        // Nothing marked: a note is not one of the three places, which is the
+        // same answer the listing gets. The attribute is asked for with its
+        // value, since the inlined stylesheet names the bare one in a selector.
+        assert!(
+            !answer.says("aria-current=\"page\""),
+            "{path} marks a place: {}",
+            answer.body
+        );
+    }
+}
+
+/// A note's four actions and the notebook's three places share a screen as soon
+/// as there is room for a rail, and two links spelled the same going to
+/// different places is not something room fixes.
+#[test]
+fn a_notes_own_tag_screen_is_not_called_what_the_notebooks_is() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let answer = server.get(&format!("/nb/default/n/{id}"));
+    assert!(answer.says("<span>Retag</span>"), "{}", answer.body);
+    assert!(
+        answer.says(&format!("href=\"/nb/default/n/{id}/tags\"")),
+        "{}",
+        answer.body
+    );
+    // And the notebook's own is still reachable, under its own name, in the rail.
+    assert!(answer.says("href=\"/nb/default/tags\""), "{}", answer.body);
+    // Once, and that is the whole of the point: one thing on this page is called
+    // Tags, and it is the notebook's. Counted rather than asked about, because
+    // "does it say Tags" is true of the page either way — it was true of the
+    // page this test was written to rule out.
+    assert_eq!(
+        answer.body.matches("<span>Tags</span>").count(),
+        1,
+        "{}",
+        answer.body
+    );
+}
+
+/// The word the rail draws is in the markup even where it is not drawn — the
+/// rule the search hint follows, for its reason: a sentence living inside a
+/// stylesheet is one nothing else can test the wording of.
+#[test]
+fn the_button_to_write_carries_the_word_the_rail_draws() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default");
+    assert!(answer.says("<span>New note</span>"), "{}", answer.body);
+    // And it is still labelled for the screen that draws no word at all.
+    assert!(answer.says("aria-label=\"New note\""), "{}", answer.body);
+}
+
 /// The wide layout puts one column down the middle by capping `main`, so a page
 /// whose body is outside `main` runs the whole width of a monitor. Every form
 /// page did until the element was put back.

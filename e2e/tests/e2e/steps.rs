@@ -15,6 +15,12 @@ use noda_e2e::world::NodaWorld;
 /// A phone narrow enough to be the worst case anybody still carries.
 const NARROW: (u32, u32) = (320, 568);
 
+/// A tablet in portrait, and the case that started the wide layout being looked
+/// at again: it is a touch screen *and* room, which is why the rail arrives on
+/// width rather than on whether the browser reports a pointer. Narrow enough
+/// that the rail and a row of tags have to share 834px and not scroll.
+const TABLET: (u32, u32) = (834, 1112);
+
 /// How bright a background has to be to be the light one, averaged over its
 /// channels.
 ///
@@ -46,6 +52,12 @@ async fn open_notebook_narrow(world: &mut NodaWorld, width: u32) -> Result<()> {
 #[given(expr = "I open the notebook on a desktop")]
 async fn open_notebook_wide(world: &mut NodaWorld) -> Result<()> {
     world.browser()?.resize(DESKTOP).await?;
+    world.page()?.go(&format!("/nb/{NOTEBOOK}")).await
+}
+
+#[given(expr = "I open the notebook on a tablet")]
+async fn open_notebook_tablet(world: &mut NodaWorld) -> Result<()> {
+    world.browser()?.resize(TABLET).await?;
     world.page()?.go(&format!("/nb/{NOTEBOOK}")).await
 }
 
@@ -289,13 +301,69 @@ async fn content_is_narrow(world: &mut NodaWorld) -> Result<()> {
 ///
 /// A column that stops short of the right edge and hugs the left is not a
 /// narrower page, it is a lopsided one.
+///
+/// Centred *in the room it has*, which stopped being the window when the bar
+/// became a rail: the gutter the rail stands in is chrome and not margin, and
+/// counting it as margin would call every wide page lopsided by half a rail.
 #[then("the content is centred")]
 async fn content_is_centred(world: &mut NodaWorld) -> Result<()> {
     let (left, width, window) = world.page()?.box_of("main").await?;
+    let gutter = world.page()?.gutter().await?;
     let right = window - left - width;
+    let beside = left - gutter;
     anyhow::ensure!(
-        (left - right).abs() <= 2.0,
-        "there is {left} to the left of the content and {right} to the right of it"
+        (beside - right).abs() <= 2.0,
+        "there is {beside} to the left of the content and {right} to the right of it, \
+         past a {gutter} gutter"
+    );
+    Ok(())
+}
+
+/// A rail: taller than it is wide, and out of the content's way.
+///
+/// Both halves matter. A strip that is taller than it is wide but drawn over the
+/// column would be a rail that costs the reading room it was meant to save.
+#[then("the bar stands beside the content")]
+async fn bar_beside(world: &mut NodaWorld) -> Result<()> {
+    let (left, _, width, height) = world.page()?.rect_of(".foot").await?;
+    let (content, _, _) = world.page()?.box_of("main").await?;
+    anyhow::ensure!(
+        height > width,
+        "the bar is {width} by {height} — that is a bar along an edge, not a rail"
+    );
+    anyhow::ensure!(
+        left + width <= content + 1.0,
+        "the bar ends at {} and the content starts at {content}",
+        left + width
+    );
+    Ok(())
+}
+
+/// The same element on a phone, the other way round.
+#[then("the bar sits along the bottom")]
+async fn bar_along_bottom(world: &mut NodaWorld) -> Result<()> {
+    let (_, top, width, height) = world.page()?.rect_of(".foot").await?;
+    let (_, content_top, _, content_height) = world.page()?.rect_of("main").await?;
+    anyhow::ensure!(
+        width > height,
+        "the bar is {width} by {height} — that is a rail, not a bar along an edge"
+    );
+    anyhow::ensure!(
+        top >= content_top + content_height - 1.0,
+        "the bar starts at {top}, above the end of the content at {}",
+        content_top + content_height
+    );
+    Ok(())
+}
+
+/// The one control a thumb gets and a pointer does not need — and the word that
+/// only the rail has room for.
+#[then(expr = "the button to write reads {string}")]
+async fn button_reads(world: &mut NodaWorld, label: String) -> Result<()> {
+    let shown = world.page()?.text_of(".fab").await?;
+    anyhow::ensure!(
+        shown.trim() == label,
+        "the button to write reads {shown:?} and not {label:?}"
     );
     Ok(())
 }
