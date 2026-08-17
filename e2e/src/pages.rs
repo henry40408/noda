@@ -153,15 +153,33 @@ impl Page<'_> {
     /// failed, it has arrived between two versions of a page. The rule the rest
     /// of this harness follows applies here too: one round trip, an answer that
     /// can say "not yet", and a loop that can see it.
+    ///
+    /// **And a match that is on the page but not on the screen is a third
+    /// answer of the same kind.** A layout of panes can hold two of something —
+    /// a note page carries the index pane's way back as well as its own, and
+    /// below 1024px the first of those is `display: none`. Taking the first
+    /// match got the hidden one and a `WebDriver` "element not interactable",
+    /// which is the browser being right. A reader presses the one they can see,
+    /// so the first *displayed* match is the one this presses.
     async fn click(&self, target: By, what: &str) -> Result<()> {
         let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
         let mut last;
         loop {
-            match self.driver().find(target.clone()).await {
-                Ok(element) => match element.click().await {
-                    Ok(()) => return Ok(()),
-                    Err(e) => last = e.to_string(),
-                },
+            match self.driver().find_all(target.clone()).await {
+                Ok(found) => {
+                    last = format!("nothing matching {target:?} is on the screen");
+                    for element in found {
+                        // `is_displayed` can fail on an element whose document
+                        // has just been replaced. That is "not yet" as well.
+                        if element.is_displayed().await.unwrap_or(false) {
+                            match element.click().await {
+                                Ok(()) => return Ok(()),
+                                Err(e) => last = e.to_string(),
+                            }
+                            break;
+                        }
+                    }
+                }
                 Err(e) => last = e.to_string(),
             }
             if std::time::Instant::now() >= deadline {

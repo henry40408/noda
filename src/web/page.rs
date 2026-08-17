@@ -1811,7 +1811,12 @@ padding:0 13px;border-radius:9px;font-size:13px}\
 /* Head, body and the delete line share one column so the rule under the title \
    spans exactly what the prose does. The pane keeps the slack. */\
 .app.split .read main.note{width:100%;max-width:44em;margin-inline:auto}\
-.app.split .read .body{max-width:none}}\
+.app.split .read .body{max-width:none}\
+/* The note's chevron points at the listing, and here the listing is already \
+   on the screen beside it. The index pane keeps its own, which points \
+   somewhere you cannot see: the notebooks. Only when the index is actually \
+   there — without the script this is the one pane, and the way back with it. */\
+.app.split.indexed .read .topbar .back{display:none}}\
 /* A monitor wider than a laptop spends the extra on the index, never on the \
    measure: a line of prose has a right length and it is not \"however wide the \
    window is\". */\
