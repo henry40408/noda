@@ -538,6 +538,102 @@ fn the_note_page_names_the_file_and_stamps_it_whole() {
     assert!(answer.says("Z</span>"), "{}", answer.body);
 }
 
+/// **A note page carries the index pane's frame and none of its rows.**
+///
+/// This is the whole of the bargain the two-pane layout makes. The listing is
+/// about 290 bytes a note, and below 1024px not one of those bytes is drawn —
+/// so the page goes out with the pane's frame, and the script asks for the rest
+/// where the column is actually on screen. A regression here is invisible on a
+/// desktop, which is exactly why it is asserted rather than looked at.
+#[test]
+fn a_note_page_is_sent_without_the_listing_beside_it() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let answer = server.get(&format!("/nb/default/n/{id}"));
+
+    // The frame: the pane, and a search field that is a working form on its own.
+    assert!(answer.says("class=\"pane index\""), "{}", answer.body);
+    assert!(
+        answer.says("<form class=\"searchbar\" method=\"get\" action=\"/nb/default\""),
+        "{}",
+        answer.body
+    );
+    // And nothing in it. `main class="rows"` closing immediately is the shape
+    // an empty pane has.
+    assert!(
+        answer.says("<main class=\"rows\"></main>"),
+        "the listing was sent with the note: {}",
+        answer.body
+    );
+    // Not another note's row, by any spelling.
+    assert!(
+        !answer.says("Reading list"),
+        "the listing was sent with the note: {}",
+        answer.body
+    );
+    // `indexed` is what says the pane has rows, and this one does not. Asserted
+    // as the whole attribute: the stylesheet inlined into every page names the
+    // class in a selector, so the bare word is on all of them.
+    assert!(
+        answer.says("class=\"app split at-note\""),
+        "{}",
+        answer.body
+    );
+}
+
+/// The listing route is the other half: its rows are in the markup, so it says
+/// `indexed` and needs nobody's help to draw them.
+#[test]
+fn the_listing_carries_its_own_rows_and_says_so() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default");
+    assert!(
+        answer.says("class=\"app split at-list indexed\""),
+        "{}",
+        answer.body
+    );
+    assert!(answer.says("Budget review"), "{}", answer.body);
+}
+
+/// The pane beside the listing, on a screen wide enough to show one.
+///
+/// A notebook that has a `README.md` has already written the page that is about
+/// the whole of it — the same file `noda readme` writes and a git host shows —
+/// so that is what stands there. Rendered, because it is Markdown and the
+/// notebook's own; and only ever drawn above 1024px, which is why the phone
+/// tests never see it.
+#[test]
+fn the_notebooks_front_page_stands_where_no_note_is_picked() {
+    let (server, paths) = serving();
+    let notebook = paths.notebooks_dir().join("default");
+    std::fs::write(
+        notebook.join("README.md"),
+        "# Ledger\n\nWhat this notebook is for.\n",
+    )
+    .expect("could not write a README");
+
+    let answer = server.get("/nb/default");
+    assert!(answer.says("class=\"pane read\""), "{}", answer.body);
+    assert!(answer.says("README.md"), "{}", answer.body);
+    assert!(
+        answer.says("What this notebook is for."),
+        "the README was not rendered: {}",
+        answer.body
+    );
+}
+
+/// And without one, an invitation rather than an empty column. An empty screen
+/// is a moment for direction.
+#[test]
+fn a_notebook_with_no_front_page_invites_a_note_instead() {
+    let (server, paths) = serving();
+    std::fs::remove_file(paths.notebooks_dir().join("default").join("README.md"))
+        .expect("could not take the README away");
+    let answer = server.get("/nb/default");
+    assert!(answer.says("Pick a note"), "{}", answer.body);
+    assert!(!answer.says("README.md"), "{}", answer.body);
+}
+
 /// `noda import tiddlywiki` leaves raw HTML in a body on purpose. Now that the
 /// page renders Markdown, it reaches the reader as a code block — escaped,
 /// shown and not run — or it is an injection.
@@ -1013,7 +1109,7 @@ fn another_site_cannot_write_either() {
 /// nowhere else. A screen that grows one later has to come here and argue for
 /// it.
 #[test]
-fn only_the_two_screens_that_wait_carry_a_script() {
+fn only_the_screens_that_wait_carry_a_script() {
     let (server, paths) = serving();
     let id = id_of(&paths, "budget-review");
     for path in &[
@@ -1021,7 +1117,6 @@ fn only_the_two_screens_that_wait_carry_a_script() {
         "/nb/default/tags".to_string(),
         "/nb/default/todo".to_string(),
         "/nb/default/files".to_string(),
-        format!("/nb/default/n/{id}"),
         format!("/nb/default/n/{id}/backlinks"),
         "/nb/default/f/rack.png/backlinks".to_string(),
     ] {
@@ -1029,9 +1124,15 @@ fn only_the_two_screens_that_wait_carry_a_script() {
         assert!(!answer.says("<script"), "{path} carries a script");
     }
 
-    // The listing, which can narrow itself without asking; and the network
-    // screen, which can ask for news without reloading whole.
-    for path in ["/nb/default", "/nb/default/status"] {
+    // The listing, which can narrow itself without asking; the network screen,
+    // which can ask for news without reloading whole; and a note, whose index
+    // pane is the one thing on any of these pages the server does not send —
+    // see `script::PANES` for what it costs and why.
+    for path in &[
+        "/nb/default".to_string(),
+        "/nb/default/status".to_string(),
+        format!("/nb/default/n/{id}"),
+    ] {
         assert!(server.get(path).says("<script>"), "{path} lost its script");
     }
 
@@ -1224,13 +1325,22 @@ fn a_note_is_not_asked_for_backlinks_as_if_it_were_a_file() {
 fn the_notebook_screens_share_one_bar_that_says_where_you_are() {
     let (server, _paths) = serving();
     for (path, here) in [
-        ("/nb/default", None),
+        ("/nb/default", Some("/nb/default")),
         ("/nb/default/tags", Some("/nb/default/tags")),
         ("/nb/default/todo", Some("/nb/default/todo")),
         ("/nb/default/files", Some("/nb/default/files")),
+        // The one notebook screen not on the bar: it is about the notebook
+        // rather than about anything inside it, and it is reached from the chip
+        // in the corner instead.
+        ("/nb/default/status", None),
     ] {
         let answer = server.get(path);
-        for place in ["/nb/default/tags", "/nb/default/todo", "/nb/default/files"] {
+        for place in [
+            "/nb/default",
+            "/nb/default/tags",
+            "/nb/default/todo",
+            "/nb/default/files",
+        ] {
             assert!(
                 answer.says(&format!("href=\"{place}\"")),
                 "{path} does not offer {place}: {}",
@@ -1238,7 +1348,6 @@ fn the_notebook_screens_share_one_bar_that_says_where_you_are() {
             );
         }
         match here {
-            // The listing is where the bar leads *from*, so nothing is marked.
             // The attribute is asked for with its value: the stylesheet inlined
             // into every page names the bare attribute in a selector, so the
             // shorter needle is on all of them.

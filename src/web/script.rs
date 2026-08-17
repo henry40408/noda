@@ -309,6 +309,140 @@ pub const STANDING: &str = r#"
 })();
 "#;
 
+/// The two panes: bringing the index one, and keeping it.
+///
+/// **This is the third wait, and it is the one the layout created.** A note
+/// page is sent without the listing beside it, because the listing is about 290
+/// bytes a note — 57KB at two hundred, half a megabyte at two thousand — and
+/// below 1024px not one of those bytes is ever drawn. So the page carries the
+/// pane's frame and this asks for the rest, and only where the column is on
+/// screen.
+///
+/// It obeys the same rule as the rest of this file: *the server is the only
+/// authority.* The rows it inserts are the rows `/nb/<book>` sent, lifted out
+/// of that page's own `main.rows` rather than built here, so the listing has
+/// exactly one renderer and this cannot disagree with it — only be later, or
+/// absent.
+///
+/// ## Two things, and the second is why the first is worth doing
+///
+/// **Bring it.** On a note route, when the pane is empty and the width holds
+/// three columns, fetch the listing and put its rows in. `indexed` goes on
+/// first, synchronously: the column has to exist before the first paint or the
+/// reading pane is laid out at one width and then again at another, which is
+/// the flicker this exists to avoid.
+///
+/// **Keep it.** Picking a note replaces the reading pane and leaves the rows
+/// alone. Without this every press would be a full navigation that threw the
+/// listing away and asked for it again — a listing blinking out and back on
+/// every note, when the reason to keep it on screen was that it *stays* while
+/// you read. It is also what makes the fetch above happen once rather than once
+/// per note.
+///
+/// There is no loading state on the pane, and that is a consequence of keeping
+/// it rather than an omission: after the first arrival there is nothing to
+/// load, and a notice that appeared on every note would be the flicker rather
+/// than a report of it.
+///
+/// Every row is still a link to a page that renders on its own. With no script,
+/// or on a screen too narrow to hold both panes, a press is an ordinary
+/// navigation — which is what a note page has always been.
+pub const PANES: &str = r#"
+(() => {
+  const app = document.querySelector(".app.split");
+  if (!app) return;
+  const wide = matchMedia("(min-width:1024px)");
+
+  const book = () => {
+    const form = app.querySelector(".index form.searchbar");
+    return form ? form.getAttribute("action") : null;
+  };
+
+  // Asked when the pane is empty, which — because picking a note keeps it — is
+  // once on a note page opened cold and never again while the reader stays in
+  // the notebook.
+  let asking = false;
+  const bring = async () => {
+    if (!wide.matches || !app.classList.contains("at-note")) return;
+    app.classList.add("indexed");
+    const box = app.querySelector(".index main.rows");
+    const where = book();
+    if (!box || box.firstElementChild || asking || !where) return;
+    asking = true;
+    let text;
+    try {
+      const answer = await fetch(where, { headers: { accept: "text/html" } });
+      if (!answer.ok) return;
+      text = await answer.text();
+    } catch {
+      // The tailnet went away. The note is on the screen and whole, which is
+      // the page the reader asked for; a column that never arrives is the
+      // scriptless layout, and that is a working one.
+      return;
+    } finally {
+      asking = false;
+    }
+    const sent = new DOMParser().parseFromString(text, "text/html");
+    const rows = sent.querySelector("main.rows");
+    const count = sent.querySelector(".index .topbar .count");
+    if (!rows || box.firstElementChild) return;
+    box.replaceChildren(...rows.childNodes);
+    const here = app.querySelector(".index .topbar .count");
+    if (here && count) here.textContent = count.textContent;
+    mark();
+  };
+
+  // The row the reading pane is showing. Read off the address rather than
+  // remembered, so it is right after a swap and right after a hard load.
+  const mark = () => {
+    const at = location.pathname;
+    for (const row of app.querySelectorAll(".index main.rows a.row")) {
+      row.classList.toggle("here", row.getAttribute("href") === at);
+    }
+  };
+
+  const swap = async (href) => {
+    let text;
+    try {
+      const answer = await fetch(href, { headers: { accept: "text/html" } });
+      if (!answer.ok) return location.assign(href);
+      text = await answer.text();
+    } catch {
+      return location.assign(href);
+    }
+    const sent = new DOMParser().parseFromString(text, "text/html");
+    const next = sent.querySelector(".pane.read");
+    if (!next) return location.assign(href);
+    app.querySelector(".pane.read").replaceWith(next);
+    document.title = sent.title;
+    app.classList.remove("at-list");
+    app.classList.add("at-note");
+    history.pushState(null, "", href);
+    mark();
+  };
+
+  app.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey ||
+        event.shiftKey || event.altKey) return;
+    const row = event.target.closest(".index main.rows a.row");
+    if (!row || !wide.matches) return;
+    const href = row.getAttribute("href");
+    if (!href) return;
+    event.preventDefault();
+    swap(href);
+  });
+
+  // A swap pushed an address, so going back has to put the note that address
+  // named on the screen. Asking the server for it is the same answer by the
+  // same route, and it is the one the reader would have got by pressing reload.
+  addEventListener("popstate", () => location.reload());
+
+  wide.addEventListener("change", bring);
+  bring();
+  mark();
+})();
+"#;
+
 /// A script, as it goes into a page.
 ///
 /// The one thing worth checking is in here rather than at each call site: a
@@ -361,6 +495,41 @@ mod tests {
                 "the filter stopped looking for {hook}"
             );
         }
+    }
+
+    /// The same for the panes, and it matters more here than anywhere else in
+    /// this file: what this script reads is the *other* page's markup, fetched
+    /// at runtime. A class renamed in `page.rs` breaks it with no compile error
+    /// and no failing Rust test — the note simply arrives beside an empty
+    /// column, on a screen size nobody's unit tests have.
+    #[test]
+    fn the_panes_look_for_what_the_pages_write() {
+        for hook in [
+            ".app.split",
+            ".index form.searchbar",
+            ".index main.rows",
+            ".index .topbar .count",
+            ".pane.read",
+            "a.row",
+            "indexed",
+            "at-note",
+            "at-list",
+            "here",
+        ] {
+            assert!(PANES.contains(hook), "the panes stopped looking for {hook}");
+        }
+    }
+
+    /// The breakpoint is written twice — once in the stylesheet, once here —
+    /// and the two have to be the same number or the script asks for a column
+    /// that is not on the screen, or leaves one empty that is.
+    #[test]
+    fn the_script_and_the_stylesheet_split_at_the_same_width() {
+        assert!(PANES.contains("(min-width:1024px)"), "{PANES}");
+        assert!(
+            crate::web::page::stylesheet().contains("(min-width:1024px)"),
+            "the stylesheet no longer splits at 1024px"
+        );
     }
 
     /// The same, for the screen that polls. Both of these are the server's own

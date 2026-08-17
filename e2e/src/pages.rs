@@ -652,6 +652,78 @@ impl Page<'_> {
         Ok((at(0), at(1), at(2)))
     }
 
+    /// The same three numbers, but against a container rather than the window.
+    ///
+    /// A layout made of panes moves the question: the reading column is not
+    /// centred in the *window*, it is centred in the pane it lives in, and the
+    /// window has a rail and an index in it as well. Measuring against the
+    /// window would ask about a relationship the design never claimed.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run or either selector matches nothing.
+    pub async fn box_in(&self, child: &str, parent: &str) -> Result<(f64, f64, f64)> {
+        let measured = self
+            .0
+            .measure(&format!(
+                "const p = document.querySelector('{parent}');
+                 const c = document.querySelector('{child}');
+                 if (!p || !c) {{ return null; }}
+                 const pr = p.getBoundingClientRect();
+                 const cr = c.getBoundingClientRect();
+                 return [cr.left - pr.left, cr.width, pr.width];"
+            ))
+            .await?;
+        let numbers = measured
+            .as_array()
+            .with_context(|| format!("nothing matches {child} inside {parent}"))?;
+        let at = |i: usize| {
+            numbers
+                .get(i)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0)
+        };
+        Ok((at(0), at(1), at(2)))
+    }
+
+    /// Whether the listing is on the screen with notes in it.
+    ///
+    /// Both halves, because either alone is satisfiable by an accident: a pane
+    /// with no width is not on screen, and a pane on screen with nothing in it
+    /// is the frame waiting for rows that never came.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run.
+    pub async fn listing_on_screen(&self) -> Result<bool> {
+        let seen = self
+            .0
+            .measure(
+                "const pane = document.querySelector('.pane.index');
+                 if (!pane) { return false; }
+                 return pane.getBoundingClientRect().width > 0
+                     && !!pane.querySelector('main.rows a.row');",
+            )
+            .await?;
+        Ok(seen.as_bool().unwrap_or(false))
+    }
+
+    /// The title of the row the listing has marked as the one being read.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run.
+    pub async fn marked_row(&self) -> Result<Option<String>> {
+        let title = self
+            .0
+            .measure(
+                "const row = document.querySelector('.pane.index main.rows a.row.here');
+                 return row ? row.querySelector('.title').textContent.trim() : null;",
+            )
+            .await?;
+        Ok(title.as_str().map(str::to_string))
+    }
+
     /// Whether the page scrolls sideways.
     ///
     /// A phone with a horizontal scrollbar is a layout that did not fit, and it

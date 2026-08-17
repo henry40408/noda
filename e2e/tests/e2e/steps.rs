@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use cucumber::{given, then, when};
-use noda_e2e::browser::{DESKTOP, PHONE};
+use noda_e2e::browser::{DESKTOP, PHONE, TABLET};
 use noda_e2e::server::NOTEBOOK;
 use noda_e2e::wait::eventually;
 use noda_e2e::world::NodaWorld;
@@ -40,6 +40,12 @@ async fn open_notebook(world: &mut NodaWorld) -> Result<()> {
 async fn open_notebook_narrow(world: &mut NodaWorld, width: u32) -> Result<()> {
     let size = if width <= NARROW.0 { NARROW } else { PHONE };
     world.browser()?.resize(size).await?;
+    world.page()?.go(&format!("/nb/{NOTEBOOK}")).await
+}
+
+#[given(expr = "I open the notebook on a tablet")]
+async fn open_notebook_tablet(world: &mut NodaWorld) -> Result<()> {
+    world.browser()?.resize(TABLET).await?;
     world.page()?.go(&format!("/nb/{NOTEBOOK}")).await
 }
 
@@ -300,6 +306,67 @@ async fn content_is_centred(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
+/// The same two questions, asked of the pane instead of the window.
+///
+/// On a screen holding two panes the reading column is not centred in the
+/// window and should not be: the window also has a rail and an index in it.
+/// What has to be true is that the prose stops short of its own pane's edges
+/// and sits evenly between them.
+#[then("the reading column is narrower than its pane")]
+async fn reading_is_narrow(world: &mut NodaWorld) -> Result<()> {
+    let (_, width, pane) = world
+        .page()?
+        .box_in(".pane.read main.note", ".pane.read")
+        .await?;
+    anyhow::ensure!(
+        width < pane,
+        "the column is {width} wide in a {pane} pane — a line that long is not read, it is scanned"
+    );
+    Ok(())
+}
+
+#[then("the reading column is centred in its pane")]
+async fn reading_is_centred(world: &mut NodaWorld) -> Result<()> {
+    let (left, width, pane) = world
+        .page()?
+        .box_in(".pane.read main.note", ".pane.read")
+        .await?;
+    let right = pane - left - width;
+    anyhow::ensure!(
+        (left - right).abs() <= 2.0,
+        "there is {left} to the left of the column and {right} to the right of it"
+    );
+    Ok(())
+}
+
+/// The whole point of a screen wide enough for two panes: the listing does not
+/// go away when a note is opened.
+#[then("the listing is still on screen")]
+async fn listing_still_there(world: &mut NodaWorld) -> Result<()> {
+    eventually("the listing to stay on screen", || async {
+        world.page()?.listing_on_screen().await
+    })
+    .await
+}
+
+#[then(expr = "the listing marks {string}")]
+async fn listing_marks(world: &mut NodaWorld, what: String) -> Result<()> {
+    eventually(&format!("the listing to mark {what:?}"), || async {
+        Ok(world.page()?.marked_row().await?.as_deref() == Some(what.as_str()))
+    })
+    .await
+}
+
+/// And the other half of the same fact, which is what a phone does instead.
+#[then("the listing is not on screen")]
+async fn listing_not_there(world: &mut NodaWorld) -> Result<()> {
+    anyhow::ensure!(
+        !world.page()?.listing_on_screen().await?,
+        "the listing is on screen beside the note"
+    );
+    Ok(())
+}
+
 #[when(expr = "I write {string} as the title")]
 async fn write_title(world: &mut NodaWorld, text: String) -> Result<()> {
     world.page()?.fill("title", &text).await
@@ -344,7 +411,9 @@ async fn bar_does_not_mark(world: &mut NodaWorld, place: String) -> Result<()> {
     .await
 }
 
-/// The listing, where nothing is marked because it is what the bar leads from.
+/// The network screen, which is the one notebook screen the bar does not hold:
+/// it is about the notebook rather than about anything inside it, and the chip
+/// in the corner is what reaches it.
 #[then("the bar marks nothing")]
 async fn bar_marks_nothing(world: &mut NodaWorld) -> Result<()> {
     eventually("the bar to mark nothing", || async {

@@ -424,6 +424,25 @@ fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
     }
 }
 
+/// The notebook's `README.md`, rendered, for the pane beside the listing.
+///
+/// The file `noda readme` writes and a git host shows above the file list, so
+/// nothing new is being invented here — it is the page the notebook already has
+/// about the whole of itself, put where a screen wide enough to hold two panes
+/// has room for it. A notebook without one gets the invitation instead.
+///
+/// It is sent on every listing view and drawn only above 1024px, which is the
+/// same bargain the rest of this layout makes and a much smaller one: a README
+/// is a couple of kilobytes against a listing of hundreds of rows.
+fn front_page(notebook: &Notebook, book: &str) -> Result<Option<String>> {
+    let path = notebook.path.join(crate::notebook::README_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let around = render::Around::of(book, &notebook.named_files()?);
+    Ok(Some(render::body(&text, &around)))
+}
+
 async fn listing(
     State(server): State<Shared>,
     Path(book): Path<String>,
@@ -465,6 +484,7 @@ async fn listing(
         // along `hidden`, which is what lets the enhancement layer widen a query
         // as well as narrow one — see `page::Row::shown`.
         let mut rows = notes.iter().map(page::Row::of).collect::<Vec<_>>();
+        let front = front_page(&notebook, &book)?;
         let tokens = query::split(&typed);
         if tokens.is_empty() {
             return Ok(Answer::Page(page::listing(
@@ -474,6 +494,7 @@ async fn listing(
                 &[],
                 None,
                 &drift,
+                front.as_deref(),
             )));
         }
         let (terms, problem) = match Query::parse(&tokens) {
@@ -493,6 +514,7 @@ async fn listing(
             &terms,
             problem.as_deref(),
             &drift,
+            front.as_deref(),
         )))
     })
     .await
@@ -522,6 +544,14 @@ async fn reading(
         let text = std::fs::read_to_string(notebook.note_path(&id, &slug))?;
         let note = Note::parse(&text).map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
         let around = render::Around::of(&book, &notebook.named_files()?);
+        // For the chip in the index pane's bar, which is the notebook's bar
+        // rather than the note's. Two refs compared, the same as the listing
+        // pays; the notes themselves are not read, which is the whole point of
+        // sending this pane empty.
+        let drift = standing(
+            notebook.remote_url().as_deref(),
+            notebook.drift(&notebook.branch()?)?,
+        );
         Ok(Answer::Page(page::note(
             &book,
             &page::Reading {
@@ -532,6 +562,7 @@ async fn reading(
                 updated: note.updated,
                 rendered: render::body(&note.body, &around),
             },
+            &drift,
         )))
     })
     .await
