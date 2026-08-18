@@ -219,10 +219,20 @@ struct Serving {
 
 impl Serving {
     fn start(root: TempRoot, allow: &[&str]) -> Serving {
+        Serving::start_with(root, allow, None)
+    }
+
+    fn start_with(root: TempRoot, allow: &[&str], rust_log: Option<&str>) -> Serving {
         let mut command = Command::new(env!("CARGO_BIN_EXE_noda"));
         command.args(["web", "--listen", "127.0.0.1:0"]);
         for name in allow {
             command.args(["--allow-host", name]);
+        }
+        // Removed and not merely overridden: whatever is in the developer's
+        // shell would otherwise decide what these tests can see.
+        command.env_remove("RUST_LOG");
+        if let Some(filter) = rust_log {
+            command.env("RUST_LOG", filter);
         }
         // All four, `XDG_STATE_HOME` included: the active-notebook pointer lives
         // in state, and a run that missed it would reach past this notebook.
@@ -255,6 +265,29 @@ impl Serving {
             port,
             _root: root,
         }
+    }
+
+    /// The same server with the request stream turned on.
+    ///
+    /// The default filter is quiet — `error,noda=info` logs nothing per
+    /// request — so a test that wants to see one has to ask for it the way a
+    /// person would.
+    fn start_logging(root: TempRoot, allow: &[&str]) -> Serving {
+        Serving::start_with(root, allow, Some("noda=debug"))
+    }
+
+    /// Everything the server wrote to its log, read once it has stopped.
+    ///
+    /// Draining the pipe to EOF is what makes this readable at all, and that
+    /// only happens when the process is gone — so it consumes the harness
+    /// rather than being something to call in the middle of a test.
+    fn logged(mut self) -> String {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let mut stderr = self.child.stderr.take().expect("stderr");
+        let mut said = String::new();
+        stderr.read_to_string(&mut said).expect("read the log");
+        said
     }
 
     fn get(&self, path: &str) -> Answer {
@@ -412,6 +445,48 @@ fn serving_with_a_remote() -> (Serving, Paths, PathBuf) {
     cmd::remote_set(&paths, &url).expect("set the remote");
 
     (Serving::start(root, &[]), paths, remote)
+}
+
+/// The wiring, which no unit test can see: the layer is on the router, the
+/// guard's refusal reaches the log, and a note is logged as the route it
+/// matched rather than as the address that names it.
+#[test]
+fn the_server_logs_what_it_did_and_never_which_note_it_was() {
+    let (root, paths) = a_notebook();
+    let id = noda::notebook::Notebook::open(&paths, "default")
+        .expect("open the notebook")
+        .notes()
+        .expect("its notes")
+        .first()
+        .expect("the fixture has notes")
+        .id
+        .clone();
+
+    let server = Serving::start_logging(root, &[]);
+    assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
+    // A name the server was not told to answer to: the rebinding attempt the
+    // guard exists for, and the one event here worth an alert.
+    assert_eq!(server.request("/", &[("Host", "evil.example")]).status, 403);
+    let log = server.logged();
+
+    assert!(log.contains("event=\"http.request\""), "{log}");
+    assert!(log.contains("route=\"/nb/{book}/n/{key}\""), "{log}");
+    assert!(log.contains("event=\"http.refused\""), "{log}");
+    assert!(log.contains("host=\"evil.example\""), "{log}");
+    // The whole point of logging the template: the note's own name is the
+    // reader's, and a log outlives the request and gets shipped elsewhere.
+    assert!(!log.contains(&id), "the note's id reached the log:\n{log}");
+}
+
+/// Quiet by default, so a healthy server's log is only the things that matter.
+/// It is also what keeps the harness's stderr pipe from filling up.
+#[test]
+fn nothing_is_logged_per_request_until_it_is_asked_for() {
+    let (server, _paths) = serving();
+    assert_eq!(server.get("/").status, 200);
+    assert_eq!(server.get("/nb/default").status, 200);
+    let log = server.logged();
+    assert!(!log.contains("http.request"), "{log}");
 }
 
 #[test]

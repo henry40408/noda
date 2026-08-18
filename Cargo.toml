@@ -20,7 +20,12 @@ strip = true
 # makes the bytes `noda show` emits identical to the file itself.
 anstream = "1.0.0"
 anstyle = "1.0.14"
-clap = { version = "4.6.2", features = ["derive"] }
+# `env` is only for `--log-format`, and only because the thing that sets it is
+# usually a unit file or a container rather than a person: `RUST_LOG` is already
+# an environment variable, so the log's other knob being one too is the shape
+# anybody deploying this expects. Nothing else noda takes is configured that way
+# — the rest is `config.toml` and flags.
+clap = { version = "4.6.2", features = ["derive", "env"] }
 # Only `std`: the default features bundle a copy of the tz database and read the
 # system zone, and noda does neither. It records instants in UTC and prints them
 # back as they were written, so `Timestamp` is the whole of what it needs.
@@ -101,6 +106,10 @@ axum = { version = "0.8.9", default-features = false, features = [
     "http1",
     "tokio",
     "query",
+    # The template the router matched, which is the only thing the log is
+    # allowed to call a request: an address here holds a note's id or a file's
+    # name, and both of those are the reader's own. See `web::log`.
+    "matched-path",
 ] }
 # The runtime and nothing else: no timers, no signals, no process spawning. The
 # blocking pool that `rt-multi-thread` brings is the part that matters, because
@@ -108,6 +117,39 @@ axum = { version = "0.8.9", default-features = false, features = [
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt-multi-thread",
     "net",
+] }
+# What `noda web` says about itself while it runs. Every other command answers
+# and exits, so its output is its answer; a server outlives the question, and
+# the only way to find out afterwards what it refused, what it failed at, or
+# what was slow is for it to have said so at the time.
+#
+# `tracing` and not `log` because the events carry fields — a request is a
+# method, a route, a status and a duration, and a line that has already had them
+# formatted into a sentence cannot be filtered or aggregated on any of them.
+# `RUST_LOG` and the subscriber's own JSON renderer then do the rest, which is
+# what makes this the same operational surface as any other Rust server.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+# `default-features = false` and then most of them back, because the two that
+# are off are off for a reason. `tracing-log` bridges the `log` crate, and
+# nothing noda depends on writes to it. `smallvec` trades a little code size for
+# fewer allocations per event, which is not a trade a page that logs one line
+# per request needs to make.
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+    "std",
+    "fmt",
+    # Colour, and it is switched off the way the rest of noda switches it off:
+    # `NO_COLOR`, honoured here by hand because a subscriber does not read
+    # `anstream`'s mind.
+    "ansi",
+    # `RUST_LOG`. It is the one feature with a real cost — a filter directive is
+    # matched with a regex engine, and noda's tree has no other regex in it —
+    # and it is what makes the log adjustable without a rebuild, which is the
+    # whole point of shipping one.
+    "env-filter",
+    # Line-delimited JSON for something that collects logs. `serde_json` is
+    # already here by way of the query string and the frontmatter, so this is
+    # the renderer and not the parser.
+    "json",
 ] }
 
 # Only the browser's end-to-end tests use these, so they cost the shipped binary

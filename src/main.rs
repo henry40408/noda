@@ -197,6 +197,20 @@ enum Command {
         /// reverse proxy or a tailnet name has to be named here.
         #[arg(long = "allow-host", value_name = "NAME")]
         allow_host: Vec<String>,
+        /// How the log is rendered: for a person, or for something that
+        /// collects it.
+        ///
+        /// The log goes to stderr, so the address above stays on stdout where
+        /// the rest of noda puts a command's answer. What is *on* the log is
+        /// `RUST_LOG`'s business: it is quiet by default, and
+        /// `RUST_LOG=noda=debug` turns on a line per request.
+        #[arg(
+            long,
+            env = "NODA_LOG_FORMAT",
+            default_value = "text",
+            value_name = "FORMAT"
+        )]
+        log_format: web::log::Format,
     },
     /// Show commit history for the notebook, or for one note.
     Log {
@@ -533,7 +547,11 @@ fn run() -> noda::Result<()> {
         } => cmd::doctor(&paths, *dry_run, *links, *times)?,
         Command::Search { query } => cmd::search(&paths, query)?,
         Command::Tui => tui::run(&paths)?,
-        Command::Web { listen, allow_host } => web::serve(&paths, listen, allow_host)?,
+        Command::Web {
+            listen,
+            allow_host,
+            log_format,
+        } => web::serve(&paths, listen, allow_host, *log_format)?,
         Command::Log { note, max } => cmd::log(&paths, note.as_deref(), *max)?,
         Command::Backlinks { key, json, quiet } => cmd::backlinks(
             &paths,

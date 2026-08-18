@@ -882,6 +882,39 @@ $ noda web
 noda is at http://127.0.0.1:8080
 ```
 
+**It says what it does while it runs, and it is quiet about it.** Every other command
+answers and exits, so its output is its answer; a server outlives the question, and the only
+way to find out afterwards what it refused, what it failed at or what was slow is for it to
+have said so at the time. The log goes to **stderr**, so that address stays on stdout where
+the rest of noda puts a command's answer.
+
+`RUST_LOG` decides what is on it. The default is `error,noda=info`, which logs nothing per
+request: what you get is a refusal, a failure, and any request that took longer than a second.
+Turn the stream on with `RUST_LOG=noda=debug`, or narrow it to the requests alone with
+`RUST_LOG=noda::web::log=debug`. `--log-format json` (or `NODA_LOG_FORMAT=json`) writes one
+JSON object per line instead, for something that collects them.
+
+```
+$ RUST_LOG=noda=debug noda web
+noda is at http://127.0.0.1:8080
+… DEBUG noda::web::log: request finished event="http.request" method=GET
+  route="/nb/{book}/n/{key}" status=200 elapsed=1.78ms elapsed_ms=1.785
+```
+
+**A request is logged as the route it matched, never as the address it asked for.** That row
+above is a note being read, and which note is not on it — an id is the name of somebody's
+note, a file's address carries its filename, and a search is the reader's own words in a query
+string. None of that belongs in a file that outlives the request and gets shipped to a log
+collector, and none of it is what anybody wants to count either: `/nb/{book}/n/{key}` is one
+line in a report and a per-note path is two thousand. A request that matched no route is
+labelled `<unmatched>` rather than having its path repeated, because that path is whatever a
+scanner put in the URL.
+
+The one event worth an alert is `http.refused`, at WARN: the guard turned a request away, and
+that is either a reverse proxy whose name has not been allowed yet or somebody attempting the
+rebinding attack the guard exists for. It carries the `Host` and `Origin` it decided on, since
+a refusal nobody can read the reason for is a refusal nobody can fix.
+
 Every notebook is named in the URL — `/nb/work` for the listing, `/nb/work/n/k3f9m2p1` for a
 note — so the active-notebook pointer never decides what a page shows. That pointer belongs to
 a shell session, and a browser tab that quietly changed which notebook it was showing because
