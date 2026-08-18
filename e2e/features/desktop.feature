@@ -90,10 +90,17 @@ Feature: The same pages on a wider screen
   # On a screen holding two panes the question moves: the prose is not centred
   # in the window, because the window has a rail and a listing in it as well.
   # It is centred in the pane it lives in.
+  #
+  # The heading first, and it is load-bearing rather than decoration. Pressing a
+  # row on a screen this wide replaces the reading pane instead of the page, and
+  # that is a round trip: until it lands, the pane still holds whatever stood
+  # there with no note picked. Measuring the reading column before the note is
+  # in it measures the wrong element, or none.
   Scenario: A note reads at a comfortable measure beside the listing
     Given I open the notebook on a desktop
     When I press "Budget review"
-    Then the reading column is narrower than its pane
+    Then the note is headed "Budget review"
+    And the reading column is narrower than its pane
     And the reading column is centred in its pane
 
   Scenario: A wide page does not scroll sideways either
@@ -176,7 +183,8 @@ Feature: The same pages on a wider screen
   Scenario: A laptop leaves the backlinks behind the press
     Given I open the notebook on a desktop
     When I press "Meeting notes"
-    Then the margin note is not on screen
+    Then the note is headed "Meeting notes"
+    And the margin note is not on screen
 
   # A title in the margin is a note in this notebook, so it goes where the
   # listing's rows go and arrives the same way — and the margin is about
