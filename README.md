@@ -960,6 +960,34 @@ A screen of its own rather than a strip on the note's page, and the reason is th
 `todo` already follow: reading a note opens one file, and answering "what links here" parses
 every note in the notebook. One press must not quietly cost the other.
 
+**On a wider screen it is the same interface at a higher density, not a second design.**
+Under 640px it is a phone: one screen at a time, that bar along the bottom. Above it the bar
+stands up into a rail down the left and a row extends — the day and the tags leave the second
+line and go to the right of the title, which is the row `noda ls -l` already prints. Above
+1024px the notes screen splits in two: the listing on the left, the note being read on the
+right, and picking a note replaces the reading half rather than the page. With no note picked
+the notebook's own `README.md` stands there, because that is the page a notebook already has
+about the whole of itself.
+
+Two things arrive with the width, and both are the browser saying what a terminal already
+says:
+
+- **A row grows the id column.** `ls -l` prints id, title, updated, tags; given the room, so
+  does this. The id is what `noda show` takes and the first half of the filename in the
+  repository, so a listing you can read is one you can act on somewhere else. Tags stay last
+  for the reason `-l` gives: they are the one column a note may not have, and anywhere else
+  their absence would shift every column behind them.
+- **The search field says how it grouped what you typed.** `tag:work OR tag:q3 budget` draws
+  as `(tag:work or tag:q3) and (budget)` under the field. `OR` binding tighter than a space is
+  the one thing about this grammar that gets read backwards, and both readings look like an
+  answer once the notes are on the screen.
+
+Neither is on a phone: there is one column there, and the title has it.
+
+The listing beside a note is fetched by the script rather than sent with the page — a row is
+about 290 bytes, and below 1024px not one of them is ever drawn. With no script a note on a
+wide screen is what it has always been: the note, whole, and the way back to the listing.
+
 Two things a note's body cannot do, both on purpose. **Raw HTML is shown as a code block**
 rather than rendered: `noda import tiddlywiki` deliberately leaves markup it could not convert
 in the body, so that markup is the only copy of what the note said, and dropping it would lose
