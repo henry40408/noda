@@ -1,12 +1,24 @@
 Feature: Getting around the notebook
 
-  Three places and one action, told apart by not being in the same row. Tags,
-  Todo and Files are somewhere to go and they sit on the bar; New is something
-  to do, and it is the round button above it. The bar also answers "where am
-  I" — the screen you are on is the one marked on it.
+  Four places and one action, told apart by not being in the same row. Notes,
+  Tags, Todo and Files are somewhere to go and they sit on the bar; New is
+  something to do, and it is the round button above it. The bar also answers
+  "where am I" — the screen you are on is the one marked on it.
 
-  The listing is not on the bar. It is where the bar leads *from*, and the way
-  back to it is the chevron every screen already carries in the same corner.
+  An earlier design left the listing off the bar, on the argument that the bar
+  held the places you go *from* it. Two things undid that: a rail is read as a
+  list of where you can be, and one missing the place you spend most of your
+  time reads as an omission; and on a screen wide enough to hold both panes the
+  listing is no longer somewhere you leave.
+
+  The one screen that is not on it is the network screen, which is about the
+  notebook rather than about anything inside it. The chip in the corner reaches
+  that one.
+
+  Scenario: The bar reaches the notes
+    Given I open "/nb/default/tags"
+    When I press "Notes"
+    Then I see a row for "Budget review"
 
   Scenario: The bar reaches the tags
     Given I open the notebook
@@ -28,8 +40,13 @@ Feature: Getting around the notebook
     Then the bar marks "Tags"
     And the bar does not mark "Todo"
 
-  Scenario: Nothing is marked on the listing the bar leads from
+  Scenario: The listing is marked like anywhere else
     Given I open the notebook
+    Then the bar marks "Notes"
+    And the bar does not mark "Tags"
+
+  Scenario: Nothing is marked on the one screen the bar does not hold
+    Given I open "/nb/default/status"
     Then the bar marks nothing
 
   Scenario: Writing is one press from anywhere in the notebook

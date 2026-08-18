@@ -235,8 +235,13 @@ fn tag_line(tags: &[String]) -> String {
 /// phone on the far end of a tailnet wants; the alternative buys caching and
 /// costs a round trip on the first view of every session, plus a question about
 /// invalidating it that nothing here is big enough to be worth asking.
-fn shell(title: &str, body: &str) -> String {
-    dressed(title, None, "", body)
+/// `app` is the classes the layout hangs off, and there are only ever three of
+/// them: `split` for the two screens made of panes, `at-list`/`at-note` for
+/// which of the two is being shown, and `indexed` for whether the index pane
+/// arrived with rows in it. Every one is a fact about the route, decided by the
+/// handler that knows it and never worked out again from the markup.
+fn shell(title: &str, app: &str, body: &str) -> String {
+    dressed(title, app, None, &[], body)
 }
 
 /// The shell, plus the script that makes this page quicker and nothing else.
@@ -246,8 +251,8 @@ fn shell(title: &str, body: &str) -> String {
 /// reads the rows and there is no `defer` on an inline script — and because a
 /// script that runs after the page is drawn cannot delay the page being drawn,
 /// which is the only guarantee that matters to something optional.
-fn scripted(title: &str, script: &str, body: &str) -> String {
-    dressed(title, None, script, body)
+fn scripted(title: &str, app: &str, scripts: &[&str], body: &str) -> String {
+    dressed(title, app, None, scripts, body)
 }
 
 /// The shell, plus the one thing a page may ask the browser to do on its own.
@@ -257,20 +262,26 @@ fn scripted(title: &str, script: &str, body: &str) -> String {
 /// full reload of a page that is a few hundred bytes, which is the cost of not
 /// requiring a script to find out whether a push finished — and the same reload
 /// the reader would perform by hand, so nothing new can go wrong in it.
-fn dressed(title: &str, again_in: Option<u32>, script: &str, body: &str) -> String {
+fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[&str], body: &str) -> String {
     let refresh = again_in.map_or_else(String::new, |seconds| {
         format!("<meta http-equiv=\"refresh\" content=\"{seconds}\">\n")
     });
-    let enhancement = if script.is_empty() {
-        String::new()
+    let enhancement = scripts
+        .iter()
+        .filter(|source| !source.is_empty())
+        .map(|source| script::tag(source))
+        .collect::<String>();
+    let classes = if app.is_empty() {
+        String::from("app")
     } else {
-        script::tag(script)
+        format!("app {app}")
     };
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         {refresh}<title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n{}{enhancement}</body>\n</html>\n",
+         {refresh}<title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n\
+         <div class=\"{classes}\">\n{}</div>\n{enhancement}</body>\n</html>\n",
         escape(title),
         theme::stylesheet(),
         CSS,
@@ -339,6 +350,11 @@ fn action_bar(items: &[(&str, &str, String, bool)]) -> String {
 }
 
 const NEW: &str = "<path d=\"M12 4.5v15M4.5 12h15\"/>";
+/// A page with a folded corner and two lines of writing on it: what the
+/// notebook is mostly made of. Not a book — a notebook is a directory of files,
+/// and the thing you press this to reach is a list of them.
+const NOTES: &str = "<path d=\"M5.5 4.5h9L19 9v10.5h-13.5z\"/><path d=\"M14.5 4.5V9H19\"/>\
+<path d=\"M9 13h6\"/><path d=\"M9 16.5h4\"/>";
 const EDIT: &str = "<path d=\"M4 20h4L19 9l-4-4L4 16z\"/>";
 const TAGS: &str = "<path d=\"M4 4h7l9 9-7 7-9-9z\"/><circle cx=\"8\" cy=\"8\" r=\"1.4\"/>";
 const RENAME: &str = "<path d=\"M4 7V5h16v2\"/><path d=\"M12 5v14\"/><path d=\"M9 19h6\"/>";
@@ -393,27 +409,37 @@ const BACK: &str =
 
 /// Which of the notebook's screens is being drawn, so the bar can say so.
 ///
-/// `Notes` is the listing, and it is deliberately not on the bar: the bar holds
-/// the three places you go *from* the listing, and the way back to it is the
-/// chevron every screen already carries in the same corner. So on the listing
-/// nothing is marked, and on the other three exactly one thing is.
+/// All four are on the bar. An earlier design left `Notes` off it and made the
+/// chevron the only way back to the listing, on the argument that the bar held
+/// the places you go *from* the listing. Two things undid that. A rail is read
+/// as a list of where you can be, and one that omitted the place you spend most
+/// of your time read as an omission rather than as an argument; and on a screen
+/// wide enough to hold both panes the listing is no longer somewhere you leave,
+/// so "from the listing" had stopped describing anything.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum At {
     Notes,
     Tags,
     Todo,
     Files,
+    /// The network screen, which is the one notebook screen not on the bar —
+    /// it is reached from the chip in the corner, because it is about the
+    /// notebook as a whole rather than about something inside it. It is a
+    /// variant rather than an absence so that the bar is told where the reader
+    /// is on every screen that carries it, and marks nothing only when nothing
+    /// on it is where they are.
+    Status,
 }
 
 /// The bar every notebook-level screen carries, and the one button that is not
 /// on it.
 ///
-/// **Three places and one action, told apart by not being in the same row.**
-/// Tags, Todo and Files are somewhere to go; New is something to do, and a row
-/// that mixes the two is a row you have to read rather than aim at. The button
-/// is lifted off it and set where a thumb already rests.
+/// **Four places and one action, told apart by not being in the same row.**
+/// Notes, Tags, Todo and Files are somewhere to go; New is something to do, and
+/// a row that mixes the two is a row you have to read rather than aim at. The
+/// button is lifted off it and set where a thumb already rests.
 ///
-/// The bar is the same three on all four screens, because a bar whose contents
+/// The bar is the same four on every screen, because a bar whose contents
 /// changed from screen to screen would be worse than no bar. It is also how the
 /// files page stopped being reachable only by typing its address, which is what
 /// it was until this existed.
@@ -428,6 +454,7 @@ fn notebook_bar(book: &str, here: At) -> String {
         "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
          <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
         action_bar(&[
+            (NOTES, "Notes", format!("/nb/{at}"), here == At::Notes),
             (TAGS, "Tags", format!("/nb/{at}/tags"), here == At::Tags),
             (TODO, "Todo", format!("/nb/{at}/todo"), here == At::Todo),
             (FILES, "Files", format!("/nb/{at}/files"), here == At::Files),
@@ -466,10 +493,12 @@ pub fn notebooks(books: &[Book]) -> String {
     };
     shell(
         "noda",
+        "",
         &format!(
-            "<header class=\"topbar\"><span class=\"here lead\">noda</span>\
+            "<section class=\"pane\">\
+             <header class=\"topbar\"><span class=\"here lead\">noda</span>\
              <span class=\"count\">{}</span></header>\
-             <main class=\"rows books\">{rows}</main>",
+             <main class=\"rows cols\">{rows}</main></section>",
             plural(books.len(), "notebook")
         ),
     )
@@ -497,6 +526,7 @@ pub fn listing(
     terms: &[String],
     problem: Option<&str>,
     drift: &str,
+    front: Option<&str>,
 ) -> String {
     let total = rows.len();
     let shown = rows.iter().filter(|row| row.shown).count();
@@ -553,35 +583,91 @@ pub fn listing(
         format!("{shown} of {total}")
     };
 
+    // `indexed`, because the rows are right here in the markup. It is the same
+    // class the script sets on a note route, and it means the same thing in
+    // both places: this pane has a listing in it.
     scripted(
         &format!("{book} — noda"),
-        script::LISTING,
+        "split at-list indexed",
+        &[script::LISTING, script::PANES],
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
-             <span class=\"count\">{counted}</span></header>\
-             <form class=\"searchbar\" method=\"get\" action=\"/nb/{}\">\
-             <input type=\"search\" name=\"q\" value=\"{}\" \
-             placeholder=\"tag:work OR tag:q3 budget\" \
-             autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" \
-             enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}</form>\
-             <main class=\"rows\">{body}</main>{}",
-            back("/", "the notebooks"),
-            escape(book),
-            drift_chip(book, drift),
-            escape(book),
-            escape(query),
-            // Written by the server and hidden by the server, so that the only
-            // thing the script does with it is decide when it applies. A
-            // sentence that exists only inside a script is a sentence nothing
-            // else can test the wording of.
-            hint(),
-            problem.map_or_else(String::new, |why| format!(
-                "<p class=\"problem\">{}</p>",
-                escape(why)
-            )),
+            "{}{}{}",
+            index_pane(book, query, &counted, problem, drift, &body),
+            front_pane(book, front),
             notebook_bar(book, At::Notes)
         ),
     )
+}
+
+/// The index pane's frame, and what is under it.
+///
+/// The frame is the same on both routes that draw it: which notebook, where it
+/// stands, and a search field that is a `GET` form on its own — so a reader
+/// with no script can still narrow the listing from a note page, by submitting
+/// it and landing on the listing.
+///
+/// `rows` is the part that differs. The listing route puts its notes here; a
+/// note route leaves it empty and `script::PANES` fills it in, because a phone
+/// that will never show this column should not be sent a copy of it. `counted`
+/// is empty for the same reason: a count of rows nobody has is not a fact yet.
+fn index_pane(
+    book: &str,
+    query: &str,
+    counted: &str,
+    problem: Option<&str>,
+    drift: &str,
+    rows: &str,
+) -> String {
+    format!(
+        "<section class=\"pane index\">\
+         <header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
+         <span class=\"count\">{counted}</span></header>\
+         <form class=\"searchbar\" method=\"get\" action=\"/nb/{}\">\
+         <input type=\"search\" name=\"q\" value=\"{}\" \
+         placeholder=\"tag:work OR tag:q3 budget\" \
+         autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" \
+         enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}</form>\
+         <main class=\"rows\">{rows}</main></section>",
+        back("/", "the notebooks"),
+        escape(book),
+        drift_chip(book, drift),
+        escape(book),
+        escape(query),
+        // Written by the server and hidden by the server, so that the only
+        // thing the script does with it is decide when it applies. A sentence
+        // that exists only inside a script is a sentence nothing else can test
+        // the wording of.
+        hint(),
+        problem.map_or_else(String::new, |why| format!(
+            "<p class=\"problem\">{}</p>",
+            escape(why)
+        )),
+    )
+}
+
+/// The reading pane with no note picked, which only a screen wide enough to
+/// show two panes ever sees.
+///
+/// A notebook that has a `README.md` has already written the page that is about
+/// the whole of it — it is what `noda readme` writes and what a git host shows
+/// above the file list — so that is what stands here rather than an invitation
+/// to press something. Without one, the invitation.
+fn front_pane(book: &str, front: Option<&str>) -> String {
+    match front {
+        Some(rendered) => format!(
+            "<section class=\"pane read\"><header class=\"topbar\">\
+             <span class=\"here lead\">{}</span>\
+             <span class=\"count mono\">README.md</span></header>\
+             <main class=\"note\"><div class=\"body\">{rendered}</div></main></section>",
+            escape(book)
+        ),
+        None => "<section class=\"pane read\"><header class=\"topbar\">\
+             <span class=\"here lead\">Reading</span></header>\
+             <main><div class=\"empty\"><b>Pick a note</b>Its text opens here. \
+             Narrow the list with a search, or press + to write a new one.\
+             </div></main></section>"
+            .to_string(),
+    }
 }
 
 /// What the listing says while the script is answering instead of the server.
@@ -646,9 +732,12 @@ pub fn files(book: &str, held: &[Held]) -> String {
 
     shell(
         &format!("Files — {book} — noda"),
+        "",
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">Files</span>\
-             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>{}",
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Files</span>\
+             <span class=\"count\">{}</span></header>\
+             <main class=\"rows cols wide\">{body}</main></section>{}",
             back(&format!("/nb/{}", escape(book)), book),
             held.len(),
             notebook_bar(book, At::Files)
@@ -708,9 +797,12 @@ pub fn tags(book: &str, tallies: &[Tally]) -> String {
 
     shell(
         &format!("Tags — {book} — noda"),
+        "",
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">Tags</span>\
-             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>{}",
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Tags</span>\
+             <span class=\"count\">{}</span></header>\
+             <main class=\"rows cols\">{body}</main></section>{}",
             back(&format!("/nb/{}", escape(book)), book),
             tallies.len(),
             notebook_bar(book, At::Tags)
@@ -767,9 +859,12 @@ pub fn todo(book: &str, tasks: &[Task]) -> String {
 
     shell(
         &format!("Todo — {book} — noda"),
+        "",
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">Todo</span>\
-             <span class=\"count\">{}</span></header><main class=\"rows\">{body}</main>{}",
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Todo</span>\
+             <span class=\"count\">{}</span></header>\
+             <main class=\"rows\">{body}</main></section>{}",
             back(&format!("/nb/{}", escape(book)), book),
             tasks.len(),
             notebook_bar(book, At::Todo)
@@ -809,11 +904,14 @@ pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
 
     shell(
         &format!("Links to {} — noda", subject.what),
+        "",
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">Backlinks</span>\
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Backlinks</span>\
              <span class=\"count\">{}</span></header>\
              <main class=\"rows\">\
-             <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}</main>",
+             <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}\
+             </main></section>",
             back(&subject.at, &subject.what),
             rows.len(),
             if subject.mono { "mono" } else { "subject" },
@@ -822,8 +920,12 @@ pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
     )
 }
 
-/// One note.
-pub fn note(book: &str, reading: &Reading) -> String {
+/// One note, and — on a screen wide enough — the listing it came from.
+///
+/// `drift` is for the index pane's own bar, which is the notebook's bar rather
+/// than the note's. It costs two refs compared, which is what the listing route
+/// already pays on every visit.
+pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
     let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
     let meta = [tag_line(&reading.tags), updated(reading.updated.as_deref())]
         .into_iter()
@@ -847,23 +949,39 @@ pub fn note(book: &str, reading: &Reading) -> String {
     ]);
     let home = format!("/nb/{}", escape(book));
 
-    shell(
+    // No `indexed`, and the pane it names is sent empty. The listing is worth
+    // about 290 bytes a note — 57KB at two hundred, half a megabyte at two
+    // thousand — and below 1024px not one of those bytes is ever drawn. So the
+    // frame goes out and `script::PANES` asks for the rest, but only where the
+    // column is on screen. With no script the grid is the tablet's two columns:
+    // the note, whole, and the chevron back to the listing, which is what a
+    // note page has always been.
+    scripted(
         &format!("{} — noda", reading.title),
+        "split at-note",
+        &[script::PANES],
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
+            "{}<section class=\"pane read\">\
+             <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
              <main class=\"note\">\
              <div class=\"note-head\"><h1>{}</h1>\
              <div class=\"filename\"><span class=\"id\">{}</span>\
              <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
              <div class=\"note-meta\">{meta}</div></div>\
              <div class=\"body\">{}</div>\
-             {perilous}</main>{bar}",
+             {perilous}</main>{bar}</section>{}",
+            index_pane(book, "", "", None, drift, ""),
             back(&home, book),
-            escape(book),
+            // The note, not the notebook. On a phone this bar is the whole
+            // chrome and either would do; beside an index pane already headed
+            // with the notebook's name, repeating it says nothing and the one
+            // thing the bar could have said goes unsaid.
+            escape(&reading.title),
             escape(&reading.title),
             escape(&reading.id),
             escape(&reading.slug),
             reading.rendered,
+            notebook_bar(book, At::Notes),
         ),
     )
 }
@@ -879,9 +997,11 @@ pub fn note(book: &str, reading: &Reading) -> String {
 fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
     shell(
         &format!("{title} — noda"),
+        "",
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
-             <main>{said}{form}</main>",
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
+             <main>{said}{form}</main></section>",
             back(back_to, book),
             escape(title)
         ),
@@ -1220,15 +1340,17 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
 
     dressed(
         &format!("Status — {book} — noda"),
+        "",
         busy.then_some(2),
-        script::STANDING,
+        &[script::STANDING],
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">Status</span>\
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Status</span>\
              <span class=\"count\">{at}</span></header>\
              <main>{said}<div class=\"rows facts\">{rows}</div>\
-             <div class=\"abreast\">{buttons}</div></main>{}",
+             <div class=\"abreast\">{buttons}</div></main></section>{}",
             back(&format!("/nb/{at}"), book),
-            notebook_bar(book, At::Notes),
+            notebook_bar(book, At::Status),
         ),
     )
 }
@@ -1241,9 +1363,11 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
 pub fn failure(heading: &str, detail: &str) -> String {
     shell(
         &format!("{heading} — noda"),
+        "",
         &format!(
-            "<header class=\"topbar\">{}<span class=\"here\">noda</span></header>\
-             <main><div class=\"empty\"><b>{}</b>{}</div></main>",
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">noda</span></header>\
+             <main><div class=\"empty\"><b>{}</b>{}</div></main></section>",
             back("/", "the notebooks"),
             escape(heading),
             escape(detail)
@@ -1278,6 +1402,16 @@ fn plural(count: usize, thing: &str) -> String {
     }
 }
 
+/// The layout, for the one test that has to read it.
+///
+/// `script.rs` writes the split breakpoint a second time, and the two numbers
+/// have to agree. Exposing the sheet is how that is checked rather than
+/// asserted twice in prose.
+#[cfg(test)]
+pub(crate) fn stylesheet() -> &'static str {
+    CSS
+}
+
 /// The whole of the layout.
 ///
 /// Mobile first, because that is what this exists for. Two numbers run through
@@ -1294,11 +1428,33 @@ const CSS: &str = "\
    says, wherever it is put and whatever else styles the element. */\
 [hidden]{display:none!important}\
 :root{--tap:48px;\
+/* The rail's width above 640px. Two numbers run through this sheet and this \
+   is the second: nothing may be smaller than `--tap`, and the navigation is \
+   always exactly this wide, so a pane can be sized against what is left. */\
+--rail:76px;\
 --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,'Cascadia Mono',Consolas,monospace;\
 --read:ui-serif,Charter,'Iowan Old Style',Georgia,'Songti TC','Noto Serif CJK TC',serif}\
 html{-webkit-text-size-adjust:100%}\
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:14px;line-height:1.6}\
 svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\
+/* A phone stacks; everything wider is a grid, and the grid is declared where \
+   the width is known. `min-width:0` because a grid item's default is `auto`, \
+   which lets one long unbroken line in a note push a whole column wider than \
+   the screen. */\
+/* A column that fills the screen, and it is not decoration: a bar is \
+   `position:sticky;bottom:0`, and sticky is bounded by its containing block. \
+   With the pane only as tall as its content, a short note left the bar \
+   floating halfway down the screen wherever the prose happened to stop. The \
+   pane grows into the space instead, so the bar has a foot to sit at. */\
+.app{display:flex;flex-direction:column;min-height:100dvh}\
+.pane{display:block;min-width:0;flex:1 1 auto}\
+.foot{flex:0 0 auto}\
+/* And the same one floor down, for the note's own bar. `position:sticky` holds \
+   a thing in view while the page scrolls past it; it will not push one down a \
+   page that does not scroll, so a short note used to leave the bar wherever \
+   the prose stopped. The prose takes the slack instead. */\
+.read{display:flex;flex-direction:column}\
+.read main{flex:1 1 auto}\
 .topbar{display:flex;align-items:center;gap:4px;min-height:56px;padding-right:16px;\
 border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--bg);z-index:1}\
 .topbar .back{min-width:var(--tap);min-height:var(--tap);display:inline-flex;align-items:center;\
@@ -1323,6 +1479,10 @@ a{color:inherit;text-decoration:none}\
 .row{display:block;min-height:64px;padding:12px 16px;border-bottom:1px solid var(--rule);\
 -webkit-tap-highlight-color:transparent}\
 .row:active{background:var(--press)}\
+/* The note the reading pane is showing. Only ever seen where both panes are, \
+   because it is the answer to a question only two panes can ask. The same \
+   grey a press leaves: it is the row you are on, not a row that is special. */\
+.row.here{background:var(--press)}\
 .row .title{font-family:var(--read);font-size:17px;line-height:1.32}\
 /* A filename is the machine's, not the reader's — the same rule the note page \
    follows when it sets the id and the slug in monospace. */\
@@ -1527,32 +1687,141 @@ white-space:pre-wrap;overflow-wrap:break-word}\
 .perilous{padding:8px 16px 24px;margin:0}\
 .perilous a{color:var(--alert);display:inline-flex;align-items:center;min-height:var(--tap);\
 text-decoration:underline;text-underline-offset:3px;font-size:14px}\
-@media (min-width:720px){\
-/* One column for the whole interface, and the room left over falls on both \
-   sides. A `max-width` without a margin is not a narrower page, it is a page \
-   pushed against the left edge of a monitor. */\
-.topbar,.searchbar,main{max-width:900px;margin-inline:auto}\
+/* Below the width that holds two panes, exactly one is on screen, and which \
+   one is the route's answer. Said as its own query rather than as a rule the \
+   wide ones have to out-order: two `display` declarations fighting on source \
+   position is how a pane goes missing. */\
+@media (max-width:1023px){.app.split.at-list .read{display:none}}\
+/* A note page is sent without its listing — see `script::PANES`. `.indexed` \
+   is what says the pane has one, and it has exactly two writers: the server, \
+   on the listing route, where the rows are in the markup; and the script, on \
+   a note route, before the first paint. Nothing else turns it on, so a pane \
+   that would have nothing in it is never a column. */\
+.app.split.at-note .index{display:none}\
+/* And a phone reading a note gets one bar, not two: the note's own actions. \
+   The rail holds the notebook's four places, and they are one press away up \
+   the chevron. */\
+@media (max-width:639px){\
+.app.split.at-note .foot{display:none}\
+.app.split.at-note main{padding-bottom:16px}}\
+/* ================================================================= TABLET */\
+/* The bottom bar stands up and becomes a rail, and the content takes \
+   everything left over. A bar pinned to the foot of a 1100px-tall screen is a \
+   phone idiom stranded; a rail is where the hand already is. \
+   The rail is written last in the markup — a phone needs it at the foot of \
+   the document to stick to the foot of the screen — and placed first here. */\
+@media (min-width:640px){\
+.app{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);height:100dvh;overflow:hidden}\
+.foot{grid-column:1;grid-row:1/-1;position:static;display:flex;flex-direction:column;\
+align-items:stretch;background:var(--bg-sunk);border-right:1px solid var(--rule)}\
+.foot .actionbar{flex-direction:column;border-top:0;background:transparent;padding:0}\
+.foot .actionbar a{flex:0 0 auto;min-height:62px}\
+/* The one action, first: a rail reads top to bottom, and what you came to do \
+   goes above where you might go. Square-ish rather than round, because at this \
+   size it sits in a column of things and a circle in a column of rectangles is \
+   a circle asking to be looked at. */\
+.fab{order:-1;position:static;width:44px;height:44px;border-radius:13px;\
+margin:14px auto 12px;box-shadow:none}\
+.fab svg{width:22px;height:22px}\
+/* Each pane scrolls on its own, which is what makes two of them worth having: \
+   a listing keeps its place while a note is read past its end. */\
+.pane{grid-column:2;min-height:0;overflow-y:auto}\
+.app:has(.fab) main{padding-bottom:24px}\
+/* A screen with one pane hangs its content off the rail and stops at a width \
+   a row can still be read across. Not centred — a column with a gutter on \
+   both sides is what a monitor looked like before this. */\
+.app:not(.split) .topbar,.app:not(.split) main{max-width:80em}\
+.topbar,.searchbar{padding-left:24px;padding-right:24px}\
+.topbar .back{margin-left:-12px}\
+.topbar .lead{padding-left:0}\
 /* The row extends rather than stacking: the tags and the day leave the second \
    line and go to the right of the title. Same information, same order — the \
    rule `-l` follows on the CLI's own row. */\
-.row{display:flex;align-items:baseline;gap:18px;min-height:0;padding:14px 20px}\
-.row.split .most{display:flex;align-items:baseline;gap:18px;padding:14px 0 14px 20px}\
-.row.split .aside{padding:0 20px}\
-/* The button follows the column rather than the window: on a wide screen the \
-   content stops at 900px, and a button pinned to the far corner would be a \
-   button somewhere else on the page. */\
-.fab{right:max(16px,calc(50% - 450px + 16px))}\
-.row .title,.row .name{flex:1 1 auto}\
-.row .under{margin:0;flex:0 0 auto}\
-.topbar,.searchbar{padding-left:20px;padding-right:20px}\
-.topbar .back{margin-left:-12px}\
-.note-head{padding:22px 20px 18px}\
+.rows .row{display:flex;align-items:baseline;gap:20px;min-height:0;padding:13px 24px}\
+.rows .row .title,.rows .row .name{flex:1 1 auto}\
+.rows .row .under{margin:0;flex:0 0 auto;justify-content:flex-end}\
+.rows .row.split{display:flex}\
+.rows .row.split .most{display:flex;align-items:baseline;gap:20px;padding:13px 0 13px 24px}\
+.rows .row.split .aside{padding:0 24px}\
+/* Short rows go in columns rather than down one long strip, so eight tags on \
+   a monitor are eight tags and not eight tags and a field of nothing. \
+   `column-width` and not a grid, because the divider wanted is a hairline and \
+   `column-rule` draws exactly that. */\
+.rows.cols{column-width:270px;column-gap:0;column-rule:1px solid var(--rule)}\
+.rows.cols .row{break-inside:avoid;display:block;padding:13px 24px}\
+.rows.cols .row .under{margin-top:3px;justify-content:flex-start}\
+.rows.cols.wide{column-width:400px}\
+.rows.cols .row.split{display:flex;padding:0}\
+.rows.cols .row.split .most{display:block;padding:13px 0 13px 24px}\
+.rows.cols .row.split .aside{padding:0 24px}\
+/* A fact is a name and a value, so it is two columns and not the row's three. */\
+.rows.facts .row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:0}\
+.rows.facts .row .under{justify-content:flex-start}\
+.note-head{padding:26px 32px 20px}\
+.note-head h1{font-size:28px}\
 /* A measure, and measured in the font it is set in. `ch` and `em` are relative \
    to the element's own type — putting the reading measure on `main`, which is \
    set in the monospace the chrome uses, sized a column of prose by a font the \
    prose is not in. It is the body that is read, so it is the body that is \
    capped. */\
-.body{font-size:18px;max-width:36em;padding:20px}}\
+.body{font-size:18px;line-height:1.65;max-width:34em;padding:24px 32px 8px}\
+.perilous{padding:8px 32px 40px}\
+.said{padding:14px 32px}\
+.empty{padding:34px 32px}\
+/* A form on a screen with a rail has vertical room the phone never had, and \
+   the text field is the one thing here that can use all of it. */\
+form.write{padding:24px 32px;max-width:52em}\
+form.write textarea{min-height:min(56vh,560px)}\
+.buttons{justify-content:flex-start}\
+button.go,button.danger{flex:0 0 auto;min-width:190px}\
+.abreast{padding:20px 32px 28px;max-width:52em}\
+/* A note's actions become a toolbar at the head of the reading pane. `order` \
+   moves it there without moving it in the markup, so the phone's bottom bar \
+   and the desktop's toolbar are one element said twice. */\
+.read{display:flex;flex-direction:column}\
+.read .topbar{order:-2}\
+.read .actionbar{order:-1;position:static;background:var(--bg);border-top:0;\
+border-bottom:1px solid var(--rule);justify-content:flex-start;gap:2px;padding:7px 20px}\
+.read .actionbar a{flex:0 0 auto;flex-direction:row;gap:8px;min-height:38px;\
+padding:0 13px;border-radius:9px;font-size:13px}\
+.read .actionbar a:hover{background:var(--press);color:var(--text)}\
+.read .actionbar svg{width:17px;height:17px}\
+.read main{order:0;flex:1 1 auto}}\
+/* ================================================================ DESKTOP */\
+/* The index stays on screen while a note is read. That is the one thing a \
+   phone cannot do, and the reason a wide screen is worth having. Every other \
+   screen keeps one pane and spends the width on columns instead. \
+   Three columns only where there is a third thing: without the class the grid \
+   is the tablet's two, which is what a reader with no script gets — the note, \
+   whole, and the chevron back to the listing. Nothing is stuck half-loaded, \
+   because nothing was promised. */\
+@media (min-width:1024px){\
+.app.split.indexed{grid-template-columns:var(--rail) clamp(300px,26vw,380px) minmax(0,1fr)}\
+.app.split.indexed .index{grid-column:2;border-right:1px solid var(--rule)}\
+.app.split.indexed .read{grid-column:3}\
+.app.split.indexed.at-note .index{display:block}\
+.app.split.at-list .read{display:flex}\
+/* In a column this narrow the row stacks again — but tighter than a phone's, \
+   because a dense list is the point of keeping it on screen. */\
+.app.split .index .rows .row{display:block;padding:11px 20px;min-height:0}\
+.app.split .index .rows .row .title{font-size:15.5px;line-height:1.34}\
+.app.split .index .rows .row .under{margin-top:2px;justify-content:flex-start;font-size:12px}\
+.app.split .index .searchbar,.app.split .index .topbar{padding-left:20px;padding-right:20px}\
+.app.split .index .empty{padding:26px 20px}\
+/* Head, body and the delete line share one column so the rule under the title \
+   spans exactly what the prose does. The pane keeps the slack. */\
+.app.split .read main.note{width:100%;max-width:44em;margin-inline:auto}\
+.app.split .read .body{max-width:none}\
+/* The note's chevron points at the listing, and here the listing is already \
+   on the screen beside it. The index pane keeps its own, which points \
+   somewhere you cannot see: the notebooks. Only when the index is actually \
+   there — without the script this is the one pane, and the way back with it. */\
+.app.split.indexed .read .topbar .back{display:none}}\
+/* A monitor wider than a laptop spends the extra on the index, never on the \
+   measure: a line of prose has a right length and it is not \"however wide the \
+   window is\". */\
+@media (min-width:1800px){\
+.app.split.indexed{grid-template-columns:var(--rail) clamp(340px,22vw,470px) minmax(0,1fr)}}\
 ";
 
 #[cfg(test)]
@@ -1586,6 +1855,7 @@ mod tests {
                 updated: None,
                 rendered: "<p>a <em>rendered</em> note</p>".into(),
             },
+            "in sync",
         );
         assert!(page.contains("<p>a <em>rendered</em> note</p>"), "{page}");
     }
@@ -1617,6 +1887,7 @@ mod tests {
                 updated: Some("2026-08-15T09:54:23Z".into()),
                 rendered: String::new(),
             },
+            "in sync",
         );
         assert!(page.contains("updated 2026-08-15T09:54:23Z"), "{page}");
     }
@@ -1656,7 +1927,7 @@ mod tests {
         let rows = (0..12)
             .map(|n| row(&format!("k3f{n}"), "Budget review", false))
             .collect::<Vec<_>>();
-        let page = listing("work", &rows, "tag:ghost", &[], None, "in sync");
+        let page = listing("work", &rows, "tag:ghost", &[], None, "in sync", None);
         assert!(
             page.contains("No notes match <span class=\"asked\">tag:ghost"),
             "{page}"
@@ -1683,6 +1954,7 @@ mod tests {
             &["budget".to_string()],
             None,
             "in sync",
+            None,
         );
         assert!(
             page.contains("<a class=\"row\" href=\"/nb/work/n/k3f9\""),
@@ -1703,7 +1975,7 @@ mod tests {
 
     #[test]
     fn an_empty_notebook_says_what_to_do_instead_of_nothing() {
-        let page = listing("work", &[], "", &[], None, "in sync");
+        let page = listing("work", &[], "", &[], None, "in sync", None);
         assert!(page.contains("No notes yet"), "{page}");
         assert!(page.contains("noda add"), "{page}");
         // Not the other empty. A notebook with nothing in it is not a query
@@ -1724,6 +1996,7 @@ mod tests {
             &[],
             None,
             "in sync",
+            None,
         );
         assert!(page.contains("<p class=\"hint\" hidden>"), "{page}");
         assert!(page.contains("press ⏎ to search the text"), "{page}");
@@ -1743,6 +2016,7 @@ mod tests {
                 updated: Some("2026-08-15T16:59:00Z".into()),
                 rendered: "late".into(),
             },
+            "in sync",
         );
         assert!(page.contains(">em0xvn4e</span>"), "{page}");
         assert!(page.contains(">-budget-review</span>"), "{page}");
@@ -1761,7 +2035,7 @@ mod tests {
             updated: Some("2026-08-12T08:03:00Z".into()),
             shown: true,
         }];
-        let page = listing("work", &rows, "", &[], None, "in sync");
+        let page = listing("work", &rows, "", &[], None, "in sync", None);
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
         // The clock is not in a listing at all, in either spelling.
@@ -1770,7 +2044,7 @@ mod tests {
 
     #[test]
     fn every_page_carries_both_themes_and_the_viewport() {
-        let page = listing("work", &[], "", &[], None, "in sync");
+        let page = listing("work", &[], "", &[], None, "in sync", None);
         assert!(page.contains("width=device-width"), "{page}");
         assert!(page.contains("prefers-color-scheme:dark"), "{page}");
         assert!(page.contains("--tap:48px"), "{page}");

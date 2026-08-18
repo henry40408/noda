@@ -30,7 +30,16 @@ pub const WAIT_INTERVAL: Duration = Duration::from_millis(100);
 /// A phone, in CSS pixels: the iPhone 14's viewport.
 pub const PHONE: (u32, u32) = (390, 844);
 
-/// A desktop, for the one scenario about the wide layout.
+/// A tablet in portrait: the iPad Air's viewport.
+///
+/// Its own size because it is its own layout. Above 640px the bar stands up
+/// into a rail and the row extends into columns; below 1024px there is still
+/// only one pane. Testing that at a desktop width would test neither — the row
+/// stacks again inside the index column, which is a different rule for a
+/// different reason.
+pub const TABLET: (u32, u32) = (834, 1112);
+
+/// A desktop: wide enough for the index and the note side by side.
 pub const DESKTOP: (u32, u32) = (1280, 800);
 
 /// Whether the page's own scripts run.
