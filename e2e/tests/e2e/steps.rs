@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use cucumber::{given, then, when};
-use noda_e2e::browser::{DESKTOP, PHONE, TABLET};
+use noda_e2e::browser::{DESKTOP, MONITOR, PHONE, TABLET};
 use noda_e2e::server::NOTEBOOK;
 use noda_e2e::wait::eventually;
 use noda_e2e::world::NodaWorld;
@@ -55,6 +55,12 @@ async fn open_notebook_wide(world: &mut NodaWorld) -> Result<()> {
     world.page()?.go(&format!("/nb/{NOTEBOOK}")).await
 }
 
+#[given(expr = "I open the notebook on a monitor")]
+async fn open_notebook_monitor(world: &mut NodaWorld) -> Result<()> {
+    world.browser()?.resize(MONITOR).await?;
+    world.page()?.go(&format!("/nb/{NOTEBOOK}")).await
+}
+
 #[given(expr = "I open {string}")]
 async fn open_path(world: &mut NodaWorld, path: String) -> Result<()> {
     world.page()?.go(&path).await
@@ -73,6 +79,11 @@ async fn prefers_light(world: &mut NodaWorld) -> Result<()> {
 #[when(expr = "I press {string}")]
 async fn press(world: &mut NodaWorld, what: String) -> Result<()> {
     world.page()?.press(&what).await
+}
+
+#[when(expr = "I press {string} in the margin note")]
+async fn press_in_margin(world: &mut NodaWorld, what: String) -> Result<()> {
+    world.page()?.press_in_margin(&what).await
 }
 
 #[when("I press back")]
@@ -404,6 +415,38 @@ async fn listing_marks(world: &mut NodaWorld, what: String) -> Result<()> {
         Ok(world.page()?.marked_row().await?.as_deref() == Some(what.as_str()))
     })
     .await
+}
+
+#[then(expr = "the margin note lists {string}")]
+async fn margin_lists(world: &mut NodaWorld, what: String) -> Result<()> {
+    eventually(&format!("the margin note to list {what:?}"), || async {
+        Ok(world
+            .page()?
+            .margin_note()
+            .await?
+            .is_some_and(|lines| lines.iter().any(|line| line == &what)))
+    })
+    .await
+}
+
+/// An answer of none is an answer, and the column says it rather than closing.
+#[then(expr = "the margin note says {string}")]
+async fn margin_says(world: &mut NodaWorld, what: String) -> Result<()> {
+    eventually(&format!("the margin note to say {what:?}"), || async {
+        Ok(world.page()?.margin_note().await? == Some(vec![what.clone()]))
+    })
+    .await
+}
+
+/// Not "it is empty" — not drawn at all. A column reserved and never filled is
+/// the thing the width is supposed to prevent.
+#[then("the margin note is not on screen")]
+async fn margin_not_there(world: &mut NodaWorld) -> Result<()> {
+    anyhow::ensure!(
+        world.page()?.margin_note().await?.is_none(),
+        "the margin note is on screen beside the note"
+    );
+    Ok(())
 }
 
 /// And the other half of the same fact, which is what a phone does instead.

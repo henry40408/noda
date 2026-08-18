@@ -640,6 +640,73 @@ fn a_note_page_is_sent_without_the_listing_beside_it() {
     );
 }
 
+/// The same bargain, made for a costlier walk. What points at a note is every
+/// note in the notebook read and scanned; a note page reads one file. Sending
+/// the answer with the page would turn one read into all of them on every
+/// phone, so the box goes out closed and empty and `script::BESIDE` fills it
+/// where the column is drawn.
+#[test]
+fn a_note_page_is_sent_without_what_points_at_it() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    cmd::add(
+        &paths,
+        Some("Pointer"),
+        Some(&format!("see [the budget]({id}-budget-review.md)")),
+        &[],
+    )
+    .expect("add");
+
+    let answer = server.get(&format!("/nb/default/n/{id}"));
+    assert!(
+        answer.says("<aside class=\"beside\" hidden>"),
+        "{}",
+        answer.body
+    );
+    assert!(
+        answer.says("<div class=\"answer\"></div>"),
+        "the margin note arrived with an answer in it: {}",
+        answer.body
+    );
+    // The note that points here is on the backlinks page and nowhere else. If
+    // this ever fails, the note route started walking the notebook.
+    assert!(
+        !answer.says("Pointer"),
+        "the note page answered a question nobody on it asked: {}",
+        answer.body
+    );
+}
+
+/// The margin note builds itself out of the backlinks page, fetched at runtime,
+/// so what that page writes is a contract and not an implementation detail. A
+/// class renamed there breaks a column at 1440px with every Rust test green —
+/// this is the assertion that turns that into a failure here.
+#[test]
+fn the_backlinks_page_writes_the_shape_the_margin_note_reads() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    cmd::add(
+        &paths,
+        Some("Pointer"),
+        Some(&format!("see [the budget]({id}-budget-review.md)")),
+        &[],
+    )
+    .expect("add");
+    let pointer = id_of(&paths, "pointer");
+
+    let answer = server.get(&format!("/nb/default/n/{id}/backlinks"));
+    assert!(answer.says("<main class=\"rows\">"), "{}", answer.body);
+    // The row, its address, and the title read out of it — and the id the
+    // margin note prints under each line is the last piece of that address.
+    assert!(
+        answer.says(&format!(
+            "<a class=\"row\" href=\"/nb/default/n/{pointer}\"><div class=\"title\">Pointer</div>"
+        )),
+        "{}",
+        answer.body
+    );
+}
+
 /// The listing route is the other half: its rows are in the markup, so it says
 /// `indexed` and needs nobody's help to draw them.
 #[test]
@@ -1185,8 +1252,10 @@ fn only_the_screens_that_wait_carry_a_script() {
 
     // The listing, which can narrow itself without asking; the network screen,
     // which can ask for news without reloading whole; and a note, whose index
-    // pane is the one thing on any of these pages the server does not send —
-    // see `script::PANES` for what it costs and why.
+    // pane and margin note are the two things on any of these pages the server
+    // does not send — see `script::PANES` and `script::BESIDE` for what each
+    // costs and why. The backlinks page above is the margin note's source and
+    // carries nothing itself: it is read, not run.
     for path in &[
         "/nb/default".to_string(),
         "/nb/default/status".to_string(),

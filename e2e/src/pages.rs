@@ -143,6 +143,29 @@ impl Page<'_> {
             .await
     }
 
+    /// The same press, aimed at the margin note.
+    ///
+    /// A title in the margin is usually a title in the listing as well — the
+    /// column is a list of notes in this notebook — so `press` would find the
+    /// index row first and prove nothing about the margin. This is the one
+    /// place a region has to be named to say which of two identical links is
+    /// meant.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the margin note holds no such link.
+    pub async fn press_in_margin(&self, what: &str) -> Result<()> {
+        let target = format!(
+            "//aside[contains(@class, 'beside')]//a[contains(., {})]",
+            xpath_string(what)
+        );
+        self.click(
+            By::XPath(&target),
+            &format!("a link naming {what:?} in the margin note"),
+        )
+        .await
+    }
+
     /// Finds a thing and presses it, treating a page that moved underneath as
     /// "not yet".
     ///
@@ -787,6 +810,46 @@ impl Page<'_> {
             )
             .await?;
         Ok(title.as_str().map(str::to_string))
+    }
+
+    /// What the margin note beside a note is saying, a line per link, or the
+    /// one line it says when nothing points here. `None` when the column is not
+    /// drawn at all, which is every width under 1440 and every width without a
+    /// script.
+    ///
+    /// `offsetParent` rather than a look at the markup, for the reason the id
+    /// column needs it too: the box is in the page from the start and closed,
+    /// so what is being asked is whether it was ever opened. The line it shows
+    /// while the notebook is being walked is deliberately not filtered out —
+    /// a caller waiting for a title will keep waiting, and one asserting the
+    /// column is absent must not pass because it happens to still be loading.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn margin_note(&self) -> Result<Option<Vec<String>>> {
+        let said = self
+            .0
+            .measure(
+                "const aside = document.querySelector('.pane.read .beside');
+                 if (!aside || aside.offsetParent === null) return null;
+                 const minis = [...aside.querySelectorAll('.mini')];
+                 if (minis.length) {
+                   return minis.map((m) => m.childNodes[0].textContent.trim());
+                 }
+                 const one = aside.querySelector('.none,.said');
+                 return one ? [one.innerText.trim()] : [];",
+            )
+            .await?;
+        let Some(lines) = said.as_array() else {
+            return Ok(None);
+        };
+        Ok(Some(
+            lines
+                .iter()
+                .filter_map(|line| line.as_str().map(str::to_string))
+                .collect(),
+        ))
     }
 
     /// Whether the page scrolls sideways.

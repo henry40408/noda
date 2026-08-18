@@ -8,7 +8,10 @@ Feature: The same pages on a wider screen
   Above that the bar stands up into a rail down the left and the row extends —
   the tags and the day leave the second line and go to the right of the title,
   which is the rule `noda ls -l` already follows. Above 1024px the notes screen
-  splits: the listing on the left, the note being read on the right.
+  splits: the listing on the left, the note being read on the right. Above
+  1440px there is room for a third thing, and it is what points at the note:
+  the answer the Links button opens as a page of its own, in the margin of the
+  note it is about.
 
   Two things arrive with the width rather than being rearranged by it, and both
   are the same page saying more of what it already knew. A row grows the id
@@ -87,10 +90,17 @@ Feature: The same pages on a wider screen
   # On a screen holding two panes the question moves: the prose is not centred
   # in the window, because the window has a rail and a listing in it as well.
   # It is centred in the pane it lives in.
+  #
+  # The heading first, and it is load-bearing rather than decoration. Pressing a
+  # row on a screen this wide replaces the reading pane instead of the page, and
+  # that is a round trip: until it lands, the pane still holds whatever stood
+  # there with no note picked. Measuring the reading column before the note is
+  # in it measures the wrong element, or none.
   Scenario: A note reads at a comfortable measure beside the listing
     Given I open the notebook on a desktop
     When I press "Budget review"
-    Then the reading column is narrower than its pane
+    Then the note is headed "Budget review"
+    And the reading column is narrower than its pane
     And the reading column is centred in its pane
 
   Scenario: A wide page does not scroll sideways either
@@ -136,3 +146,54 @@ Feature: The same pages on a wider screen
     When I press "Budget review"
     Then the note is headed "Budget review"
     And the listing is not on screen
+
+  # The untagged account of the widest screen, and it says the same thing the
+  # narrower ones do. Nothing about a monitor changes what the page is: the
+  # note, whole, and no sideways scroll. Without a script that is all a monitor
+  # gets, which is why this is the scenario both passes run.
+  Scenario: A note opens whole on a monitor
+    Given I open the notebook on a monitor
+    When I press "Meeting notes"
+    Then the note is headed "Meeting notes"
+    And the page does not scroll sideways
+
+  # What a note points at is in the note, and every Markdown reader shows it.
+  # What points *at* the note is the half nothing else could tell you, and it
+  # has been a press away since the day there was a Links button. Here there is
+  # room for it, so it is simply there.
+  @scripted
+  Scenario: What points at a note sits beside it on a monitor
+    Given I open the notebook on a monitor
+    When I press "Meeting notes"
+    Then the margin note lists "Reading list"
+
+  # An answer of none is an answer, and worth the column it arrived in. The
+  # column that goes quiet instead is the one that reads as broken.
+  @scripted
+  Scenario: A note nothing points at says so
+    Given I open the notebook on a monitor
+    When I press "Budget review"
+    Then the margin note says "Nothing points here."
+
+  # The breakpoint, asserted from the side below it. Backlinks are a walk of
+  # every note in the notebook — worth it for a column somebody is reading,
+  # waste for one nothing will draw — so a laptop keeps them behind the press
+  # they have always been behind.
+  @scripted
+  Scenario: A laptop leaves the backlinks behind the press
+    Given I open the notebook on a desktop
+    When I press "Meeting notes"
+    Then the note is headed "Meeting notes"
+    And the margin note is not on screen
+
+  # A title in the margin is a note in this notebook, so it goes where the
+  # listing's rows go and arrives the same way — and the margin is about
+  # whichever note is now being read, not the one that was.
+  @scripted
+  Scenario: A link in the margin leads to the note it names
+    Given I open the notebook on a monitor
+    When I press "Meeting notes"
+    Then the margin note lists "Reading list"
+    When I press "Reading list" in the margin note
+    Then the note is headed "Reading list"
+    And the margin note says "Nothing points here."

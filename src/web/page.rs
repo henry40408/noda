@@ -649,7 +649,10 @@ pub fn listing(
     scripted(
         &format!("{book} — noda"),
         "split at-list indexed",
-        &[script::LISTING, script::PANES],
+        // `BESIDE` is here for the note this listing turns into. Picking a row
+        // replaces the reading pane with a note's, aside and all, and nothing
+        // else on the page would ever ask what points at it.
+        &[script::LISTING, script::PANES, script::BESIDE],
         &format!(
             "{}{}{}",
             index_pane(book, asked, &counted, drift, &body),
@@ -1056,6 +1059,16 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
     // is proportionate rather than invented.
     let perilous =
         format!("<p class=\"perilous\"><a href=\"{at}/delete\">Delete this note</a></p>");
+
+    // The box, and not the answer in it. What points at a note is a walk of
+    // every note in the notebook — about 8% on top of what `ls` already costs,
+    // measured, but all of it spent on a column no screen under 1440px draws.
+    // So the server writes the empty box and `script::BESIDE` fills it, on the
+    // widths where it shows. Sent `hidden`, and it stays that way until there is
+    // something in it: a reader with no script gets the note and the Links
+    // button, which is the page this has always been.
+    let beside = "<aside class=\"beside\" hidden><div class=\"pane-head\">Backlinks</div>\
+                  <div class=\"answer\"></div></aside>";
     // Nothing marked as current: a note's bar is four things to do *to* the note
     // you are already on, and there is no "here" among them to be at.
     let bar = action_bar(&[
@@ -1076,7 +1089,7 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
     scripted(
         &format!("{} — noda", reading.title),
         "split at-note",
-        &[script::PANES],
+        &[script::PANES, script::BESIDE],
         &format!(
             "{}<section class=\"pane read\">\
              <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
@@ -1086,7 +1099,7 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
              <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
              <div class=\"note-meta\">{meta}</div></div>\
              <div class=\"body\">{}</div>\
-             {perilous}</main>{bar}</section>{}",
+             {perilous}{beside}</main>{bar}</section>{}",
             index_pane(book, &Asked::nothing(), "", drift, ""),
             back(&home, book),
             // The note, not the notebook. On a phone this bar is the whole
@@ -1830,6 +1843,31 @@ white-space:pre-wrap;overflow-wrap:break-word}\
 .perilous{padding:8px 16px 24px;margin:0}\
 .perilous a{color:var(--alert);display:inline-flex;align-items:center;min-height:var(--tap);\
 text-decoration:underline;text-underline-offset:3px;font-size:14px}\
+/* ------------------------------------------------------------ label role */\
+/* Mono, small, uppercase, tracked — a terminal's header line. It names a \
+   region and never appears inside content. */\
+.pane-head{font-size:11px;letter-spacing:.09em;text-transform:uppercase;\
+color:var(--punct);padding:0 0 8px}\
+/* --------------------------------------------------------- the margin note */\
+/* Hidden until it holds something, and there is no width at which that is not \
+   true: the `display:block` below is on `:not([hidden])` so it cannot out-order \
+   the attribute. A reader with no script keeps the attribute for good, and what \
+   they get is the note and the Links button — nothing stuck half-loaded, \
+   because nothing was promised. */\
+.beside{display:none}\
+.beside .mini{display:block;padding:8px 0;border-bottom:1px solid var(--rule);\
+font-family:var(--read);font-size:14px;line-height:1.35;color:var(--text)}\
+.beside .mini:last-child{border-bottom:0}\
+.beside .mini:hover{color:var(--tag)}\
+.beside .mini span{display:block;font-family:var(--mono);font-size:11px;\
+color:var(--id);margin-top:3px}\
+/* An answer of none is still an answer, and worth the column it arrived in. */\
+.beside .none{margin:0;color:var(--muted);font-size:13px}\
+/* Waiting for the walk. It borrows the status screen's breathing dot rather \
+   than inventing a second way of saying \"working\", but not that screen's bold: \
+   there it is the page's answer, here it is a margin note keeping its place. */\
+.beside .said{margin:0;padding:0;border-bottom:0;font-size:13px}\
+.beside .said b{font-weight:400;color:var(--muted)}\
 /* Below the width that holds two panes, exactly one is on screen, and which \
    one is the route's answer. Said as its own query rather than as a rule the \
    wide ones have to out-order: two `display` declarations fighting on source \
@@ -1978,11 +2016,43 @@ padding:0 13px;border-radius:9px;font-size:13px}\
    somewhere you cannot see: the notebooks. Only when the index is actually \
    there — without the script this is the one pane, and the way back with it. */\
 .app.split.indexed .read .topbar .back{display:none}}\
-/* A monitor wider than a laptop spends the extra on the index, never on the \
-   measure: a line of prose has a right length and it is not \"however wide the \
-   window is\". */\
+/* =================================================================== WIDE */\
+/* At 1440px what points at this note comes out from behind a press and sits \
+   beside it. It is the half of a note's links nothing else could tell you, and \
+   on a screen this wide there is room to just show it. \
+   `margined` is `indexed`'s twin and is set the same way — by the script, \
+   synchronously, before the first paint. It says the column has been asked \
+   for, which is why the layout may reserve it: the prose is then laid out once \
+   and the answer lands into space already kept for it. Without a script the \
+   class never appears and the note keeps the centred measure it has at \
+   1024px, rather than sitting off to one side of a column nothing will fill. */\
+@media (min-width:1440px){\
+/* `align-content:start` is load-bearing, not tidiness. `main` fills the pane, \
+   so a note shorter than the screen leaves the grid with room to spare — and \
+   the default (`normal`, resolving to `stretch`) hands that room out among the \
+   auto rows. The aside spans a row more than column one has, so the moment it \
+   stops being hidden there is one more row to share with and everything above \
+   shrinks: the body of a short note jumped up about 40px as the answer landed. \
+   Packing the rows at the start leaves the spare room at the bottom, where it \
+   belongs, and the row count stops being something the reader can see. */\
+.app.split.at-note.margined .read main.note{max-width:none;margin-inline:0;\
+display:grid;grid-template-columns:minmax(0,38em) 236px;column-gap:48px;\
+align-items:start;align-content:start;justify-content:center}\
+/* Head, body and the delete line share one column, so the rule under the title \
+   spans exactly what the prose does and the measure is the track rather than \
+   the track less two paddings. */\
+.app.split.at-note.margined .read .note-head,\
+.app.split.at-note.margined .read .body{grid-column:1;padding-left:0;padding-right:0}\
+.app.split.at-note.margined .read .perilous{grid-column:1;padding-left:0}\
+.app.split.at-note.margined .read .beside:not([hidden]){display:block;grid-column:2;\
+grid-row:1/span 3;position:sticky;top:24px;padding:26px 0 0}}\
+/* A monitor wider than a laptop spends the extra on the index and the margin \
+   note, never on the measure: a line of prose has a right length and it is not \
+   \"however wide the window is\". */\
 @media (min-width:1800px){\
-.app.split.indexed{grid-template-columns:var(--rail) clamp(340px,22vw,470px) minmax(0,1fr)}}\
+.app.split.indexed{grid-template-columns:var(--rail) clamp(340px,22vw,470px) minmax(0,1fr)}\
+.app.split.at-note.margined .read main.note{grid-template-columns:minmax(0,40em) 290px;\
+column-gap:64px}}\
 ";
 
 #[cfg(test)]
@@ -2353,5 +2423,71 @@ mod tests {
         assert!(page.contains("width=device-width"), "{page}");
         assert!(page.contains("prefers-color-scheme:dark"), "{page}");
         assert!(page.contains("--tap:48px"), "{page}");
+    }
+
+    fn reading() -> Reading {
+        Reading {
+            id: "em0xvn4e".into(),
+            slug: "budget-review".into(),
+            title: "Budget review".into(),
+            tags: vec![],
+            updated: None,
+            rendered: "late".into(),
+        }
+    }
+
+    /// The box, sent empty and closed. What goes in it is a walk of every note
+    /// in the notebook, and a note page reads one file — so the walk happens
+    /// where the column is drawn or it does not happen at all.
+    #[test]
+    fn the_note_page_sends_the_margin_note_empty_and_hidden() {
+        let page = note("work", &reading(), "in sync");
+        assert!(page.contains("<aside class=\"beside\" hidden>"), "{page}");
+        assert!(page.contains("<div class=\"answer\"></div>"), "{page}");
+        assert!(page.contains(">Backlinks</div>"), "{page}");
+    }
+
+    /// Hidden is hidden at every width. `display:block` on a class chain
+    /// out-ranks the `hidden` attribute, so the rule that draws the column has
+    /// to say it does not apply to a closed one — otherwise a reader with no
+    /// script gets a heading over an empty column, forever.
+    #[test]
+    fn the_margin_note_is_drawn_only_when_it_holds_something() {
+        let sheet = stylesheet();
+        assert!(sheet.contains(".beside{display:none}"), "{sheet}");
+        assert!(
+            sheet.contains(".read .beside:not([hidden]){display:block"),
+            "the margin note can now out-order its own hidden attribute"
+        );
+    }
+
+    /// The reading pane on the listing route is a README in the same
+    /// `main.note`, and it has no aside. The wide grid reserves a column for
+    /// one, so it has to ask whether a note is being read — `at-note` — or the
+    /// README ends up shoved off centre by 236px of nothing.
+    #[test]
+    fn the_wide_grid_asks_for_a_note_before_it_reserves_a_margin() {
+        let sheet = stylesheet();
+        assert!(sheet.contains("@media (min-width:1440px)"), "{sheet}");
+        for rule in sheet.split('}') {
+            if rule.contains("main.note") && rule.contains("grid-template-columns") {
+                assert!(
+                    rule.contains("at-note.margined"),
+                    "the wide grid applies to a pane that may hold the README: {rule}"
+                );
+            }
+        }
+    }
+
+    /// Two writers, one column. The listing route sends the script because
+    /// picking a row turns that page into a note page without a reload.
+    #[test]
+    fn both_routes_that_can_show_a_note_carry_the_script_that_fills_its_margin() {
+        let hook = "querySelector(\".pane.read .beside\")";
+        assert!(note("work", &reading(), "in sync").contains(hook), "note");
+        assert!(
+            listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
+            "listing"
+        );
     }
 }
