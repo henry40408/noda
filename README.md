@@ -967,7 +967,9 @@ line and go to the right of the title, which is the row `noda ls -l` already pri
 1024px the notes screen splits in two: the listing on the left, the note being read on the
 right, and picking a note replaces the reading half rather than the page. With no note picked
 the notebook's own `README.md` stands there, because that is the page a notebook already has
-about the whole of itself.
+about the whole of itself. Above 1440px there is room for a third thing, and it is what points
+at the note: the answer the Links button opens as a page of its own, in the margin of the note
+it is about.
 
 Two things arrive with the width, and both are the browser saying what a terminal already
 says:
@@ -985,8 +987,12 @@ says:
 Neither is on a phone: there is one column there, and the title has it.
 
 The listing beside a note is fetched by the script rather than sent with the page — a row is
-about 290 bytes, and below 1024px not one of them is ever drawn. With no script a note on a
-wide screen is what it has always been: the note, whole, and the way back to the listing.
+about 290 bytes, and below 1024px not one of them is ever drawn. The margin note is fetched the
+same way and for a sharper version of the same reason: what points at a note is a walk of every
+note in the notebook, while a note page otherwise reads one file. With no script a note on a
+wide screen is what it has always been: the note, whole, and the way back to the listing —
+and the Links button, which is the way to the same answer at every width and the only way to
+it on a phone.
 
 Two things a note's body cannot do, both on purpose. **Raw HTML is shown as a code block**
 rather than rendered: `noda import tiddlywiki` deliberately leaves markup it could not convert
