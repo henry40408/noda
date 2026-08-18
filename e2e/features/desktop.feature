@@ -197,3 +197,12 @@ Feature: The same pages on a wider screen
     When I press "Reading list" in the margin note
     Then the note is headed "Reading list"
     And the margin note says "Nothing points here."
+
+  # The one screen that is not inside a notebook, and so the one with no rail.
+  # It is a grid column, and a page that never draws a rail was still being laid
+  # out around one: 76 pixels of nothing down the left of every notebook, which
+  # the markup gives no sign of either way.
+  Scenario: The front page is laid out with no rail
+    Given I open the front page on a tablet
+    Then the notebooks fill the window
+    And the page does not scroll sideways

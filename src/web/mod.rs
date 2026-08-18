@@ -392,14 +392,28 @@ fn html(body: String) -> impl IntoResponse {
 
 async fn front(State(server): State<Shared>) -> Response {
     answer(move || {
+        // A missing pointer is not an error here. `noda init` writes one and
+        // every command that opens the active notebook complains when it is
+        // gone, but this page names all of them and would be worth reading
+        // even on a machine that has never chosen one.
+        let active = server.paths.active_notebook().ok();
         let mut books = Vec::new();
         for name in Notebook::list(&server.paths)? {
             let notebook = Notebook::open(&server.paths, &name)?;
             let status = notebook.status()?;
+            let (seconds, offset) = notebook.last_commit()?;
             books.push(page::Book {
+                active: active.as_deref() == Some(name.as_str()),
                 name,
                 notes: status.notes,
-                remote: standing(status.remote.as_deref(), status.drift),
+                files: status.files,
+                uncommitted: status.uncommitted,
+                // `None` is a notebook with nowhere to sync to, and the row
+                // draws that case differently: it is the one that is not a
+                // link. Said in the type rather than by reading the words back
+                // out of the string this used to be.
+                drift: status.remote.as_ref().map(|_| drifted(status.drift)),
+                last: cmd::format_time(seconds, offset)[..cmd::DATE_WIDTH].to_string(),
             });
         }
         Ok(Answer::Page(page::notebooks(&books)))
@@ -407,20 +421,28 @@ async fn front(State(server): State<Shared>) -> Response {
     .await
 }
 
-/// Where a notebook stands against its remote, in git's own words.
+/// Where a notebook stands, remote and all, for the screens that say it in one
+/// string.
+fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
+    match remote {
+        None => "no remote".to_string(),
+        Some(_) => drifted(drift),
+    }
+}
+
+/// Where a notebook stands against a remote it has, in git's own words.
 ///
 /// `ahead` and `behind` rather than a verb: "sync" asks whether you want to,
 /// and this says whether there is anything to. The counts are already in
 /// `Status` — `noda status` prints them — so this is the same judgement said
 /// shorter, not a second one.
-fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
-    match (remote, drift) {
-        (None, _) => "no remote".to_string(),
-        (Some(_), None) => "never fetched".to_string(),
-        (Some(_), Some((0, 0))) => "in sync".to_string(),
-        (Some(_), Some((ahead, 0))) => format!("{ahead} to push"),
-        (Some(_), Some((0, behind))) => format!("{behind} to pull"),
-        (Some(_), Some((ahead, behind))) => format!("{ahead} to push, {behind} to pull"),
+fn drifted(drift: Option<(usize, usize)>) -> String {
+    match drift {
+        None => "never fetched".to_string(),
+        Some((0, 0)) => "in sync".to_string(),
+        Some((ahead, 0)) => format!("{ahead} to push"),
+        Some((0, behind)) => format!("{behind} to pull"),
+        Some((ahead, behind)) => format!("{ahead} to push, {behind} to pull"),
     }
 }
 

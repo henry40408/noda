@@ -11,6 +11,14 @@ Feature: Everything can be pressed with a thumb
     Given I open the front page
     Then no control is smaller than 48 by 48
 
+  # A tablet is touched too, and the front page's row is where that stopped
+  # being automatic: the chip saying where a notebook stands is as tall as its
+  # row on a phone and was as tall as its own pill here, because at this width
+  # the row aligns its contents on a baseline rather than stretching them.
+  Scenario: Every control on the front page is big enough on a tablet
+    Given I open the front page on a tablet
+    Then no control is smaller than 48 by 48
+
   Scenario: Every control on a listing is big enough
     Given I open the notebook
     Then no control is smaller than 48 by 48
