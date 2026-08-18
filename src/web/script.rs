@@ -6,7 +6,7 @@
 //! corner nobody notices — and it decides what this file may do. **Nothing here
 //! adds a capability. Everything here removes a wait.**
 //!
-//! Two waits, specifically, and they are the two the design named up front:
+//! Three waits, specifically. The first two the design named up front:
 //!
 //! * **The listing waits for a round trip to narrow itself.** Every fact a
 //!   title-or-tag query needs is already on the page, so the round trip buys
@@ -16,6 +16,12 @@
 //!   is how a page with no script comes back for news; a fetch of the same URL
 //!   is the same news without the flash, the scroll jump, and the field losing
 //!   focus.
+//!
+//! And the third, which the wide layout added: **what points at a note waits
+//! behind a press.** On a screen with room beside the prose, the Links page and
+//! the round trip to it buy nothing that could not be on the screen already.
+//! The button stays, it is still the only way there on a phone, and the answer
+//! shown is the one that route sends.
 //!
 //! ## The rule both halves are written against
 //!
@@ -476,12 +482,23 @@ pub const PANES: &str = r#"
     app.classList.add("at-note");
     history.pushState(null, "", href);
     mark();
+    // The reading pane is replaced whole, so anything that hangs off the note
+    // being read is now a different, empty element. Said rather than observed:
+    // `script::BESIDE` is the one listener today, and a pane swap is a fact
+    // about this script, not something another one should have to infer from
+    // the DOM changing under it.
+    app.dispatchEvent(new CustomEvent("noda:read"));
   };
 
   app.addEventListener("click", (event) => {
     if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey ||
         event.shiftKey || event.altKey) return;
-    const row = event.target.closest(".index main.rows a.row");
+    // The margin note's links are the same kind of thing as the index's rows —
+    // a note in this notebook, one press away — so they travel the same way.
+    // Left out, pressing one would be a full navigation that threw away the
+    // listing beside it and asked for it again, which is the flicker `swap`
+    // exists to avoid.
+    const row = event.target.closest(".index main.rows a.row,.read .beside .mini");
     if (!row || !wide.matches) return;
     const href = row.getAttribute("href");
     if (!href) return;
@@ -500,11 +517,151 @@ pub const PANES: &str = r#"
 })();
 "#;
 
+/// What points at the note, in the margin of the note.
+///
+/// The third wait, and the one the module's opening list did not have room for:
+/// backlinks are a page of their own behind the Links button, and on a screen
+/// wide enough to hold them beside the prose, that press and its round trip buy
+/// nothing. Nothing new is reachable here. The button is still there, it is
+/// still the only way on a phone, and this answers with the same route's answer.
+///
+/// ## Why the server does not send it
+///
+/// Because of what it costs, and where. `backlinks_to_note` walks every note in
+/// the notebook — measured at about 8% on top of `ls` at two thousand notes,
+/// which is cheap for a page that was asked for and pure waste for a column no
+/// screen under 1440px draws. Worse, a note page today reads exactly one file:
+/// `resolve` looks at filenames and nothing opens a second note. Putting the
+/// aside in the markup would turn one read into two thousand on every phone.
+///
+/// So the server writes the box, hidden, and this fills it where it shows.
+///
+/// ## `margined`, and why the class comes before the answer
+///
+/// The same bargain `indexed` makes on the index pane. The class goes on
+/// synchronously, before the first paint, and it is what lets the layout keep
+/// 236px for a column whose contents are still in flight — so the prose is laid
+/// out once and the answer lands into space already held for it, rather than
+/// pushing a short note's body up as it arrives. No script, no class, no
+/// reserved column: the note keeps the centred measure it has at 1024px.
+///
+/// ## The one loading state on the page
+///
+/// The index pane opposite says nothing while it fills, because after the first
+/// arrival it has rows and keeps them. This column is the other case: it is
+/// empty on every note, the walk behind it is the whole notebook, and an
+/// unexplained gap in a column that says "Backlinks" reads as a column that
+/// failed. So it says so, once, in the status screen's own breathing dot.
+///
+/// An answer of none is an answer and is drawn as one. A fetch that never comes
+/// back is not: the box goes away again and the reader is left with the note,
+/// whole, which is the page they asked for.
+pub const BESIDE: &str = r#"
+(() => {
+  const app = document.querySelector(".app.split");
+  if (!app) return;
+  const wide = matchMedia("(min-width:1440px)");
+
+  // The note the column is about, read off the address rather than remembered
+  // — right after a swap, right after a hard load, and the string the fetch is
+  // built from, so the two can never be about different notes.
+  let asked = null;
+
+  const working = (text) => {
+    const said = document.createElement("p");
+    said.className = "said working";
+    const bold = document.createElement("b");
+    bold.textContent = text;
+    said.append(bold);
+    return said;
+  };
+
+  const nothing = (text) => {
+    const none = document.createElement("p");
+    none.className = "none";
+    none.textContent = text;
+    return none;
+  };
+
+  const ask = async () => {
+    if (!wide.matches || !app.classList.contains("at-note")) return;
+    const aside = app.querySelector(".pane.read .beside");
+    const answer = aside && aside.querySelector(".answer");
+    if (!answer) return;
+    // Before the first paint and before the first await: the column has to be
+    // reserved while the answer is still coming, or the note is laid out at one
+    // measure and then again at another.
+    app.classList.add("margined");
+    const at = location.pathname;
+    if (asked === at) return;
+    asked = at;
+
+    answer.replaceChildren(working("Reading the notebook…"));
+    aside.hidden = false;
+
+    let text;
+    try {
+      const got = await fetch(at + "/backlinks", { headers: { accept: "text/html" } });
+      if (!got.ok) throw new Error(got.status);
+      text = await got.text();
+    } catch {
+      // Nothing arrived, so nothing is claimed. The box closes, `asked` is
+      // cleared so widening or the next note may try again, and what is left on
+      // the screen is a whole note and a Links button — the page with no script.
+      if (location.pathname === at) {
+        aside.hidden = true;
+        answer.replaceChildren();
+      }
+      asked = null;
+      return;
+    }
+
+    // The reader may have moved on while the notebook was being walked, and the
+    // pane they moved to is a different element than the one asked for.
+    if (location.pathname !== at) return;
+    const box = app.querySelector(".pane.read .beside");
+    const into = box && box.querySelector(".answer");
+    if (!into) return;
+
+    // The server's answer, said in the margin's own shape. `bring` lifts the
+    // listing's rows because that column *is* the listing; this one is not — it
+    // is 236px beside prose, where a row's tags would wrap into a paragraph.
+    // What is taken is which notes and what they are called; the shape is the
+    // column's, and the id under each title is the same identity the index puts
+    // on its rows.
+    const sent = new DOMParser().parseFromString(text, "text/html");
+    const minis = [];
+    for (const row of sent.querySelectorAll("main.rows a.row")) {
+      const href = row.getAttribute("href");
+      const title = row.querySelector(".title");
+      if (!href || !title) continue;
+      const mini = document.createElement("a");
+      mini.className = "mini";
+      mini.href = href;
+      mini.textContent = title.textContent;
+      const id = document.createElement("span");
+      id.textContent = href.split("/").pop();
+      mini.append(id);
+      minis.push(mini);
+    }
+    if (minis.length) into.replaceChildren(...minis);
+    else into.replaceChildren(nothing("Nothing points here."));
+    box.hidden = false;
+  };
+
+  // Widening past the breakpoint is the reader asking for the column, so it is
+  // when the question gets asked. Narrowing asks nothing and undoes nothing.
+  wide.addEventListener("change", ask);
+  app.addEventListener("noda:read", ask);
+  ask();
+})();
+"#;
+
 /// A script, as it goes into a page.
 ///
 /// The one thing worth checking is in here rather than at each call site: a
 /// `</script` anywhere in the text ends the element, wherever it appears, and
-/// the rest of the file becomes markup. Neither script contains one today and
+/// the rest of the file becomes markup. No script here contains one today and
 /// the assertion is what keeps that true of the next line somebody adds.
 pub fn tag(source: &str) -> String {
     debug_assert!(
@@ -522,8 +679,8 @@ mod tests {
 
     /// The whole of the injection defence, and it is one string.
     #[test]
-    fn neither_script_can_end_its_own_element() {
-        for source in [LISTING, STANDING] {
+    fn no_script_can_end_its_own_element() {
+        for source in [LISTING, STANDING, PANES, BESIDE] {
             assert!(!source.to_lowercase().contains("</script"), "{source}");
         }
     }
@@ -622,6 +779,76 @@ mod tests {
             "{STANDING}"
         );
         assert!(STANDING.contains("querySelector(\"main\")"), "{STANDING}");
+    }
+
+    /// The margin note reads two pages it did not write: the note page it sits
+    /// in, and the backlinks page it fetches. Both break it silently — the
+    /// column simply arrives empty, at a width no unit test has.
+    #[test]
+    fn the_margin_note_looks_for_what_the_pages_write() {
+        for hook in [
+            ".app.split",
+            ".pane.read .beside",
+            ".answer",
+            "main.rows a.row",
+            ".title",
+            "at-note",
+            "margined",
+            "\"mini\"",
+            "\"/backlinks\"",
+        ] {
+            assert!(
+                BESIDE.contains(hook),
+                "the margin note stopped looking for {hook}"
+            );
+        }
+    }
+
+    /// The shapes it builds are drawn by the stylesheet and nowhere else. This
+    /// is the same pairing the grouping needs: markup written in JavaScript
+    /// against rules written in Rust, with nothing between them but a name.
+    #[test]
+    fn the_stylesheet_draws_what_the_margin_note_builds() {
+        let sheet = crate::web::page::stylesheet();
+        for rule in [
+            ".beside .mini",
+            ".beside .mini span",
+            ".beside .none",
+            ".beside .said",
+        ] {
+            assert!(
+                sheet.contains(rule),
+                "the stylesheet stopped drawing {rule}"
+            );
+        }
+        for made in ["\"mini\"", "\"none\"", "\"said working\""] {
+            assert!(
+                BESIDE.contains(made),
+                "the margin note stopped building {made}"
+            );
+        }
+    }
+
+    /// The margin note's breakpoint, written twice for the same reason the
+    /// panes' is: ask at a width the stylesheet does not draw and the answer
+    /// lands in a column nobody can see.
+    #[test]
+    fn the_margin_note_and_the_stylesheet_widen_at_the_same_number() {
+        assert!(BESIDE.contains("(min-width:1440px)"), "{BESIDE}");
+        assert!(
+            crate::web::page::stylesheet().contains("(min-width:1440px)"),
+            "the stylesheet no longer puts the margin note beside the note"
+        );
+    }
+
+    /// A swap replaces the reading pane whole, so the aside in it becomes a
+    /// different, empty element. One script says so and the other listens; drop
+    /// either half and the margin note is right on a hard load and stale on
+    /// every press after it.
+    #[test]
+    fn a_pane_swap_tells_the_margin_note_the_note_changed() {
+        assert!(PANES.contains("\"noda:read\""), "{PANES}");
+        assert!(BESIDE.contains("\"noda:read\""), "{BESIDE}");
     }
 
     #[test]

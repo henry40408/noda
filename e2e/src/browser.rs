@@ -40,7 +40,14 @@ pub const PHONE: (u32, u32) = (390, 844);
 pub const TABLET: (u32, u32) = (834, 1112);
 
 /// A desktop: wide enough for the index and the note side by side.
+///
+/// A laptop, deliberately. 1280 is over the width that splits the panes and
+/// under the one that puts a margin beside the note, so it is where "two
+/// columns and no third" can be asserted rather than assumed.
 pub const DESKTOP: (u32, u32) = (1280, 800);
+
+/// A monitor: wide enough for what points at the note to sit beside it.
+pub const MONITOR: (u32, u32) = (1680, 1050);
 
 /// Whether the page's own scripts run.
 ///
