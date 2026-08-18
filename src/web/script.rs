@@ -59,13 +59,28 @@
 
 use std::fmt::Write;
 
-/// The listing's filter.
+/// The listing's filter, and the grouping it drew on the way.
 ///
 /// Reads the rows out of the DOM rather than being handed a copy of them. The
 /// alternative — a `<script type="application/json">` beside the list — would
 /// put every title and tag on the page twice, and the second copy is the one
 /// that goes stale. `textContent` also unwraps the server's `<mark>`s for free,
 /// which is exactly the string the query has to be matched against.
+///
+/// ## The grouping is the one thing here that never stands aside
+///
+/// `page::grouping` draws what the server parsed; this redraws it on every
+/// keystroke, from the same `parse` the filter runs on. That is not a third
+/// implementation — it is the one already required by the table above, used for
+/// a second thing.
+///
+/// It also answers in the two cases the *filter* refuses to. A negated bare
+/// word makes the filter stand aside, and a query still being typed does not
+/// parse at all — but a grouping is a fact about the words, not about the
+/// notes, so where there is a parse there is a grouping, whatever the rows are
+/// doing. Where there is not, the box empties: half a query has no grouping
+/// yet, and drawing the last complete one under a line that no longer says it
+/// would be the one thing worse than saying nothing.
 pub const LISTING: &str = r#"
 (() => {
   const form = document.querySelector("form.searchbar");
@@ -77,6 +92,7 @@ pub const LISTING: &str = r#"
 
   const count = document.querySelector(".topbar .count");
   const hint = form.querySelector(".hint");
+  const parsed = form.querySelector(".parse");
   const problem = form.querySelector(".problem");
   const empty = list.querySelector(".empty");
   const asked = empty && empty.querySelector(".asked");
@@ -120,6 +136,9 @@ pub const LISTING: &str = r#"
     return pieces;
   };
 
+  // `said` is the token as it was typed, kept because the grouping is drawn
+  // from it: what goes on the screen has to be the reader's own line, and
+  // everything else here is what the line was read to mean.
   const term = (token) => {
     const negated = token.startsWith("-");
     const rest = negated ? token.slice(1) : token;
@@ -131,7 +150,7 @@ pub const LISTING: &str = r#"
       field = rest.slice(0, colon);
       value = rest.slice(colon + 1);
     }
-    return value ? { field, value, negated } : null;
+    return value ? { field, value, negated, said: token } : null;
   };
 
   // Groups that must all match, each satisfied by any one of its terms. `null`
@@ -200,6 +219,39 @@ pub const LISTING: &str = r#"
     element.append(text.slice(at));
   };
 
+  // `page::grouping`, again: a pill per group, `or` inside one and `and`
+  // between them. Built as nodes for the same reason `paint` is — the text in
+  // it is the reader's, and the way to be sure it is never read as markup is
+  // to never make it into a string that could be.
+  const chips = (groups) => {
+    if (!parsed) return;
+    parsed.textContent = "";
+    parsed.hidden = !groups;
+    if (!groups) return;
+    for (const group of groups) {
+      if (parsed.firstChild) {
+        const and = document.createElement("span");
+        and.className = "and";
+        and.textContent = "and";
+        parsed.append(and);
+      }
+      const pill = document.createElement("span");
+      pill.className = "g";
+      for (const one of group) {
+        if (pill.firstChild) {
+          const or = document.createElement("i");
+          or.textContent = "or";
+          pill.append(or);
+        }
+        const said = document.createElement("b");
+        if (one.said.startsWith("tag:") || one.said.startsWith("-tag:")) said.className = "t";
+        said.textContent = one.said;
+        pill.append(said);
+      }
+      parsed.append(pill);
+    }
+  };
+
   // `full` is whether what is on the screen is the whole answer. When it is
   // not, the count would be a lie told in the server's own voice, so the hint
   // says whose answer it is and which key finishes it.
@@ -228,6 +280,12 @@ pub const LISTING: &str = r#"
     if (problem) problem.hidden = true;
 
     const tokens = split(field.value);
+    // Drawn before anything is decided about the rows, and from the same parse
+    // the deciding uses. Both of the ways out below leave the listing alone;
+    // neither is a reason to leave the grouping wrong.
+    const groups = tokens.length ? parse(tokens) : null;
+    chips(groups);
+
     if (!tokens.length) {
       for (const note of notes) {
         note.row.hidden = false;
@@ -237,7 +295,6 @@ pub const LISTING: &str = r#"
       return;
     }
 
-    const groups = parse(tokens);
     if (!groups) return stand();
     const terms = groups.flat();
     // The row that inverts. See the table at the top of `script.rs`.
@@ -486,6 +543,7 @@ mod tests {
             ".tags",
             ".topbar .count",
             ".hint",
+            ".parse",
             ".problem",
             ".empty",
             ".asked",
@@ -493,6 +551,29 @@ mod tests {
             assert!(
                 LISTING.contains(hook),
                 "the filter stopped looking for {hook}"
+            );
+        }
+    }
+
+    /// The grouping is drawn twice — by `page::grouping` when the page arrives
+    /// and by this on every keystroke after — so the two have to build the same
+    /// markup. They cannot share a function across the language boundary, and a
+    /// pill that changed shape the moment a key was pressed would be a flicker
+    /// nothing else here would catch. What can be checked is that both write
+    /// the classes the stylesheet draws, and that the stylesheet draws them.
+    #[test]
+    fn both_halves_of_the_grouping_draw_the_same_pill() {
+        for hook in ["\".parse\"", "\"and\"", "\"g\"", "\"t\"", "\"i\""] {
+            assert!(
+                LISTING.contains(hook),
+                "the grouping stopped writing {hook}"
+            );
+        }
+        let sheet = crate::web::page::stylesheet();
+        for rule in [".parse .g", ".parse .g b.t", ".parse .g i", ".parse .and"] {
+            assert!(
+                sheet.contains(rule),
+                "the stylesheet stopped drawing {rule}"
             );
         }
     }

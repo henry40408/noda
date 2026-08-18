@@ -34,12 +34,22 @@ pub struct Book {
     pub remote: String,
 }
 
-/// A note, as a listing names it. The row `ls` prints, minus the id.
+/// A note, as a listing names it: the row `ls -l` prints, minus the slug and
+/// the created stamp.
 ///
-/// The id is gone for a reason worth writing down: `ls` shows it because the
-/// next thing you do is type it, and here the next thing you do is press it. It
-/// is still the address — the link is `/nb/<book>/n/<id>` — it is just not
-/// something the reader has to carry any more.
+/// Both of those are on the note's own page, and a browser is one press from
+/// it — which is the rule the rest of the row follows too. What is left is the
+/// id, the title, the day it was last touched and the tags, **in that order**,
+/// because that is `ls -l`'s order and this is meant to be the same row.
+///
+/// The id in particular was left out until a screen turned up with room for
+/// it. The argument for leaving it out is real on a phone — `ls` prints an id
+/// because the next thing you do is type it, and here the next thing you do is
+/// press it — but it is an argument about space, not about the id, and a
+/// monitor has the space. What it buys back is the notebook's own vocabulary:
+/// an id on the screen is the one you say to `noda show`, and the filename you
+/// find in the repository. So it is written on every row and shown where it
+/// fits, which is the whole of the layout's habit in one element.
 pub struct Row {
     pub id: String,
     pub title: String,
@@ -504,16 +514,47 @@ pub fn notebooks(books: &[Book]) -> String {
     )
 }
 
+/// The line in the search field, and everything the page has to say about it.
+///
+/// One argument rather than four because they are one thing: four answers to
+/// the same line, only ever right together. A page holding the grouping of one
+/// query and the complaint about another is not a state worth being able to
+/// construct.
+pub struct Asked<'a> {
+    /// The line exactly as it arrived, which is what goes back in the field.
+    pub typed: &'a str,
+    /// The grouping it parsed to — `query::Query::grouping`. Empty when the
+    /// line is not a query yet, which is the same state as nothing typed as far
+    /// as this page is concerned: there is no grouping to show either way.
+    pub grouping: &'a [Vec<String>],
+    /// What is worth marking in a title, from the query that has all of it.
+    pub terms: &'a [String],
+    /// Why what has been typed is not a query yet. It is said and the notes are
+    /// left alone — the same call `style::INVALID` exists for in the browser:
+    /// half a query is what every query looks like on the way to being one, and
+    /// emptying the screen over an unfinished thought is not an answer.
+    pub problem: Option<&'a str>,
+}
+
+impl Asked<'_> {
+    /// A page with no search on it. What a note route sends: the field is there
+    /// and empty, because a reader who narrows from a note lands on the
+    /// listing, and nothing has been asked yet.
+    pub fn nothing() -> Self {
+        Self {
+            typed: "",
+            grouping: &[],
+            terms: &[],
+            problem: None,
+        }
+    }
+}
+
 /// A notebook's notes, narrowed by whatever was typed.
 ///
 /// `total` is how many the notebook holds, which is only interesting when it
 /// differs from how many are shown — a reader who has filtered to nothing needs
 /// to be told there is something to go back to.
-///
-/// `problem` is why what has been typed is not a query yet. It is said and the
-/// notes are left alone — the same call `style::INVALID` exists for in the
-/// browser: half a query is what every query looks like on the way to being
-/// one, and emptying the screen over an unfinished thought is not an answer.
 ///
 /// `drift` is where the notebook stands against its remote, already in words. It
 /// rides in the corner of the bar as a link to the network screen — the one
@@ -522,9 +563,7 @@ pub fn notebooks(books: &[Book]) -> String {
 pub fn listing(
     book: &str,
     rows: &[Row],
-    query: &str,
-    terms: &[String],
-    problem: Option<&str>,
+    asked: &Asked<'_>,
     drift: &str,
     front: Option<&str>,
 ) -> String {
@@ -533,24 +572,45 @@ pub fn listing(
 
     let mut body = String::new();
     for row in rows {
-        let under = [tag_line(&row.tags), when(row.updated.as_deref())]
+        // `ls -l`'s order, and tags last for `ls -l`'s reason: they are the one
+        // column a note may not have, and anything after them would shift from
+        // row to row. Here that would be a day sitting under a different part
+        // of the line depending on whether the note above it was tagged.
+        let under = [when(row.updated.as_deref()), tag_line(&row.tags)]
             .into_iter()
             .filter(|piece| !piece.is_empty())
             .collect::<Vec<_>>()
             .join("<span class=\"sep\">·</span>");
         let _ = write!(
             body,
-            "<a class=\"row\"{} href=\"/nb/{}/n/{}\"><div class=\"title\">{}</div>\
+            "<a class=\"row\"{} href=\"/nb/{}/n/{}\">\
+             <div class=\"ident\"><span class=\"id\">{}</span>{}</div>\
+             <div class=\"title\">{}</div>\
              <div class=\"under\">{under}</div></a>",
             if row.shown { "" } else { " hidden" },
             escape(book),
             escape(&row.id),
+            escape(&row.id),
+            // The day, said a second time and shown in only one place at a
+            // time. A wide row prints it at the right, where `-l` prints it; a
+            // column too narrow for three has nowhere to the right to print it,
+            // so it rides beside the id instead and the one under the title is
+            // the copy that goes. Writing both and letting the stylesheet
+            // choose keeps the choice at the width that knows it — the server
+            // is not told how wide the screen is, and asking would be a worse
+            // page than sending eleven bytes twice.
+            row.updated
+                .as_deref()
+                .map_or_else(String::new, |value| format!(
+                    "<span class=\"day\">{}</span>",
+                    escape(&day(value))
+                )),
             // Marked only on the rows that are being shown for a reason. A
             // hidden row carries its title unmarked, which is the state the
             // script would put it in anyway when it lets the row back through
             // for a different query.
             if row.shown {
-                highlight(&row.title, terms)
+                highlight(&row.title, asked.terms)
             } else {
                 escape(&row.title)
             }
@@ -571,13 +631,13 @@ pub fn listing(
             "<div class=\"empty\"{}><b>No notes match <span class=\"asked\">{}</span></b>\
              This notebook holds {}. <a href=\"/nb/{}\">Clear the search</a> to see them.</div>",
             if shown > 0 { " hidden" } else { "" },
-            escape(query),
+            escape(asked.typed),
             plural(total, "note"),
             escape(book)
         );
     }
 
-    let counted = if query.is_empty() {
+    let counted = if asked.typed.is_empty() {
         total.to_string()
     } else {
         format!("{shown} of {total}")
@@ -592,7 +652,7 @@ pub fn listing(
         &[script::LISTING, script::PANES],
         &format!(
             "{}{}{}",
-            index_pane(book, query, &counted, problem, drift, &body),
+            index_pane(book, asked, &counted, drift, &body),
             front_pane(book, front),
             notebook_bar(book, At::Notes)
         ),
@@ -610,14 +670,7 @@ pub fn listing(
 /// note route leaves it empty and `script::PANES` fills it in, because a phone
 /// that will never show this column should not be sent a copy of it. `counted`
 /// is empty for the same reason: a count of rows nobody has is not a fact yet.
-fn index_pane(
-    book: &str,
-    query: &str,
-    counted: &str,
-    problem: Option<&str>,
-    drift: &str,
-    rows: &str,
-) -> String {
+fn index_pane(book: &str, asked: &Asked<'_>, counted: &str, drift: &str, rows: &str) -> String {
     format!(
         "<section class=\"pane index\">\
          <header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
@@ -626,23 +679,87 @@ fn index_pane(
          <input type=\"search\" name=\"q\" value=\"{}\" \
          placeholder=\"tag:work OR tag:q3 budget\" \
          autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" \
-         enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}</form>\
+         enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}{}</form>\
          <main class=\"rows\">{rows}</main></section>",
         back("/", "the notebooks"),
         escape(book),
         drift_chip(book, drift),
         escape(book),
-        escape(query),
+        escape(asked.typed),
         // Written by the server and hidden by the server, so that the only
         // thing the script does with it is decide when it applies. A sentence
         // that exists only inside a script is a sentence nothing else can test
         // the wording of.
         hint(),
-        problem.map_or_else(String::new, |why| format!(
+        grouping(asked.grouping),
+        asked.problem.map_or_else(String::new, |why| format!(
             "<p class=\"problem\">{}</p>",
             escape(why)
         )),
     )
+}
+
+/// What was typed, as noda grouped it.
+///
+/// **`a OR b c` is `(a OR b) AND c`, and that is the one thing about this
+/// grammar people get wrong.** `OR` binding tighter than a space is backwards
+/// from every search box that has an `OR` at all, and the two readings are not
+/// close: one asks for notes in either of two tags that also mention a word,
+/// the other asks for anything in the first tag at all. A reader who has the
+/// second and wanted the first has no way to tell from a list of notes, because
+/// both answers look like an answer.
+///
+/// The manual says so, and the manual is not on the screen. This is, sitting
+/// under the field it is about, and it says it in the only terms that cannot be
+/// misread: the grouping itself, drawn. Each pill is a group — its terms joined
+/// by `or` — and the pills are joined by `and`.
+///
+/// Never the words the parser would have used. Every token is the reader's own,
+/// which is what makes this a mirror rather than a second opinion: shown
+/// `tag:work OR tag:q3 budget`, it draws `(tag:work or tag:q3) and (budget)`
+/// and every character in it was theirs.
+///
+/// Empty for an empty field and for a line that is not a query yet — in the
+/// second case the field already carries a red line about what is wrong, and
+/// grouping the words of a query that does not parse would be inventing an
+/// answer to go with it.
+///
+/// The box is written either way and hidden when there is nothing in it, for
+/// the reason [`hint`] gives: what the script does with it is decide when it
+/// applies, never what it says.
+fn grouping(groups: &[Vec<String>]) -> String {
+    if groups.is_empty() {
+        return "<div class=\"parse\" hidden></div>".to_string();
+    }
+    let mut out = String::from("<div class=\"parse\">");
+    for (at, group) in groups.iter().enumerate() {
+        if at > 0 {
+            out.push_str("<span class=\"and\">and</span>");
+        }
+        out.push_str("<span class=\"g\">");
+        for (at, term) in group.iter().enumerate() {
+            if at > 0 {
+                out.push_str("<i>or</i>");
+            }
+            // A `tag:` term wears the tag's own colour, the way it does
+            // everywhere else noda prints one. Nothing else here is coloured:
+            // the point is the shape, and a pill per field would be a legend to
+            // learn before the shape could be read.
+            let _ = write!(
+                out,
+                "<b{}>{}</b>",
+                if term.starts_with("tag:") || term.starts_with("-tag:") {
+                    " class=\"t\""
+                } else {
+                    ""
+                },
+                escape(term)
+            );
+        }
+        out.push_str("</span>");
+    }
+    out.push_str("</div>");
+    out
 }
 
 /// The reading pane with no note picked, which only a screen wide enough to
@@ -970,7 +1087,7 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
              <div class=\"note-meta\">{meta}</div></div>\
              <div class=\"body\">{}</div>\
              {perilous}</main>{bar}</section>{}",
-            index_pane(book, "", "", None, drift, ""),
+            index_pane(book, &Asked::nothing(), "", drift, ""),
             back(&home, book),
             // The note, not the notebook. On a phone this bar is the whole
             // chrome and either would do; beside an index pane already headed
@@ -1475,6 +1592,23 @@ font-family:var(--mono);font-size:16px}\
    same field — and it is the chrome's grey rather than a hue, since nothing \
    in this palette colours a state. */\
 .searchbar .hint{margin:8px 2px 0;font-size:12.5px;color:var(--muted)}\
+/* ------------------------------------------- SIGNATURE: the query parse */\
+/* The grouping, drawn under the field it is about. See `page::grouping` for \
+   why it is worth the room; this is only where it is spent. Not on a phone: \
+   the field there is one line with one remark under it, and a second remark \
+   about the same line would be the taller half of a screen already short of \
+   room. The reading of `a OR b c` a phone gets wrong is the reading a monitor \
+   gets wrong, but a monitor can afford to be told. */\
+.parse{display:none;margin:9px 2px 1px;flex-wrap:wrap;align-items:center;gap:7px;font-size:12px}\
+/* A group is a pill, so the boundary is a shape rather than a word — the \
+   thing being said is where the brackets fall, and brackets are what people \
+   were not reading. */\
+.parse .g{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;\
+border:1px solid var(--rule);border-radius:999px;background:var(--bg-sunk)}\
+.parse .g b{font-weight:400;color:var(--text)}\
+.parse .g b.t{color:var(--tag)}\
+.parse .g i{font-style:normal;color:var(--punct);font-size:11px;letter-spacing:.06em}\
+.parse .and{color:var(--punct);font-size:11px;letter-spacing:.09em;text-transform:uppercase}\
 a{color:inherit;text-decoration:none}\
 .row{display:block;min-height:64px;padding:12px 16px;border-bottom:1px solid var(--rule);\
 -webkit-tap-highlight-color:transparent}\
@@ -1490,6 +1624,15 @@ a{color:inherit;text-decoration:none}\
 .row .name{font-size:15px}\
 .row .under{margin-top:4px;font-size:12.5px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}\
 .row .under:empty{display:none}\
+/* ------------------------------------------------ SIGNATURE: the id column */\
+/* The note's own name, in the notebook's own vocabulary — `noda show` takes \
+   it, and it is the first half of the filename in the repository. Written on \
+   every listing row and shown only where a row has a column to spare for it, \
+   which is nowhere on a phone: see the rules at 640 and 1024 below. \
+   Monospace and `--id`, the same as `noda ls` prints and the same as the \
+   filename at the head of a note page, because it is the same thing being \
+   named three times. */\
+.row .ident{display:none;font-family:var(--mono);font-size:12px;color:var(--id)}\
 .tags{color:var(--tag)}\
 .sep{color:var(--punct)}\
 .when{color:var(--muted)}\
@@ -1734,10 +1877,20 @@ margin:14px auto 12px;box-shadow:none}\
 .topbar,.searchbar{padding-left:24px;padding-right:24px}\
 .topbar .back{margin-left:-12px}\
 .topbar .lead{padding-left:0}\
-/* The row extends rather than stacking: the tags and the day leave the second \
-   line and go to the right of the title. Same information, same order — the \
-   rule `-l` follows on the CLI's own row. */\
+.parse{display:flex}\
+/* The row extends rather than stacking, and what it extends into is `ls -l`'s \
+   own columns: id, title, updated, tags. The slug and the created stamp are \
+   the two `-l` prints that are not here, and both are one press away on the \
+   note's own page. \
+   Tags stay last for the reason `-l` gives: they are the one column a note \
+   may not have, and anywhere but the end their absence would shift every \
+   column behind them from row to row. */\
 .rows .row{display:flex;align-items:baseline;gap:20px;min-height:0;padding:13px 24px}\
+.rows .row .ident{display:block;flex:0 0 auto}\
+/* The day is at the right of a wide row, where `-l` prints it. The copy \
+   beside the id is for the narrow index pane further down, which has no \
+   right-hand side to print it at. */\
+.rows .row .ident .day{display:none}\
 .rows .row .title,.rows .row .name{flex:1 1 auto}\
 .rows .row .under{margin:0;flex:0 0 auto;justify-content:flex-end}\
 .rows .row.split{display:flex}\
@@ -1804,8 +1957,16 @@ padding:0 13px;border-radius:9px;font-size:13px}\
 /* In a column this narrow the row stacks again — but tighter than a phone's, \
    because a dense list is the point of keeping it on screen. */\
 .app.split .index .rows .row{display:block;padding:11px 20px;min-height:0}\
-.app.split .index .rows .row .title{font-size:15.5px;line-height:1.34}\
+/* Stacked, `-l`'s four columns become three lines, and the id line takes the \
+   day with it: a column 300px wide has no right-hand side to print a date at, \
+   but it does have two ends, and the two things that are not the title are \
+   exactly what belongs at them. The copy under the title goes, so the day is \
+   still said once. */\
+.app.split .index .rows .row .ident{display:flex;justify-content:space-between;gap:10px}\
+.app.split .index .rows .row .ident .day{display:block;color:var(--muted)}\
+.app.split .index .rows .row .title{font-size:15.5px;line-height:1.34;margin-top:2px}\
 .app.split .index .rows .row .under{margin-top:2px;justify-content:flex-start;font-size:12px}\
+.app.split .index .rows .row .under .when,.app.split .index .rows .row .under .sep{display:none}\
 .app.split .index .searchbar,.app.split .index .topbar{padding-left:20px;padding-right:20px}\
 .app.split .index .empty{padding:26px 20px}\
 /* Head, body and the delete line share one column so the rule under the title \
@@ -1927,7 +2088,16 @@ mod tests {
         let rows = (0..12)
             .map(|n| row(&format!("k3f{n}"), "Budget review", false))
             .collect::<Vec<_>>();
-        let page = listing("work", &rows, "tag:ghost", &[], None, "in sync", None);
+        let page = listing(
+            "work",
+            &rows,
+            &Asked {
+                typed: "tag:ghost",
+                ..Asked::nothing()
+            },
+            "in sync",
+            None,
+        );
         assert!(
             page.contains("No notes match <span class=\"asked\">tag:ghost"),
             "{page}"
@@ -1947,12 +2117,15 @@ mod tests {
             row("k3f9", "Budget review", true),
             row("em0x", "Reading list", false),
         ];
+        let terms = ["budget".to_string()];
         let page = listing(
             "work",
             &rows,
-            "budget",
-            &["budget".to_string()],
-            None,
+            &Asked {
+                typed: "budget",
+                terms: &terms,
+                ..Asked::nothing()
+            },
             "in sync",
             None,
         );
@@ -1975,7 +2148,7 @@ mod tests {
 
     #[test]
     fn an_empty_notebook_says_what_to_do_instead_of_nothing() {
-        let page = listing("work", &[], "", &[], None, "in sync", None);
+        let page = listing("work", &[], &Asked::nothing(), "in sync", None);
         assert!(page.contains("No notes yet"), "{page}");
         assert!(page.contains("noda add"), "{page}");
         // Not the other empty. A notebook with nothing in it is not a query
@@ -1992,9 +2165,7 @@ mod tests {
         let page = listing(
             "work",
             &[row("k3f9", "Budget review", true)],
-            "",
-            &[],
-            None,
+            &Asked::nothing(),
             "in sync",
             None,
         );
@@ -2035,16 +2206,150 @@ mod tests {
             updated: Some("2026-08-12T08:03:00Z".into()),
             shown: true,
         }];
-        let page = listing("work", &rows, "", &[], None, "in sync", None);
+        let page = listing("work", &rows, &Asked::nothing(), "in sync", None);
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
         // The clock is not in a listing at all, in either spelling.
         assert!(!page.contains("08:03"), "{page}");
     }
 
+    /// The signature, on the listing's side: a row is `ls -l`'s row, in `ls
+    /// -l`'s order. The id leads, tags come last, and the day is written twice
+    /// because only one of the two places it can go is on screen at a time.
+    #[test]
+    fn a_row_prints_the_columns_ls_dash_l_prints_in_that_order() {
+        let page = listing(
+            "work",
+            &[row("em0xvn4e", "Budget review", true)],
+            &Asked::nothing(),
+            "in sync",
+            None,
+        );
+        assert!(
+            page.contains(
+                "<div class=\"ident\"><span class=\"id\">em0xvn4e</span>\
+                 <span class=\"day\">2026-08-12</span></div>\
+                 <div class=\"title\">Budget review</div>"
+            ),
+            "{page}"
+        );
+        // Tags last, which is the order `-l` prints and the one thing about it
+        // that is a decision rather than a habit: they are the column a note
+        // may not have.
+        let under = page.split("<div class=\"under\">").nth(1).unwrap();
+        assert!(
+            under.starts_with(
+                "<span class=\"when\">2026-08-12</span>\
+                 <span class=\"sep\">·</span><span class=\"tags\">work</span>"
+            ),
+            "{under}"
+        );
+    }
+
+    /// The other signature: `a OR b c` is `(a OR b) AND c`, drawn rather than
+    /// explained. Every word in it is the reader's own.
+    #[test]
+    fn the_field_draws_the_grouping_it_arrived_at() {
+        let grouping = [
+            vec!["tag:work".to_string(), "tag:q3".to_string()],
+            vec!["budget".to_string()],
+        ];
+        let page = listing(
+            "work",
+            &[row("k3f9", "Budget review", true)],
+            &Asked {
+                typed: "tag:work OR tag:q3 budget",
+                grouping: &grouping,
+                ..Asked::nothing()
+            },
+            "in sync",
+            None,
+        );
+        assert!(
+            page.contains(
+                "<div class=\"parse\">\
+                 <span class=\"g\"><b class=\"t\">tag:work</b><i>or</i><b class=\"t\">tag:q3</b></span>\
+                 <span class=\"and\">and</span>\
+                 <span class=\"g\"><b>budget</b></span></div>"
+            ),
+            "{page}"
+        );
+    }
+
+    /// Half a query has no grouping, and the box that would hold one is written
+    /// anyway — the same arrangement as the hint, for the same reason: what the
+    /// script decides is when it applies, never what it says.
+    #[test]
+    fn a_line_that_is_not_a_query_yet_is_grouped_into_nothing() {
+        let page = listing(
+            "work",
+            &[row("k3f9", "Budget review", true)],
+            &Asked {
+                typed: "budget OR",
+                problem: Some("`OR` needs a term on both sides"),
+                ..Asked::nothing()
+            },
+            "in sync",
+            None,
+        );
+        assert!(
+            page.contains("<div class=\"parse\" hidden></div>"),
+            "{page}"
+        );
+        assert!(
+            page.contains("<p class=\"problem\">`OR` needs a term on both sides</p>"),
+            "{page}"
+        );
+    }
+
+    /// A note route sends the pane's frame with the field in it and nothing
+    /// asked. The box is there for the script to fill; the count is not, because
+    /// a count of rows nobody has is not a fact yet.
+    #[test]
+    fn a_note_page_sends_the_search_field_with_nothing_asked_of_it() {
+        let page = note(
+            "work",
+            &Reading {
+                id: "em0xvn4e".into(),
+                slug: "budget-review".into(),
+                title: "Budget review".into(),
+                tags: vec![],
+                updated: None,
+                rendered: String::new(),
+            },
+            "in sync",
+        );
+        assert!(
+            page.contains("<div class=\"parse\" hidden></div>"),
+            "{page}"
+        );
+        assert!(page.contains("<span class=\"count\"></span>"), "{page}");
+    }
+
+    /// A term written to be matched against a note's text, put on the screen as
+    /// the reader's own words. Everything in the grouping came off the query
+    /// line, so it is the query line that must not be able to write markup.
+    #[test]
+    fn a_grouping_cannot_write_markup_into_the_page() {
+        let grouping = [vec!["<script>x</script>".to_string()]];
+        let page = listing(
+            "work",
+            &[],
+            &Asked {
+                typed: "<script>x</script>",
+                grouping: &grouping,
+                ..Asked::nothing()
+            },
+            "in sync",
+            None,
+        );
+        assert!(page.contains("&lt;script&gt;x&lt;/script&gt;"), "{page}");
+        assert!(!page.contains("<script>x"), "{page}");
+    }
+
     #[test]
     fn every_page_carries_both_themes_and_the_viewport() {
-        let page = listing("work", &[], "", &[], None, "in sync", None);
+        let page = listing("work", &[], &Asked::nothing(), "in sync", None);
         assert!(page.contains("width=device-width"), "{page}");
         assert!(page.contains("prefers-color-scheme:dark"), "{page}");
         assert!(page.contains("--tap:48px"), "{page}");

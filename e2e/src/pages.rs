@@ -418,6 +418,53 @@ impl Page<'_> {
         Ok(said.as_str().map(str::to_string))
     }
 
+    /// The id on the first row, or nothing where the width has no column to
+    /// print it in.
+    ///
+    /// Written on every row and shown by the stylesheet, so what is asked here
+    /// is whether it was *drawn* — `offsetParent` is null for anything a
+    /// `display:none` is hiding, at any depth. A markup assertion would pass on
+    /// the phone the id is deliberately absent from.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn shown_id(&self) -> Result<Option<String>> {
+        let said = self
+            .0
+            .measure(
+                "const id = document.querySelector('.rows .row .ident .id');
+                 return id && id.offsetParent !== null ? id.innerText : null;",
+            )
+            .await?;
+        Ok(said.as_str().map(str::to_string))
+    }
+
+    /// The grouping the search field is showing, flattened into one line:
+    /// `(tag:work or tag:q3) and (budget)`.
+    ///
+    /// The brackets are this function's — on the screen a group is a pill, and
+    /// a pill is not a thing a feature file can quote. What is being checked is
+    /// that the boundaries fall where noda put them, so they are read off the
+    /// elements and written the way the manual writes them.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn grouping(&self) -> Result<Option<String>> {
+        let said = self
+            .0
+            .measure(
+                "const parse = document.querySelector('.searchbar .parse');
+                 if (!parse || parse.offsetParent === null) return null;
+                 return [...parse.children].map((piece) => piece.className === 'g'
+                   ? '(' + [...piece.children].map((t) => t.textContent).join(' ') + ')'
+                   : piece.textContent).join(' ');",
+            )
+            .await?;
+        Ok(said.as_str().map(str::to_string))
+    }
+
     /// Whether the page is asking the browser to reload it.
     ///
     /// The scriptless network screen steers by `<meta refresh>`; the script's

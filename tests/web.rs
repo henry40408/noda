@@ -494,6 +494,65 @@ fn an_unfinished_query_says_why_and_keeps_the_notes() {
     assert!(answer.says("class=\"problem\""), "{}", answer.body);
     assert!(answer.says("Budget review"), "{}", answer.body);
     assert!(answer.says("Reading list"), "{}", answer.body);
+    // And nothing is grouped, because there is no grouping yet. A box drawn
+    // around the words of a query that does not parse would be an answer
+    // invented to sit beside the complaint about it.
+    assert!(
+        answer.says("<div class=\"parse\" hidden></div>"),
+        "{}",
+        answer.body
+    );
+}
+
+/// A listing row is `noda ls -l`'s row, and the id is the column that makes it
+/// one: the same eight characters `noda show` takes and the first half of the
+/// filename in the repository. It is written on every row and shown where there
+/// is a column for it, which the stylesheet decides.
+#[test]
+fn a_listing_row_carries_the_id_the_notebook_knows_the_note_by() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let answer = server.get("/nb/default");
+    assert_eq!(answer.status, 200);
+    assert!(
+        answer.says(&format!(
+            "<div class=\"ident\"><span class=\"id\">{id}</span>"
+        )),
+        "{}",
+        answer.body
+    );
+    // The link is still the id, which is what it has always been. The column is
+    // the same fact said where it can be read rather than only followed.
+    assert!(
+        answer.says(&format!("href=\"/nb/default/n/{id}\"")),
+        "{}",
+        answer.body
+    );
+}
+
+/// `a OR b c` is `(a OR b) AND c` — the one thing about this grammar that gets
+/// read backwards, said by the field rather than by the manual. The grouping
+/// comes from `Query` itself, so what is drawn cannot disagree with what
+/// narrowed the notes.
+#[test]
+fn the_field_says_how_it_grouped_what_was_typed() {
+    let (server, _paths) = serving();
+    let answer = server.get("/nb/default?q=tag%3Awork+OR+tag%3Aops+budget");
+    assert_eq!(answer.status, 200);
+    assert!(
+        answer.says(
+            "<div class=\"parse\"><span class=\"g\">\
+             <b class=\"t\">tag:work</b><i>or</i><b class=\"t\">tag:ops</b></span>\
+             <span class=\"and\">and</span><span class=\"g\"><b>budget</b></span></div>"
+        ),
+        "{}",
+        answer.body
+    );
+    // And the grouping it drew is the grouping it applied: `budget` is ANDed
+    // rather than swallowed by the OR, so a note with neither tag is on the
+    // page and not on the screen.
+    assert!(answer.says("<mark>Budget</mark> review"), "{}", answer.body);
+    assert!(answer.says("<a class=\"row\" hidden"), "{}", answer.body);
 }
 
 /// One address per page. A slug follows the title and an id prefix is a
