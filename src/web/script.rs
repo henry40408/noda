@@ -605,14 +605,17 @@ pub const BESIDE: &str = r#"
       if (!got.ok) throw new Error(got.status);
       text = await got.text();
     } catch {
-      // Nothing arrived, so nothing is claimed. The box closes, `asked` is
-      // cleared so widening or the next note may try again, and what is left on
-      // the screen is a whole note and a Links button — the page with no script.
-      if (location.pathname === at) {
+      // Nothing arrived, so nothing is claimed. The box closes, what was asked
+      // for is forgotten so widening or the next note may try again, and what is
+      // left on the screen is a whole note and a Links button — the page with no
+      // script. Both are conditional on this still being the note being read:
+      // the reader may have moved on to one whose answer is on its way, and
+      // clearing that would show it arriving twice.
+      if (asked === at) {
+        asked = null;
         aside.hidden = true;
         answer.replaceChildren();
       }
-      asked = null;
       return;
     }
 
