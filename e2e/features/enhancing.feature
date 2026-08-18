@@ -77,6 +77,34 @@ Feature: Answering without asking
     And I see a row for "Reading list"
     And the page says nothing is wrong
 
+  # The grouping is redrawn on every keystroke, from the same parse the filter
+  # runs on. Not a third implementation — the one the filter already needed,
+  # used for a second thing.
+  @scripted
+  Scenario: The grouping follows what is being typed
+    Given I open the notebook on a tablet
+    When I type "tag:work OR tag:ops budget" into the search field
+    Then the field groups it as "(tag:work or tag:ops) and (budget)"
+
+  # The case that separates the two. A negated bare word makes the filter stand
+  # aside — it would have to widen the answer, which is the one thing the
+  # script may never do — but a grouping is a fact about the words and not
+  # about the notes, so it is still drawn.
+  @scripted
+  Scenario: A query the filter stands aside for is still grouped
+    Given I open the notebook on a tablet
+    When I type "-budget tag:work" into the search field
+    Then I see a row for "Reading list"
+    And the field groups it as "(-budget) and (tag:work)"
+
+  # Half a query has no grouping yet, and the last complete one is not an
+  # answer to a line that no longer says it.
+  @scripted
+  Scenario: Half a query has no grouping to show
+    Given I open the notebook on a tablet
+    When I type "tag:work OR" into the search field
+    Then the field groups nothing
+
   @scripted
   Scenario: The network screen asks for news instead of reloading
     Given I open "/nb/default/status"

@@ -100,6 +100,18 @@ pub fn scoped(tag: &str) -> String {
 /// terms.
 pub struct Query {
     groups: Vec<Vec<Term>>,
+    /// The same grouping, in the words it was typed in.
+    ///
+    /// Kept because something wanted to *show* the grouping rather than apply
+    /// it, and a `Term` cannot be shown: it is what the token means, with the
+    /// `tag:`, the quotes and the leading `-` already read and thrown away.
+    /// What has to go back on a screen is what the reader put there.
+    ///
+    /// It is a second copy, which is a thing worth being uneasy about, so it is
+    /// filled in the one loop that does the grouping rather than by a second
+    /// pass over the tokens. Two functions splitting on `OR` is how they come
+    /// to disagree; one loop appending to both cannot.
+    said: Vec<Vec<String>>,
 }
 
 struct Term {
@@ -128,6 +140,7 @@ impl Query {
     /// as two terms, and no escape syntax has to be invented or explained.
     pub fn parse(tokens: &[String]) -> Result<Query> {
         let mut groups: Vec<Vec<Term>> = Vec::new();
+        let mut said: Vec<Vec<String>> = Vec::new();
         let mut expecting = false;
 
         for token in tokens {
@@ -146,6 +159,10 @@ impl Query {
                 Some(group) if expecting => group.push(term),
                 _ => groups.push(vec![term]),
             }
+            match said.last_mut() {
+                Some(group) if expecting => group.push(token.clone()),
+                _ => said.push(vec![token.clone()]),
+            }
             expecting = false;
         }
 
@@ -155,7 +172,22 @@ impl Query {
         if groups.is_empty() {
             return Err(Error::msg("search needs something to look for"));
         }
-        Ok(Query { groups })
+        Ok(Query { groups, said })
+    }
+
+    /// The grouping this query arrived at, said back in the tokens it was
+    /// written with.
+    ///
+    /// `a OR b c` is `(a OR b) AND c`, and that precedence is the one thing
+    /// about this grammar that gets read wrong — `OR` binding tighter than a
+    /// space is the opposite of what most search boxes do. A caller that can
+    /// draw the grouping can answer that without a manual, and this is what it
+    /// draws: the outer list is and-ed, each inner list is or-ed.
+    ///
+    /// Every token comes back exactly as it was given, so whatever is shown is
+    /// the reader's own text and not this parser's opinion of it.
+    pub fn grouping(&self) -> &[Vec<String>] {
+        &self.said
     }
 
     /// Whether a note satisfies every group.
@@ -330,6 +362,45 @@ mod tests {
             "the bare term is ANDed, not swallowed by the OR"
         );
         assert!(!q.matches("k3f9m2p1", &wrong_body));
+    }
+
+    /// The same precedence, read off the other end: what `grouping` hands back
+    /// has to be the shape `matches` applies, or a page could draw one grouping
+    /// while the notes were narrowed by another.
+    #[test]
+    fn the_grouping_shown_is_the_grouping_applied() {
+        assert_eq!(
+            query("budget tag:work OR tag:q3").grouping(),
+            [
+                vec!["budget".to_string()],
+                vec!["tag:work".to_string(), "tag:q3".to_string()]
+            ]
+        );
+        assert_eq!(
+            query("tag:a OR tag:b tag:c OR tag:d").grouping(),
+            [
+                vec!["tag:a".to_string(), "tag:b".to_string()],
+                vec!["tag:c".to_string(), "tag:d".to_string()]
+            ]
+        );
+    }
+
+    /// The tokens come back as they were written, `-` and quotes and all. A
+    /// caller drawing them is drawing the reader's own line, and `Term` has
+    /// already thrown away everything needed to write it again.
+    #[test]
+    fn the_grouping_keeps_the_words_that_were_typed() {
+        // Through `split`, because that is the road a browser's query takes:
+        // one line typed into one field. What comes back is what was in it,
+        // leading `-` and all — `Term` has already thrown that away.
+        let typed = split("-tag:archived title:\"Q3 budget\"");
+        assert_eq!(
+            Query::parse(&typed).unwrap().grouping(),
+            [
+                vec!["-tag:archived".to_string()],
+                vec!["title:Q3 budget".to_string()]
+            ]
+        );
     }
 
     #[test]

@@ -490,29 +490,38 @@ async fn listing(
             return Ok(Answer::Page(page::listing(
                 &book,
                 &rows,
-                &typed,
-                &[],
-                None,
+                &page::Asked {
+                    typed: &typed,
+                    ..page::Asked::nothing()
+                },
                 &drift,
                 front.as_deref(),
             )));
         }
-        let (terms, problem) = match Query::parse(&tokens) {
+        // The parsed query outlives the borrow of its grouping, so it is bound
+        // here rather than being matched into pieces: `grouping` hands back a
+        // slice of the query's own words, and the page is drawn while it is
+        // still standing.
+        let parsed = Query::parse(&tokens);
+        let (grouping, terms, problem) = match &parsed {
             Ok(query) => {
                 for (row, file) in rows.iter_mut().zip(notes.iter()) {
                     row.shown = query.matches(&file.id, &file.note);
                 }
-                (query.excerpt_terms(), None)
+                (query.grouping(), query.excerpt_terms(), None)
             }
-            Err(e) => (Vec::new(), Some(e.to_string())),
+            Err(e) => (&[][..], Vec::new(), Some(e.to_string())),
         };
 
         Ok(Answer::Page(page::listing(
             &book,
             &rows,
-            &typed,
-            &terms,
-            problem.as_deref(),
+            &page::Asked {
+                typed: &typed,
+                grouping,
+                terms: &terms,
+                problem: problem.as_deref(),
+            },
             &drift,
             front.as_deref(),
         )))

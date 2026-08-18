@@ -281,6 +281,55 @@ async fn tags_under(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
+/// The id is the note's name in the notebook's own vocabulary: what `noda show`
+/// takes and the first half of the filename in the repository. It is on every
+/// row and drawn where there is a column for it.
+#[then("the row shows the note's id")]
+async fn row_shows_an_id(world: &mut NodaWorld) -> Result<()> {
+    let shown = world.page()?.shown_id().await?;
+    let Some(id) = shown else {
+        anyhow::bail!("no id is drawn on the row at this width");
+    };
+    // Eight characters of Crockford base32 — `note::mint_id`. Not a particular
+    // id, because a fixture that names one is a fixture that has to mint one.
+    anyhow::ensure!(
+        id.len() == 8 && id.chars().all(|c| c.is_ascii_alphanumeric()),
+        "the id column says {id:?}, which is not an id"
+    );
+    Ok(())
+}
+
+/// And the other half of the same decision. A phone has one column, and it
+/// belongs to the title.
+#[then("the row shows no id")]
+async fn row_shows_no_id(world: &mut NodaWorld) -> Result<()> {
+    let shown = world.page()?.shown_id().await?;
+    anyhow::ensure!(
+        shown.is_none(),
+        "the id column is drawn on a screen with no room for it: {shown:?}"
+    );
+    Ok(())
+}
+
+/// `a OR b c` is `(a OR b) AND c`, which is the one thing about this grammar
+/// people read backwards — so the field says what it did with what was typed.
+#[then(expr = "the field groups it as {string}")]
+async fn field_groups_it(world: &mut NodaWorld, expected: String) -> Result<()> {
+    eventually(
+        &format!("the field to group it as {expected:?}"),
+        || async { Ok(world.page()?.grouping().await?.as_deref() == Some(expected.as_str())) },
+    )
+    .await
+}
+
+#[then("the field groups nothing")]
+async fn field_groups_nothing(world: &mut NodaWorld) -> Result<()> {
+    eventually("the field to group nothing", || async {
+        Ok(world.page()?.grouping().await?.is_none())
+    })
+    .await
+}
+
 #[then("the content is narrower than the window")]
 async fn content_is_narrow(world: &mut NodaWorld) -> Result<()> {
     let (_, width, window) = world.page()?.box_of("main").await?;
