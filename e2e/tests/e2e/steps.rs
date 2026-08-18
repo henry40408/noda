@@ -30,6 +30,12 @@ async fn open_front(world: &mut NodaWorld) -> Result<()> {
     world.page()?.go("/").await
 }
 
+#[given(expr = "I open the front page on a tablet")]
+async fn open_front_tablet(world: &mut NodaWorld) -> Result<()> {
+    world.browser()?.resize(TABLET).await?;
+    world.page()?.go("/").await
+}
+
 #[given("I open the notebook")]
 #[when("I open the notebook")]
 async fn open_notebook(world: &mut NodaWorld) -> Result<()> {
@@ -347,6 +353,22 @@ async fn content_is_narrow(world: &mut NodaWorld) -> Result<()> {
     anyhow::ensure!(
         width < window,
         "the content is {width} wide in a {window} window — a line that long is not read, it is scanned"
+    );
+    Ok(())
+}
+
+/// The front page has no rail, so it must not be laid out around one.
+///
+/// Only a laid-out page can answer this. The rail is a grid column, and a page
+/// that never draws one still gets the column: what was on screen was 76px of
+/// nothing down the left of every notebook. The markup gives nothing away —
+/// there is no rail in it either way.
+#[then("the notebooks fill the window")]
+async fn notebooks_fill_the_window(world: &mut NodaWorld) -> Result<()> {
+    let (left, width, window) = world.page()?.box_of("main.books").await?;
+    anyhow::ensure!(
+        left <= 1.0 && (window - width).abs() <= 1.0,
+        "the notebooks start {left} in and are {width} wide in a {window} window"
     );
     Ok(())
 }

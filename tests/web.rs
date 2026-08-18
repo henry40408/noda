@@ -426,6 +426,81 @@ fn the_front_page_lists_the_notebooks() {
     assert!(answer.says("5 notes"), "{}", answer.body);
 }
 
+/// A row is `noda status` in a line, and every fact on it is one the command
+/// prints — read off the running server rather than off a struct built by hand,
+/// because the point is that the page and the command agree.
+#[test]
+fn a_front_page_row_says_what_status_says() {
+    let (server, paths) = serving();
+    let status = noda::notebook::Notebook::open(&paths, "default")
+        .expect("open the notebook")
+        .status()
+        .expect("its status");
+    let answer = server.get("/");
+
+    assert!(
+        answer.says(&format!("{} notes", status.notes)),
+        "{}",
+        answer.body
+    );
+    assert!(
+        answer.says(&format!("{} files", status.files)),
+        "{}",
+        answer.body
+    );
+    // The day it was last committed to, and only the day: noda's stamps are
+    // UTC, and a clock cut down to fit a row reads as a local one.
+    let stamp = answer
+        .body
+        .split_once("<span class=\"stamp\">")
+        .and_then(|(_, rest)| rest.split_once("</span>"))
+        .map(|(day, _)| day.to_string())
+        .expect("a row carries the day it was last written to");
+    assert_eq!(stamp.len(), 10, "{stamp} is not just a day");
+    assert!(!stamp.contains(':'), "{stamp} has a clock in it");
+}
+
+/// Two destinations in one row: the notebook, and where that notebook stands.
+/// The second is the only way to the network screen from here, and a notebook
+/// with no remote does not get it — which is this notebook, so the link must be
+/// absent and the words still there.
+#[test]
+fn the_front_page_leads_to_a_notebook_and_to_where_it_stands() {
+    let (server, _paths, _remote) = serving_with_a_remote();
+    let answer = server.get("/");
+    assert!(answer.says("href=\"/nb/default\""), "{}", answer.body);
+    assert!(
+        answer.says("href=\"/nb/default/status\""),
+        "{}",
+        answer.body
+    );
+
+    let (plain, _paths) = serving();
+    let answer = plain.get("/");
+    assert!(answer.says("no remote"), "{}", answer.body);
+    assert!(!answer.says("/status"), "{}", answer.body);
+}
+
+/// `noda notebook ls` marks the active notebook with a `*`, and the front page
+/// is the one screen in the browser that knows which one it is: every other
+/// address names its notebook, so the pointer is never consulted there.
+#[test]
+fn the_front_page_marks_the_notebook_the_terminal_is_pointed_at() {
+    let (server, paths) = serving();
+    assert_eq!(
+        paths.active_notebook().expect("an active notebook"),
+        "default"
+    );
+    let answer = server.get("/");
+    assert_eq!(
+        answer.body.matches("class=\"mark\"").count(),
+        1,
+        "{}",
+        answer.body
+    );
+    assert!(answer.says("<span class=\"sr\">Active"), "{}", answer.body);
+}
+
 #[test]
 fn the_listing_names_every_note() {
     let (server, _paths) = serving();

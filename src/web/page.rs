@@ -25,13 +25,34 @@ use std::fmt::Write;
 use crate::notebook::NoteFile;
 use crate::web::{script, theme};
 
-/// A notebook, as the front page lists it.
+/// A notebook, as the front page lists it: `noda status` compressed to a row,
+/// the way a listing's row is `ls -l` compressed to one.
+///
+/// Every field but `last` is already in `Status`, and `last` is one commit read.
+/// That is the whole of the page's data: what it lists costs what listing it
+/// cost before, which is the only reason a page that already walks every
+/// notebook can afford to say more about each.
 pub struct Book {
     pub name: String,
     pub notes: usize,
-    /// What `status` says about the remote, already in words: a count is not
+    /// Files the notebook holds that are not notes. Shown only when there are
+    /// any, the way `noda status` prints the line only when there are any.
+    pub files: usize,
+    /// Files differing from `HEAD`. The one fact on the row that is about
+    /// something to do rather than something held.
+    pub uncommitted: usize,
+    /// Where it stands against its remote, already in words — a count is not
     /// what anybody wants to be told about a remote they have not set up.
-    pub remote: String,
+    ///
+    /// `None` is a notebook with nowhere to sync to, and it is the case the row
+    /// draws differently: everything else is a link to the network screen, and
+    /// this one is not.
+    pub drift: Option<String>,
+    /// Whether this is the notebook a terminal is pointed at — the one
+    /// `noda notebook ls` puts a `*` beside.
+    pub active: bool,
+    /// The day of its last commit, already rendered by `cmd::format_time`.
+    pub last: String,
 }
 
 /// A note, as a listing names it: the row `ls -l` prints, minus the slug and
@@ -480,37 +501,112 @@ fn back(href: &str, label: &str) -> String {
     )
 }
 
-/// The front page: which notebooks there are.
+/// The front page: which notebooks there are, and where each of them stands.
+///
+/// **The one screen that is not inside a notebook**, which is why it carries
+/// neither the rail nor the bar: both hold places inside a notebook, and there
+/// is nowhere further up than this. `root` is what says so to the stylesheet,
+/// and what stops the layout reserving a column for a rail that is not coming.
 pub fn notebooks(books: &[Book]) -> String {
     let rows = if books.is_empty() {
         // An empty screen is an invitation to act, and the act is not on this
         // machine's web server — a notebook is made at a terminal.
         "<div class=\"empty\"><b>No notebooks yet</b>Run <code>noda init</code> in a terminal to make the first one.</div>".to_string()
     } else {
-        let mut out = String::new();
-        for book in books {
-            let _ = write!(
-                out,
-                "<a class=\"row\" href=\"/nb/{}\"><div class=\"name\">{}</div>\
-                 <div class=\"under\"><span class=\"when\">{} · {}</span></div></a>",
-                escape(&book.name),
-                escape(&book.name),
-                plural(book.notes, "note"),
-                escape(&book.remote)
-            );
-        }
-        out
+        books.iter().map(book_row).collect()
     };
     shell(
         "noda",
-        "",
+        "root",
         &format!(
             "<section class=\"pane\">\
              <header class=\"topbar\"><span class=\"here lead\">noda</span>\
              <span class=\"count\">{}</span></header>\
-             <main class=\"rows cols\">{rows}</main></section>",
-            plural(books.len(), "notebook")
+             <main class=\"rows books\">{rows}</main></section>",
+            tally(books)
         ),
+    )
+}
+
+/// What the corner says: how many notebooks, and — where there is room for it —
+/// how much they hold between them.
+///
+/// The second clause rides in a `.more` span the stylesheet drops on a phone,
+/// which is the same answer the listing's row gives when it writes the day twice
+/// and lets the stylesheet pick one: the server does not know how wide the
+/// screen is, and asking it is worse than sending a dozen bytes that are not
+/// shown.
+fn tally(books: &[Book]) -> String {
+    let notes = books.iter().map(|book| book.notes).sum();
+    format!(
+        "{}<span class=\"more\"> · {}</span>",
+        plural(books.len(), "notebook"),
+        plural(notes, "note")
+    )
+}
+
+/// One notebook, as a row: `noda status` said in the width of a line.
+///
+/// **Two destinations, side by side rather than nested**, the shape the files
+/// page already uses: the row is the notebook and goes to its listing; the chip
+/// is where it stands with its remote and goes to the network screen. A
+/// notebook with no remote keeps the words and loses the link, for the reason
+/// that page gives when it leaves `nothing links to it` as text — a press whose
+/// answer is what you have already read is not worth having.
+fn book_row(book: &Book) -> String {
+    let at = escape(&book.name);
+    // `*` in `noda notebook ls`, a dot in the same margin here. The screen
+    // reader is told in words, because a dot is not one.
+    let mark = if book.active {
+        "<span class=\"mark\" aria-hidden=\"true\"></span><span class=\"sr\">Active — </span>"
+    } else {
+        ""
+    };
+
+    // `.holds` and not `.when`: on every other page that class is a timestamp,
+    // and a test helper reads the page's stamps out by it.
+    let mut facts = vec![format!(
+        "<span class=\"holds\">{}</span>",
+        plural(book.notes, "note")
+    )];
+    if book.files > 0 {
+        // Classed, because a phone drops this one: three facts do not fit
+        // beside the chip at 390px, and the file count is the one of the three
+        // that keeps least. The stylesheet is where that is argued.
+        facts.push(format!(
+            "<span class=\"holds files\">{}</span>",
+            plural(book.files, "file")
+        ));
+    }
+    if book.uncommitted > 0 {
+        facts.push(format!(
+            "<span class=\"holds\">{} uncommitted</span>",
+            book.uncommitted
+        ));
+    }
+
+    let aside = match &book.drift {
+        Some(drift) => format!(
+            "<a class=\"aside\" href=\"/nb/{at}/status\" aria-label=\"Status: {}\">\
+             <span class=\"pill\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{SYNC}</svg>\
+             <span>{}</span></span></a>",
+            escape(drift),
+            escape(drift)
+        ),
+        // `.row.split .aside` already sets the muted colour and the size, so
+        // the words need nothing of their own.
+        None => "<span class=\"aside\">no remote</span>".to_string(),
+    };
+
+    format!(
+        "<div class=\"row split book\">\
+         <a class=\"most\" href=\"/nb/{at}\">\
+         <span class=\"name\">{mark}{}</span>\
+         <div class=\"under\">{}</div>\
+         <span class=\"stamp\">{}</span></a>{aside}</div>",
+        escape(&book.name),
+        facts.join("<span class=\"sep\">·</span>"),
+        escape(&book.last)
     )
 }
 
@@ -2053,6 +2149,102 @@ grid-row:1/span 3;position:sticky;top:24px;padding:26px 0 0}}\
 .app.split.indexed{grid-template-columns:var(--rail) clamp(340px,22vw,470px) minmax(0,1fr)}\
 .app.split.at-note.margined .read main.note{grid-template-columns:minmax(0,40em) 290px;\
 column-gap:64px}}\
+/* ============================================ SIGNATURE: a row is a notebook */\
+/* Written last on purpose. Two of the rules below have to beat something the \
+   sheet already says at the same weight, and at the same weight the later rule \
+   wins — putting the front page's own section anywhere else would mean raising \
+   selectors until they won, which is how a stylesheet stops being readable. */\
+/* The front page has no rail and no bar, so it does not want the grid that \
+   holds one. With no `.foot` in its markup the rail's column was there and \
+   empty: 76px of nothing down the left of every screen wider than a phone, \
+   which is most of what made this page look broken. \
+   `.app:not(.split)`'s `max-width:80em` goes with it. That cap is for one pane \
+   hanging off the rail with prose in it; here there is no rail, and a row is a \
+   line of a table rather than a line of text, so stopping at 1120px only leaves \
+   the rest of a monitor empty. */\
+@media (min-width:640px){\
+.app.root{display:block;height:auto;overflow:visible}\
+/* And the pane stops being its own scroll container, or the bar above it is \
+   sticky inside a box that never scrolls — which is the same as not sticky. */\
+.app.root .pane{overflow:visible;min-height:0}\
+.app.root .topbar,.app.root main{max-width:none}}\
+/* `.books` as well as `.row`, because at 640 `.rows .row{padding:13px 24px}` is \
+   the same weight as `.row.split{padding:0}` and comes after it: the split row \
+   keeps that padding, `.most` adds its own, and the whole row is indented \
+   twice. */\
+.books .row.split{position:relative;padding:0}\
+.books .row.split .most{padding:13px 0 13px 28px}\
+.books .most{min-width:0}\
+/* A notebook's name is a directory's name, so it is set in the machine's face \
+   like every other filename here. `display:block` is what makes the ellipsis \
+   work at all — `text-overflow` does nothing to an inline box, so a long name \
+   used to run across the row rather than end in one. The line is tight because \
+   this is one word and not prose: at 1.6 it carries five pixels of air above \
+   and below, and the name floats away from the facts under it. */\
+.books .name{display:block;font-family:var(--mono);font-size:16px;line-height:1.3;\
+color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+/* `noda notebook ls` marks the active notebook with an uncoloured `*` in the \
+   margin, and this is that mark in that margin. Contrast and not hue: the \
+   colours in this palette say what a thing *is*, and which notebook a terminal \
+   is pointed at is not that. \
+   Absolute, so an inactive row reserves nothing and every name starts at the \
+   same x. Its `top` is the row's padding plus half a line rather than `50%`, \
+   which would slide down the row the moment the facts wrapped. */\
+.books .mark{position:absolute;left:11px;top:23px;transform:translateY(-50%);\
+width:7px;height:7px;border-radius:4px;background:var(--text)}\
+.books .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}\
+/* The facts run from a common x, which is what makes a column of them a column. \
+   `.rows` is in the selector to beat `.rows .row .under`'s `flex-end`: that \
+   rule puts a note's day at the right of its row, and this is not that. */\
+.rows.books .row .under{justify-content:flex-start;line-height:1.45;row-gap:0}\
+.books .holds{color:var(--muted)}\
+/* One fact fewer on a phone. At 390px the facts have about 215px once the row's \
+   padding and the chip are out of it, and three of them want 250 — so they \
+   wrapped, and a wrapped `.under` sets its 8px gap between the two lines, which \
+   is wider than the 4px between the name and the first of them. The row read as \
+   three loose bands rather than one row. \
+   Dropping the file count is the argument the listing row already makes for \
+   dropping the id on a phone: it is about the space, not about the count. \
+   `:has` takes the separator out with it, or the line keeps a separator with \
+   nothing left on one side of it. (Nothing here writes that separator out as a \
+   character: a listing test asserts a page holding no tags holds no separator, \
+   and this sheet rides inside every page.) */\
+@media (max-width:639px){\
+.books .under .files,.books .under .sep:has(+ .files){display:none}}\
+/* Where it stands, in the pill the listing already wears in its corner. */\
+.books .aside .pill{display:inline-flex;align-items:center;gap:6px;min-height:32px;\
+padding:0 11px;border:1px solid var(--rule);border-radius:999px;font-size:12px;\
+white-space:nowrap}\
+.books .aside svg{width:14px;height:14px;flex:0 0 auto;color:var(--muted)}\
+.books a.aside:active .pill{background:var(--press)}\
+.books .row .aside{align-items:center}\
+/* The rest of the tally, and the day: both are what a wider screen buys. */\
+.count .more,.books .stamp{display:none}\
+@media (min-width:640px){\
+.count .more{display:inline}\
+/* The row extends into the columns it was always made of. The name column has \
+   a floor and a ceiling both: a notebook called `q` should not leave the facts \
+   at the left margin, and one with a long name should not push them off the \
+   screen. */\
+.books .row.split .most{display:grid;grid-template-columns:minmax(9em,15em) minmax(0,1fr);\
+gap:20px;align-items:baseline;padding:15px 0 15px 36px}\
+.books .mark{left:19px;top:25px}\
+/* A floor under the chip's column, so `.most` is the same width in every row. \
+   Each row is its own grid, and a pill and a bare `no remote` are not the same \
+   width — without this the day above sits at a different x in every row. \
+   `align-self:stretch` is the tap target, and it is needed only here: at this \
+   width `.rows .row{align-items:baseline}` outranks `.row.split`'s `stretch`, \
+   so the chip stopped being as tall as the row and became as tall as its own \
+   pill — 32px, under the 48 nothing here may go below. Below 640 it already \
+   stretches, which is why only a laid-out page above it shows this. */\
+.books .row.split .aside{min-width:15em;justify-content:flex-end;padding:0 24px;\
+align-self:stretch}}\
+/* The day it was last committed to, at the right of the row, where `-l` prints \
+   a date — and only where there is a column to spare for it, which is the \
+   bargain the listing's id makes too. */\
+@media (min-width:1024px){\
+.books .row.split .most{grid-template-columns:minmax(9em,16em) minmax(0,1fr) auto}\
+.books .stamp{display:block;color:var(--muted);font-size:12.5px;justify-self:end}}\
 ";
 
 #[cfg(test)]
@@ -2488,6 +2680,101 @@ mod tests {
         assert!(
             listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
             "listing"
+        );
+    }
+
+    fn book(name: &str) -> Book {
+        Book {
+            name: name.to_string(),
+            notes: 10,
+            files: 2,
+            uncommitted: 1,
+            drift: Some("2 to push".to_string()),
+            active: false,
+            last: "2026-08-18".to_string(),
+        }
+    }
+
+    /// The signature, on the front page's side: a row is `noda status` said in
+    /// a line, and the two things it can take you to are two links rather than
+    /// one — the notebook, and where that notebook stands.
+    #[test]
+    fn a_notebook_row_says_what_status_says_and_leads_two_ways() {
+        let page = notebooks(&[book("work")]);
+        assert!(page.contains("href=\"/nb/work\""), "{page}");
+        assert!(page.contains("href=\"/nb/work/status\""), "{page}");
+        for fact in [
+            "10 notes",
+            "2 files",
+            "1 uncommitted",
+            "2026-08-18",
+            "2 to push",
+        ] {
+            assert!(page.contains(fact), "{fact} is missing:\n{page}");
+        }
+    }
+
+    /// Zero is not worth a column. `noda status` prints the files line only when
+    /// there are files, and the row keeps that.
+    #[test]
+    fn a_notebook_row_leaves_out_what_it_holds_none_of() {
+        let page = notebooks(&[Book {
+            files: 0,
+            uncommitted: 0,
+            ..book("work")
+        }]);
+        assert!(page.contains("10 notes"), "{page}");
+        assert!(!page.contains("0 files"), "{page}");
+        assert!(!page.contains("uncommitted"), "{page}");
+    }
+
+    /// The one case that is not a link, for the reason the files page gives when
+    /// it leaves `nothing links to it` as text.
+    #[test]
+    fn a_notebook_with_no_remote_keeps_the_words_and_loses_the_link() {
+        let page = notebooks(&[Book {
+            drift: None,
+            ..book("work")
+        }]);
+        assert!(page.contains("no remote"), "{page}");
+        assert!(!page.contains("/status"), "{page}");
+    }
+
+    /// `noda notebook ls` marks the active notebook with a `*`. The browser
+    /// marks it in the same margin, and says so in words as well, because a dot
+    /// is not one.
+    #[test]
+    fn the_active_notebook_is_marked_and_the_others_are_not() {
+        let page = notebooks(&[
+            book("journal"),
+            Book {
+                active: true,
+                ..book("work")
+            },
+        ]);
+        assert_eq!(page.matches("class=\"mark\"").count(), 1, "{page}");
+        assert!(page.contains("<span class=\"sr\">Active"), "{page}");
+    }
+
+    /// The screen above every notebook: no rail, no bar, and the class that
+    /// stops the layout keeping a column for one.
+    #[test]
+    fn the_front_page_is_the_one_screen_with_neither_rail_nor_bar() {
+        let page = notebooks(&[book("work")]);
+        assert!(page.contains("class=\"app root\""), "{page}");
+        // Not the bare word: `actionbar` is in the stylesheet every page carries.
+        assert!(!page.contains("<nav class=\"actionbar\""), "{page}");
+        assert!(!page.contains("class=\"fab\""), "{page}");
+    }
+
+    /// The corner counts the notebooks always and what they hold when there is
+    /// room — the same bargain the listing's row strikes with the day.
+    #[test]
+    fn the_corner_counts_the_notebooks_and_leaves_the_rest_to_the_stylesheet() {
+        let page = notebooks(&[book("journal"), book("work")]);
+        assert!(
+            page.contains("2 notebooks<span class=\"more\"> · 20 notes</span>"),
+            "{page}"
         );
     }
 }

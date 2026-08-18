@@ -371,6 +371,22 @@ impl Notebook {
         }
     }
 
+    /// When the notebook was last written to — `(seconds, offset_minutes)`, the
+    /// pair `Entry` carries, so the caller renders it through `cmd::format_time`
+    /// like every other stamp noda prints.
+    ///
+    /// One commit read rather than a walk, which is what makes it worth showing
+    /// on a page that already lists every notebook: `status` is the expensive
+    /// half of that page and this must not add to it.
+    ///
+    /// It is deliberately not part of `Status`. `noda status` does not report a
+    /// last-commit day, and a field on that struct would either change what the
+    /// command prints or sit there unread.
+    pub fn last_commit(&self) -> Result<(i64, i32)> {
+        let commit = self.repo.head()?.peel_to_commit()?;
+        Ok((commit.time().seconds(), commit.time().offset_minutes()))
+    }
+
     /// Walks the working tree and sorts every `*.md` into the four cases.
     ///
     /// Tolerant where `notes` is strict: one malformed file must not stop the

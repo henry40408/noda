@@ -883,10 +883,26 @@ noda is at http://127.0.0.1:8080
 ```
 
 Every notebook is named in the URL — `/nb/work` for the listing, `/nb/work/n/k3f9m2p1` for a
-note — and the active-notebook pointer is never consulted. That pointer belongs to a shell
-session, and a browser tab that quietly changed which notebook it was showing because
+note — so the active-notebook pointer never decides what a page shows. That pointer belongs to
+a shell session, and a browser tab that quietly changed which notebook it was showing because
 something happened in a terminal would be worse than a longer address. A note's slug and any
 prefix of its id both redirect to the id, so a bookmark survives a retitle.
+
+**The front page is the list of notebooks, and the one screen that is not inside one.** It
+carries neither the rail nor the bar — both hold places inside a notebook, and there is nowhere
+further up than this — so the whole width goes to the rows. A row is `noda status` said in a
+line: the name, what it holds, the day it was last committed to, and where it stands against
+its remote. Two of those are somewhere to go, so the row has two links in it, the shape the
+files page already uses: the name opens that notebook, the standing opens its network screen.
+A notebook with no remote keeps the words and loses the link, because a press whose answer is
+what you have already read is not worth having. The notebook your terminal is pointed at gets
+the mark `noda notebook ls` gives it — a dot in the margin, uncoloured, since which notebook a
+shell is on is not a fact about what that notebook is. It is the one thing on any of these
+pages that the pointer is read for.
+
+The row gives up its columns as the screen narrows, the way a listing's row does: below 1024px
+the day goes, and on a phone the file count goes with it. Three counts and the chip do not fit
+in 390px, and of the three the file count is the one that keeps least.
 
 **There is no password on it, and there is not going to be one.** It is meant to be reached
 over a tailnet or from behind something that already does authentication, and both of those
