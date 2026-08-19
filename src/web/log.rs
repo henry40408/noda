@@ -30,7 +30,10 @@ use axum::extract::{MatchedPath, Request};
 use axum::http::{Extensions, Method};
 use axum::middleware::Next;
 use axum::response::Response;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer as _;
+use tracing_subscriber::filter::Targets;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 
 /// How the log is rendered.
 ///
@@ -47,7 +50,7 @@ pub enum Format {
     Json,
 }
 
-/// What is logged when nothing says otherwise.
+/// What is logged when `RUST_LOG` says nothing.
 ///
 /// Other crates at `error`, noda's own at `info`. A server that logged every
 /// request by default would be one whose log has to be turned *down* before it
@@ -69,21 +72,66 @@ pub const SLOW_REQUEST: Duration = Duration::from_secs(1);
 pub const UNMATCHED: &str = "<unmatched>";
 
 /// Installs the subscriber. Called once, by `serve`.
+///
+/// **`Targets` and not `EnvFilter`, which is the one place this departs from
+/// the two servers it was modelled on.** They read the same variable with
+/// `EnvFilter`, and `EnvFilter` matches its directives with a regex engine:
+/// measured, it is 355 KB of a binary whose cold start is a feature and whose
+/// tree holds no other regex — 69% of everything logging cost. `Targets` reads
+/// the same `noda=debug` and `noda::web::log=debug` out of the same variable.
+/// What it will not do is filter on spans and fields, and nothing here writes
+/// either.
+///
+/// **`RUST_LOG` is layered onto the default rather than replacing it, and that
+/// is not tidiness — it is the one sharp edge `Targets` has.** It reads a bare
+/// word as a *target name* at `TRACE`, not as a level, so `RUST_LOG=noda=info `
+/// with a stray character, or any typo at all, parses happily into a filter
+/// naming a target nothing writes to and carrying no default level — which
+/// silences everything, warnings included. Starting from the default means the
+/// worst a mistyped variable can do is fail to have the effect that was wanted.
+/// (`EnvFilter` refuses to parse the same string, which is how it avoids this.)
+///
+/// A level given on its own is the exception, and replaces the default outright:
+/// somebody who writes `RUST_LOG=off` means all of it, and somebody who writes
+/// `RUST_LOG=debug` means all of that too.
 pub fn start(format: Format) {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+    let filter = wanted(std::env::var("RUST_LOG").ok().as_deref());
     // The same two questions `anstream` asks for the rest of noda's output, and
     // asked here by hand because a subscriber cannot read its mind: is colour
     // wanted, and is anything at the other end that could show it.
     let colour = std::env::var_os("NO_COLOR").is_none()
         && std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    // A layer under a registry rather than `fmt()`'s own builder: that builder's
+    // filter is `EnvFilter`'s, and this one is attached to the layer itself.
+    let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_ansi(colour);
-    match format {
-        Format::Text => builder.init(),
-        Format::Json => builder.json().init(),
+    let layer = match format {
+        Format::Text => layer.with_filter(filter).boxed(),
+        Format::Json => layer.json().with_filter(filter).boxed(),
+    };
+    tracing_subscriber::registry().with(layer).init();
+}
+
+/// The filter `RUST_LOG` asks for, on top of the one noda would have used.
+///
+/// Split out of `start` because the interesting half is what it does with a
+/// line somebody typed wrong, and that is worth being able to ask directly.
+fn wanted(rust_log: Option<&str>) -> Targets {
+    let asked = rust_log.and_then(|directives| directives.parse::<Targets>().ok());
+    let base = match asked.as_ref().and_then(Targets::default_level) {
+        // A bare level was given, and it means everything: noda's own floor
+        // goes with the rest.
+        Some(level) => Targets::new().with_default(level),
+        None => DEFAULT_FILTER.parse().expect("the default filter parses"),
+    };
+    match asked {
+        Some(asked) => base.with_targets(
+            asked
+                .iter()
+                .map(|(target, level)| (target.to_owned(), level)),
+        ),
+        None => base,
     }
 }
 
@@ -327,6 +375,56 @@ mod tests {
         assert!(log.contains("WARN"), "{log}");
         assert!(log.contains("host=\"evil.example\""), "{log}");
         assert!(log.contains("origin=\"<none>\""), "{log}");
+    }
+
+    /// The sharp edge, pinned. `Targets` reads a bare word as a target name at
+    /// `TRACE` rather than as a level, so a mistyped `RUST_LOG` parses into a
+    /// filter that says nothing at all — and a server whose log went silent
+    /// because of a typo in a unit file is the failure nobody would think to
+    /// look for.
+    #[test]
+    fn a_mistyped_rust_log_cannot_silence_the_server() {
+        let typo = wanted(Some("nonsense"));
+        assert!(
+            typo.would_enable("noda::web::log", &tracing::Level::WARN),
+            "a refusal must still be said: {typo:?}"
+        );
+        // And what was actually asked for is still applied on top of it.
+        assert!(
+            typo.would_enable("nonsense", &tracing::Level::TRACE),
+            "{typo:?}"
+        );
+    }
+
+    #[test]
+    fn what_rust_log_asks_for_wins_over_the_default() {
+        let asked = wanted(Some("noda=debug"));
+        assert!(asked.would_enable("noda::web::log", &tracing::Level::DEBUG));
+        // Other crates keep the default's floor rather than going silent.
+        assert!(
+            asked.would_enable("git2", &tracing::Level::ERROR),
+            "{asked:?}"
+        );
+    }
+
+    /// A level on its own means all of it, including noda's own floor.
+    #[test]
+    fn a_bare_level_replaces_the_default_outright() {
+        let off = wanted(Some("off"));
+        assert!(
+            !off.would_enable("noda::web::log", &tracing::Level::ERROR),
+            "{off:?}"
+        );
+        let all = wanted(Some("debug"));
+        assert!(all.would_enable("git2", &tracing::Level::DEBUG), "{all:?}");
+    }
+
+    #[test]
+    fn nothing_set_is_the_default_filter() {
+        let quiet = wanted(None);
+        assert!(quiet.would_enable("noda::web::log", &tracing::Level::INFO));
+        assert!(!quiet.would_enable("noda::web::log", &tracing::Level::DEBUG));
+        assert!(!quiet.would_enable("git2", &tracing::Level::WARN));
     }
 
     #[test]

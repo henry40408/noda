@@ -100,8 +100,12 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 # notebook per request is what a `!Send` handle requires anyway.
 #
 # Features: `http1` and `tokio` are the server, `query` is the `?q=` on the
-# listing. No `json` (nothing here speaks it), no `tracing`, no `http2` — a
-# notebook on a tailnet is not multiplexing streams.
+# listing, and `matched-path` is the route template — the only name `web::log`
+# is allowed to call a request by, an address here carrying a note's id or a
+# file's name. No `json` (nothing here speaks it), no `http2` — a notebook on a
+# tailnet is not multiplexing streams — and not axum's own `tracing` either:
+# what noda wants said about a request is said by one middleware of its own,
+# which is a dozen lines and says the four things it actually wants.
 axum = { version = "0.8.9", default-features = false, features = [
     "http1",
     "tokio",
@@ -129,11 +133,28 @@ tokio = { version = "1.53.1", default-features = false, features = [
 # `RUST_LOG` and the subscriber's own JSON renderer then do the rest, which is
 # what makes this the same operational surface as any other Rust server.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
-# `default-features = false` and then most of them back, because the two that
+# `default-features = false` and then most of them back, because the ones that
 # are off are off for a reason. `tracing-log` bridges the `log` crate, and
-# nothing noda depends on writes to it. `smallvec` trades a little code size for
-# fewer allocations per event, which is not a trade a page that logs one line
-# per request needs to make.
+# nothing noda depends on writes to it. `smallvec` trades code size for fewer
+# allocations per event, which is not a trade something that logs one line per
+# request needs to make.
+#
+# **`env-filter` is deliberately not here, and it is the one place this departs
+# from the servers it was modelled on.** It is what `RUST_LOG` is normally read
+# with, and both of them use it — but it matches directives with a regex engine,
+# and noda's tree has no other regex in it. Measured on one machine, release
+# profile, against the commit this branched from:
+#
+#     main                      7,326,256 bytes
+#     with `Targets`           +  166,016   (+2.27%)
+#     with `EnvFilter`         +  530,080   (+7.24%)
+#
+# The filter alone is 355 KB — 69% of the whole of the logging — and
+# `tracing_subscriber::filter::Targets` reads the same `noda=debug` and
+# `noda::web::log=debug` directives out of the same variable. What it will not
+# do is filter on spans and fields, and nothing here writes either. A server can
+# pay 355 KB without noticing; noda is a CLI that happens to serve, which is
+# what the note above `axum` is about.
 tracing-subscriber = { version = "0.3.23", default-features = false, features = [
     "std",
     "fmt",
@@ -141,14 +162,11 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
     # `NO_COLOR`, honoured here by hand because a subscriber does not read
     # `anstream`'s mind.
     "ansi",
-    # `RUST_LOG`. It is the one feature with a real cost — a filter directive is
-    # matched with a regex engine, and noda's tree has no other regex in it —
-    # and it is what makes the log adjustable without a rebuild, which is the
-    # whole point of shipping one.
-    "env-filter",
+    # What a `Targets` filter is layered onto.
+    "registry",
     # Line-delimited JSON for something that collects logs. `serde_json` is
-    # already here by way of the query string and the frontmatter, so this is
-    # the renderer and not the parser.
+    # already here by way of the import and the query string, so this is the
+    # renderer and not the parser.
     "json",
 ] }
 

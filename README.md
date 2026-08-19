@@ -894,6 +894,11 @@ Turn the stream on with `RUST_LOG=noda=debug`, or narrow it to the requests alon
 `RUST_LOG=noda::web::log=debug`. `--log-format json` (or `NODA_LOG_FORMAT=json`) writes one
 JSON object per line instead, for something that collects them.
 
+What you ask for is applied *on top of* that default rather than replacing it, so a typo in
+`RUST_LOG` costs you the setting and not the log — a server that went quiet because of a
+stray character in a unit file is the sort of failure nobody thinks to look for. A bare level
+is the exception and means all of it: `RUST_LOG=off` is off.
+
 ```
 $ RUST_LOG=noda=debug noda web
 noda is at http://127.0.0.1:8080
