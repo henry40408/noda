@@ -20,7 +20,12 @@ strip = true
 # makes the bytes `noda show` emits identical to the file itself.
 anstream = "1.0.0"
 anstyle = "1.0.14"
-clap = { version = "4.6.2", features = ["derive"] }
+# `env` is only for `--log-format`, and only because the thing that sets it is
+# usually a unit file or a container rather than a person: `RUST_LOG` is already
+# an environment variable, so the log's other knob being one too is the shape
+# anybody deploying this expects. Nothing else noda takes is configured that way
+# — the rest is `config.toml` and flags.
+clap = { version = "4.6.2", features = ["derive", "env"] }
 # Only `std`: the default features bundle a copy of the tz database and read the
 # system zone, and noda does neither. It records instants in UTC and prints them
 # back as they were written, so `Timestamp` is the whole of what it needs.
@@ -95,12 +100,20 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 # notebook per request is what a `!Send` handle requires anyway.
 #
 # Features: `http1` and `tokio` are the server, `query` is the `?q=` on the
-# listing. No `json` (nothing here speaks it), no `tracing`, no `http2` — a
-# notebook on a tailnet is not multiplexing streams.
+# listing, and `matched-path` is the route template — the only name `web::log`
+# is allowed to call a request by, an address here carrying a note's id or a
+# file's name. No `json` (nothing here speaks it), no `http2` — a notebook on a
+# tailnet is not multiplexing streams — and not axum's own `tracing` either:
+# what noda wants said about a request is said by one middleware of its own,
+# which is a dozen lines and says the four things it actually wants.
 axum = { version = "0.8.9", default-features = false, features = [
     "http1",
     "tokio",
     "query",
+    # The template the router matched, which is the only thing the log is
+    # allowed to call a request: an address here holds a note's id or a file's
+    # name, and both of those are the reader's own. See `web::log`.
+    "matched-path",
 ] }
 # The runtime and nothing else: no timers, no signals, no process spawning. The
 # blocking pool that `rt-multi-thread` brings is the part that matters, because
@@ -108,6 +121,53 @@ axum = { version = "0.8.9", default-features = false, features = [
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt-multi-thread",
     "net",
+] }
+# What `noda web` says about itself while it runs. Every other command answers
+# and exits, so its output is its answer; a server outlives the question, and
+# the only way to find out afterwards what it refused, what it failed at, or
+# what was slow is for it to have said so at the time.
+#
+# `tracing` and not `log` because the events carry fields — a request is a
+# method, a route, a status and a duration, and a line that has already had them
+# formatted into a sentence cannot be filtered or aggregated on any of them.
+# `RUST_LOG` and the subscriber's own JSON renderer then do the rest, which is
+# what makes this the same operational surface as any other Rust server.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+# `default-features = false` and then most of them back, because the ones that
+# are off are off for a reason. `tracing-log` bridges the `log` crate, and
+# nothing noda depends on writes to it. `smallvec` trades code size for fewer
+# allocations per event, which is not a trade something that logs one line per
+# request needs to make.
+#
+# **`env-filter` is deliberately not here, and it is the one place this departs
+# from the servers it was modelled on.** It is what `RUST_LOG` is normally read
+# with, and both of them use it — but it matches directives with a regex engine,
+# and noda's tree has no other regex in it. Measured on one machine, release
+# profile, against the commit this branched from:
+#
+#     main                      7,326,256 bytes
+#     with `Targets`           +  166,016   (+2.27%)
+#     with `EnvFilter`         +  530,080   (+7.24%)
+#
+# The filter alone is 355 KB — 69% of the whole of the logging — and
+# `tracing_subscriber::filter::Targets` reads the same `noda=debug` and
+# `noda::web::log=debug` directives out of the same variable. What it will not
+# do is filter on spans and fields, and nothing here writes either. A server can
+# pay 355 KB without noticing; noda is a CLI that happens to serve, which is
+# what the note above `axum` is about.
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+    "std",
+    "fmt",
+    # Colour, and it is switched off the way the rest of noda switches it off:
+    # `NO_COLOR`, honoured here by hand because a subscriber does not read
+    # `anstream`'s mind.
+    "ansi",
+    # What a `Targets` filter is layered onto.
+    "registry",
+    # Line-delimited JSON for something that collects logs. `serde_json` is
+    # already here by way of the import and the query string, so this is the
+    # renderer and not the parser.
+    "json",
 ] }
 
 # Only the browser's end-to-end tests use these, so they cost the shipped binary

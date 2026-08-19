@@ -25,6 +25,7 @@
 //!   It is also what makes a slow walk on one request not a stall on the others.
 
 pub mod guard;
+pub mod log;
 pub mod page;
 pub mod render;
 pub mod script;
@@ -128,7 +129,10 @@ type Shared = Arc<Server>;
 /// this one does not finish, and what a reader needs is the URL to type into a
 /// phone — now, not when the process ends. The `String` it answers with is the
 /// shape `main` prints and is always empty, for the same reason.
-pub fn serve(paths: &Paths, listen: &str, allow: &[String]) -> Result<String> {
+pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format) -> Result<String> {
+    // Before the bind, so a failure to listen is the first thing the log says
+    // rather than the first thing it misses.
+    log::start(format);
     let server = Arc::new(Server {
         paths: paths.clone(),
         guard: guard::Guard::new(allow),
@@ -205,6 +209,11 @@ fn router(server: Shared) -> Router {
             Arc::clone(&server),
             admitted,
         ))
+        // Outside the guard, so a refusal is timed and counted like any other
+        // answer. It still runs after routing — axum matches the route before
+        // handing the request to the layers — which is what puts the template
+        // within reach at all.
+        .layer(middleware::from_fn(log::timed))
         .with_state(server)
 }
 
@@ -218,11 +227,14 @@ async fn admitted(State(server): State<Shared>, request: Request, next: Next) ->
     let origin = text(headers, header::ORIGIN);
     match server.guard.admits(host.as_deref(), origin.as_deref()) {
         Ok(()) => next.run(request).await,
-        Err(refusal) => (
-            StatusCode::FORBIDDEN,
-            html(page::failure("Not answered", &refusal.0)),
-        )
-            .into_response(),
+        Err(refusal) => {
+            log::refused(host.as_deref(), origin.as_deref(), &refusal.0);
+            (
+                StatusCode::FORBIDDEN,
+                html(page::failure("Not answered", &refusal.0)),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -277,21 +289,28 @@ where
         )
             .into_response(),
         Ok(Ok(Answer::Held(held))) => held.into_response(),
-        Ok(Err(e)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            html(page::failure("Something went wrong", &e.to_string())),
-        )
-            .into_response(),
+        Ok(Err(e)) => {
+            log::failed(&e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                html(page::failure("Something went wrong", &e.to_string())),
+            )
+                .into_response()
+        }
         // The blocking pool lost the task: a panic, or a shutdown under way.
-        // Nothing useful to say about it, and nothing the reader can do.
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            html(page::failure(
-                "Something went wrong",
-                "the request did not finish",
-            )),
-        )
-            .into_response(),
+        // Nothing useful to say to the reader about it, and nothing they can do
+        // — which is exactly why it is worth saying somewhere they are not.
+        Err(_) => {
+            log::lost();
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                html(page::failure(
+                    "Something went wrong",
+                    "the request did not finish",
+                )),
+            )
+                .into_response()
+        }
     }
 }
 
