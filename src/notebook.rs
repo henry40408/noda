@@ -683,10 +683,19 @@ impl Notebook {
         Ok(())
     }
 
-    /// The configured remote, if there is one whose URL is valid UTF-8.
+    /// The configured remote, if there is one whose URL is valid UTF-8, with any
+    /// credentials in it redacted.
+    ///
+    /// Redacted here and not at each screen, because there are five screens and
+    /// the sixth one added later would be a leak nobody would think to look for.
+    /// Nothing that talks to the network reads this: `remote()` is what fetch
+    /// and push open, and it carries the URL as it was configured.
     pub fn remote_url(&self) -> Option<String> {
         let remote = self.repo.find_remote(REMOTE_NAME).ok()?;
-        remote.url().ok().map(str::to_string)
+        remote
+            .url()
+            .ok()
+            .map(|url| remote::redact(url).into_owned())
     }
 
     pub fn note_path(&self, id: &str, slug: &str) -> PathBuf {

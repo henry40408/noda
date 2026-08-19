@@ -1708,6 +1708,33 @@ fn the_status_screen_says_where_a_notebook_stands() {
     }
 }
 
+/// Of every screen that shows a remote this is the one with the widest
+/// audience: `noda web` asks nobody who they are, so whoever can open the page
+/// can read what is on it. A remote authenticated by a token in its URL — which
+/// is how the container image reaches an HTTPS host at all — must not put that
+/// token on it.
+#[test]
+fn the_status_screen_shows_a_remote_without_its_token() {
+    let (root, paths) = a_notebook();
+    cmd::remote_set(
+        &paths,
+        "https://x-access-token:ghp_secret@github.com/me/notes.git",
+    )
+    .expect("set the remote");
+    let server = Serving::start(root, &[]);
+
+    let answer = server.get("/nb/default/status");
+    assert_eq!(answer.status, 200);
+    assert!(!answer.says("ghp_secret"), "{}", answer.body);
+    // Still a remote, and still the one you configured — the host and the path
+    // are what the row is read for.
+    assert!(
+        answer.says("***@github.com/me/notes.git"),
+        "{}",
+        answer.body
+    );
+}
+
 /// The way in, and the only thing on the listing that says anything about the
 /// remote. It is a link because it is a way somewhere, and it carries the answer
 /// because that saves going there at all.

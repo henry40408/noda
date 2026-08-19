@@ -5,6 +5,8 @@
 //! calls back repeatedly until one succeeds, so every method is offered at most
 //! once and the callback then gives up rather than looping.
 
+use std::borrow::Cow;
+
 use git2::{Config, Cred, CredentialType, FetchOptions, RemoteCallbacks};
 
 use crate::Error;
@@ -94,7 +96,48 @@ pub fn explain(error: git2::Error, url: &str) -> Error {
     } else {
         "noda reads SSH keys from ssh-agent — check `ssh-add -l` and add your key with `ssh-add`"
     };
-    Error::msg(format!("{}: {}\n{hint}", url, error.message()))
+    Error::msg(format!("{}: {}\n{hint}", redact(url), error.message()))
+}
+
+/// A remote URL with its credentials taken out, for anything a person reads.
+///
+/// A token in the URL is not an exotic setup, it is the ordinary one wherever
+/// the credential helper cannot be reached: the container image carries no
+/// shell, so the helper never runs and the URL is the only place left to put
+/// the secret. That makes a remote URL something to assume is carrying one, and
+/// every screen that shows a remote — `noda status`, `noda remote show`, the
+/// notebook listing, the TUI, the web status page, and the error a failed sync
+/// prints — shows it through here.
+///
+/// The whole userinfo goes, not the password alone. Gitea and Forgejo take the
+/// token as the *username*, so a redaction that kept the username would leak
+/// the secret on exactly the hosts that ask for it there.
+///
+/// What is left still names the host and the path, which is what a remote is
+/// read for. The URL as configured stays in `.git/config`, where it was put.
+pub fn redact(url: &str) -> Cow<'_, str> {
+    // `git@github.com:me/notes.git` is scp syntax rather than a URL: it has no
+    // scheme, and the `git@` in front of it is a username with nothing to hide.
+    let Some(mark) = url.find("://") else {
+        return Cow::Borrowed(url);
+    };
+    let (scheme, rest) = url.split_at(mark);
+    let rest = &rest["://".len()..];
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    // `rfind`, because a password may hold an `@` and the userinfo ends at the
+    // last one. The search stops at the authority because a *path* may hold one
+    // too — `https://host/a@b.git` has no credentials in it at all.
+    let Some(at) = authority.rfind('@') else {
+        return Cow::Borrowed(url);
+    };
+    // Over SSH a bare username is not a secret: the key authenticates and never
+    // travels in the URL. A password does, and over HTTPS so does anything at
+    // all, because that is where a token is put.
+    let secret = authority[..at].contains(':') || matches!(scheme, "http" | "https");
+    if !secret {
+        return Cow::Borrowed(url);
+    }
+    Cow::Owned(format!("{scheme}://***@{}", &rest[at + 1..]))
 }
 
 /// The notebook name implied by a clone URL: the last path segment, minus `.git`.
@@ -182,6 +225,62 @@ mod tests {
             Some("notes")
         );
         assert_eq!(name_from_url("/"), None);
+    }
+
+    /// What a remote may be carrying, and what is safe to leave on a screen.
+    #[test]
+    fn credentials_come_out_of_a_url_before_anyone_reads_it() {
+        // GitHub and GitLab put the token where the password goes.
+        assert_eq!(
+            redact("https://x-access-token:ghp_secret@github.com/me/notes.git"),
+            "https://***@github.com/me/notes.git"
+        );
+        // Gitea and Forgejo take it as the username, so the username goes too.
+        assert_eq!(
+            redact("https://tok_secret@codeberg.org/me/notes.git"),
+            "https://***@codeberg.org/me/notes.git"
+        );
+        // A password may hold an `@`, so the userinfo ends at the last one.
+        assert_eq!(
+            redact("https://me:p@ssw0rd@git.example.com/notes.git"),
+            "https://***@git.example.com/notes.git"
+        );
+
+        // Nothing to hide: these come back exactly as they went in, because a
+        // remote that reads differently from the one you configured is its own
+        // kind of confusing.
+        for url in [
+            "https://github.com/me/notes.git",
+            // scp syntax, where `git@` is a username and the key does the
+            // authenticating somewhere else entirely.
+            "git@github.com:me/notes.git",
+            "ssh://git@github.com/me/notes.git",
+            // The `@` is in the path here — the authority ended before it.
+            "https://git.example.com/me/a@b.git",
+            // A remote is allowed to be a directory.
+            "/srv/backups/notes.git",
+        ] {
+            assert_eq!(redact(url), url);
+        }
+
+        // ...but a password travels whatever the scheme is, so it still goes.
+        assert_eq!(
+            redact("ssh://me:pw@git.example.com/notes.git"),
+            "ssh://***@git.example.com/notes.git"
+        );
+    }
+
+    /// The URL goes into the message, and a sync that failed to authenticate is
+    /// exactly the moment the URL is most likely to be carrying a token.
+    #[test]
+    fn a_failure_does_not_print_the_token_it_failed_with() {
+        let explained = explain(
+            git2::Error::from_str("no usable credentials"),
+            "https://x-access-token:ghp_secret@github.com/me/notes.git",
+        )
+        .to_string();
+        assert!(!explained.contains("ghp_secret"), "{explained}");
+        assert!(explained.contains("***@github.com"), "{explained}");
     }
 
     /// The message libgit2 actually produces when no credential helper answers.
