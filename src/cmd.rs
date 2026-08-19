@@ -3009,7 +3009,10 @@ pub fn remote_set(paths: &Paths, url: &str) -> Result<String> {
     }
     let notebook = Notebook::open_active(paths)?;
     notebook.set_remote(url)?;
-    Ok(format!("{}  {url}", notebook.name))
+    // Redacted even though the URL was just typed: what was typed is gone from
+    // the screen the moment the answer replaces it, and this line is the one
+    // that stays in the scrollback.
+    Ok(format!("{}  {}", notebook.name, remote::redact(url)))
 }
 
 /// Prints the active notebook's remote.
@@ -3133,7 +3136,8 @@ pub fn clone(paths: &Paths, url: &str, name: Option<&str>) -> Result<String> {
         Some(name) => name.to_string(),
         None => remote::name_from_url(url).ok_or_else(|| {
             Error::msg(format!(
-                "cannot tell what to call the notebook from `{url}` — pass a name"
+                "cannot tell what to call the notebook from `{}` — pass a name",
+                remote::redact(url)
             ))
         })?,
     };

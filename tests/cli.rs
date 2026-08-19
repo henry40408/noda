@@ -1361,6 +1361,40 @@ fn merge_commits(notebook: &Path) -> usize {
         .count()
 }
 
+/// A token in the remote URL is how the container image authenticates over
+/// HTTPS: the credential helper it would otherwise consult has to be executed,
+/// and that image carries no shell to execute it with. So a remote is something
+/// to assume is carrying a secret, and none of the screens that show one may
+/// hand it back.
+#[test]
+fn a_token_in_the_remote_is_never_printed_back() {
+    const URL: &str = "https://x-access-token:ghp_secret@github.com/me/notes.git";
+
+    let (_root, paths) = initialized();
+
+    // Four screens, and the first of them is the answer to `remote set` itself.
+    let screens = [
+        cmd::remote_set(&paths, URL).unwrap(),
+        cmd::remote_show(&paths).unwrap(),
+        cmd::status(&paths).unwrap(),
+        cmd::notebook_ls(&paths).unwrap(),
+    ];
+    for shown in &screens {
+        assert!(!shown.contains("ghp_secret"), "{shown}");
+        assert!(shown.contains("***@github.com"), "{shown}");
+    }
+
+    // Redacting is a way of showing a remote, not a way of storing one: what
+    // was configured is what push and fetch still open.
+    let repo = git2::Repository::open(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)).expect("open");
+    let origin = repo.find_remote("origin").expect("remote");
+    assert_eq!(
+        origin.url().ok(),
+        Some(URL),
+        "the URL on disk was rewritten"
+    );
+}
+
 #[test]
 fn push_and_clone_round_trip_a_notebook() {
     let (root, paths) = initialized();

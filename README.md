@@ -1323,6 +1323,16 @@ calling `git`, so a helper your `git` reads from its installation's own `etc/git
 where a packaged build may well have put `credential.helper = osxkeychain` for you — is
 invisible to noda and has to be repeated in one of the files above.
 
+A remote can also carry its credentials in the URL — `https://<user>:<token>@host/notes.git`
+— and where no helper can be *run* at all, that is what is left: the container image has no
+shell to run one with. So noda assumes a remote is carrying a secret and never reads one
+back to you. `noda status`, `noda remote show`, `noda notebook ls`, the TUI, the web status
+page and the error a failed sync prints all say `https://***@host/notes.git`; the URL you
+configured is untouched in `.git/config`, which is what push and fetch still open. The whole
+userinfo is replaced rather than the password alone, because Gitea and Forgejo take the
+token as the *username*. `git@github.com:me/notes.git` is left exactly as it is — over SSH
+the key does the authenticating and the username is not a secret.
+
 Carrying its own libgit2 has a second consequence, and it is the one that surprises people:
 **noda runs no git hooks.** libgit2 does not run them at all, so a `pre-commit` in your
 notebook fires under `git commit` and does nothing under `noda add` — same file, same
