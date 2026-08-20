@@ -1752,7 +1752,7 @@ fn the_listing_says_where_the_notebook_stands_and_leads_to_the_rest() {
     // And with a remote it says the same thing `noda status` would.
     let (server, _paths, _remote) = serving_with_a_remote();
     assert!(
-        server.get("/nb/default").says(">never fetched</span>"),
+        server.get("/nb/default").says(">never synced</span>"),
         "the chip did not follow the notebook"
     );
     server.post("/nb/default/status/sync", &[]);
@@ -1783,7 +1783,7 @@ fn the_status_screen_is_not_a_dead_end() {
 fn a_sync_answers_before_it_finishes_and_says_how_it_went() {
     let (server, _paths, remote) = serving_with_a_remote();
     let answer = server.get("/nb/default/status");
-    assert!(answer.says("never fetched"), "{}", answer.body);
+    assert!(answer.says("never synced"), "{}", answer.body);
 
     let started = server.post("/nb/default/status/sync", &[]);
     assert_eq!(started.status, 303);

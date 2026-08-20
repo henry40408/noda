@@ -65,7 +65,9 @@ pub struct Status {
     pub uncommitted: usize,
     pub remote: Option<String>,
     /// `(ahead, behind)` against the remote-tracking ref, or `None` when there
-    /// is nothing to compare against because the notebook has never fetched.
+    /// is no such ref to compare against yet. A first push builds one as surely
+    /// as a fetch does, which is why the screens call this state `never synced`
+    /// rather than naming either half of it.
     pub drift: Option<(usize, usize)>,
     /// What the walk of the working tree turned up that wants attention. Empty
     /// is the healthy state, and the ordinary one.
@@ -1163,6 +1165,12 @@ impl Notebook {
             return Ok("pull: already up to date".to_string());
         }
 
+        // Between the fetch and the merge, which is the one moment both sides
+        // are known and neither has moved: the tracking ref already carries the
+        // remote's news and the branch has not been touched yet, so this is
+        // exactly what is about to arrive.
+        let incoming_count = self.drift(&branch)?.map_or(0, |(_, behind)| behind);
+
         if analysis.is_fast_forward() {
             let refname = format!("refs/heads/{branch}");
             self.repo
@@ -1171,7 +1179,11 @@ impl Notebook {
             self.repo.set_head(&refname)?;
             self.repo
                 .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
-            return Ok(format!("pull: fast-forwarded to {}", short(incoming)));
+            return Ok(format!(
+                "pull: fast-forwarded {} to {}",
+                plural(incoming_count, "commit"),
+                short(incoming)
+            ));
         }
 
         self.repo.merge(&[&annotated], None, None)?;
@@ -1202,7 +1214,10 @@ impl Notebook {
             &[&ours, &theirs],
         )?;
         self.repo.cleanup_state()?;
-        Ok(format!("pull: merged {REMOTE_NAME}/{branch}"))
+        Ok(format!(
+            "pull: merged {} from {REMOTE_NAME}/{branch}",
+            plural(incoming_count, "commit")
+        ))
     }
 
     /// Pushes the current branch, and the snapshots the remote does not have. A
@@ -1210,6 +1225,13 @@ impl Notebook {
     /// because that is always the next step.
     pub fn push(&self) -> Result<String> {
         let branch = self.branch()?;
+        // Read before anything is sent, because afterwards it is gone: libgit2
+        // moves the remote-tracking ref itself once the push lands, so this is
+        // the only moment the count is there to be had. It is measured against
+        // what the last fetch left behind, the same line `status` draws — and a
+        // push that raced a remote which had moved is refused outright below
+        // rather than counted wrongly.
+        let ahead = self.drift(&branch)?.map(|(ahead, _)| ahead);
         let mut remote = self.remote()?;
         let url = remote.url().unwrap_or_default().to_string();
         // Snapshots go with the branch. One that stayed on the machine it was
@@ -1271,7 +1293,32 @@ impl Notebook {
             return Err(rejected(&rejections));
         }
 
-        let mut out = format!("push: {branch} -> {url}");
+        // The branch's own refspec is always the first, so the rest are the
+        // snapshots this push carried — which is a thing sent, and belongs in
+        // the same breath as the commits rather than going unmentioned.
+        let snapshots = refspecs.len() - 1;
+        let mut sent = Vec::new();
+        if let Some(n) = ahead
+            && n > 0
+        {
+            sent.push(plural(n, "commit"));
+        }
+        if snapshots > 0 {
+            sent.push(plural(snapshots, "snapshot"));
+        }
+
+        let mut out = match (sent.is_empty(), ahead) {
+            (false, _) => format!("push: {branch} ({}) -> {url}", sent.join(", ")),
+            // Nothing moved, and the notebook knew that before it opened the
+            // connection. Worth saying: the line that used to print here was the
+            // same one a push of twenty commits printed, so the command that
+            // acts on the difference was the one command never reporting it.
+            (true, Some(_)) => format!("push: {branch} matches {url} — nothing to send"),
+            // Never synced, so there is no count to give. What the remote holds
+            // is unknown until something is fetched from it, and a number
+            // counted off the local history would be a guess dressed as a fact.
+            (true, None) => format!("push: {branch} -> {url}"),
+        };
         // Said out loud rather than swallowed: the notebook now holds a snapshot
         // name that means one thing here and another everywhere else, and only
         // its author can decide which one keeps the name.
@@ -1786,6 +1833,15 @@ fn initial_branch(config: &git2::Config) -> String {
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "master".to_string())
+}
+
+/// `1 commit` / `3 commits`, for the counts `push` and `pull` report.
+fn plural(n: usize, thing: &str) -> String {
+    if n == 1 {
+        format!("1 {thing}")
+    } else {
+        format!("{n} {thing}s")
+    }
 }
 
 /// A refused push, phrased as the next thing to do about it.

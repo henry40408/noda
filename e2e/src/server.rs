@@ -85,7 +85,7 @@ pub fn reset() -> Result<()> {
 
     // **The remote is fixture too, and forgetting that is the same trap the
     // notebook itself set.** A scenario that syncs leaves commits on the bare
-    // repository and a tracking ref behind it, and "never fetched" is then a
+    // repository and a tracking ref behind it, and "never synced" is then a
     // statement about the previous scenario rather than about a notebook that
     // has not been anywhere. It passes on a single pass, because the scenario
     // that reads comes before the scenario that syncs, and fails on the second
