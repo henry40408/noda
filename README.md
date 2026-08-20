@@ -1721,6 +1721,10 @@ cargo nextest run
 scripts/bench-coldstart.sh                # times whole processes, not in-process code
 ```
 
+How the crate is put together — the layering, three worked paths through it, the concurrency the
+web server needs, and where to add a command or a screen — is
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## License
 
 [MIT](LICENSE.txt) © 2026 Heng-Yi Wu

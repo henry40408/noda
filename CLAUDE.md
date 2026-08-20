@@ -40,64 +40,54 @@ opt-out list in `Cargo.toml`.
 
 ## Architecture
 
+**`docs/ARCHITECTURE.md` is the reference** — it has the shape, three worked paths through it (a
+CLI command, a write from the browser, a TUI keystroke), the concurrency model, and where to add a
+command / import source / screen / page. The short version:
+
 ```
-main.rs      clap definitions and argument parsing. Prints; holds no logic.
-   |
-cmd.rs       one function per command. Returns a String — never prints.
-   |
-notebook.rs  `Notebook`: the single façade over git2. Status, drift, scan,
-             commit, pull/push, log, blame, diff, snapshots.
-note.rs      one note: frontmatter parse / write-back, and the filename identity.
-link · query · todo    features derived from the CommonMark event stream.
+main.rs → cmd.rs → notebook.rs   the single façade over git2
+                   note.rs       the filename that carries a note's identity
+link · query · todo              read from the CommonMark event stream, never grepped
 paths · config · error · style · sign · remote
 ```
 
-Two front ends sit on top of `cmd`, and neither reimplements it:
-
-| | modules | reaches for |
-| --- | --- | --- |
-| `tui/` | `app` `view` `frame` `field` `command` `theme` | `cmd::edit`, `cmd::tag`, `cmd::rm`, `cmd::bulk`, … |
-| `web/` | `mod` `page` `render` `script` `log` `guard` `theme` `work` | `cmd::rewrite_in`, `cmd::tag_in`, `cmd::rm_in`, … |
-| `import/` | `wikitext` `tiddlywiki` | one parser per source, producing `Incoming`; one shared back end |
+`tui/`, `web/` and `import/` sit on top, and neither front end reaches past `cmd` to write a note.
 
 ## Invariants
 
-These hold across modules, so no single file states them. Breaking one is how the two front ends
-drift apart.
+These hold *between* modules, so no single file states them — which is why they are here. Breaking
+one is how the two front ends drift apart; `docs/ARCHITECTURE.md` explains each in context.
 
-1. **A command returns its answer; it does not emit it.** Every entry point in `cmd` is
-   `-> Result<String>`, which is what lets the TUI show a command's own output in its status band
-   and the web handlers reuse it. There is exactly one write to stdout in the crate —
-   `cmd::print`, called once from `main.rs` — and it goes through `anstream`, so a redirected
-   `noda show` writes the file byte for byte. Adding a second one breaks both front ends.
+1. **A command returns its answer; it does not emit it.** Every `cmd` entry point is
+   `-> Result<String>`. There is exactly one write to stdout in the crate — `cmd::print`, called
+   once from `main.rs`, through `anstream` so a redirected `noda show` is byte-for-byte the file.
 
-2. **Commands come in pairs: `foo(paths, …)` and `foo_in(notebook, …)`.** The first opens the
-   active notebook; the second takes one already open. `noda web` opens a notebook per request and
-   calls the `_in` half — a second handle on the same repository would defeat the point — and the
-   `_in` half never opens `$EDITOR`, because a browser arrives with the body already written.
+2. **What a command returns is prose, not an interface.** It is a sentence written for a person,
+   and a caller that parses it has turned the wording of a message into an API. When a caller needs
+   a fact about what just happened it asks the notebook — both front ends diff `taken_ids()` around
+   the call rather than reading an id out of the answer.
 
-3. **Nothing outside `cmd` writes a note.** Validating a title, stamping `updated` and committing
-   happen in one place. `tui/mod.rs` says it outright: nothing in that module writes a note itself.
+3. **Commands come in pairs: `foo(paths, …)` and `foo_in(notebook, …)`.** The `_in` half takes an
+   already-open notebook and never opens `$EDITOR` — it is the half `noda web` calls, because a
+   request must not open an editor and a second handle on one repository defeats the point.
 
-4. **The layer that produces a screen touches nothing else.** `tui/app.rs` takes keystrokes and
-   returns `Action`s — it opens no file, repository or terminal. `web/page.rs` takes what a page is
-   about and returns a string — it opens no repository and does not know what a request is. Both
-   exist so the interesting half can be tested with no terminal and no socket; `tui/mod.rs` is the
-   only place in the TUI that touches the world.
+4. **Nothing outside `cmd` writes a note.** Validating a title, stamping `updated` and committing
+   happen in one place, so a change means the same thing however it was asked for.
 
-5. **`git2::Repository` is `!Send`** and cannot be held across an await. Every web handler works
-   inside `spawn_blocking` and opens its own `Notebook`. `web/work.rs` uses a plain `std::thread`
-   instead: the blocking pool is for work a request waits on, and sync is precisely the work no
-   request waits on.
+5. **The layer that produces a screen touches nothing.** `tui/app.rs` returns `Action`s and opens
+   no file, repository or terminal; `web/page.rs` returns strings and knows nothing about requests.
+   Both exist so the interesting half can be tested with no terminal and no socket.
 
-6. **Markdown is parsed, never grepped.** `link.rs`, `todo.rs` and `web/render.rs` all go through
-   `pulldown-cmark`. `- [ ]` inside a code fence is not a checkbox, a link inside one is not a
-   link, and a reference-style link keeps its destination at the bottom of the file — getting any
-   of that wrong reports a referenced file as an orphan.
+6. **`git2::Repository` is `!Send`** and is never held across an await. Every web handler works
+   inside `spawn_blocking` with its own `Notebook`; `web/work.rs` uses a plain `std::thread`,
+   because the blocking pool is for work a request waits on and sync is the work none waits on.
 
-7. **Colour is decided once, in `style.rs`.** `tui/theme.rs` and `web/theme.rs` translate that
-   decision for their medium; they do not make one. An id is the same yellow in `noda ls`, in the
-   TUI and in a browser.
+7. **Markdown is parsed, never grepped** — `link.rs`, `todo.rs`, `web/render.rs`. `- [ ]` inside a
+   code fence is not a checkbox and a link inside one is not a link; getting that wrong reports a
+   referenced file as an orphan.
+
+8. **Colour is decided once, in `style.rs`.** `tui/theme.rs` and `web/theme.rs` translate that
+   decision for their medium; they do not make one.
 
 ## Data model
 
@@ -123,14 +113,11 @@ path asked for, because an address here carries somebody's note id or filename.
 
 ## Testing
 
-| layer | what it catches |
-| --- | --- |
-| `#[cfg(test)]` in `src/**` (~369 tests) | units, next to the code |
-| `tests/cli.rs` | the command layer, each test with its own XDG root |
-| `tests/tui.rs` | screens, drawn into ratatui's test backend — no terminal |
-| `tests/pty.rs` | layout bugs a character buffer is blind to: a real pty, `vt100` on the other end |
-| `tests/web.rs` | the real binary on a real socket, requests written by hand (the guard tests need a `Host` that lies) |
-| `e2e/` | Gherkin features driving a real browser |
+Six layers: `#[cfg(test)]` units in `src/**` (~369), `tests/cli.rs` for the command layer,
+`tests/tui.rs` for screens (ratatui's test backend — no terminal), `tests/pty.rs` for *layout*
+(a real pty and `vt100`, catching what a character buffer is blind to), `tests/web.rs` for the real
+binary on a real socket, and `e2e/` for a real browser. `docs/ARCHITECTURE.md` says what each one
+exists to catch; put a new test in the cheapest layer that can actually fail on the bug.
 
 Two things that are not optional:
 
