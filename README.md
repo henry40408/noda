@@ -166,7 +166,7 @@ destructive surprise — `noda rm` is a commit you can revert.
 | --- | --- |
 | `noda init` | Create the XDG directories and a `default` notebook. |
 | `noda notebook add <name> [--remote <url>]` | Create a notebook (a new git repo). |
-| `noda notebook ls` | List notebooks; marks the active one. |
+| `noda notebook ls` | List notebooks; marks the active one and says where each stands against its remote. |
 | `noda notebook rm <name> [--force]` | Remove a notebook (local repo). Asks first. |
 | `noda notebook rename <old> <new>` | Rename a notebook. |
 | `noda use <name>` | Set the active notebook. |
@@ -1058,7 +1058,7 @@ document that runs script, so it arrives as a download.
 
 **The notebook syncs from the browser, and the request does not wait for it.** The corner of
 the listing's bar carries where the notebook stands against its remote — `2 to push`, `in
-sync`, `never fetched` — and pressing it opens `/nb/<book>/status`: the same facts `noda
+sync`, `never synced` — and pressing it opens `/nb/<book>/status`: the same facts `noda
 status` prints, none of them fetched, with `Sync`, `Pull` and `Push` under them.
 
 A sync is a fetch over somebody's network, so it takes as long as it takes. Pressing starts it
@@ -1259,7 +1259,7 @@ and the notes go anyway.
 
 ```
 $ noda push
-push: main -> git@github.com:me/notes.git
+push: main (2 commits, 1 snapshot) -> git@github.com:me/notes.git
 snapshot `q3` was not sent — the remote already has that name for another commit; rename
 yours, or drop it with `git tag -d q3`
 ```
@@ -1313,6 +1313,40 @@ list is an answer. `--notebook` looks at one you are not currently in.
 | `noda remote show` | Print the configured remote. |
 | `noda sync` | Pull, then push (auto-commits pending changes first). |
 | `noda push` / `noda pull` | One-directional sync. |
+
+**Where you stand against the remote is said in one vocabulary, wherever it is said.** `in
+sync`, `2 to push`, `3 to pull`, `never synced`, `no remote` — those are the words, and
+`noda status`, the `noda notebook ls` column, the TUI's `↑2 ↓3` and the chip on the web bar
+are all reading the same two numbers. None of them goes to the network: the counts are
+measured against what the last sync left behind, which is what makes every one of them
+instant and correct on a train. `never synced` covers a notebook whose remote it has not
+spoken to yet, and a first `noda push` clears it as readily as a fetch does.
+
+```
+$ noda notebook ls
+* work     git@github.com:me/work-notes.git  2 to push
+  archive  git@github.com:me/archive.git     in sync
+  scratch  no remote
+```
+
+`noda status` speaks only about the notebook you are in, so this column is where a notebook
+you have not opened in a fortnight gets to say it is thirty commits behind.
+
+**The two commands that act on the difference report it too.** A push used to print the same
+line whether it carried twenty commits or nothing at all:
+
+```
+$ noda push
+push: main (2 commits) -> git@github.com:me/notes.git
+$ noda push
+push: main matches git@github.com:me/notes.git — nothing to send
+$ noda pull
+pull: fast-forwarded 3 commits to cba91df
+```
+
+A first push is the one that gives no number — until something has been fetched, what the
+remote holds is unknown, and a count taken off the local history would be a guess dressed as
+a fact.
 
 HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. Credentials
 are not noda's to keep: SSH keys come from `ssh-agent`, HTTPS from git's credential helper.

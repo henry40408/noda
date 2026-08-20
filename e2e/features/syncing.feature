@@ -10,11 +10,11 @@ Feature: Syncing from a phone
 
   Scenario: The listing says where the notebook stands
     Given I open the notebook
-    Then the page says "never fetched"
+    Then the page says "never synced"
 
   Scenario: The chip leads to the screen that says the rest
     Given I open the notebook
-    When I press "never fetched"
+    When I press "never synced"
     Then I am at "/nb/default/status"
     And the page says "Branch"
     And the page says "Remote"
@@ -50,6 +50,6 @@ Feature: Syncing from a phone
 
   Scenario: The narrowest phone still fits the network screen
     Given I open the notebook on a 320 pixel phone
-    When I press "never fetched"
+    When I press "never synced"
     Then the page does not scroll sideways
     And no control is smaller than 48 by 48

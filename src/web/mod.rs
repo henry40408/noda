@@ -431,38 +431,13 @@ async fn front(State(server): State<Shared>) -> Response {
                 // draws that case differently: it is the one that is not a
                 // link. Said in the type rather than by reading the words back
                 // out of the string this used to be.
-                drift: status.remote.as_ref().map(|_| drifted(status.drift)),
+                drift: status.remote.as_ref().map(|_| cmd::drifted(status.drift)),
                 last: cmd::format_time(seconds, offset)[..cmd::DATE_WIDTH].to_string(),
             });
         }
         Ok(Answer::Page(page::notebooks(&books)))
     })
     .await
-}
-
-/// Where a notebook stands, remote and all, for the screens that say it in one
-/// string.
-fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
-    match remote {
-        None => "no remote".to_string(),
-        Some(_) => drifted(drift),
-    }
-}
-
-/// Where a notebook stands against a remote it has, in git's own words.
-///
-/// `ahead` and `behind` rather than a verb: "sync" asks whether you want to,
-/// and this says whether there is anything to. The counts are already in
-/// `Status` — `noda status` prints them — so this is the same judgement said
-/// shorter, not a second one.
-fn drifted(drift: Option<(usize, usize)>) -> String {
-    match drift {
-        None => "never fetched".to_string(),
-        Some((0, 0)) => "in sync".to_string(),
-        Some((ahead, 0)) => format!("{ahead} to push"),
-        Some((0, behind)) => format!("{behind} to pull"),
-        Some((ahead, behind)) => format!("{ahead} to push, {behind} to pull"),
-    }
 }
 
 /// The notebook's `README.md`, rendered, for the pane beside the listing.
@@ -504,7 +479,7 @@ async fn listing(
         // this handler has already read and once for a whole `git status` — and
         // none of that is on the chip. What is left is two refs compared, which
         // is what a listing can afford to pay on every visit.
-        let drift = standing(
+        let drift = cmd::standing(
             notebook.remote_url().as_deref(),
             notebook.drift(&notebook.branch()?)?,
         );
@@ -598,7 +573,7 @@ async fn reading(
         // rather than the note's. Two refs compared, the same as the listing
         // pays; the notes themselves are not read, which is the whole point of
         // sending this pane empty.
-        let drift = standing(
+        let drift = cmd::standing(
             notebook.remote_url().as_deref(),
             notebook.drift(&notebook.branch()?)?,
         );
@@ -767,7 +742,7 @@ async fn status(State(server): State<Shared>, Path(book): Path<String>) -> Respo
                 files: status.files,
                 uncommitted: status.uncommitted,
                 remote: status.remote.clone(),
-                drift: standing(status.remote.as_deref(), status.drift),
+                drift: cmd::standing(status.remote.as_deref(), status.drift),
                 problems: status
                     .problems
                     .iter()
@@ -1417,20 +1392,5 @@ mod tests {
     fn a_stray_percent_is_left_as_typed() {
         assert_eq!(parameter(Some("q=100%+of+it"), "q"), "100% of it");
         assert_eq!(parameter(Some("q=%zz"), "q"), "%zz");
-    }
-
-    /// `noda status` already answers this; the words are the only new part.
-    #[test]
-    fn a_notebook_says_where_it_stands_in_gits_own_words() {
-        let standing_of = standing;
-        assert_eq!(standing_of(None, None), "no remote");
-        assert_eq!(standing_of(Some("git@x:y.git"), None), "never fetched");
-        assert_eq!(standing_of(Some("git@x:y.git"), Some((0, 0))), "in sync");
-        assert_eq!(standing_of(Some("git@x:y.git"), Some((2, 0))), "2 to push");
-        assert_eq!(standing_of(Some("git@x:y.git"), Some((0, 1))), "1 to pull");
-        assert_eq!(
-            standing_of(Some("git@x:y.git"), Some((2, 1))),
-            "2 to push, 1 to pull"
-        );
     }
 }

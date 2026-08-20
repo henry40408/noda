@@ -1694,27 +1694,102 @@ pub fn notebook_add(paths: &Paths, name: &str, remote: Option<&str>) -> Result<S
     ))
 }
 
-/// Lists notebooks, marking the active one with `*` and showing any remote.
+/// One notebook as `notebook_ls` lays it out, read before any of it is measured.
+struct Row {
+    name: String,
+    /// `None` is a notebook with nowhere to sync to, which is not the same as
+    /// one that has somewhere and has never used it. The column is skipped
+    /// entirely for the first and padded for the second.
+    remote: Option<String>,
+    drift: Option<(usize, usize)>,
+}
+
+/// Lists notebooks, marking the active one with `*` and showing where each one
+/// stands against its remote.
+///
+/// `noda status` speaks only about the active notebook, which leaves every other
+/// one silent: a notebook you have not opened in a fortnight can be thirty
+/// commits behind and nothing on the terminal ever says so. This is the row that
+/// says it, and the browser's shelf has said it all along — so this is the CLI
+/// catching up with what the web UI already shows.
+///
+/// [`Notebook::drift`] rather than [`Notebook::status`], which is what makes it
+/// affordable per row: the full status walks the working tree twice over, and
+/// this is two refs compared. Nothing goes to the network either, so a notebook
+/// whose remote is unreachable — or whose host is simply not up right now —
+/// costs no more than any other.
 pub fn notebook_ls(paths: &Paths) -> Result<String> {
     let names = Notebook::list(paths)?;
     if names.is_empty() {
         return Ok(String::new());
     }
     let active = notebook::active_name(paths).ok();
-    let width = names.iter().map(|n| display_width(n)).max().unwrap_or(0);
+
+    // Opened once each, for two facts that both come off the refs. Gathered
+    // whole before anything is laid out, because no column's width is known
+    // until every notebook has been asked.
+    let rows: Vec<Row> = names
+        .into_iter()
+        .map(|name| {
+            let opened = Notebook::open(paths, &name).ok();
+            let remote = opened.as_ref().and_then(Notebook::remote_url);
+            let drift = opened.as_ref().and_then(|notebook| {
+                let branch = notebook.branch().ok()?;
+                notebook.drift(&branch).ok().flatten()
+            });
+            Row {
+                name,
+                remote,
+                drift,
+            }
+        })
+        .collect();
+
+    let name_width = rows
+        .iter()
+        .map(|row| display_width(&row.name))
+        .max()
+        .unwrap_or(0);
+    let remote_width = rows
+        .iter()
+        .map(|row| row.remote.as_deref().map_or(0, display_width))
+        .max()
+        .unwrap_or(0);
 
     let mut out = String::new();
-    for name in names {
+    for Row {
+        name,
+        remote,
+        drift,
+    } in rows
+    {
         let marker = if active.as_deref() == Some(&name) {
             '*'
         } else {
             ' '
         };
-        let remote = Notebook::open(paths, &name)
-            .ok()
-            .and_then(|notebook| notebook.remote_url())
-            .unwrap_or_default();
-        let line = format!("{marker} {}  {remote}", pad(&name, width));
+        // Muted unless there is something to do about it. Every other row on
+        // this screen is a fact, and `in sync` is a fact too — but `2 to push`
+        // is a fact that wants acting on, and on a listing of a dozen notebooks
+        // that is the one the eye has to be able to find without reading.
+        let words = standing(remote.as_deref(), drift);
+        let painted = match drift {
+            Some((ahead, behind)) if remote.is_some() && (ahead > 0 || behind > 0) => words,
+            _ => style::paint(style::MUTED, &words),
+        };
+        // A notebook with no remote skips the URL column rather than padding
+        // past it. That column is not empty for such a row, it is absent — and
+        // a `no remote` parked forty spaces to the right, under a heading of
+        // URLs it has nothing to do with, reads as a value that went missing
+        // instead of a notebook that never had one.
+        let line = match remote.as_deref() {
+            Some(remote) => format!(
+                "{marker} {}  {}  {painted}",
+                pad(&name, name_width),
+                pad(remote, remote_width)
+            ),
+            None => format!("{marker} {}  {painted}", pad(&name, name_width)),
+        };
         out.push_str(line.trim_end());
         out.push('\n');
     }
@@ -2472,16 +2547,51 @@ fn advice(scan: &notebook::Scan) -> Vec<String> {
 }
 
 /// How far the notebook has drifted, phrased as what there is left to do.
+///
+/// One wording, and it lives here because three screens say it: `noda status`
+/// spells it out with the caveat below, `noda notebook ls` puts it in a column,
+/// and the browser carries it in the chip on its bar. They had already grown two
+/// spellings of the same state — `never synced` on the terminal and `never
+/// fetched` in the browser — and the terminal's is the accurate one: a first
+/// `noda push` clears that state as readily as a fetch does, so a fetch is not
+/// what it is waiting for.
+///
+/// Plain text and no colour, because one of those three renders into HTML. A
+/// caller that wants it painted paints it; see [`describe_drift`].
+pub fn drifted(drift: Option<(usize, usize)>) -> String {
+    match drift {
+        None => "never synced".to_string(),
+        Some((0, 0)) => "in sync".to_string(),
+        Some((ahead, 0)) => format!("{ahead} to push"),
+        Some((0, behind)) => format!("{behind} to pull"),
+        Some((ahead, behind)) => format!("{ahead} to push, {behind} to pull"),
+    }
+}
+
+/// The same, for a notebook that may have no remote to stand against at all.
+///
+/// A notebook with no remote has not drifted from anything, and `never synced`
+/// would name a state it can never leave. So the absence of a remote is its own
+/// answer, and it is the one the screens show.
+pub fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
+    match remote {
+        None => "no remote".to_string(),
+        Some(_) => drifted(drift),
+    }
+}
+
+/// [`drifted`], painted for the one screen with room for the caveat.
+///
+/// The caveat is the whole reason `status` is instant: nothing went to the
+/// network, so what it reports is the last sync's news rather than today's.
 fn describe_drift(drift: Option<(usize, usize)>) -> String {
-    let Some((ahead, behind)) = drift else {
-        return style::paint(style::MUTED, "never synced");
-    };
-    let as_of = style::paint(style::MUTED, "(as of the last sync)");
-    match (ahead, behind) {
-        (0, 0) => format!("in sync {as_of}"),
-        (ahead, 0) => format!("{ahead} to push {as_of}"),
-        (0, behind) => format!("{behind} to pull {as_of}"),
-        (ahead, behind) => format!("{ahead} to push, {behind} to pull {as_of}"),
+    let words = drifted(drift);
+    match drift {
+        None => style::paint(style::MUTED, &words),
+        Some(_) => format!(
+            "{words} {}",
+            style::paint(style::MUTED, "(as of the last sync)")
+        ),
     }
 }
 
@@ -3444,6 +3554,38 @@ mod tests {
         assert_eq!(display_width(&pad("reading-log", width)), width);
         // Already at or past the target width: never truncate, never panic.
         assert_eq!(pad("reading-log", 4), "reading-log");
+    }
+
+    /// `noda status` already answers this; the words are the only new part.
+    ///
+    /// It lives here rather than beside the browser now, because the browser is
+    /// no longer the only caller: the terminal's `notebook ls` column and the
+    /// chip on the web bar are the same sentence, and one of them saying `never
+    /// fetched` while the other said `never synced` is exactly what this is
+    /// here to stop happening again.
+    #[test]
+    fn a_notebook_says_where_it_stands_in_gits_own_words() {
+        assert_eq!(standing(None, None), "no remote");
+        assert_eq!(standing(Some("git@x:y.git"), None), "never synced");
+        assert_eq!(standing(Some("git@x:y.git"), Some((0, 0))), "in sync");
+        assert_eq!(standing(Some("git@x:y.git"), Some((2, 0))), "2 to push");
+        assert_eq!(standing(Some("git@x:y.git"), Some((0, 1))), "1 to pull");
+        assert_eq!(
+            standing(Some("git@x:y.git"), Some((2, 1))),
+            "2 to push, 1 to pull"
+        );
+    }
+
+    /// A notebook with no remote is not `never synced` — that would name a
+    /// state it can never leave. The two answers come apart only here, which is
+    /// why the pair is worth asserting rather than just the one.
+    #[test]
+    fn a_notebook_with_no_remote_is_not_merely_unsynced() {
+        assert_eq!(drifted(None), "never synced");
+        assert_eq!(standing(None, None), "no remote");
+        // Whatever the drift says, no remote outranks it: a notebook with
+        // nowhere to push to cannot be two commits from anywhere.
+        assert_eq!(standing(None, Some((2, 0))), "no remote");
     }
 
     #[test]

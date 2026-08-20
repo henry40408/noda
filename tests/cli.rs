@@ -1294,6 +1294,49 @@ fn notebook_rm_asks_before_deleting_and_takes_no_for_an_answer() {
     assert!(!paths.notebook_dir("work").exists());
 }
 
+/// `noda status` speaks only about the active notebook, which left every other
+/// one silent — a notebook untouched for a fortnight could be thirty commits
+/// behind and nothing on the terminal ever said so. This is the row that says
+/// it, and it says it without going to the network.
+#[test]
+fn notebook_ls_says_where_each_notebook_stands() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+
+    // One with nowhere to sync to, which is not the same as one that has never
+    // synced: it can never leave that state, so it is given its own answer.
+    cmd::notebook_add(&paths, "solo", None).unwrap();
+    let listed = plain(&cmd::notebook_ls(&paths).unwrap());
+    let solo = listed.lines().find(|l| l.contains("solo")).unwrap();
+    assert!(solo.contains("no remote"), "{listed}");
+
+    cmd::remote_set(&paths, &url).unwrap();
+    let listed = plain(&cmd::notebook_ls(&paths).unwrap());
+    let active = listed.lines().find(|l| l.starts_with('*')).unwrap();
+    assert!(active.contains("never synced"), "{listed}");
+
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+    let listed = plain(&cmd::notebook_ls(&paths).unwrap());
+    let active = listed.lines().find(|l| l.starts_with('*')).unwrap();
+    assert!(active.contains("in sync"), "{listed}");
+
+    // And the state the whole column exists for.
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let listed = plain(&cmd::notebook_ls(&paths).unwrap());
+    let active = listed.lines().find(|l| l.starts_with('*')).unwrap();
+    assert!(active.contains("1 to push"), "{listed}");
+
+    // Nothing above went out to the host, so a notebook pointed at a URL that
+    // does not answer costs no more to list than any other. A bare path that
+    // was never created is as unreachable as an unplugged network.
+    cmd::notebook_add(&paths, "gone", Some("file:///nowhere/at/all.git")).unwrap();
+    let listed = plain(&cmd::notebook_ls(&paths).unwrap());
+    let gone = listed.lines().find(|l| l.contains("gone")).unwrap();
+    assert!(gone.contains("never synced"), "{listed}");
+}
+
 #[test]
 fn notebook_rm_refuses_when_there_is_nobody_to_ask() {
     let (_root, paths) = initialized();
@@ -1393,6 +1436,96 @@ fn a_token_in_the_remote_is_never_printed_back() {
         Some(URL),
         "the URL on disk was rewritten"
     );
+}
+
+/// The command that acts on the difference was the one command never reporting
+/// it: a push carrying twenty commits printed the same line as a push carrying
+/// nothing. These are the three things it can say instead, and which one it
+/// picks is the whole of what was missing.
+#[test]
+fn push_says_how_much_it_sent() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    // Never synced. What the remote holds is unknown until something has been
+    // fetched from it, so there is no count to give — and a number counted off
+    // the local history would be a guess wearing the clothes of a fact.
+    let out = plain(&cmd::push(&paths).unwrap());
+    assert!(out.starts_with("push:"), "{out}");
+    assert!(
+        !out.contains("commit"),
+        "a first push counted what it could not know: {out}"
+    );
+
+    // Nothing has moved since, and saying so is the point: this used to be
+    // indistinguishable from the line above it.
+    let out = plain(&cmd::push(&paths).unwrap());
+    assert!(out.contains("nothing to send"), "{out}");
+
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Gamma"), Some("c\n"), &[]).unwrap();
+    let out = plain(&cmd::push(&paths).unwrap());
+    assert!(out.contains("(2 commits)"), "{out}");
+
+    // Singular when it is one, because a line that says `1 commits` is a line
+    // that was assembled rather than written.
+    cmd::add(&paths, Some("Delta"), Some("d\n"), &[]).unwrap();
+    let out = plain(&cmd::push(&paths).unwrap());
+    assert!(out.contains("(1 commit)"), "{out}");
+}
+
+/// A push that carries no commits but does carry a snapshot has sent something,
+/// and `nothing to send` would be a lie about the one thing it did.
+#[test]
+fn a_snapshot_is_something_sent_even_when_no_commit_is() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+
+    // The notebook is clean, so this adds a tag and no commit at all.
+    cmd::snapshot(&paths, "q3", None).unwrap();
+    let out = plain(&cmd::push(&paths).unwrap());
+    assert!(out.contains("1 snapshot"), "{out}");
+    assert!(!out.contains("nothing to send"), "{out}");
+}
+
+/// The other direction, and the harder count: it is read between the fetch and
+/// the merge, which is the one moment the tracking ref carries the remote's news
+/// and the branch has not moved yet.
+#[test]
+fn pull_says_how_much_arrived() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    mirror(&paths, &url, "mirror");
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Gamma"), Some("c\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    // Only the remote moved, so the whole of it arrives as a fast-forward.
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    let out = plain(&cmd::pull(&paths).unwrap());
+    assert!(out.contains("fast-forwarded 2 commits"), "{out}");
+
+    // Now both sides move, which is the branch that makes a merge commit — and
+    // the count has to survive the merge being the thing that happened.
+    cmd::add(&paths, Some("Local"), Some("l\n"), &[]).unwrap();
+    cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
+    cmd::add(&paths, Some("Remote"), Some("r\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    let out = plain(&cmd::pull(&paths).unwrap());
+    assert!(out.contains("merged 1 commit"), "{out}");
 }
 
 #[test]
