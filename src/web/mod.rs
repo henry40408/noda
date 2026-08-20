@@ -209,12 +209,80 @@ fn router(server: Shared) -> Router {
             Arc::clone(&server),
             admitted,
         ))
+        // Added after the guard's layer and therefore outside it: a layer in
+        // axum covers the routes declared before it, and this one is meant not
+        // to be covered. See `health` for why.
+        .route("/health", get(health))
         // Outside the guard, so a refusal is timed and counted like any other
         // answer. It still runs after routing — axum matches the route before
         // handing the request to the layers — which is what puts the template
         // within reach at all.
         .layer(middleware::from_fn(log::timed))
         .with_state(server)
+}
+
+/// Whether this process is still able to answer.
+///
+/// **Outside the guard, and that is the decision worth explaining.** The guard
+/// reads `Host` and refuses a name nobody allowed, which is right for a browser
+/// and wrong for a probe: a probe is a program, and the `Host` it sends is
+/// whatever the thing running it decided on — a pod's own address, a service
+/// name, the name on a proxy's certificate. A liveness check that answered 403
+/// because `--allow-host` had not been given would report a healthy server as
+/// dead, and the restart that followed would not fix it. There is also nothing
+/// on the other side of the guard to protect here: no notebook is opened, no
+/// header is echoed back, and the only thing the answer discloses is that
+/// something is listening — which the caller established by connecting.
+///
+/// **It goes through `spawn_blocking`, which is the whole of what it tests.**
+/// Every page in this server does its work on the blocking pool, because
+/// libgit2 offers no other kind; a check that answered from the async side
+/// would return 200 with every reader hanging, and a health check that cannot
+/// fail is a health check that is not being run. Waiting for one blocking
+/// thread costs microseconds when the pool is free and does not come back when
+/// it is not, which is exactly the answer a probe's timeout is there to hear.
+///
+/// **It does not open a notebook, and that is not laziness.** A notebook that
+/// will not open is a repository to repair, not a process to restart; a check
+/// that failed on one would turn a single broken notebook into a container
+/// restarting every thirty seconds and still failing. What this reports is what
+/// a restart can mend.
+async fn health() -> Response {
+    let alive = tokio::task::spawn_blocking(|| ()).await.is_ok();
+    if !alive {
+        // The pool lost a task the way it does when a shutdown is under way. The
+        // page handlers say the same thing here, and this one has a status code
+        // for it that a probe already knows how to read.
+        log::lost();
+        return (StatusCode::SERVICE_UNAVAILABLE, plain("unavailable\n")).into_response();
+    }
+    (StatusCode::OK, plain("ok\n")).into_response()
+}
+
+/// A short answer meant for a program, with the two headers that keeps honest.
+///
+/// `no-store` because a health check behind a cache is a health check that can
+/// report a stopped server as running, and there is nothing here worth keeping
+/// anyway. `nosniff` for the reason every other answer here carries it: what
+/// noda said this is, is what it is.
+fn plain(body: &'static str) -> impl IntoResponse {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("text/plain; charset=utf-8"),
+            ),
+            (
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store"),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                header::HeaderValue::from_static("nosniff"),
+            ),
+        ],
+        body,
+    )
 }
 
 /// The guard, in front of everything.
