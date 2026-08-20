@@ -208,6 +208,8 @@ env.
 - **`Cargo.toml`** — why each dependency is present, what was rejected, and the measurements
   behind it (`env-filter` was dropped for `Targets` after measuring it at 355 KB, 69% of the whole
   of the logging).
-- **`README.md`** — the user-facing contract, written spec-first before the code existed.
+- **`README.md`** — the user-facing contract, written spec-first before the code existed. It
+  says what each command does; the four documents beside this one carry the reasoning:
+  [tui.md](tui.md), [web.md](web.md), [history.md](history.md), [importing.md](importing.md).
 - **`docs/PRFAQ.md`** — the working-backwards document behind the README: who this is for, and
   what problem it solves.
