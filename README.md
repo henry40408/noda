@@ -10,6 +10,23 @@
 
 ---
 
+**Start here** — [Why noda](#why-noda) · [Install](#install) · [Quickstart](#quickstart) · [Concepts](#concepts)
+
+**The commands** — [Notebooks](#notebooks) · [Notes](#notes) · [Attachments](#attachments) · [Paths](#paths) · [Config](#config) · [Output](#output)
+
+**The two other ways in** — [In the terminal](#browsing) · [In a browser](#in-a-browser)
+
+**What a note can carry** — [Action items](#action-items) · [Backlinks](#backlinks)
+
+**Because it is git** — [History](#history-git-backed) · [Remote sync](#remote-sync-https--ssh) · [Signing](#signing) · [Storage layout](#storage-layout)
+
+**Coming from elsewhere** — [Importing](#importing) · [Building from source](#building-from-source) · [Roadmap](#roadmap)
+
+Sections marked ▸ can be expanded for the reasoning behind a decision; everything you need to
+use the command is outside them.
+
+---
+
 ## Why noda
 
 - **Just git.** Every notebook is a normal git repo of Markdown files. No lock-in, no
@@ -40,6 +57,9 @@ docker run --rm -v noda:/data ghcr.io/henry40408/noda:main add "Meeting notes" -
 docker run --rm -v noda:/data ghcr.io/henry40408/noda:main ls
 ```
 
+<details>
+<summary><b>Living with the image</b> — an alias, and the three things a container cannot do for you</summary>
+
 That is a mouthful to type, so it is worth an alias:
 
 ```sh
@@ -51,6 +71,8 @@ carry — write notes with `-c`, or mount one in. And `noda sync` over SSH needs
 your agent through with `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent`, or use
 an HTTPS remote with a token. `noda tui` needs the `-it` the alias above already carries;
 without it there is no terminal on the other end and the command says so.
+
+</details>
 
 Otherwise, build it:
 
@@ -121,6 +143,9 @@ $ noda edit imported --no-touch          # the 2019 date it came with is still t
 $ noda tag imported --no-touch +archived
 ```
 
+<details>
+<summary>Where <code>--no-touch</code> goes on <code>tag</code>, what it means on <code>restore</code>, and why <code>add</code> has none</summary>
+
 On `tag` the flag goes *before* the tags, which take every argument after them so that
 `-q3` reads as a tag to remove rather than an option. Written after them it would arrive as
 one more tag, so noda says where it belongs rather than accepting a command that did
@@ -131,6 +156,11 @@ the version rather than being held aside, so the note ends up byte for byte the 
 was asked for. `add` has no such flag — `created` and `updated` are both written the moment
 a note is made, and a note nobody has changed was last changed when it was made. Write the
 block yourself if it should say otherwise.
+
+</details>
+
+<details>
+<summary>Why the timestamps live in the frontmatter — and how to write your own, for notes that arrived with dates</summary>
 
 They live in the file because that is the only place that survives a `clone`. The
 filesystem's own timestamps do not: git does not record them, so a fresh checkout stamps
@@ -149,6 +179,8 @@ came with it rather than losing it to the first command that rewrites the note.
 
 A note without the fields keeps not having them. noda will not invent a `created` it was
 never told — the only sources it could invent one from are the two that just failed.
+
+</details>
 
 Anywhere a command takes `<note>`, pass either the id or the slug. A slug is matched whole;
 an id is matched by any prefix that names exactly one note, the same bargain git makes with
@@ -357,6 +389,9 @@ jjvgqnrv  Meeting notes  meeting-notes  2026-08-02T09:14:00Z  2026-08-02T09:14:0
 k3f9m2p1  Imported       imported       -                     -
 ```
 
+<details>
+<summary>Why <code>-l</code> only extends the row, and what each column's colour is doing</summary>
+
 **`-l` extends the row, it does not rearrange it.** The id and the title are the first two
 columns either way, so `noda ls | cut -c1-8` and anything else that reads off the front says
 the same thing with the flag as without it. Tags are last in both, and for the reason they
@@ -371,6 +406,8 @@ noda; the tags, the one column that groups notes rather than naming one, get a h
 own. The title is left uncoloured, which is what makes it the column the eye lands on — and
 it is the note's own words, which noda does not paint anywhere. `NO_COLOR=1` turns all of it
 off, and a pipe has none of it to begin with.
+
+</details>
 
 `--sort created|updated|title` puts the listing in order — the times newest first, the title
 alphabetically.
@@ -595,7 +632,7 @@ the frontmatter — the file is left as you saved it so you can fix it or throw 
 `git checkout`. An edit cannot change *which* note it is editing: the id is in the filename,
 and the editor is handed the file.
 
-### Browsing
+## Browsing
 
 `noda tui` puts the notebook on a screen you can go into and come back out of. Reading a
 notebook from the shell is `ls`, then `show`, then `ls` again to find your place; here the
@@ -708,7 +745,7 @@ runs on are worth a keystroke apiece, and the hundred one-offs are what `/` is f
 the short version of what the tags screen's `Enter` does, which is why that screen numbers
 its first nine rows with the very digits that reach them.
 
-#### The other screens
+### The other screens
 
 A screen is the whole width and there is a stack of them, which is what lets a screen be
 about something a listing cannot hold. `noda blame`, `noda log` and `noda diff` do not fit
@@ -810,7 +847,7 @@ and the reason for wanting it — a sitting of small corrections to notes whose 
 somewhere else — outlasts one keystroke anyway. `T` turns it on for the session, `e`, `m` and
 `#` follow it, and the header carries `keeping updated` until you turn it off.
 
-#### Changing several notes at once
+### Changing several notes at once
 
 Marking and searching are separate, and neither undoes the other. `Space` marks the note under
 the cursor and `*` marks everything the query is showing, so "narrow to what I mean, take the
@@ -870,7 +907,7 @@ $ noda tui | less
 noda: noda tui needs a terminal at both ends; `noda ls`, `noda search` and `noda show` are the ones to redirect
 ```
 
-### In a browser
+## In a browser
 
 `noda web` serves the notebooks over HTTP, so a phone can read them. It renders on the
 server and works with JavaScript turned off: the search box is a form, every row is a link.
@@ -881,6 +918,9 @@ section](#and-a-script-on-top-that-nothing-depends-on).
 $ noda web
 noda is at http://127.0.0.1:8080
 ```
+
+<details>
+<summary><b>What it says while it runs</b> — <code>RUST_LOG</code>, JSON lines, the one event worth an alert, and why a request is never logged by the address it asked for</summary>
 
 **It says what it does while it runs, and it is quiet about it.** Every other command
 answers and exits, so its output is its answer; a server outlives the question, and the only
@@ -920,11 +960,16 @@ that is either a reverse proxy whose name has not been allowed yet or somebody a
 rebinding attack the guard exists for. It carries the `Host` and `Origin` it decided on, since
 a refusal nobody can read the reason for is a refusal nobody can fix.
 
+</details>
+
 Every notebook is named in the URL — `/nb/work` for the listing, `/nb/work/n/k3f9m2p1` for a
 note — so the active-notebook pointer never decides what a page shows. That pointer belongs to
 a shell session, and a browser tab that quietly changed which notebook it was showing because
 something happened in a terminal would be worse than a longer address. A note's slug and any
 prefix of its id both redirect to the id, so a bookmark survives a retitle.
+
+<details>
+<summary><b>What the front page shows</b> — a notebook per row, its two links, and what it drops as the screen narrows</summary>
 
 **The front page is the list of notebooks, and the one screen that is not inside one.** It
 carries neither the rail nor the bar — both hold places inside a notebook, and there is nowhere
@@ -941,6 +986,8 @@ pages that the pointer is read for.
 The row gives up its columns as the screen narrows, the way a listing's row does: below 1024px
 the day goes, and on a phone the file count goes with it. Three counts and the chip do not fit
 in 390px, and of the three the file count is the one that keeps least.
+
+</details>
 
 **There is no password on it, and there is not going to be one.** It is meant to be reached
 over a tailnet or from behind something that already does authentication, and both of those
@@ -1121,7 +1168,7 @@ landing halfway through somebody pressing Save is what that lock is there for. T
 notebook, so a remote that has gone quiet slows nothing down but the notebook whose remote it
 is.
 
-#### And a script on top, that nothing depends on
+### And a script on top, that nothing depends on
 
 Two screens carry one. The listing filters as you type, and the network screen asks for its
 own page instead of reloading whole. Both are shortcuts: they remove a wait, never add an
@@ -1139,7 +1186,7 @@ too. A *negated* bare word inverts that — `-budget` would **keep** a row whose
 cannot see — so there the filter stands aside and waits for the key, as it does for a query
 half typed.
 
-### Action items
+## Action items
 
 A todo is a GFM checkbox in a note's body — not a note, and not a file of its own:
 
@@ -1176,6 +1223,9 @@ off is a list you have to open the note to read anyway. `--json` carries `id`, `
 `file`, `text` and `due`, and prints a document even when there is nothing to do. It does
 not carry "overdue": a program has its own clock.
 
+<details>
+<summary>How a box is recognised, and why there is no <code>noda done</code></summary>
+
 The boxes are read with a CommonMark parser, not searched for as text, for the same reason
 `doctor --links` is — `- [ ]` inside a fenced code block is prose *about* a checkbox, and a
 list nested three deep is still a list.
@@ -1187,7 +1237,9 @@ can read — which is the one thing choosing checkboxes was meant to avoid. `nod
 types one `x` and auto-commits. Nor does noda ever move a finished item: a ticked line stays
 where its author wrote it.
 
-### Backlinks
+</details>
+
+## Backlinks
 
 What a note points *at* is in the note — `noda show` prints it, and every Markdown reader
 renders it. What points at the note is the half nothing could tell you:
@@ -1218,7 +1270,7 @@ that links to itself is listed — that is what the file says.
 `-q` prints one note id per line, for `noda backlinks x -q | xargs -n1 noda show`. There is no
 `--null` beside it: what it prints is an id, and an id has no spaces to protect.
 
-### History (git-backed)
+## History (git-backed)
 
 | Command | Description |
 | --- | --- |
@@ -1244,6 +1296,9 @@ $ noda log
   8d5f590  2026-08-20 11:05  add: gamma
 ```
 
+<details>
+<summary>Why the marks are not a run along the top after a merge, when there are none at all, and the same margin in the TUI</summary>
+
 The marks are that count enumerated rather than a second opinion, so the two cannot disagree.
 Which matters most in exactly the listing above: after a pull that merged, **the unpushed
 commits are no longer a run along the top of the log**. `fromother` came down in the merge and
@@ -1259,6 +1314,8 @@ itself as the whole.
 **The TUI's log screen carries the same mark in the same margin** — `l` on a note or the
 listing, or `:log`. Its chrome has been saying `↑2 ↓0` all along; the marks are which two.
 
+</details>
+
 `noda blame <note>` answers the other question about a note's past — not "what happened to
 it" but "when did I write *this*":
 
@@ -1270,6 +1327,9 @@ $ noda blame q3-planning
 89bb210  2026-08-02 11:47  - hire two engineers
 0000000  not committed     - draft still open
 ```
+
+<details>
+<summary>Two things it does that <code>git blame</code> will not — reaching past a rename, and the <code>0000000</code> rows — plus why only the body is blamed</summary>
 
 Two things it does that `git blame` on the same file will not.
 
@@ -1289,6 +1349,8 @@ would put a block of identical commits above the prose and make every note look 
 was written all at once. There are no line numbers: nothing else in noda prints one, and in
 prose the unit you are looking for is a paragraph.
 
+</details>
+
 `noda diff` shows uncommitted changes when there are any, and otherwise what the last
 commit changed — noda commits as it goes, so a clean notebook is the normal state and
 "what just happened" is the useful answer. The output is a plain unified diff with nothing
@@ -1298,6 +1360,9 @@ wrapped around it, so `git apply` will take it.
 of three answers about the same gap — `noda status` counts it, `noda log` marks which
 commits, and this is what is inside them. It takes a note, so "what am I about to send"
 can be asked about one as readily as about the notebook.
+
+<details>
+<summary>Why it is measured from where the histories parted — and the invented rename that comes of measuring it any other way</summary>
 
 It is measured **from where the two histories parted**, which is the same diff a pull
 request shows. That matters when the remote has commits you have not pulled: comparing
@@ -1317,6 +1382,8 @@ an empty diff, because it differs from its remote by everything it holds.
 
 Uncommitted work is not in it either: a push would not carry that, and plain `noda diff` is
 the command that shows it.
+
+</details>
 
 `<commit>` is anything git accepts: a full or abbreviated id, `HEAD~3`, a tag, a branch.
 A restore is a new commit, never a rewrite, and a note keeps the name it has now — only its
@@ -1395,7 +1462,7 @@ commit was made in, which is a question a person asks and a program should not h
 Unlike the table, `--json` prints a document even when nothing has been deleted — an empty
 list is an answer. `--notebook` looks at one you are not currently in.
 
-### Remote sync (HTTPS / SSH)
+## Remote sync (HTTPS / SSH)
 
 | Command | Description |
 | --- | --- |
@@ -1485,7 +1552,7 @@ is left exactly as it was, and you can resolve it with git in the notebook direc
 derived to fall out of step with the notes, so there is no state in which committing
 everything would make a disagreement permanent and remote.
 
-### Config
+## Config
 
 | Command | Description |
 | --- | --- |
@@ -1532,7 +1599,7 @@ says so, leaving the note on disk and the history untouched.
 Signing runs gpg once per commit, so a notebook you write to constantly will want an
 unlocked agent — the same arrangement `git commit` needs.
 
-### Output
+## Output
 
 Colour appears on a terminal and nowhere else: redirect or pipe any command and the escape
 sequences are gone, so `noda show meeting-notes > backup.md` writes the file byte for byte.
@@ -1566,6 +1633,9 @@ not imported:
   337 system tiddler
   12 not text (image/webp)
 ```
+
+<details>
+<summary><b>Importing a TiddlyWiki in detail</b> — several files as one import, the two commits it writes, what converts and what does not, and how times and tags carry over</summary>
 
 ### A wiki exported in pieces
 
@@ -1654,6 +1724,8 @@ What is not a note is reported rather than dropped: system tiddlers under `$:/`,
 other binaries, empty tiddlers, and anything carrying a title or a tag noda's own files
 cannot spell.
 
+</details>
+
 ## Storage layout
 
 noda follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
@@ -1696,9 +1768,11 @@ pointer, and the editor's scratch buffer are kept out of your synced data on pur
 
 ## Roadmap
 
-- **The web UI reads, writes and syncs.** `noda web` is here — see
-  [In a browser](#in-a-browser). What is left is the enhancement layer: filtering a listing as
-  you type, without giving up the form that works with no script at all.
+- **The web UI reads, writes and syncs**, and the enhancement layer over it has landed: a
+  listing that filters as you type, a network screen that fetches instead of reloading whole,
+  and backlinks beside the prose on a wide screen — none of which gives up the form that works
+  with no script at all. See [In a browser](#in-a-browser) and
+  [the script layer](#and-a-script-on-top-that-nothing-depends-on).
 - Encrypted notebooks are under consideration.
 
 ## Building from source
