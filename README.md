@@ -843,7 +843,7 @@ that buries the fact under the work of carrying it out.
 
 ```
 $ noda log -n 1
-8f2a1c9  2026-08-06 22:31  bulk: 2 changes over 12 notes
+  8f2a1c9  2026-08-06 22:31  bulk: 2 changes over 12 notes
 ```
 
 What a change *means* is not restated to make that possible — `noda tui` hands the queue to
@@ -1182,7 +1182,7 @@ that links to itself is listed — that is what the file says.
 
 | Command | Description |
 | --- | --- |
-| `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note. |
+| `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note; marks what the remote has not seen. |
 | `noda blame <note>` | Show which commit put each line of a note where it is. |
 | `noda diff [<note>]` | Show uncommitted or last-commit changes. |
 | `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
@@ -1192,6 +1192,29 @@ that links to itself is listed — that is what the file says.
 `noda log <note>` follows a note across renames, because every commit records the filenames
 and the id is one of them — no rename guessing involved. Nothing is capped: `-n` is there
 when you want less.
+
+**A commit the remote has not seen carries a `↑` in the margin.** `noda status` says how many
+there are to push; this says which.
+
+```
+$ noda log
+↑ 061f38a  2026-08-20 11:05  merge: origin/main
+↑ 37f9a04  2026-08-20 11:05  add: localonly
+  94acbd0  2026-08-20 11:05  add: fromother
+  8d5f590  2026-08-20 11:05  add: gamma
+```
+
+The marks are that count enumerated rather than a second opinion, so the two cannot disagree.
+Which matters most in exactly the listing above: after a pull that merged, **the unpushed
+commits are no longer a run along the top of the log**. `fromother` came down in the merge and
+the remote already has it, so it sits unmarked between two commits that are still waiting to
+go out.
+
+A notebook with no remote, or one that has never synced, carries no marks at all — with
+nothing to compare against every commit is unpushed, and saying so on all of them says
+nothing. And when `-n` cuts the listing above the oldest unpushed commit, a line below the
+rows says how many marks are out of sight, so what is on screen is never a subset presenting
+itself as the whole.
 
 `noda blame <note>` answers the other question about a note's past — not "what happened to
 it" but "when did I write *this*":
@@ -1493,8 +1516,8 @@ the second holds the conversion.
 
 ```
 $ noda log -n 2
-7d1016e  2026-08-02 22:50  import: convert 1678 notes from tiddlywiki
-bb81bb7  2026-08-02 22:50  import: 1693 notes from tiddlywiki
+  7d1016e  2026-08-02 22:50  import: convert 1678 notes from tiddlywiki
+  bb81bb7  2026-08-02 22:50  import: 1693 notes from tiddlywiki
 ```
 
 So `noda diff` shows you the whole conversion before it goes anywhere, and

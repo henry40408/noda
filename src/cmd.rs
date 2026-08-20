@@ -2595,7 +2595,21 @@ fn describe_drift(drift: Option<(usize, usize)>) -> String {
     }
 }
 
+/// What a commit the remote has not seen is marked with.
+///
+/// The arrow `status` and the TUI already use for the same direction, so a
+/// reader who has seen `2 to push` anywhere else has seen this. A margin and not
+/// a column: it is one character on a few rows, and a column would be two
+/// characters of heading and a width on every row to say nothing on most of
+/// them.
+const UNPUSHED: &str = "↑";
+
 /// The notebook's history, or one note's.
+///
+/// **The rows the remote has not seen carry a mark.** `noda status` says how
+/// many there are to push; the question straight after it is *which*, and until
+/// now nothing answered that — the counts were on four screens and the commits
+/// behind them on none.
 pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     // History is about the file, not its contents: a note whose frontmatter has
@@ -2606,10 +2620,24 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
         None => None,
     };
 
+    // Read once for the whole listing rather than per row, and free when the
+    // notebook has no remote to be behind: see `Notebook::unpushed`.
+    let unpushed = notebook.unpushed(&notebook.branch()?)?;
+
+    let entries = notebook.log(id.as_deref(), max)?;
+    let mut shown = 0;
     let mut out = String::new();
-    for entry in notebook.log(id.as_deref(), max)? {
+    for entry in &entries {
+        let mark = if unpushed.contains(&entry.id) {
+            shown += 1;
+            style::paint(style::MUTED, UNPUSHED)
+        } else {
+            // A space, so the ids stay in one column whether or not anything on
+            // the screen is waiting to go out.
+            " ".to_string()
+        };
         let line = format!(
-            "{}  {}  {}",
+            "{mark} {}  {}  {}",
             style::paint(style::COMMIT, &entry.short_id()),
             style::paint(
                 style::MUTED,
@@ -2619,6 +2647,29 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
         );
         out.push_str(line.trim_end());
         out.push('\n');
+    }
+
+    // `-n` can cut the listing above the oldest unpushed commit, and then the
+    // marks on screen are a subset presenting itself as the whole.
+    //
+    // Only for the whole notebook's history. `unpushed` holds the commits on the
+    // branch, and against one note's log that is a count of a different set of
+    // commits than the rows being shown — most of them touch other notes, so
+    // subtracting one from the other would produce a number about nothing.
+    let hidden = if id.is_none() {
+        unpushed.len().saturating_sub(shown)
+    } else {
+        0
+    };
+    if hidden > 0 {
+        let _ = writeln!(
+            out,
+            "{}",
+            style::paint(
+                style::MUTED,
+                &format!("{hidden} more to push, below what `-n` shows")
+            )
+        );
     }
     Ok(out)
 }

@@ -3801,12 +3801,133 @@ fn log_reports_the_notebook_history_newest_first() {
     assert!(lines[0].ends_with("add: beta"), "{out}");
     assert!(lines[2].ends_with("chore: initialize notebook"), "{out}");
 
-    let fields: Vec<&str> = lines[0].split("  ").collect();
+    // Past the margin that carries the unpushed mark, which is a space on every
+    // row here: this notebook has no remote, so nothing is waiting to go out.
+    let fields: Vec<&str> = lines[0].trim_start().split("  ").collect();
     assert_eq!(fields[0].len(), 7, "abbreviated commit id: {out}");
     assert_eq!(fields[1].len(), 16, "YYYY-MM-DD HH:MM: {out}");
 
     let limited = cmd::log(&paths, None, Some(1)).unwrap();
     assert_eq!(limited.lines().count(), 1);
+}
+
+/// `status` says how many there are to push. This is which — the question
+/// straight after it, and the one nothing answered.
+#[test]
+fn log_marks_the_commits_the_remote_has_not_seen() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+
+    // No remote yet: every commit is unpushed in the technical sense, and
+    // marking all of them would say nothing at all.
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let out = plain(&cmd::log(&paths, None, None).unwrap());
+    assert!(!out.contains('↑'), "nothing to compare against yet: {out}");
+
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::push(&paths).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Gamma"), Some("c\n"), &[]).unwrap();
+
+    let out = plain(&cmd::log(&paths, None, None).unwrap());
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with('↑'), "{out}");
+    assert!(lines[1].starts_with('↑'), "{out}");
+    assert!(lines[2].starts_with(' '), "already pushed: {out}");
+
+    // The count and the marks are the same judgement, so they cannot disagree.
+    let status = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&status, "sync"),
+        Some("2 to push (as of the last sync)")
+    );
+    assert_eq!(out.matches('↑').count(), 2, "{out}");
+
+    // The ids stay in one column whether or not a row is marked — the margin is
+    // one character wide on every row, marked or not, which is the whole reason
+    // it is a margin and not a prefix.
+    for line in &lines {
+        let id: String = line.chars().skip(2).take(7).collect();
+        assert!(
+            id.len() == 7 && id.chars().all(|c| c.is_ascii_hexdigit()),
+            "the id column moved on `{line}`: {out}"
+        );
+    }
+}
+
+/// **The trap this whole thing had to be built around.** A `pull` that merges
+/// puts the remote's commits in beside yours, and from then on the unpushed ones
+/// are not a run along the top of the log — walking down from `HEAD` until
+/// something familiar appears would mark a commit the remote already has.
+#[test]
+fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    // The other machine adds one and sends it.
+    mirror(&paths, &url, "mirror");
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    cmd::add(&paths, Some("Theirs"), Some("t\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    // This one adds its own without having seen that, so the pull has to merge.
+    cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
+    cmd::add(&paths, Some("Mine"), Some("m\n"), &[]).unwrap();
+    cmd::pull(&paths).unwrap();
+
+    let out = plain(&cmd::log(&paths, None, None).unwrap());
+    let marked: Vec<&str> = out.lines().filter(|line| line.starts_with('↑')).collect();
+
+    // The merge commit and the local one; `theirs` sits between them in the log
+    // and is the commit a linear scan would have got wrong.
+    assert_eq!(marked.len(), 2, "{out}");
+    assert!(marked.iter().any(|line| line.contains("merge:")), "{out}");
+    assert!(marked.iter().any(|line| line.contains("mine")), "{out}");
+    assert!(
+        out.lines()
+            .any(|line| line.contains("theirs") && line.starts_with(' ')),
+        "a commit the remote already has was marked: {out}"
+    );
+
+    // And it agrees with the number `status` prints, which is the check that
+    // matters: the marks are `graph_ahead_behind`'s answer enumerated.
+    let status = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&status, "sync"),
+        Some("2 to push (as of the last sync)")
+    );
+}
+
+/// `-n` can cut the listing above the oldest unpushed commit, and marks that
+/// are a subset presenting themselves as the whole would be worse than none.
+#[test]
+fn a_cut_listing_says_how_many_marks_are_below_it() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::push(&paths).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Gamma"), Some("c\n"), &[]).unwrap();
+
+    let cut = plain(&cmd::log(&paths, None, Some(1)).unwrap());
+    assert!(cut.contains("1 more to push"), "{cut}");
+
+    // Never on a full listing, where the marks are already the whole count.
+    let whole = plain(&cmd::log(&paths, None, None).unwrap());
+    assert!(!whole.contains("more to push"), "{whole}");
+
+    // And never for one note's log: `unpushed` counts commits on the branch, so
+    // subtracting the rows of a single note's history from it would produce a
+    // number about nothing.
+    let note = plain(&cmd::log(&paths, Some("alpha"), Some(1)).unwrap());
+    assert!(!note.contains("more to push"), "{note}");
 }
 
 #[test]
