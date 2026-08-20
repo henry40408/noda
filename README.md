@@ -719,7 +719,7 @@ beside a note at any width; given the width, each of them is a screen.
 | `t` / `:todo` | every unticked box in the notebook, soonest due first, with a missed date in red. `Enter` reads the note it is in |
 | `:tags` | every tag, commonest first, and how many notes carry it, with the first nine numbered. `Enter` narrows the listing to it rather than opening a screen — the notes are already down there |
 | `b` / `:backlinks` | what links to the note in front of you. `Enter` reads the note that was found |
-| `l` / `:log` | commits, newest first: the note's on a note screen, the notebook's on the listing |
+| `l` / `:log` | commits, newest first: the note's on a note screen, the notebook's on the listing. A `↑` marks what the remote has not seen, the same mark in the same margin `noda log` uses |
 | `B` / `:blame` | which commit put each line of a note where it is — the body only, because `updated` moves on every edit |
 | `:diff` | what is uncommitted, or what the last commit did |
 | `:deleted` | the notes history holds that the notebook no longer does |
@@ -1215,6 +1215,9 @@ nothing to compare against every commit is unpushed, and saying so on all of the
 nothing. And when `-n` cuts the listing above the oldest unpushed commit, a line below the
 rows says how many marks are out of sight, so what is on screen is never a subset presenting
 itself as the whole.
+
+**The TUI's log screen carries the same mark in the same margin** — `l` on a note or the
+listing, or `:log`. Its chrome has been saying `↑2 ↓0` all along; the marks are which two.
 
 `noda blame <note>` answers the other question about a note's past — not "what happened to
 it" but "when did I write *this*":

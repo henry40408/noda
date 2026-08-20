@@ -2602,7 +2602,11 @@ fn describe_drift(drift: Option<(usize, usize)>) -> String {
 /// a column: it is one character on a few rows, and a column would be two
 /// characters of heading and a width on every row to say nothing on most of
 /// them.
-const UNPUSHED: &str = "↑";
+///
+/// Shared with the TUI's log screen rather than spelled twice. The two draw
+/// through different machinery — a `String` here, a `Span` there — and the one
+/// thing they must not differ on is the character.
+pub const UNPUSHED: &str = "↑";
 
 /// The notebook's history, or one note's.
 ///

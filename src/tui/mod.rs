@@ -381,7 +381,12 @@ fn fetch(paths: &Paths, need: Need) -> Result<Content> {
         Need::Note { .. } => {
             return Err(Error::msg("a note's file is read without the repository"));
         }
-        Need::Log(id) => Content::Log(notebook.log(id.as_deref(), None)?),
+        // Two refs compared beside the walk that was happening anyway, and
+        // nothing on the network — the same bargain the chrome's `↑2 ↓3` makes.
+        Need::Log(id) => Content::Log(
+            notebook.log(id.as_deref(), None)?,
+            notebook.unpushed(&notebook.branch()?)?,
+        ),
         Need::Blame { id, slug } => Content::Blame(notebook.blame(&id, &slug)?),
         Need::Deleted => Content::Deleted(notebook.deleted()?),
         // Built by `cmd`, and then stripped of the colour `cmd` painted it for a
