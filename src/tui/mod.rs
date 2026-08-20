@@ -393,8 +393,11 @@ fn fetch(paths: &Paths, need: Need) -> Result<Content> {
         // pipe. The patch itself is the part worth having written down once; what
         // colour a `+` line is, is the drawing's business here as it is for every
         // other listing on screen.
+        // The working tree's diff, not the remote's. `:diff` is a screen and a
+        // screen takes no flags; asking for the other one would be a second
+        // command name to invent, and that is a decision of its own.
         Need::Diff => {
-            Content::Diff(anstream::adapter::strip_str(&cmd::diff(paths, None)?).to_string())
+            Content::Diff(anstream::adapter::strip_str(&cmd::diff(paths, None, false)?).to_string())
         }
     })
 }

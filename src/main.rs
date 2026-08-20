@@ -255,6 +255,11 @@ enum Command {
         /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
         /// (`meeting-notes`). Omit for the notebook.
         note: Option<String>,
+        /// Show what a push would carry instead: everything committed here that
+        /// the remote has not got. Measured from where the histories parted, so
+        /// commits you have yet to pull are not read as your own deletions.
+        #[arg(long)]
+        remote: bool,
     },
     /// List notes the notebook no longer holds, with the commit to restore each
     /// from. Walks all of history.
@@ -564,7 +569,7 @@ fn run() -> noda::Result<()> {
         )?,
         Command::Todo { json } => cmd::todo(&paths, *json)?,
         Command::Blame { note } => cmd::blame(&paths, note)?,
-        Command::Diff { note } => cmd::diff(&paths, note.as_deref())?,
+        Command::Diff { note, remote } => cmd::diff(&paths, note.as_deref(), *remote)?,
         Command::Deleted { notebook, json } => cmd::deleted(&paths, notebook.as_deref(), *json)?,
         Command::Snapshot { name, message } => match name {
             Some(name) => cmd::snapshot(&paths, name, message.as_deref())?,

@@ -1688,6 +1688,59 @@ impl Notebook {
         Ok(diff)
     }
 
+    /// What a push would carry: the third layer of the same question `status`
+    /// counts and `log` enumerates.
+    ///
+    /// **Measured from where the histories parted, not from where the remote
+    /// stands** — `git diff origin/main...HEAD`, the three-dot form, which is
+    /// also the diff a pull request shows. The two-dot form would be wrong in a
+    /// way that is hard to see: with commits on the remote you have not pulled,
+    /// every line *they* added comes back as a line removed, because it is
+    /// absent from your tree. Nobody removed it. Reading that as your own work
+    /// is exactly the mistake this command exists to prevent.
+    ///
+    /// So a notebook that is behind gets the same answer as one that is level:
+    /// what you would send, and nothing about what you have yet to receive.
+    /// That is `noda pull`'s business.
+    ///
+    /// **Committed work only.** Anything uncommitted is not in the history and
+    /// a push would not carry it either, so it is not here — `noda diff` with
+    /// no flag is the command for that, and noda commits as it goes, so a clean
+    /// notebook is the ordinary state.
+    ///
+    /// Nothing goes to the network: the tracking ref is the one the last sync
+    /// left, as everywhere else in this vocabulary.
+    pub fn diff_remote(&self, branch: &str, file: Option<&str>) -> Result<git2::Diff<'_>> {
+        let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
+        let Ok(upstream) = self.repo.refname_to_id(&tracking) else {
+            // Not an empty diff. A notebook that has never synced differs from
+            // its remote by everything it holds, and answering "no changes"
+            // would be the one wrong answer that looks like a right one.
+            return Err(Error::msg(format!(
+                "notebook `{}` has never synced, so there is nothing to compare against — \
+                 run `noda sync` first",
+                self.name
+            )));
+        };
+
+        let head = self.repo.head()?.peel_to_commit()?;
+        let base = self.repo.merge_base(head.id(), upstream)?;
+
+        let mut options = git2::DiffOptions::new();
+        if let Some(file) = file {
+            options.pathspec(file);
+        }
+        let mut diff = self.repo.diff_tree_to_tree(
+            Some(&self.repo.find_commit(base)?.tree()?),
+            Some(&head.tree()?),
+            Some(&mut options),
+        )?;
+        // The same reason `diff` does it: a renamed note is one note, not a
+        // deletion beside an invention.
+        diff.find_similar(None)?;
+        Ok(diff)
+    }
+
     /// Resolves a revision the way git does: a full or abbreviated id, `HEAD~3`,
     /// a tag, a branch. Anything git accepts, and nothing invented on top.
     pub fn revision(&self, rev: &str) -> Result<git2::Commit<'_>> {

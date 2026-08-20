@@ -3052,7 +3052,17 @@ fn rfc3339(seconds: i64) -> String {
 /// Uncommitted changes, or what the last commit changed. The output is a plain
 /// unified diff — no header, nothing wrapped around it — so it stays something
 /// `git apply` will take.
-pub fn diff(paths: &Paths, key: Option<&str>) -> Result<String> {
+///
+/// `remote` asks the other question instead: not what changed here a moment
+/// ago, but **what a push would carry** — see [`Notebook::diff_remote`]. The
+/// third and last of the three layers, after the count `status` prints and the
+/// marks `log` puts in its margin.
+///
+/// One flag rather than a command of its own, because what comes back is a
+/// patch either way and there is one command for reading a patch. It composes
+/// with the note argument for the same reason: "what am I about to send" is
+/// worth asking about one note as readily as about the notebook.
+pub fn diff(paths: &Paths, key: Option<&str>, remote: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     // Only the filename is needed, so a file that will not parse is no obstacle
     // — and seeing what changed is how you find out why it will not.
@@ -3064,22 +3074,26 @@ pub fn diff(paths: &Paths, key: Option<&str>) -> Result<String> {
         None => None,
     };
 
+    let diff = if remote {
+        notebook.diff_remote(&notebook.branch()?, file.as_deref())?
+    } else {
+        notebook.diff(file.as_deref())?
+    };
+
     let mut out = String::new();
-    notebook
-        .diff(file.as_deref())?
-        .print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
-            let text = String::from_utf8_lossy(line.content());
-            let painted = match line.origin() {
-                '+' => style::paint(style::ADDED, &format!("+{text}")),
-                '-' => style::paint(style::REMOVED, &format!("-{text}")),
-                ' ' => format!(" {text}"),
-                'F' => style::paint(style::HEADING, &text),
-                'H' => style::paint(style::HUNK, &text),
-                _ => text.into_owned(),
-            };
-            out.push_str(&painted);
-            true
-        })?;
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        let text = String::from_utf8_lossy(line.content());
+        let painted = match line.origin() {
+            '+' => style::paint(style::ADDED, &format!("+{text}")),
+            '-' => style::paint(style::REMOVED, &format!("-{text}")),
+            ' ' => format!(" {text}"),
+            'F' => style::paint(style::HEADING, &text),
+            'H' => style::paint(style::HUNK, &text),
+            _ => text.into_owned(),
+        };
+        out.push_str(&painted);
+        true
+    })?;
     Ok(out)
 }
 
