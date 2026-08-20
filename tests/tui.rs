@@ -1285,6 +1285,69 @@ fn the_log_screen_shows_the_notebooks_commits_and_then_one_notes_own() {
     assert!(app.entries().len() < all, "{one:#?}");
 }
 
+/// The chrome along the top already says `↑1`. This is the screen that says
+/// *which* one — the same answer `noda log` gives, drawn through a table
+/// instead of a string, and it has to be the same arrow in the same margin or
+/// the two screens are telling one story in two ways.
+#[test]
+fn the_log_screen_marks_what_the_remote_has_not_seen() {
+    let (root, paths) = a_worked_notebook();
+    let branch = noda::notebook::Notebook::open(&paths, cmd::DEFAULT_NOTEBOOK)
+        .expect("open the notebook")
+        .branch()
+        .expect("its branch");
+
+    // `main` or `master` depending on the machine, so it is read off the
+    // notebook rather than assumed.
+    let bare = root.0.join("origin.git");
+    git2::Repository::init_bare(&bare)
+        .expect("init a bare remote")
+        .set_head(&format!("refs/heads/{branch}"))
+        .expect("point it at that branch");
+    let url = bare.to_str().expect("utf-8 path").to_string();
+    cmd::remote_set(&paths, &url).expect("set the remote");
+    cmd::push(&paths).expect("push");
+
+    // Written after the push, so it is the only thing waiting to go out.
+    cmd::add(&paths, Some("Not sent yet"), Some("x\n"), &[]).expect("add");
+
+    let mut app = tui::load(&paths).expect("load");
+    let log = go(&paths, &mut app, "log");
+
+    // The mark and the commit it belongs to are on one row.
+    assert!(
+        log.iter()
+            .any(|line| line.contains('↑') && line.contains("not-sent-yet")),
+        "{log:#?}"
+    );
+
+    // And the rows the remote already has carry a blank margin instead — the
+    // arrow on the chrome is `↑1`, with no space after it, so it is not this.
+    assert!(
+        log.iter()
+            .any(|line| line.contains("initialize notebook") && !line.contains('↑')),
+        "a commit the remote has was marked: {log:#?}"
+    );
+    assert_eq!(
+        log.iter().filter(|line| line.contains("↑ ")).count(),
+        1,
+        "{log:#?}"
+    );
+
+    // The margin widened the column rather than eating into it: every id is
+    // still the whole seven characters, marked row included. `↑` is an East
+    // Asian Ambiguous character, so a column sized as if it were one cell would
+    // clip exactly one hex digit off the row that carries it — and only that
+    // row, which is the kind of thing that reads as a rendering glitch.
+    for entry in app.entries() {
+        let id = entry.short_id();
+        assert!(
+            log.iter().any(|line| line.contains(&id)),
+            "`{id}` was clipped: {log:#?}"
+        );
+    }
+}
+
 #[test]
 fn a_commit_on_a_notes_log_writes_a_restore_that_puts_the_note_back() {
     let (_root, paths) = a_worked_notebook();

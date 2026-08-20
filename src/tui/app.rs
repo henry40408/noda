@@ -298,7 +298,14 @@ pub enum Content {
     Tags(Vec<Tally>),
     /// Indices into the session's notes: the ones that link to the subject.
     Backlinks(Vec<usize>),
-    Log(Vec<Entry>),
+    /// The history, and which of those commits the remote has not seen.
+    ///
+    /// The set travels beside the entries rather than as a flag on each of them,
+    /// because it is read off the refs in one walk and an `Entry` is what a
+    /// commit is — not what this notebook's remote happens to know about it.
+    /// Empty when there is nothing to compare against, which is the same answer
+    /// `noda log` gives: see [`crate::notebook::Notebook::unpushed`].
+    Log(Vec<Entry>, std::collections::HashSet<git2::Oid>),
     Blame(Vec<BlameLine>),
     Deleted(Vec<Deleted>),
     /// The patch, with no colour on it. Colour is put back on by the drawing,
@@ -1007,8 +1014,19 @@ impl App {
 
     pub fn entries(&self) -> &[Entry] {
         match self.content() {
-            Some(Content::Log(entries)) => entries,
+            Some(Content::Log(entries, _)) => entries,
             _ => &[],
+        }
+    }
+
+    /// Whether the remote has yet to see this commit.
+    ///
+    /// False on every other screen and on a notebook with no remote, which is
+    /// what leaves the margin blank rather than marking everything.
+    pub fn is_unpushed(&self, commit: git2::Oid) -> bool {
+        match self.content() {
+            Some(Content::Log(_, unpushed)) => unpushed.contains(&commit),
+            _ => false,
         }
     }
 
@@ -4160,18 +4178,23 @@ mod tests {
         app.on_key(key(KeyCode::Char('l')));
         supplied(
             &mut app,
-            Content::Log(vec![
-                a_commit(
-                    "1111111111111111111111111111111111111111",
-                    1_770_000_000,
-                    "edit",
-                ),
-                a_commit(
-                    "2222222222222222222222222222222222222222",
-                    1_769_000_000,
-                    "add",
-                ),
-            ]),
+            Content::Log(
+                vec![
+                    a_commit(
+                        "1111111111111111111111111111111111111111",
+                        1_770_000_000,
+                        "edit",
+                    ),
+                    a_commit(
+                        "2222222222222222222222222222222222222222",
+                        1_769_000_000,
+                        "add",
+                    ),
+                ],
+                // Nothing waiting to go out: this is about the restore, and a
+                // margin either way does not change which row Enter lands on.
+                std::collections::HashSet::new(),
+            ),
         );
 
         app.on_key(key(KeyCode::Char('j')));
@@ -4197,11 +4220,14 @@ mod tests {
         app.on_key(key(KeyCode::Char('l')));
         supplied(
             &mut app,
-            Content::Log(vec![a_commit(
-                "1111111111111111111111111111111111111111",
-                1_770_000_000,
-                "edit",
-            )]),
+            Content::Log(
+                vec![a_commit(
+                    "1111111111111111111111111111111111111111",
+                    1_770_000_000,
+                    "edit",
+                )],
+                std::collections::HashSet::new(),
+            ),
         );
         app.on_key(key(KeyCode::Enter));
         assert_eq!(app.mode, Mode::Browse, "there is nothing to put it against");
@@ -4372,11 +4398,14 @@ mod tests {
 
         app.supply(
             &asked,
-            Content::Log(vec![a_commit(
-                "1111111111111111111111111111111111111111",
-                1_770_000_000,
-                "edit",
-            )]),
+            Content::Log(
+                vec![a_commit(
+                    "1111111111111111111111111111111111111111",
+                    1_770_000_000,
+                    "edit",
+                )],
+                std::collections::HashSet::new(),
+            ),
         );
         assert_eq!(app.view(), &View::Notes);
         assert!(app.entries().is_empty(), "it landed on the wrong screen");

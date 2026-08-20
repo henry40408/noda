@@ -49,6 +49,12 @@ const TITLE_FLOOR: usize = 10;
 /// hold.
 const SHORT_COMMIT: u16 = 7;
 
+/// The log's commit column, which carries the unpushed mark and the space after
+/// it in front of the id. Only the log's: `deleted` names a commit too, and a
+/// commit that a note was restored from is not something the remote can be
+/// waiting for.
+const MARKED_COMMIT: u16 = SHORT_COMMIT + 2;
+
 /// How far the body is held off either edge, so nothing on it is written into
 /// the corner of the terminal.
 ///
@@ -724,24 +730,41 @@ fn backlink_rows(app: &App) -> Sheet {
 
 /// Commits, newest first — the same three columns `noda log` prints.
 fn log_rows(app: &App) -> Sheet {
+    let muted = theme::from(palette::MUTED);
     let rows = app
         .entries()
         .iter()
         .map(|entry| {
+            // The mark sits inside the commit column rather than in one of its
+            // own. A column would cost two characters of heading and a width on
+            // every row to say nothing on most of them, and this way the arrow
+            // lands where `noda log` puts it — at the far left, one character
+            // wide whether or not the row carries it, so the ids stay in line.
+            let mark = if app.is_unpushed(entry.id) {
+                cmd::UNPUSHED
+            } else {
+                " "
+            };
             Row::new(vec![
-                Line::from(Span::styled(entry.short_id(), theme::from(palette::COMMIT))),
+                Line::from(vec![
+                    Span::styled(format!("{mark} "), muted),
+                    Span::styled(entry.short_id(), theme::from(palette::COMMIT)),
+                ]),
                 Line::from(Span::styled(
                     cmd::format_time(entry.seconds, entry.offset_minutes),
-                    theme::from(palette::MUTED),
+                    muted,
                 )),
                 Line::from(Span::raw(entry.summary.clone())),
             ])
         })
         .collect();
     Sheet {
-        names: headings(&["COMMIT", "WHEN", "SUMMARY"]),
+        // Indented to sit over the ids rather than over the margin in front of
+        // them: a heading that named the column from two characters to its left
+        // would be pointing at the arrows.
+        names: headings(&["  COMMIT", "WHEN", "SUMMARY"]),
         widths: vec![
-            Constraint::Length(SHORT_COMMIT),
+            Constraint::Length(MARKED_COMMIT),
             Constraint::Length(cmd::TIME_WIDTH as u16),
             Constraint::Fill(1),
         ],
