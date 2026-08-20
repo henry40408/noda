@@ -373,6 +373,40 @@ impl Notebook {
         }
     }
 
+    /// Which commits the remote does not have, by id.
+    ///
+    /// The same question [`drift`](Self::drift) answers with a number, answered
+    /// with the commits themselves — `noda status` says *how many* there are to
+    /// push and this is *which*.
+    ///
+    /// **A set, and it has to be.** After a `pull` merges, the commits the
+    /// remote has not seen are no longer a run along the top of the log: the
+    /// merge brings the remote's history in beside yours, and below that commit
+    /// the two are interleaved. Walking down from `HEAD` until something
+    /// recognisable turns up would mark the wrong ones and would do it only on
+    /// notebooks that had ever merged — which is to say, only on the ones being
+    /// shared, which is the whole population that cares. `push HEAD / hide
+    /// upstream` is the definition `graph_ahead_behind` counts, so this is that
+    /// same answer enumerated rather than tallied, and the two cannot disagree.
+    ///
+    /// Empty when there is no remote-tracking ref: with nothing to compare
+    /// against, every commit is unpushed in the technical sense and marking all
+    /// of them says nothing. `status` already calls that state `never synced`.
+    ///
+    /// Nothing here goes to the network either — it is the refs already on disk.
+    pub fn unpushed(&self, branch: &str) -> Result<std::collections::HashSet<git2::Oid>> {
+        let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
+        let Ok(upstream) = self.repo.refname_to_id(&tracking) else {
+            return Ok(std::collections::HashSet::new());
+        };
+        let mut walk = self.repo.revwalk()?;
+        walk.push_head()?;
+        walk.hide(upstream)?;
+        // No sorting asked for: this is a membership test, and the order a set
+        // comes back in is not one.
+        Ok(walk.collect::<std::result::Result<std::collections::HashSet<_>, _>>()?)
+    }
+
     /// When the notebook was last written to — `(seconds, offset_minutes)`, the
     /// pair `Entry` carries, so the caller renders it through `cmd::format_time`
     /// like every other stamp noda prints.
