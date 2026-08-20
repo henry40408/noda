@@ -965,6 +965,46 @@ noda web --listen 0.0.0.0:8080 --allow-host noda.tail1234.ts.net
   Behind a reverse proxy, name whatever the browser puts in the address bar. The refusal says
   exactly what to add.
 
+**`/health` is the one address outside all of that**, because a probe is a program and not a
+browser. It answers `200` and the word `ok` while the server can still answer, and nothing
+else: no notebook is opened, nothing is echoed back, and the only thing it discloses is that
+something is listening — which whatever asked established by connecting.
+
+```
+$ curl -i http://127.0.0.1:8080/health
+HTTP/1.1 200 OK
+content-type: text/plain; charset=utf-8
+cache-control: no-store
+x-content-type-options: nosniff
+
+ok
+```
+
+It sits outside the guard because the `Host` a probe sends is whatever the thing running it
+decided on — a pod's own address, a service name, the name on a proxy's certificate — and a
+check that answered `403` because `--allow-host` had not been given would report a healthy
+server as dead, then restart it, and the restart would not help.
+
+**What it checks is what a restart can mend.** Every page here does its work on the blocking
+pool, because libgit2 offers no other kind, so the check goes through that pool too: a server
+whose pool has wedged stops answering this instead of answering `200` while every reader
+hangs. It deliberately does *not* open a notebook — a repository that will not open is a thing
+to repair, and a check that failed on one would turn a single broken notebook into a container
+restarting every thirty seconds and still failing.
+
+```yaml
+livenessProbe:
+  httpGet: { path: /health, port: 8080 }
+```
+
+One caveat about the image: it is distroless and holds nothing but the binary, so a Dockerfile
+`HEALTHCHECK` — or a Compose `test:`, which is the same thing — has nothing inside the
+container to make the request with. Everything that probes from *outside* it works as written:
+Kubernetes' `httpGet` above, a load balancer's pool check, an uptime monitor.
+
+It is logged like any other request, which is to say not at all until `RUST_LOG=noda=debug`
+asks — and then as `route="/health"`, one line in a report rather than one per probe.
+
 It writes as well as reads: a note can be started, its body rewritten, its title changed, its
 tags ticked on and off, and it can be deleted. Every one of those runs the command that does
 it — the same `add`, `mv`, `tag` and `rm` the terminal calls — so what a change *means* has

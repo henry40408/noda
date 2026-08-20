@@ -1157,6 +1157,72 @@ fn an_ordinary_navigation_is_answered() {
     assert_eq!(server.get("/").status, 200);
 }
 
+/// The health check, in the shape a probe reads it: a status code, a body short
+/// enough to be a log line, and nothing cached in front of it.
+#[test]
+fn the_health_check_says_the_server_is_answering() {
+    let (server, _paths) = serving();
+    let answer = server.get("/health");
+    assert_eq!(answer.status, 200);
+    assert_eq!(answer.body, "ok\n");
+    assert!(
+        answer
+            .head
+            .to_lowercase()
+            .contains("cache-control: no-store"),
+        "{}",
+        answer.head
+    );
+    assert!(
+        answer
+            .head
+            .to_lowercase()
+            .contains("content-type: text/plain"),
+        "{}",
+        answer.head
+    );
+}
+
+/// **The point of the endpoint, and the one thing a unit test cannot see.** A
+/// probe sends whatever `Host` the thing running it decided on — a pod address,
+/// a service name, the name on a proxy's certificate — and the guard refuses a
+/// name nobody allowed. That refusal is right for a browser and would report a
+/// healthy server as dead, so the health check is declared outside the guard's
+/// layer and this is what says it stayed there.
+#[test]
+fn the_health_check_answers_a_name_the_guard_would_refuse() {
+    let (server, _paths) = serving();
+    let name = &[("Host", "kubernetes.default.svc")];
+    assert_eq!(server.request("/health", name).status, 200);
+    // The same name, one path over: nothing was loosened but this one route.
+    assert_eq!(server.request("/", name).status, 403);
+}
+
+/// A probe that uses `HEAD` — most of them do — has to get the same answer
+/// rather than a 405. axum routes `HEAD` to the `GET` handler and drops the
+/// body; the assertion is that nothing here has taken that away.
+#[test]
+fn the_health_check_answers_a_head_request() {
+    let (server, _paths) = serving();
+    let answer = server.send("HEAD", "/health", &[], None);
+    assert_eq!(answer.status, 200);
+    assert!(answer.body.is_empty(), "{:?}", answer.body);
+}
+
+/// It is logged the way every other request is: one route template, no path of
+/// anybody's. A probe runs forever, so this is the row a reader will see most
+/// of once `RUST_LOG=noda=debug` is on — worth knowing it is there and worth
+/// knowing it aggregates to one line rather than to a per-probe series.
+#[test]
+fn the_health_check_is_logged_like_any_other_route() {
+    let (root, _paths) = a_notebook();
+    let server = Serving::start_logging(root, &[]);
+    assert_eq!(server.get("/health").status, 200);
+    let log = server.logged();
+    assert!(log.contains("route=\"/health\""), "{log}");
+    assert!(log.contains("event=\"http.request\""), "{log}");
+}
+
 /// A note written from a phone, end to end: the form, the commit, the redirect
 /// to the note that now exists.
 #[test]
