@@ -1107,7 +1107,7 @@ fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
     // read it. History is about the file, and seeing what changed is how you
     // find out why it will not parse.
     assert!(cmd::log(&paths, Some(&id), None).unwrap().contains("add:"));
-    assert!(cmd::diff(&paths, Some(&id)).unwrap().contains(&file));
+    assert!(cmd::diff(&paths, Some(&id), false).unwrap().contains(&file));
 
     // And the one that undoes the damage. It writes over the file, so reading it
     // first was never necessary.
@@ -3965,7 +3965,7 @@ fn diff_shows_the_last_commit_when_nothing_is_pending() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    let out = plain(&cmd::diff(&paths, None).unwrap());
+    let out = plain(&cmd::diff(&paths, None, false).unwrap());
     assert!(
         out.contains(&format!("+++ b/{}", note_file(&added))),
         "{out}"
@@ -3985,14 +3985,109 @@ fn diff_shows_uncommitted_changes_when_there_are_some() {
     let text = std::fs::read_to_string(&note).unwrap();
     std::fs::write(&note, text.replace("a\n", "changed by hand\n")).unwrap();
 
-    let out = plain(&cmd::diff(&paths, None).unwrap());
+    let out = plain(&cmd::diff(&paths, None, false).unwrap());
     assert!(out.contains("+changed by hand"), "{out}");
     assert!(out.contains("-a"), "{out}");
     assert!(!out.contains("beta"), "only what changed: {out}");
 
     // And it can be narrowed to one note.
-    let scoped = plain(&cmd::diff(&paths, Some("beta")).unwrap());
+    let scoped = plain(&cmd::diff(&paths, Some("beta"), false).unwrap());
     assert!(scoped.is_empty(), "beta is untouched: {scoped}");
+}
+
+/// The third layer: `status` counts what there is to push, `log` marks which
+/// commits, and this is what is actually in them.
+#[test]
+fn diff_against_the_remote_shows_what_a_push_would_carry() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+
+    // Never synced. Not an empty diff — a notebook that has never spoken to its
+    // remote differs from it by everything, and "no changes" is the one wrong
+    // answer that looks like a right one.
+    let err = cmd::diff(&paths, None, true).unwrap_err().to_string();
+    assert!(err.contains("never synced"), "{err}");
+    assert!(
+        err.contains("noda sync"),
+        "a way out, not just a refusal: {err}"
+    );
+
+    cmd::push(&paths).unwrap();
+    let level = plain(&cmd::diff(&paths, None, true).unwrap());
+    assert!(level.is_empty(), "nothing to send: {level}");
+
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    let out = plain(&cmd::diff(&paths, None, true).unwrap());
+    assert!(out.contains("+b"), "{out}");
+    assert!(!out.contains("alpha"), "alpha is already there: {out}");
+
+    // Narrowed to one note, as the working-tree diff can be.
+    let scoped = plain(&cmd::diff(&paths, Some("alpha"), true).unwrap());
+    assert!(
+        scoped.is_empty(),
+        "alpha is already on the remote: {scoped}"
+    );
+}
+
+/// **Why it is `origin/main...HEAD` and not `origin/main HEAD`.**
+///
+/// With commits on the remote that have not been pulled, the two-dot form does
+/// not merely report them as deletions. Rename detection — which this command
+/// needs, because `noda mv` renames a note whenever its title changes — then
+/// pairs their file with yours and reports a rename that never happened:
+///
+/// ```text
+/// c7pjk17v-theirnote.md => pt1a8xar-beta.md | 4 ++--
+/// ```
+///
+/// Two notes written on two machines, neither of which is the other renamed.
+#[test]
+fn diffing_against_the_remote_ignores_what_has_not_been_pulled() {
+    let (root, paths) = initialized();
+    let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
+    let url = bare_remote(&root, "origin.git", &branch);
+    cmd::remote_set(&paths, &url).unwrap();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    // The other machine writes one and sends it.
+    mirror(&paths, &url, "mirror");
+    cmd::use_notebook(&paths, "mirror").unwrap();
+    cmd::add(&paths, Some("Theirs"), Some("t\n"), &[]).unwrap();
+    cmd::sync(&paths).unwrap();
+
+    cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
+    cmd::add(&paths, Some("Mine"), Some("m\n"), &[]).unwrap();
+
+    // Fetch without merging — the state a pull leaves when its merge is rolled
+    // back, and the only way a notebook is knowingly behind.
+    let repo = git2::Repository::open(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)).unwrap();
+    repo.find_remote("origin")
+        .unwrap()
+        .fetch(
+            &[format!("+refs/heads/{branch}:refs/remotes/origin/{branch}")],
+            None,
+            None,
+        )
+        .unwrap();
+
+    // Both sides have moved, and `status` says so.
+    let status = plain(&cmd::status(&paths).unwrap());
+    assert_eq!(
+        status_row(&status, "sync"),
+        Some("1 to push, 1 to pull (as of the last sync)")
+    );
+
+    let out = plain(&cmd::diff(&paths, None, true).unwrap());
+    assert!(out.contains("mine"), "what a push would carry: {out}");
+    assert!(
+        !out.contains("theirs"),
+        "a commit that was never pulled turned up in what this end would send: {out}"
+    );
+    assert!(!out.contains("=>"), "a rename nobody performed: {out}");
 }
 
 #[test]

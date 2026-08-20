@@ -1184,7 +1184,7 @@ that links to itself is listed — that is what the file says.
 | --- | --- |
 | `noda log [<note>] [-n <count>]` | Show commit history for the notebook, or one note; marks what the remote has not seen. |
 | `noda blame <note>` | Show which commit put each line of a note where it is. |
-| `noda diff [<note>]` | Show uncommitted or last-commit changes. |
+| `noda diff [<note>] [--remote]` | Show uncommitted or last-commit changes; `--remote` shows what a push would carry. |
 | `noda deleted [--notebook <name>] [--json]` | List notes the notebook no longer holds, with the commit to restore each from. |
 | `noda restore <note> <commit> [--no-touch]` | Restore a note to an earlier version (new commit). |
 | `noda snapshot [<name>] [-m <text>]` | Name the notebook as it stands. Without a name, list what has been named. |
@@ -1253,6 +1253,30 @@ prose the unit you are looking for is a paragraph.
 commit changed — noda commits as it goes, so a clean notebook is the normal state and
 "what just happened" is the useful answer. The output is a plain unified diff with nothing
 wrapped around it, so `git apply` will take it.
+
+**`noda diff --remote` asks the other question: what a push would carry.** It is the third
+of three answers about the same gap — `noda status` counts it, `noda log` marks which
+commits, and this is what is inside them. It takes a note, so "what am I about to send"
+can be asked about one as readily as about the notebook.
+
+It is measured **from where the two histories parted**, which is the same diff a pull
+request shows. That matters when the remote has commits you have not pulled: comparing
+straight against the remote's tip would report every line *they* added as a line removed,
+because it is missing from your tree — and since this diff needs rename detection (`noda mv`
+renames a note whenever its title changes), git then pairs their new note with yours and
+reports a rename that never happened:
+
+```
+c7pjk17v-theirnote.md => pt1a8xar-beta.md | 4 ++--
+```
+
+Two notes written on two machines, neither of which is the other renamed. So `--remote`
+says only what you would send, and never anything about what you have yet to receive —
+that is `noda pull`'s business. A notebook that has never synced gets an error rather than
+an empty diff, because it differs from its remote by everything it holds.
+
+Uncommitted work is not in it either: a push would not carry that, and plain `noda diff` is
+the command that shows it.
 
 `<commit>` is anything git accepts: a full or abbreviated id, `HEAD~3`, a tag, a branch.
 A restore is a new commit, never a rewrite, and a note keeps the name it has now — only its
@@ -1373,6 +1397,15 @@ pull: fast-forwarded 3 commits to cba91df
 A first push is the one that gives no number — until something has been fetched, what the
 remote holds is unknown, and a count taken off the local history would be a guess dressed as
 a fact.
+
+**The same gap, asked three ways.** Each answer is the one above it opened up, and all three
+read the same refs without going anywhere:
+
+| | |
+| --- | --- |
+| how many? | `noda status`, and the `noda notebook ls` column |
+| which commits? | the `↑` margin in `noda log`, and on the TUI's log screen |
+| what is in them? | `noda diff --remote` |
 
 HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. Credentials
 are not noda's to keep: SSH keys come from `ssh-agent`, HTTPS from git's credential helper.
