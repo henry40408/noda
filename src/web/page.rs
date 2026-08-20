@@ -905,10 +905,21 @@ fn hint() -> String {
 /// an orphan, and this is the same question answered in the same way rather
 /// than a second opinion about it.
 pub fn files(book: &str, held: &[Held]) -> String {
-    let body = if held.is_empty() {
-        "<div class=\"empty\"><b>No files yet</b>Run <code>noda file add diagram.png</code> \
-         in a terminal to put one here.</div>"
-            .to_string()
+    // The class goes with the branch that decides it, because the two are one
+    // decision. `.rows.cols` is a multi-column box: what is inside it is poured
+    // across `column-width` tracks with a `column-rule` hairline drawn between
+    // them, which is what a screenful of short rows wants and the exact
+    // opposite of what an invitation wants. One sentence poured into four
+    // columns arrives as four fragments with a rule through the middle of it.
+    // Neither of the two screens that ask for columns gains a row after the
+    // paint, so the server is the one that knows which of the two this is.
+    let (laid, body) = if held.is_empty() {
+        (
+            "rows",
+            "<div class=\"empty\"><b>No files yet</b>Run <code>noda file add diagram.png</code> \
+             in a terminal to put one here.</div>"
+                .to_string(),
+        )
     } else {
         let mut out = String::new();
         for file in held {
@@ -943,7 +954,7 @@ pub fn files(book: &str, held: &[Held]) -> String {
                 escape(&file.name)
             );
         }
-        out
+        ("rows cols wide", out)
     };
 
     shell(
@@ -953,7 +964,7 @@ pub fn files(book: &str, held: &[Held]) -> String {
             "<section class=\"pane\">\
              <header class=\"topbar\">{}<span class=\"here\">Files</span>\
              <span class=\"count\">{}</span></header>\
-             <main class=\"rows cols wide\">{body}</main></section>{}",
+             <main class=\"{laid}\">{body}</main></section>{}",
             back(&format!("/nb/{}", escape(book)), book),
             held.len(),
             notebook_bar(book, At::Files)
@@ -991,10 +1002,15 @@ fn size(bytes: u64) -> String {
 /// the query, because the field it lands in splits the way a shell does and a
 /// tag with a space in it has to arrive quoted.
 pub fn tags(book: &str, tallies: &[Tally]) -> String {
-    let body = if tallies.is_empty() {
-        "<div class=\"empty\"><b>No tags yet</b>Tags come from a note's frontmatter. \
-         Open a note and press Tags to add one.</div>"
-            .to_string()
+    // Columns only where there are rows to put in them — `page::files` says why
+    // at length.
+    let (laid, body) = if tallies.is_empty() {
+        (
+            "rows",
+            "<div class=\"empty\"><b>No tags yet</b>Tags come from a note's frontmatter. \
+             Open a note and press Tags to add one.</div>"
+                .to_string(),
+        )
     } else {
         let mut out = String::new();
         for tally in tallies {
@@ -1008,7 +1024,7 @@ pub fn tags(book: &str, tallies: &[Tally]) -> String {
                 plural(tally.notes, "note")
             );
         }
-        out
+        ("rows cols", out)
     };
 
     shell(
@@ -1018,7 +1034,7 @@ pub fn tags(book: &str, tallies: &[Tally]) -> String {
             "<section class=\"pane\">\
              <header class=\"topbar\">{}<span class=\"here\">Tags</span>\
              <span class=\"count\">{}</span></header>\
-             <main class=\"rows cols\">{body}</main></section>{}",
+             <main class=\"{laid}\">{body}</main></section>{}",
             back(&format!("/nb/{}", escape(book)), book),
             tallies.len(),
             notebook_bar(book, At::Tags)
@@ -2250,6 +2266,56 @@ align-self:stretch}}\
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two screens that lay their rows out in columns must stop doing it
+    /// when there are no rows.
+    ///
+    /// `.rows.cols` is a multi-column box, and it flows whatever it holds —
+    /// including the empty state, which is one sentence of prose. On a monitor
+    /// that came out as "No tags yet" alone in the first column and the
+    /// invitation broken across the next three, with a `column-rule` hairline
+    /// drawn through the middle of the sentence. Asserted on the class rather
+    /// than on the layout because the class is the whole of the decision: no
+    /// script adds or removes it, so the markup the server sends is the markup
+    /// the browser lays out.
+    #[test]
+    fn an_empty_screen_is_not_poured_into_columns() {
+        let no_tags = tags("work", &[]);
+        assert!(no_tags.contains("No tags yet"), "{no_tags}");
+        assert!(no_tags.contains("<main class=\"rows\">"), "{no_tags}");
+
+        let no_files = files("work", &[]);
+        assert!(no_files.contains("No files yet"), "{no_files}");
+        assert!(no_files.contains("<main class=\"rows\">"), "{no_files}");
+
+        // And the columns are still there the moment there is something to put
+        // in them, which is what they were written for.
+        let some_tags = tags(
+            "work",
+            &[Tally {
+                tag: "ops".into(),
+                notes: 2,
+            }],
+        );
+        assert!(
+            some_tags.contains("<main class=\"rows cols\">"),
+            "{some_tags}"
+        );
+
+        let some_files = files(
+            "work",
+            &[Held {
+                name: "rack.png".into(),
+                size: 4096,
+                kind: "image/png".into(),
+                used: 1,
+            }],
+        );
+        assert!(
+            some_files.contains("<main class=\"rows cols wide\">"),
+            "{some_files}"
+        );
+    }
 
     #[test]
     fn a_note_cannot_write_markup_into_the_page() {
