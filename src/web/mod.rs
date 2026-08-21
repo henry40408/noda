@@ -24,6 +24,7 @@
 //!   actually the design — one request, one handle, nothing kept between them.
 //!   It is also what makes a slow walk on one request not a stall on the others.
 
+pub mod asset;
 pub mod guard;
 pub mod log;
 pub mod page;
@@ -168,6 +169,11 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
 fn router(server: Shared) -> Router {
     Router::new()
         .route("/", get(front))
+        // Inside the guard with everything else. Nothing here is a notebook's
+        // and none of it is secret, but a page that the guard refuses should
+        // not be able to draw itself either — and a host nobody allowed has no
+        // business getting a reply of any kind.
+        .route("/a/{file}", get(held_asset))
         .route("/nb/{book}", get(listing))
         .route("/nb/{book}/files", get(files))
         // The three screens that are about the notebook rather than about one
@@ -219,6 +225,39 @@ fn router(server: Shared) -> Router {
         // within reach at all.
         .layer(middleware::from_fn(log::timed))
         .with_state(server)
+}
+
+/// The stylesheet, or one of the scripts.
+///
+/// **The whole of this route is a lookup and two headers.** Nothing is read
+/// from disk, nothing is decoded from the path, and the path itself is never
+/// joined to anything — `asset::find` compares it against the handful of names
+/// this build wrote, so the traversal question every file route has to answer
+/// is one this one cannot be asked.
+///
+/// `immutable`, for a year. The address carries a hash of the bytes behind it,
+/// so the only way for this answer to be wrong is for it to be a different
+/// answer, and a different answer has a different address. The other half of
+/// that bargain is on the pages: they are `no-cache`, so a reader always has
+/// the addresses this build wrote.
+async fn held_asset(Path(file): Path<String>) -> Response {
+    let Some(held) = asset::find(&file) else {
+        return (StatusCode::NOT_FOUND, plain("no such asset\n")).into_response();
+    };
+    (
+        [
+            (header::CONTENT_TYPE, held.kind.to_string()),
+            (
+                header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable".to_string(),
+            ),
+            // What noda said it is, is what it is — the same line every other
+            // typed answer here carries.
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        held.body.clone(),
+    )
+        .into_response()
 }
 
 /// Whether this process is still able to answer.
@@ -556,6 +595,15 @@ fn html(body: String) -> impl IntoResponse {
             // would hand it to the next reader who typed the address. Saying it
             // once here means a route added later cannot forget to.
             (header::VARY, header::HeaderValue::from_static(PART)),
+            // And the other half of what `asset.rs` serves for a year: a page
+            // names the addresses this build wrote, so a kept page is a page
+            // that could ask for bytes this build does not have. `no-cache` is
+            // "ask first", not "do not keep" — going back still comes out of
+            // the browser's own memory, which is where a swap left it.
+            (
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-cache"),
+            ),
         ],
         body,
     )

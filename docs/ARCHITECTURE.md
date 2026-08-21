@@ -183,6 +183,11 @@ router in `web/mod.rs`, and the handler wraps its work in `answer(move || …)`.
 the notebook's lock first. If it is reachable without a script, it must work without one — the
 enhancement layer in `script.rs` may make an answer arrive sooner, never differently.
 
+**Something every page needs.** It belongs in `web/asset.rs`, linked rather than written into the
+markup: one address per thing, the content's own hash in the name, served for a year and never
+asked for twice. The pages are `no-cache` so that they always name addresses this build wrote — the
+two halves are one decision, and either alone serves somebody a page whose stylesheet is a 404.
+
 **A part of a page.** When the script fetches a page to take one region out of it, that region gets
 a name in `web::Part`, a function of its own in `page.rs`, and a branch in the handler; the fetch
 sends `x-noda-fragment: <name>`. One route may answer several — the listing sends its column to a

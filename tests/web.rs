@@ -106,6 +106,26 @@ fn a_notebook() -> (TempRoot, Paths) {
     (root, paths)
 }
 
+/// The stylesheet a page links, fetched the way a browser fetches it.
+///
+/// Two things at once, and the second is the point: the rules are on the other
+/// end of a link now, so reading one means following the link — which is also
+/// the only way to find out that the address on the page is an address this
+/// build answers.
+fn linked_stylesheet(server: &Serving, from: &str) -> Answer {
+    let page = server.get(from);
+    let opening = "<link rel=\"stylesheet\" href=\"";
+    let at = page
+        .body
+        .find(opening)
+        .unwrap_or_else(|| panic!("{from} links no stylesheet:\n{}", page.body));
+    let href = page.body[at + opening.len()..]
+        .split_once('"')
+        .map(|(href, _)| href.to_string())
+        .expect("an unterminated attribute");
+    server.get(&href)
+}
+
 /// Percent-encoding, for the handful of characters a test actually sends.
 ///
 /// Not a general encoder: a test that needed one would be a test whose fixture
@@ -887,11 +907,20 @@ fn a_note_can_be_asked_for_without_the_page_around_it() {
     // is going into, which is the whole of why this exists.
     assert!(part.says("class=\"pane read\""), "{}", part.body);
     assert!(part.says("Budget review"), "{}", part.body);
-    for absent in ["<!doctype", "<style>", "<script>", "class=\"pane index\""] {
+    for absent in [
+        "<!doctype",
+        "<link rel=\"stylesheet\"",
+        "<script",
+        "class=\"pane index\"",
+    ] {
         assert!(!part.says(absent), "the fragment carried {absent}");
     }
+    // Smaller, and no longer by the order of magnitude it once was: the 46 KB
+    // that made this a 92% saving is not on the whole page either now, and what
+    // is left between them is the head, the rail, the index pane's frame — and
+    // the two refs the drift chip costs, which the fragment does not measure.
     assert!(
-        part.body.len() * 4 < whole.body.len(),
+        part.body.len() < whole.body.len(),
         "{} of {} bytes",
         part.body.len(),
         whole.body.len()
@@ -1520,11 +1549,11 @@ fn a_tag_row_centres_its_box_against_its_name() {
     let (server, paths) = serving();
     let id = id_of(&paths, "meeting-notes");
 
-    let form = server.get(&format!("/nb/default/n/{id}/tags"));
+    let sheet = linked_stylesheet(&server, &format!("/nb/default/n/{id}/tags"));
     assert!(
-        form.says("form.write label.tick{display:flex"),
+        sheet.says("form.write label.tick{display:flex"),
         "the row rule is out-specified:\n{}",
-        form.body
+        sheet.body
     );
 }
 
@@ -1608,6 +1637,93 @@ fn another_site_cannot_write_either() {
     assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
 }
 
+/// The stylesheet, on the other end of the link every page carries.
+///
+/// **The two headers are the whole bargain.** The address names the bytes, so
+/// the answer may be kept for a year and never asked for again; and the page
+/// that names it may not be kept at all, so a reader always has the addresses
+/// this build wrote. Either half alone is a way to serve somebody a page whose
+/// stylesheet is a 404.
+#[test]
+fn the_stylesheet_is_linked_once_and_kept_for_a_year() {
+    let (server, _paths) = serving();
+    let sheet = linked_stylesheet(&server, "/nb/default");
+
+    assert_eq!(sheet.status, 200);
+    assert_eq!(
+        sheet.header("content-type").as_deref(),
+        Some("text/css; charset=utf-8")
+    );
+    assert_eq!(
+        sheet.header("cache-control").as_deref(),
+        Some("public, max-age=31536000, immutable")
+    );
+    assert_eq!(
+        sheet.header("x-content-type-options").as_deref(),
+        Some("nosniff")
+    );
+    assert!(sheet.says("--tap:48px"), "{}", sheet.body);
+    assert!(sheet.says("prefers-color-scheme:dark"), "{}", sheet.body);
+
+    // And the page itself is the half that must not be kept, because what it
+    // holds is the addresses.
+    let page = server.get("/nb/default");
+    assert_eq!(page.header("cache-control").as_deref(), Some("no-cache"));
+    assert!(
+        !page.says("--tap:48px"),
+        "the sheet is back inside the page"
+    );
+}
+
+/// A script is the same bargain, and a page names only the ones it runs.
+#[test]
+fn a_page_links_the_scripts_it_uses_and_no_others() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let listing = server.get("/nb/default");
+    for named in ["/a/listing.", "/a/panes.", "/a/beside."] {
+        assert!(listing.says(named), "the listing lost {named}");
+    }
+    assert!(!listing.says("/a/standing."), "{}", listing.body);
+
+    // A note is the same two panes and none of the filtering: there is no field
+    // on it to type into that this page answers.
+    let note = server.get(&format!("/nb/default/n/{id}"));
+    assert!(note.says("/a/panes."), "{}", note.body);
+    assert!(note.says("/a/beside."), "{}", note.body);
+    assert!(!note.says("/a/listing."), "{}", note.body);
+
+    // And the poll is on the one screen that waits for something to finish.
+    let status = server.get("/nb/default/status");
+    assert!(status.says("/a/standing."), "{}", status.body);
+    assert!(!status.says("/a/panes."), "{}", status.body);
+}
+
+/// An address this build did not write is nothing.
+///
+/// Not the current bytes under a name that promised different ones: a hash in
+/// an address is a promise, and `immutable` is a year of somebody keeping it.
+/// It is also how the route stays a lookup — there is no path here to join to
+/// anything, so the traversal question is one it cannot be asked.
+#[test]
+fn an_asset_address_this_build_did_not_write_is_not_answered() {
+    let (server, _paths) = serving();
+    for missing in [
+        "/a/style.000000000000.css",
+        "/a/style.css",
+        "/a/panes.000000000000.js",
+        "/a/..%2f..%2fetc%2fpasswd",
+    ] {
+        let answer = server.get(missing);
+        assert_eq!(
+            answer.status, 404,
+            "{missing} was answered: {}",
+            answer.body
+        );
+    }
+}
+
 /// Only two pages carry a script, and this is the assertion that keeps the
 /// number down.
 ///
@@ -1645,7 +1761,10 @@ fn only_the_screens_that_wait_carry_a_script() {
         "/nb/default/status".to_string(),
         format!("/nb/default/n/{id}"),
     ] {
-        assert!(server.get(path).says("<script>"), "{path} lost its script");
+        assert!(
+            server.get(path).says("<script src=\"/a/"),
+            "{path} lost its script"
+        );
     }
 
     // Not one handler attribute anywhere, on either kind of page. Every
