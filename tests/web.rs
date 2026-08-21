@@ -970,6 +970,61 @@ fn the_other_three_parts_arrive_without_their_pages() {
     }
 }
 
+/// The second part off the listing route, and the one going back asks for.
+///
+/// A press of back out of a note has two panes to put right — the rows, and the
+/// pane the note was standing in — so this carries both, and the tab's name,
+/// which is the one thing on the screen that a search does not change and back
+/// does.
+#[test]
+fn the_listing_screen_arrives_as_both_of_its_panes() {
+    let (server, _paths) = serving();
+    let whole = server.get("/nb/default");
+    let part = server.request("/nb/default", &[("X-Noda-Fragment", "screen")]);
+
+    assert_eq!(part.status, 200);
+    assert!(part.body.starts_with("<title>default — noda</title>"));
+    let (title, panes) = part.body.split_once("</title>").expect("a named tab");
+    assert!(whole.says(&format!("{title}</title>")), "{}", part.body);
+    assert!(
+        whole.says(panes),
+        "the panes are not the page's own: {}",
+        part.body
+    );
+
+    // Both of them, and nothing around them.
+    assert!(part.says("class=\"pane index\""), "{}", part.body);
+    assert!(part.says("class=\"pane read\""), "{}", part.body);
+    assert!(part.says("Budget review"), "{}", part.body);
+    for absent in ["<!doctype", "<style>", "<script>", "class=\"notebooks\""] {
+        assert!(!part.says(absent), "the fragment carried {absent}");
+    }
+
+    // And the narrower part off the same route is still the column alone: two
+    // parts, one address, told apart by the name asked for.
+    let column = server.request("/nb/default", &[("X-Noda-Fragment", "index")]);
+    assert!(column.body.starts_with("<section class=\"pane index\">"));
+    assert!(!column.says("class=\"pane read\""), "{}", column.body);
+}
+
+/// A search asked for as a part is the search the address asks for, so what the
+/// script puts on the screen and what a scriptless press would have landed on
+/// are the same rows.
+#[test]
+fn a_searched_listing_answers_the_same_rows_either_way() {
+    let (server, _paths) = serving();
+    let part = server.request("/nb/default?q=q3", &[("X-Noda-Fragment", "index")]);
+    let whole = server.get("/nb/default?q=q3");
+
+    assert_eq!(part.status, 200);
+    assert!(whole.says(&part.body), "the column is not the page's own");
+    // `q3` is in a body and in no title or tag, which is the case the script
+    // cannot answer alone — the reason sending the search is a round trip at
+    // all. What comes back is a row it could not have shown.
+    assert_eq!(part.row("Budget review"), Some(true), "{}", part.body);
+    assert_eq!(part.row("Reading list"), Some(false), "{}", part.body);
+}
+
 /// The listing route is the other half: its rows are in the markup, so it says
 /// `indexed` and needs nobody's help to draw them.
 #[test]

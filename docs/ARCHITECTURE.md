@@ -185,7 +185,9 @@ enhancement layer in `script.rs` may make an answer arrive sooner, never differe
 
 **A part of a page.** When the script fetches a page to take one region out of it, that region gets
 a name in `web::Part`, a function of its own in `page.rs`, and a branch in the handler; the fetch
-sends `x-noda-fragment: <name>`. Two rules hold it together. The whole page must be *built from* the
+sends `x-noda-fragment: <name>`. One route may answer several — the listing sends its column to a
+search and both of its panes to a press of back — and which is asked for is decided by what the
+reader is doing, never by the route. Two rules hold it together. The whole page must be *built from* the
 part — one rendering, asserted by containment in `page.rs`, never two that look alike — and the
 whole page must stay a correct answer, because an unknown name, a missing header and a reader typing
 the address all get it. That is what keeps the header an optimisation rather than a protocol: the

@@ -23,6 +23,14 @@
 //! The button stays, it is still the only way there on a phone, and the answer
 //! shown is the one that route sends.
 //!
+//! Two more came with the split screen, and they are the same wait seen from
+//! either end of one press. **Sending the search waits for the page to be
+//! built again** — the answer is a column of rows, and everything around it is
+//! already on the screen it would be drawn on. **Going back waits for the same
+//! thing**, and had been paying for it in full: a press of back was a reload,
+//! which is the one navigation nobody chose to make. Both are answered by the
+//! route the address names, in the shape that route sends.
+//!
 //! ## The rule both halves are written against
 //!
 //! *The server is the only authority, and the script must never be able to
@@ -105,34 +113,46 @@ use std::fmt::Write;
 /// would be the one thing worse than saying nothing.
 pub const LISTING: &str = r#"
 (() => {
+  const app = document.querySelector(".app");
   const form = document.querySelector("form.searchbar");
   const list = document.querySelector("main.rows");
   if (!form || !list) return;
   const field = form.querySelector("input[name=q]");
-  const rows = [...list.querySelectorAll("a.row")];
-  if (!field || !rows.length) return;
+  if (!field) return;
 
-  const count = document.querySelector(".topbar .count");
-  const hint = form.querySelector(".hint");
-  const parsed = form.querySelector(".parse");
-  const problem = form.querySelector(".problem");
-  const empty = list.querySelector(".empty");
-  const asked = empty && empty.querySelector(".asked");
-  const total = rows.length;
-
-  // Each row, as the query sees it. A tag cannot contain a comma — `note.rs`
-  // refuses one — so the line the server joined is safe to take apart again.
-  const notes = rows.map((row) => {
-    const title = row.querySelector(".title");
-    const tags = row.querySelector(".tags");
-    return {
-      row,
-      title,
-      words: title.textContent,
-      tags: tags ? tags.textContent.split(", ") : [],
-      id: row.getAttribute("href").split("/").pop(),
-    };
-  });
+  // Read at startup and read again when the server answers a search without the
+  // page being reloaded: `script::PANES` replaces the rows and everything under
+  // the field, and says so. Held in `let` rather than `const` for exactly that
+  // reason — an element taken out of the document is an element this would go
+  // on filtering, invisibly, for the rest of the session.
+  //
+  // The field and the form itself are never replaced, which is why they are
+  // read once above: the reader may have a cursor in one of them.
+  let count, hint, parsed, problem, empty, asked, notes, total;
+  const look = () => {
+    count = document.querySelector(".topbar .count");
+    hint = form.querySelector(".hint");
+    parsed = form.querySelector(".parse");
+    problem = form.querySelector(".problem");
+    empty = list.querySelector(".empty");
+    asked = empty && empty.querySelector(".asked");
+    // Each row, as the query sees it. A tag cannot contain a comma — `note.rs`
+    // refuses one — so the line the server joined is safe to take apart again.
+    notes = [...list.querySelectorAll("a.row")].map((row) => {
+      const title = row.querySelector(".title");
+      const tags = row.querySelector(".tags");
+      return {
+        row,
+        title,
+        words: title.textContent,
+        tags: tags ? tags.textContent.split(", ") : [],
+        id: row.getAttribute("href").split("/").pop(),
+      };
+    });
+    total = notes.length;
+  };
+  look();
+  if (!total) return;
 
   const FIELDS = ["tag", "title", "id", "text"];
 
@@ -338,6 +358,10 @@ pub const LISTING: &str = r#"
   };
 
   field.addEventListener("input", apply);
+  // The rows the server just sent are the answer to the query in the address,
+  // and nothing here re-filters them: what is on the screen is the server's,
+  // until the next keystroke asks this to narrow it.
+  if (app) app.addEventListener("noda:rows", look);
 })();
 "#;
 
@@ -466,13 +490,53 @@ pub const PANES: &str = r#"
       asking = false;
     }
     const sent = new DOMParser().parseFromString(text, "text/html");
+    if (box.firstElementChild) return;
+    column(sent, false);
+  };
+
+  // The index column, as the server now has it, put on the screen.
+  //
+  // **The form is never replaced, only what hangs off it.** There may be a
+  // cursor in that field, and `script::LISTING` is listening to the element the
+  // page was loaded with — replacing it would drop both, and dropping the
+  // listener would leave a listing that no longer filters as you type. So the
+  // input stays and everything after it goes: the hint, the grouping, and the
+  // complaint about a query that does not parse are the server's answer to the
+  // query, taken whole.
+  //
+  // `retype` is whether the field itself is the server's to set. It is when the
+  // address changed under the reader — going back is arriving at a query
+  // somebody typed a while ago — and it is not when they are the one who just
+  // typed it, where the answer catching up must not take the keystrokes made
+  // while it was in flight.
+  const column = (sent, retype) => {
+    const box = app.querySelector(".index main.rows");
     const rows = sent.querySelector("main.rows");
-    const count = sent.querySelector(".index .topbar .count");
-    if (!rows || box.firstElementChild) return;
+    if (!box || !rows) return false;
     box.replaceChildren(...rows.childNodes);
+
     const here = app.querySelector(".index .topbar .count");
+    const count = sent.querySelector(".index .topbar .count");
     if (here && count) here.textContent = count.textContent;
+
+    const form = app.querySelector(".index form.searchbar");
+    const said = sent.querySelector("form.searchbar");
+    const field = form && form.querySelector("input[name=q]");
+    const asked = said && said.querySelector("input[name=q]");
+    if (field && asked) {
+      if (retype) field.value = asked.value;
+      const rest = [...said.childNodes];
+      const at = rest.indexOf(asked);
+      while (field.nextSibling) field.nextSibling.remove();
+      form.append(...rest.slice(at + 1));
+    }
+
     mark();
+    // The rows are different elements now, and the filter holds a list of the
+    // ones it was built with. Said rather than observed, for the reason the
+    // read pane says it: one script's doing is another script's fact.
+    app.dispatchEvent(new CustomEvent("noda:rows"));
+    return true;
   };
 
   // The row the reading pane is showing. Read off the address rather than
@@ -484,7 +548,7 @@ pub const PANES: &str = r#"
     }
   };
 
-  const swap = async (href) => {
+  const swap = async (href, push = true) => {
     let text;
     try {
       const answer = await fetch(href, {
@@ -502,7 +566,10 @@ pub const PANES: &str = r#"
     document.title = sent.title;
     app.classList.remove("at-list");
     app.classList.add("at-note");
-    history.pushState(null, "", href);
+    // Pressing a row pushes the address it went to; arriving by `popstate` is
+    // the browser having moved already, and pushing there would bury the entry
+    // the reader was trying to get back to.
+    if (push) history.pushState(null, "", href);
     mark();
     // The reading pane is replaced whole, so anything that hangs off the note
     // being read is now a different, empty element. Said rather than observed:
@@ -511,6 +578,73 @@ pub const PANES: &str = r#"
     // the DOM changing under it.
     app.dispatchEvent(new CustomEvent("noda:read"));
   };
+
+  // Back to the listing: the rows it had, and the pane the note was standing
+  // in. Two panes of one answer and one round trip, because a screen half
+  // arrived is a screen that flickers.
+  const screen = async (href) => {
+    let text;
+    try {
+      const answer = await fetch(href, {
+        headers: { accept: "text/html", "x-noda-fragment": "screen" },
+      });
+      if (!answer.ok) return location.reload();
+      text = await answer.text();
+    } catch {
+      // Nothing arrived, so nothing is claimed about where the reader is. A
+      // reload asks the same question by the same route, and it is what going
+      // back did before any of this.
+      return location.reload();
+    }
+    const sent = new DOMParser().parseFromString(text, "text/html");
+    const read = sent.querySelector(".pane.read");
+    if (!read || !column(sent, true)) return location.reload();
+    app.querySelector(".pane.read").replaceWith(read);
+    document.title = sent.title;
+    app.classList.remove("at-note");
+    app.classList.add("at-list");
+    mark();
+    app.dispatchEvent(new CustomEvent("noda:read"));
+  };
+
+  // Sending the search: the rows change and the page does not.
+  //
+  // **Only on the listing screen.** The same form is in the index column of a
+  // note page, and there a press of ⏎ is the way *to* the listing — a
+  // navigation that leaves the note behind. Answering it here would keep the
+  // note on the screen, which is not the answer the server would have given.
+  //
+  // The address it asks for is the address the form would have submitted,
+  // `q=` and all, so what lands in the history is what a scriptless press
+  // leaves there and back arrives at the same place either way.
+  app.addEventListener("submit", (event) => {
+    if (event.defaultPrevented) return;
+    const form = event.target.closest(".index form.searchbar");
+    if (!form || !app.classList.contains("at-list")) return;
+    const field = form.querySelector("input[name=q]");
+    const action = form.getAttribute("action");
+    if (!field || !action) return;
+    event.preventDefault();
+    const where = action + "?q=" + encodeURIComponent(field.value);
+    (async () => {
+      let text;
+      try {
+        const answer = await fetch(where, {
+          headers: { accept: "text/html", "x-noda-fragment": "index" },
+        });
+        if (!answer.ok) return form.submit();
+        text = await answer.text();
+      } catch {
+        // The search is the reader's question and it has not been answered.
+        // Submitting the form is the scriptless way to ask it, which is the
+        // one thing here that cannot fail differently.
+        return form.submit();
+      }
+      const sent = new DOMParser().parseFromString(text, "text/html");
+      if (!column(sent, false)) return form.submit();
+      history.pushState(null, "", where);
+    })();
+  });
 
   app.addEventListener("click", (event) => {
     if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey ||
@@ -528,10 +662,22 @@ pub const PANES: &str = r#"
     swap(href);
   });
 
-  // A swap pushed an address, so going back has to put the note that address
-  // named on the screen. Asking the server for it is the same answer by the
-  // same route, and it is the one the reader would have got by pressing reload.
-  addEventListener("popstate", () => location.reload());
+  // A press pushed an address, so going back has to put what that address names
+  // on the screen. Asking the server for it is the same answer by the same
+  // route — the one the reader would have got by pressing reload, minus the
+  // reload.
+  addEventListener("popstate", () => {
+    // Below the breakpoint nothing was ever pushed: every press at this width
+    // is a navigation, so anything arriving here is history this script does
+    // not own, and a reload is both correct and what has always happened.
+    if (!wide.matches) return location.reload();
+    const at = location.pathname;
+    // A note's address is the only kind this script pushes besides the
+    // listing's own, and the two are told apart the way the router tells them
+    // apart: `/nb/<book>/n/<id>` names a note and nothing else does.
+    if (/\/n\/[^/]+$/.test(at)) return swap(at, false);
+    screen(at + location.search);
+  });
 
   wide.addEventListener("change", bring);
   bring();
@@ -606,7 +752,15 @@ pub const BESIDE: &str = r#"
   };
 
   const ask = async () => {
-    if (!wide.matches || !app.classList.contains("at-note")) return;
+    // The reading pane may not hold a note at all any more — going back to the
+    // listing puts the notebook's own page there. Forgetting what was asked is
+    // what lets the same note, opened again, ask again: the aside the answer
+    // was going into went away with the pane it was in.
+    if (!app.classList.contains("at-note")) {
+      asked = null;
+      return;
+    }
+    if (!wide.matches) return;
     const aside = app.querySelector(".pane.read .beside");
     const answer = aside && aside.querySelector(".answer");
     if (!answer) return;
@@ -889,6 +1043,7 @@ mod tests {
         for (script, what, part) in [
             (PANES, "the pane swap", Part::Read),
             (PANES, "the index column", Part::Index),
+            (PANES, "going back to the listing", Part::Screen),
             (BESIDE, "the margin note", Part::Rows),
             (STANDING, "the poll", Part::News),
         ] {
@@ -915,6 +1070,46 @@ mod tests {
                 "an answer is being taken apart by position rather than by {looked_for}"
             );
         }
+    }
+
+    /// The rows a search replaces are the rows the filter holds a list of, and
+    /// the two scripts are the two halves of that. Drop either and the listing
+    /// goes on filtering elements that are no longer in the document — a page
+    /// that looks right until the next keystroke, which is the kind of failure
+    /// no Rust test can see.
+    #[test]
+    fn replacing_the_rows_tells_the_filter_to_read_them_again() {
+        assert!(PANES.contains("\"noda:rows\""), "{PANES}");
+        assert!(LISTING.contains("\"noda:rows\""), "{LISTING}");
+    }
+
+    /// Going back is answered rather than reloaded, and only above the width
+    /// where anything was ever pushed. Below it every press was a navigation,
+    /// so the history is not this script's to answer for.
+    #[test]
+    fn going_back_asks_the_server_rather_than_the_page() {
+        assert!(PANES.contains("popstate"), "{PANES}");
+        assert!(
+            PANES.contains("if (!wide.matches) return location.reload();"),
+            "the narrow screen stopped falling back to a reload"
+        );
+    }
+
+    /// And sending a search is answered the same way — but only where a
+    /// scriptless press would have stayed on the listing. In the index column
+    /// of a note page the same form is the way *to* the listing, and answering
+    /// it in place would leave the note on the screen.
+    #[test]
+    fn a_search_is_answered_in_place_only_on_the_listing() {
+        assert!(PANES.contains("submit"), "{PANES}");
+        assert!(
+            PANES.contains("app.classList.contains(\"at-list\")"),
+            "the search stopped checking which screen it is on"
+        );
+        assert!(
+            PANES.contains("form.submit()"),
+            "nothing falls back to submitting the form"
+        );
     }
 
     #[test]
