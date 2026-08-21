@@ -857,6 +857,119 @@ fn the_backlinks_page_writes_the_shape_the_margin_note_reads() {
     );
 }
 
+/// **The saving, on the wire.** A swap replaces one pane and keeps the rest of
+/// the screen, so a request that says so is sent one pane — and what arrives is
+/// a piece of the page the same address answers with, byte for byte, which is
+/// the assertion that matters. The rest of this file is about the page; this is
+/// about the two answers being one rendering.
+#[test]
+fn a_note_can_be_asked_for_without_the_page_around_it() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let at = format!("/nb/default/n/{id}");
+    let whole = server.get(&at);
+    let part = server.request(&at, &[("X-Noda-Fragment", "read")]);
+
+    assert_eq!(part.status, 200);
+    // The tab's name first, then the pane. Both are what the whole page sent:
+    // an HTML parser puts a leading `<title>` in the head of whatever it is
+    // parsing, which is where the script already looks for it.
+    assert!(part.body.starts_with("<title>Budget review — noda</title>"));
+    let (title, pane) = part.body.split_once("</title>").expect("a named tab");
+    assert!(whole.says(&format!("{title}</title>")), "{}", part.body);
+    assert!(
+        whole.says(pane),
+        "the pane is not the page's own: {}",
+        part.body
+    );
+
+    // And the note is all of it. Everything left out is on the screen the pane
+    // is going into, which is the whole of why this exists.
+    assert!(part.says("class=\"pane read\""), "{}", part.body);
+    assert!(part.says("Budget review"), "{}", part.body);
+    for absent in ["<!doctype", "<style>", "<script>", "class=\"pane index\""] {
+        assert!(!part.says(absent), "the fragment carried {absent}");
+    }
+    assert!(
+        part.body.len() * 4 < whole.body.len(),
+        "{} of {} bytes",
+        part.body.len(),
+        whole.body.len()
+    );
+}
+
+/// The header is the whole of the difference, and nobody but the script sends
+/// it. A reader typing the address, a bookmark and a browser with no script all
+/// get what they always got.
+#[test]
+fn an_address_asked_for_plainly_is_still_the_whole_page() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let at = format!("/nb/default/n/{id}");
+    assert!(server.get(&at).says("<!doctype html>"), "a page went short");
+    // Nor does a name this server has never heard of shorten anything: there is
+    // nothing to send less of, so the answer is the page. Correct, and the one
+    // thing the reader can always be given.
+    let odd = server.request(&at, &[("X-Noda-Fragment", "everything")]);
+    assert_eq!(odd.status, 200);
+    assert!(odd.says("<!doctype html>"), "{}", odd.body);
+
+    // Said out loud on every page, because two answers to one address told
+    // apart by a header is exactly what a cache has to be told about.
+    assert_eq!(
+        server.get(&at).header("vary").as_deref(),
+        Some("x-noda-fragment")
+    );
+}
+
+/// The other three, each named by the fetch that asks for it. The listing's
+/// column is fetched once per note page opened cold, the backlinks answer once
+/// per note read on a monitor, and the network screen's news every two seconds
+/// while a sync runs — which is the one that used to re-send the whole
+/// stylesheet to move a line of text.
+#[test]
+fn the_other_three_parts_arrive_without_their_pages() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let column = server.request("/nb/default", &[("X-Noda-Fragment", "index")]);
+    assert!(column.body.starts_with("<section class=\"pane index\">"));
+    assert!(column.says("Budget review"), "{}", column.body);
+    assert!(
+        server.get("/nb/default").says(&column.body),
+        "{}",
+        column.body
+    );
+
+    let links = server.request(
+        &format!("/nb/default/n/{id}/backlinks"),
+        &[("X-Noda-Fragment", "rows")],
+    );
+    assert!(links.body.starts_with("<main class=\"rows\">"));
+    assert!(
+        server
+            .get(&format!("/nb/default/n/{id}/backlinks"))
+            .says(&links.body),
+        "{}",
+        links.body
+    );
+
+    let news = server.request("/nb/default/status", &[("X-Noda-Fragment", "news")]);
+    assert!(news.body.starts_with("<main>"), "{}", news.body);
+    assert!(news.says("5 notes, 3 files"), "{}", news.body);
+    assert!(
+        server.get("/nb/default/status").says(&news.body),
+        "{}",
+        news.body
+    );
+
+    for part in [&column, &links, &news] {
+        assert_eq!(part.status, 200);
+        assert!(!part.says("<!doctype"), "{}", part.body);
+        assert!(!part.says("<style>"), "{}", part.body);
+    }
+}
+
 /// The listing route is the other half: its rows are in the markup, so it says
 /// `indexed` and needs nobody's help to draw them.
 #[test]

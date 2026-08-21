@@ -314,6 +314,77 @@ fn text(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
+/// The header a request names a part of a page with.
+///
+/// Its own name rather than a shape of `Accept`, because this is not content
+/// negotiation: what comes back is the same `text/html` either way, and what
+/// the header settles is how much of it. A media type saying so would be a type
+/// nothing else on the web means anything by.
+pub(crate) const PART: &str = "x-noda-fragment";
+
+/// How much of a page a request will use.
+///
+/// **A page here is one screen's worth of chrome around one changing region**,
+/// and the enhancement layer only ever keeps the region: a swap takes
+/// `.pane.read` out of a note and drops the rest, which was measured at 48 of
+/// the 52 KB a note page weighs. Every one of those fetches asked for a whole
+/// page and threw away nine tenths of it, on the round trip a reader is waiting
+/// through.
+///
+/// So a request may say which part it will use, and the server sends that part.
+/// Three rules keep it from becoming a second interface:
+///
+/// * **The part is a substring of the page.** Both come out of one function in
+///   `page.rs` — the whole page is built from the same string the fragment is —
+///   so there is no shorter rendering to drift from the longer one. `page.rs`
+///   tests it by containment.
+/// * **The whole page is always a correct answer.** A name nothing here knows
+///   is not an error; it is a request with nothing to shorten, and it gets the
+///   page. Every one of these fetches parses what arrives and queries it for
+///   the region it wants, so a server that ignored the header entirely would
+///   still be answering them — later, never differently.
+/// * **Nobody but the script asks.** A reader typing an address, a bookmark, a
+///   crawler and a browser with no script all send no such header, and the
+///   scriptless page is what they get. This is why `Vary` is on every HTML
+///   answer: two answers to one address, told apart by a header, is exactly what
+///   that header is for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Part {
+    /// The note being read: `.pane.read`, and the name of the tab it is in.
+    Read,
+    /// The listing's own column, rows and count.
+    Index,
+    /// The rows of a backlinks answer, without the page around them.
+    Rows,
+    /// The network screen's news, and whether it is still moving.
+    News,
+}
+
+impl Part {
+    /// The name a request calls it by. One vocabulary, written here and read by
+    /// `script.rs`, which is what the tests in that file pair against.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Part::Read => "read",
+            Part::Index => "index",
+            Part::Rows => "rows",
+            Part::News => "news",
+        }
+    }
+
+    /// Whether this request asked for this part of the page it is about.
+    ///
+    /// Each route knows the one part it can send, so this is asked rather than
+    /// parsed: a note route is not made to have an opinion about what the
+    /// network screen calls its news.
+    fn wanted(self, headers: &HeaderMap) -> bool {
+        headers
+            .get(PART)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|said| said == self.name())
+    }
+}
+
 /// What a handler decided, before it is an HTTP anything.
 enum Answer {
     Page(String),
@@ -469,10 +540,19 @@ fn holding(name: &str) -> (&'static str, bool) {
 
 fn html(body: String) -> impl IntoResponse {
     (
-        [(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/html; charset=utf-8"),
-        )],
+        [
+            (
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("text/html; charset=utf-8"),
+            ),
+            // On every HTML answer and not only the ones that can be shortened:
+            // what this says is that an address is not the whole of what decided
+            // this body, and that is true of a route the moment one of its
+            // answers depends on the header — a cache that had kept the fragment
+            // would hand it to the next reader who typed the address. Saying it
+            // once here means a route added later cannot forget to.
+            (header::VARY, header::HeaderValue::from_static(PART)),
+        ],
         body,
     )
 }
@@ -533,6 +613,7 @@ async fn listing(
     request: Request,
 ) -> Response {
     let typed = parameter(request.uri().query(), "q");
+    let part = Part::Index.wanted(request.headers());
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
             return Ok(missing_notebook(&book));
@@ -568,18 +649,29 @@ async fn listing(
         // along `hidden`, which is what lets the enhancement layer widen a query
         // as well as narrow one — see `page::Row::shown`.
         let mut rows = notes.iter().map(page::Row::of).collect::<Vec<_>>();
-        let front = front_page(&notebook, &book)?;
+        // Read for the pane beside the listing, and only when that pane is going
+        // out: the column asking for this one is putting rows into a page whose
+        // other half is a note, and the notebook's front page is not on it.
+        let front = if part {
+            None
+        } else {
+            front_page(&notebook, &book)?
+        };
+        let drawn = |rows: &[page::Row], asked: &page::Asked<'_>| {
+            if part {
+                page::listing_pane(&book, rows, asked, &drift)
+            } else {
+                page::listing(&book, rows, asked, &drift, front.as_deref())
+            }
+        };
         let tokens = query::split(&typed);
         if tokens.is_empty() {
-            return Ok(Answer::Page(page::listing(
-                &book,
+            return Ok(Answer::Page(drawn(
                 &rows,
                 &page::Asked {
                     typed: &typed,
                     ..page::Asked::nothing()
                 },
-                &drift,
-                front.as_deref(),
             )));
         }
         // The parsed query outlives the borrow of its grouping, so it is bound
@@ -597,8 +689,7 @@ async fn listing(
             Err(e) => (&[][..], Vec::new(), Some(e.to_string())),
         };
 
-        Ok(Answer::Page(page::listing(
-            &book,
+        Ok(Answer::Page(drawn(
             &rows,
             &page::Asked {
                 typed: &typed,
@@ -606,8 +697,6 @@ async fn listing(
                 terms: &terms,
                 problem: problem.as_deref(),
             },
-            &drift,
-            front.as_deref(),
         )))
     })
     .await
@@ -616,7 +705,9 @@ async fn listing(
 async fn reading(
     State(server): State<Shared>,
     Path((book, key)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    let part = Part::Read.wanted(&headers);
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
             return Ok(missing_notebook(&book));
@@ -637,6 +728,21 @@ async fn reading(
         let text = std::fs::read_to_string(notebook.note_path(&id, &slug))?;
         let note = Note::parse(&text).map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
         let around = render::Around::of(&book, &notebook.named_files()?);
+        let reading = page::Reading {
+            id,
+            slug,
+            title: note.title,
+            tags: note.tags,
+            updated: note.updated,
+            rendered: render::body(&note.body, &around),
+        };
+        // A swap replaces the reading pane and leaves the index pane where it
+        // is, so a request for that part is not asking about the notebook at
+        // all — and the two refs the chip in the index pane's bar costs are two
+        // refs nothing on the screen will change.
+        if part {
+            return Ok(Answer::Page(page::note_pane(&book, &reading)));
+        }
         // For the chip in the index pane's bar, which is the notebook's bar
         // rather than the note's. Two refs compared, the same as the listing
         // pays; the notes themselves are not read, which is the whole point of
@@ -645,18 +751,7 @@ async fn reading(
             notebook.remote_url().as_deref(),
             notebook.drift(&notebook.branch()?)?,
         );
-        Ok(Answer::Page(page::note(
-            &book,
-            &page::Reading {
-                id,
-                slug,
-                title: note.title,
-                tags: note.tags,
-                updated: note.updated,
-                rendered: render::body(&note.body, &around),
-            },
-            &drift,
-        )))
+        Ok(Answer::Page(page::note(&book, &reading, &drift)))
     })
     .await
 }
@@ -776,7 +871,12 @@ async fn todo(State(server): State<Shared>, Path(book): Path<String>) -> Respons
 /// only things that go out. A page that quietly fetched before drawing itself
 /// would be a page that hangs, and it would make the Pull button a lie about
 /// what pressing it does.
-async fn status(State(server): State<Shared>, Path(book): Path<String>) -> Response {
+async fn status(
+    State(server): State<Shared>,
+    Path(book): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let part = Part::News.wanted(&headers);
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
             return Ok(missing_notebook(&book));
@@ -802,23 +902,24 @@ async fn status(State(server): State<Shared>, Path(book): Path<String>) -> Respo
                 seconds: report.took.as_secs(),
             }
         });
-        Ok(Answer::Page(page::standing(
-            &book,
-            &page::Standing {
-                branch: status.branch.clone(),
-                notes: status.notes,
-                files: status.files,
-                uncommitted: status.uncommitted,
-                remote: status.remote.clone(),
-                drift: cmd::standing(status.remote.as_deref(), status.drift),
-                problems: status
-                    .problems
-                    .iter()
-                    .map(|(kind, subjects)| kind.describe(subjects.len()))
-                    .collect(),
-            },
-            errand.as_ref(),
-        )))
+        let standing = page::Standing {
+            branch: status.branch.clone(),
+            notes: status.notes,
+            files: status.files,
+            uncommitted: status.uncommitted,
+            remote: status.remote.clone(),
+            drift: cmd::standing(status.remote.as_deref(), status.drift),
+            problems: status
+                .problems
+                .iter()
+                .map(|(kind, subjects)| kind.describe(subjects.len()))
+                .collect(),
+        };
+        Ok(Answer::Page(if part {
+            page::standing_main(&book, &standing, errand.as_ref())
+        } else {
+            page::standing(&book, &standing, errand.as_ref())
+        }))
     })
     .await
 }
@@ -879,7 +980,9 @@ async fn errand(
 async fn note_backlinks(
     State(server): State<Shared>,
     Path((book, key)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    let part = Part::Rows.wanted(&headers);
     answer(move || {
         let (notebook, id, slug) = match aim(&server.paths, &book, &key, "/backlinks")? {
             Aimed::At(notebook, id, slug) => (notebook, id, slug),
@@ -892,15 +995,16 @@ async fn note_backlinks(
             .iter()
             .map(page::Row::of)
             .collect::<Vec<_>>();
-        Ok(Answer::Page(page::backlinks(
-            &book,
-            &page::Subject {
-                what: note.title,
-                at: format!("/nb/{book}/n/{id}"),
-                mono: false,
-            },
-            &rows,
-        )))
+        let subject = page::Subject {
+            what: note.title,
+            at: format!("/nb/{book}/n/{id}"),
+            mono: false,
+        };
+        Ok(Answer::Page(if part {
+            page::backlinks_rows(&book, &subject, &rows)
+        } else {
+            page::backlinks(&book, &subject, &rows)
+        }))
     })
     .await
 }
@@ -919,7 +1023,9 @@ async fn note_backlinks(
 async fn file_backlinks(
     State(server): State<Shared>,
     Path((book, name)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    let part = Part::Rows.wanted(&headers);
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
             return Ok(missing_notebook(&book));
@@ -944,15 +1050,16 @@ async fn file_backlinks(
             .iter()
             .map(page::Row::of)
             .collect::<Vec<_>>();
-        Ok(Answer::Page(page::backlinks(
-            &book,
-            &page::Subject {
-                at: format!("/nb/{}/files", encoded(&book)),
-                what: path,
-                mono: true,
-            },
-            &rows,
-        )))
+        let subject = page::Subject {
+            at: format!("/nb/{}/files", encoded(&book)),
+            what: path,
+            mono: true,
+        };
+        Ok(Answer::Page(if part {
+            page::backlinks_rows(&book, &subject, &rows)
+        } else {
+            page::backlinks(&book, &subject, &rows)
+        }))
     })
     .await
 }

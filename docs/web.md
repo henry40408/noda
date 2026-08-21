@@ -254,9 +254,26 @@ is.
 
 ## And a script on top, that nothing depends on
 
-Two screens carry one. The listing filters as you type, and the network screen asks for its
-own page instead of reloading whole. Both are shortcuts: they remove a wait, never add an
-ability, and with scripts off every screen does what it always did.
+Every screen works without one, and three of them carry one anyway: the listing filters as
+you type, the network screen asks for its own news instead of reloading whole, and on a
+screen wide enough for two panes, picking a note replaces the reading half instead of the
+page. All of them are shortcuts: they remove a wait, never add an ability, and with scripts
+off every screen does what it always did.
+
+What the ones that go to the server ask for is a *part* of a page rather than a page. A
+press on a row replaces the reading pane and leaves the rest of the screen where it is, so
+what used to arrive with it — the stylesheet, both scripts, the rail, the index pane's
+frame — was 48 of its 52 KB already on the screen. So a fetch says which region it will
+use, in an `x-noda-fragment` header, and the server sends that region out of the same
+function the whole page is built from. Measured against the test notebook: 49,751 bytes
+down to 1,579 for a note, and 41,418 down to 876 for a poll of the network screen.
+
+It stays a shortcut rather than becoming a second interface because the part is a
+substring of the page — one rendering, and `page.rs` asserts it by containment — and
+because the whole page is always a correct answer. A reader typing the address, a
+bookmark, a crawler and a browser with no script send no such header and get the page;
+so does a name the server does not know. Every fetch parses what arrives and asks it for
+the element it wants, so a server that ignored the header would still be answering them.
 
 The listing can do that because it already holds every note it has — the rows a query
 excludes are on the page with `hidden` on them, in both directions, which is what lets a

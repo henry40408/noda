@@ -537,6 +537,21 @@ impl Page<'_> {
         self.reads("h1").await
     }
 
+    /// The name of the tab.
+    ///
+    /// The one thing a pane swap changes that is not in the pane. It arrives as
+    /// a `<title>` at the head of the fragment, which the parser puts where a
+    /// whole page would have had one — so this asserts the server's own string
+    /// reached the tab, rather than the script having composed one.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn tab(&self) -> Result<String> {
+        let text = self.0.measure("return document.title;").await?;
+        Ok(text.as_str().unwrap_or_default().to_string())
+    }
+
     /// The filename line under the heading.
     ///
     /// # Errors

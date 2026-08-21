@@ -218,6 +218,14 @@ async fn headed(world: &mut NodaWorld, title: String) -> Result<()> {
     .await
 }
 
+#[then(expr = "the tab is named {string}")]
+async fn tab_named(world: &mut NodaWorld, name: String) -> Result<()> {
+    eventually(&format!("a tab named {name:?}"), || async {
+        Ok(world.page()?.tab().await? == name)
+    })
+    .await
+}
+
 #[then(expr = "the filename ends with {string}")]
 async fn filename_ends(world: &mut NodaWorld, ending: String) -> Result<()> {
     eventually(&format!("a filename ending {ending:?}"), || async {

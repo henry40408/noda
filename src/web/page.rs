@@ -294,9 +294,7 @@ fn scripted(title: &str, app: &str, scripts: &[&str], body: &str) -> String {
 /// requiring a script to find out whether a push finished — and the same reload
 /// the reader would perform by hand, so nothing new can go wrong in it.
 fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[&str], body: &str) -> String {
-    let refresh = again_in.map_or_else(String::new, |seconds| {
-        format!("<meta http-equiv=\"refresh\" content=\"{seconds}\">\n")
-    });
+    let refresh = refresh(again_in);
     let enhancement = scripts
         .iter()
         .filter(|source| !source.is_empty())
@@ -311,13 +309,37 @@ fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[&str], body
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         {refresh}<title>{}</title>\n<style>{}{}</style>\n</head>\n<body>\n\
+         {refresh}{}\n<style>{}{}</style>\n</head>\n<body>\n\
          <div class=\"{classes}\">\n{}</div>\n{enhancement}</body>\n</html>\n",
-        escape(title),
+        titled(title),
         theme::stylesheet(),
         CSS,
         body
     )
+}
+
+/// The tab's name, and the one instruction a page may give the browser about
+/// itself — both written here rather than inline in [`dressed`], because a
+/// fragment sends them too.
+///
+/// **A fragment is a page with the parts the reader already has left out**, and
+/// what is left is never only the body: a swap renames the tab, and the polling
+/// screen steers by the refresh the scriptless page steers by. Those two live in
+/// the `<head>`, so a fragment leads with them — and because an HTML parser puts
+/// a leading `<title>` or `<meta>` in the head of whatever it is parsing, the
+/// script finds each exactly where it looks for it on a whole page. Nothing in
+/// the enhancement layer had to learn a second shape.
+///
+/// One function each, called from both sides, so the shorter answer cannot come
+/// to differ from the longer one by a character.
+fn titled(title: &str) -> String {
+    format!("<title>{}</title>", escape(title))
+}
+
+fn refresh(again_in: Option<u32>) -> String {
+    again_in.map_or_else(String::new, |seconds| {
+        format!("<meta http-equiv=\"refresh\" content=\"{seconds}\">\n")
+    })
 }
 
 /// A note being written, as the form holds it.
@@ -663,6 +685,32 @@ pub fn listing(
     drift: &str,
     front: Option<&str>,
 ) -> String {
+    // `indexed`, because the rows are right here in the markup. It is the same
+    // class the script sets on a note route, and it means the same thing in
+    // both places: this pane has a listing in it.
+    scripted(
+        &format!("{book} — noda"),
+        "split at-list indexed",
+        // `BESIDE` is here for the note this listing turns into. Picking a row
+        // replaces the reading pane with a note's, aside and all, and nothing
+        // else on the page would ever ask what points at it.
+        &[script::LISTING, script::PANES, script::BESIDE],
+        &format!(
+            "{}{}{}",
+            listing_pane(book, rows, asked, drift),
+            front_pane(book, front),
+            notebook_bar(book, At::Notes)
+        ),
+    )
+}
+
+/// The listing's own column, for a page that already has the rest.
+///
+/// The other half of the trade [`note`] makes. A note page is sent with this
+/// pane empty because a phone will never draw it; `script::PANES` asks for it
+/// on a screen that will, and what it takes out of the answer is this — the
+/// rows, and the count over them. The page around them it already has.
+pub fn listing_pane(book: &str, rows: &[Row], asked: &Asked<'_>, drift: &str) -> String {
     let total = rows.len();
     let shown = rows.iter().filter(|row| row.shown).count();
 
@@ -739,23 +787,7 @@ pub fn listing(
         format!("{shown} of {total}")
     };
 
-    // `indexed`, because the rows are right here in the markup. It is the same
-    // class the script sets on a note route, and it means the same thing in
-    // both places: this pane has a listing in it.
-    scripted(
-        &format!("{book} — noda"),
-        "split at-list indexed",
-        // `BESIDE` is here for the note this listing turns into. Picking a row
-        // replaces the reading pane with a note's, aside and all, and nothing
-        // else on the page would ever ask what points at it.
-        &[script::LISTING, script::PANES, script::BESIDE],
-        &format!(
-            "{}{}{}",
-            index_pane(book, asked, &counted, drift, &body),
-            front_pane(book, front),
-            notebook_bar(book, At::Notes)
-        ),
-    )
+    index_pane(book, asked, &counted, drift, &body)
 }
 
 /// The index pane's frame, and what is under it.
@@ -1111,6 +1143,28 @@ pub fn todo(book: &str, tasks: &[Task]) -> String {
 /// is the half nothing else could tell you — and on a phone, where there is no
 /// `noda backlinks` to type, it is the half that has nowhere else to come from.
 pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
+    shell(
+        &format!("Links to {} — noda", subject.what),
+        "",
+        &format!(
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Backlinks</span>\
+             <span class=\"count\">{}</span></header>{}</section>",
+            back(&subject.at, &subject.what),
+            rows.len(),
+            backlinks_rows(book, subject, rows),
+        ),
+    )
+}
+
+/// The answer, without the page it is a page of.
+///
+/// This route is asked twice for two different reasons: by a reader pressing
+/// Links, who gets the page, and by `script::BESIDE` filling the margin beside
+/// a note, which reads the rows out of the answer and rebuilds them 236px wide.
+/// The second one is a fetch per note read on a monitor, so it is the one that
+/// pays for saying which part it wants.
+pub fn backlinks_rows(book: &str, subject: &Subject, rows: &[Row]) -> String {
     let body = if rows.is_empty() {
         format!(
             "<div class=\"empty\"><b>Nothing links here</b>\
@@ -1134,21 +1188,11 @@ pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
         out
     };
 
-    shell(
-        &format!("Links to {} — noda", subject.what),
-        "",
-        &format!(
-            "<section class=\"pane\">\
-             <header class=\"topbar\">{}<span class=\"here\">Backlinks</span>\
-             <span class=\"count\">{}</span></header>\
-             <main class=\"rows\">\
-             <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}\
-             </main></section>",
-            back(&subject.at, &subject.what),
-            rows.len(),
-            if subject.mono { "mono" } else { "subject" },
-            escape(&subject.what)
-        ),
+    format!(
+        "<main class=\"rows\">\
+         <p class=\"said\">What links to <span class=\"{}\">{}</span></p>{body}</main>",
+        if subject.mono { "mono" } else { "subject" },
+        escape(&subject.what)
     )
 }
 
@@ -1158,6 +1202,55 @@ pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
 /// than the note's. It costs two refs compared, which is what the listing route
 /// already pays on every visit.
 pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
+    // No `indexed`, and the pane it names is sent empty. The listing is worth
+    // about 290 bytes a note — 57KB at two hundred, half a megabyte at two
+    // thousand — and below 1024px not one of those bytes is ever drawn. So the
+    // frame goes out and `script::PANES` asks for the rest, but only where the
+    // column is on screen. With no script the grid is the tablet's two columns:
+    // the note, whole, and the chevron back to the listing, which is what a
+    // note page has always been.
+    scripted(
+        &note_title(reading),
+        "split at-note",
+        &[script::PANES, script::BESIDE],
+        &format!(
+            "{}{}{}",
+            index_pane(book, &Asked::nothing(), "", drift, ""),
+            read_pane(book, reading),
+            notebook_bar(book, At::Notes),
+        ),
+    )
+}
+
+/// The same note, for a reader who already has the page around it.
+///
+/// **This is the whole of what a swap uses.** `script::PANES` fetches a note,
+/// takes `.pane.read` out of the answer and renames the tab; everything else it
+/// receives — the stylesheet, both scripts, the rail, the index pane's frame —
+/// is already on the screen it is putting the note into, and was measured at 48
+/// of the 52 KB a note page weighs. So a request that says it wants only this
+/// part gets only this part, out of the same function the whole page is built
+/// from.
+///
+/// It takes no `drift`: the chip that fact draws sits in the index pane's bar,
+/// which a swap does not replace. Not sending it means not working it out, so a
+/// note asked for this way costs one file read and no refs compared.
+pub fn note_pane(book: &str, reading: &Reading) -> String {
+    format!(
+        "{}{}",
+        titled(&note_title(reading)),
+        read_pane(book, reading)
+    )
+}
+
+fn note_title(reading: &Reading) -> String {
+    format!("{} — noda", reading.title)
+}
+
+/// The note itself, written once and sent by both answers above — which is what
+/// makes the shorter one a part of the longer one rather than a second opinion
+/// about the same note.
+fn read_pane(book: &str, reading: &Reading) -> String {
     let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
     let meta = [tag_line(&reading.tags), updated(reading.updated.as_deref())]
         .into_iter()
@@ -1191,40 +1284,26 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
     ]);
     let home = format!("/nb/{}", escape(book));
 
-    // No `indexed`, and the pane it names is sent empty. The listing is worth
-    // about 290 bytes a note — 57KB at two hundred, half a megabyte at two
-    // thousand — and below 1024px not one of those bytes is ever drawn. So the
-    // frame goes out and `script::PANES` asks for the rest, but only where the
-    // column is on screen. With no script the grid is the tablet's two columns:
-    // the note, whole, and the chevron back to the listing, which is what a
-    // note page has always been.
-    scripted(
-        &format!("{} — noda", reading.title),
-        "split at-note",
-        &[script::PANES, script::BESIDE],
-        &format!(
-            "{}<section class=\"pane read\">\
-             <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
-             <main class=\"note\">\
-             <div class=\"note-head\"><h1>{}</h1>\
-             <div class=\"filename\"><span class=\"id\">{}</span>\
-             <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
-             <div class=\"note-meta\">{meta}</div></div>\
-             <div class=\"body\">{}</div>\
-             {perilous}{beside}</main>{bar}</section>{}",
-            index_pane(book, &Asked::nothing(), "", drift, ""),
-            back(&home, book),
-            // The note, not the notebook. On a phone this bar is the whole
-            // chrome and either would do; beside an index pane already headed
-            // with the notebook's name, repeating it says nothing and the one
-            // thing the bar could have said goes unsaid.
-            escape(&reading.title),
-            escape(&reading.title),
-            escape(&reading.id),
-            escape(&reading.slug),
-            reading.rendered,
-            notebook_bar(book, At::Notes),
-        ),
+    format!(
+        "<section class=\"pane read\">\
+         <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
+         <main class=\"note\">\
+         <div class=\"note-head\"><h1>{}</h1>\
+         <div class=\"filename\"><span class=\"id\">{}</span>\
+         <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
+         <div class=\"note-meta\">{meta}</div></div>\
+         <div class=\"body\">{}</div>\
+         {perilous}{beside}</main>{bar}</section>",
+        back(&home, book),
+        // The note, not the notebook. On a phone this bar is the whole
+        // chrome and either would do; beside an index pane already headed
+        // with the notebook's name, repeating it says nothing and the one
+        // thing the bar could have said goes unsaid.
+        escape(&reading.title),
+        escape(&reading.title),
+        escape(&reading.id),
+        escape(&reading.slug),
+        reading.rendered,
     )
 }
 
@@ -1483,6 +1562,56 @@ pub struct Errand<'a> {
 /// running the page brings itself back for news; when it stops, the refresh
 /// stops with it.
 pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
+    let at = escape(book);
+    dressed(
+        &format!("Status — {book} — noda"),
+        "",
+        working(errand).then_some(AGAIN_IN),
+        &[script::STANDING],
+        &format!(
+            "<section class=\"pane\">\
+             <header class=\"topbar\">{}<span class=\"here\">Status</span>\
+             <span class=\"count\">{at}</span></header>{}</section>{}",
+            back(&format!("/nb/{at}"), book),
+            network_main(book, standing, errand),
+            notebook_bar(book, At::Status),
+        ),
+    )
+}
+
+/// The news, without the screen it is news on.
+///
+/// The only fetch here that repeats: while an errand runs, `script::STANDING`
+/// asks again every two seconds, and until now each of those answers carried
+/// the whole stylesheet to move one line of text. What the script takes is the
+/// `<main>` and one fact from the head — whether the scriptless page would have
+/// come back for more — so both go out and nothing else does.
+///
+/// **Whether to poll again is still the server's decision, said the way the
+/// scriptless page hears it.** `<meta http-equiv="refresh">` is what a page with
+/// no script steers by; the script reads that meta rather than deciding for
+/// itself, so a fragment that dropped it would be the script inventing a stop
+/// condition. It is the same `refresh` the whole page writes, from the same
+/// number.
+pub fn standing_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
+    format!(
+        "{}{}",
+        refresh(working(errand).then_some(AGAIN_IN)),
+        network_main(book, standing, errand)
+    )
+}
+
+/// How long the network screen waits before asking again, in seconds. One
+/// number, read by the meta the browser obeys and by the poll that replaces it.
+const AGAIN_IN: u32 = 2;
+
+/// Whether an errand is still running — which is the whole of what "come back
+/// for more" means here.
+fn working(errand: Option<&Errand>) -> bool {
+    errand.is_some_and(|errand| errand.said.is_none())
+}
+
+fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
     let mut rows = String::new();
     let mut row = |name: &str, value: &str, mono: bool| {
         let _ = write!(
@@ -1563,7 +1692,7 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     // safety: a second press is already refused by the server, so what the
     // greying out prevents is not a second sync but the belief that the first
     // one did not land.
-    let busy = errand.is_some_and(|errand| errand.said.is_none());
+    let busy = working(errand);
     let at = escape(book);
     let mut buttons = String::new();
     for (errand, label) in [("sync", "Sync"), ("pull", "Pull"), ("push", "Push")] {
@@ -1580,20 +1709,9 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
         );
     }
 
-    dressed(
-        &format!("Status — {book} — noda"),
-        "",
-        busy.then_some(2),
-        &[script::STANDING],
-        &format!(
-            "<section class=\"pane\">\
-             <header class=\"topbar\">{}<span class=\"here\">Status</span>\
-             <span class=\"count\">{at}</span></header>\
-             <main>{said}<div class=\"rows facts\">{rows}</div>\
-             <div class=\"abreast\">{buttons}</div></main></section>{}",
-            back(&format!("/nb/{at}"), book),
-            notebook_bar(book, At::Status),
-        ),
+    format!(
+        "<main>{said}<div class=\"rows facts\">{rows}</div>\
+         <div class=\"abreast\">{buttons}</div></main>"
     )
 }
 
@@ -2691,6 +2809,114 @@ mod tests {
             tags: vec![],
             updated: None,
             rendered: "late".into(),
+        }
+    }
+
+    /// **The whole of the fragment contract, said as four assertions.** A
+    /// request that names a part gets that part and the page is what it was cut
+    /// out of — so the answers cannot come to disagree, whatever either of them
+    /// grows into. A rendering that only the shorter answer went through would
+    /// be a second interface with nothing checking it against the first.
+    ///
+    /// Containment is the check because containment is the claim. Nothing here
+    /// compares two renderings for looking alike; the page and the fragment are
+    /// the same bytes, from one function, or this fails.
+    #[test]
+    fn a_fragment_is_a_piece_of_the_page_it_came_from() {
+        let (title, pane) = note_pane("work", &reading())
+            .split_once("</title>")
+            .map(|(title, pane)| (format!("{title}</title>"), pane.to_string()))
+            .expect("the reading fragment names the tab");
+        let page = note("work", &reading(), "in sync");
+        assert!(page.contains(&title), "{page}");
+        assert!(page.contains(&pane), "{page}");
+
+        let rows = [Row {
+            id: "em0xvn4e".into(),
+            title: "Budget review".into(),
+            tags: vec!["work".into()],
+            updated: None,
+            shown: true,
+        }];
+        let column = listing_pane("work", &rows, &Asked::nothing(), "in sync");
+        assert!(
+            listing("work", &rows, &Asked::nothing(), "in sync", None).contains(&column),
+            "{column}"
+        );
+
+        let subject = Subject {
+            what: "Budget review".into(),
+            at: "/nb/work/n/em0xvn4e".into(),
+            mono: false,
+        };
+        let answer = backlinks_rows("work", &subject, &rows);
+        assert!(
+            backlinks("work", &subject, &rows).contains(&answer),
+            "{answer}"
+        );
+
+        let news = standing_main("work", &still(), None);
+        assert!(standing("work", &still(), None).contains(&news), "{news}");
+    }
+
+    /// And what it leaves out is the reason for it. None of this is on the
+    /// screen the fragment is going into — it is already there, and it is where
+    /// the weight of a note page is: 48 of its 52 KB.
+    #[test]
+    fn a_fragment_carries_none_of_the_page_around_it() {
+        let fragment = note_pane("work", &reading());
+        for absent in [
+            "<!doctype",
+            "<style>",
+            "<script>",
+            "class=\"pane index\"",
+            "class=\"notebooks\"",
+        ] {
+            assert!(!fragment.contains(absent), "the fragment carries {absent}");
+        }
+        assert!(fragment.contains("class=\"pane read\""), "{fragment}");
+        assert!(
+            fragment.len() * 4 < note("work", &reading(), "in sync").len(),
+            "the fragment is no longer a fraction of the page"
+        );
+    }
+
+    /// The one fact the network screen's fragment carries out of the head, and
+    /// the one that would be a decision if the script made it: whether to come
+    /// back. It is the server's own `<meta>`, written by the same function the
+    /// whole page writes it with — the script reads it there rather than
+    /// working out for itself whether an errand is still running.
+    #[test]
+    fn the_news_says_whether_to_come_back_the_way_the_page_does() {
+        let running = Errand {
+            doing: "Syncing",
+            done: "Synced",
+            said: None,
+            failed: false,
+            seconds: 3,
+        };
+        let news = standing_main("work", &still(), Some(&running));
+        assert!(news.starts_with("<meta http-equiv=\"refresh\""), "{news}");
+        assert!(
+            standing("work", &still(), Some(&running)).contains("<meta http-equiv=\"refresh\""),
+            "the whole page stopped asking to come back"
+        );
+
+        // And when there is nothing to wait for, neither of them says to.
+        let quiet = standing_main("work", &still(), None);
+        assert!(!quiet.contains("http-equiv"), "{quiet}");
+        assert!(quiet.starts_with("<main>"), "{quiet}");
+    }
+
+    fn still() -> Standing {
+        Standing {
+            branch: "main".into(),
+            notes: 5,
+            files: 0,
+            uncommitted: 0,
+            remote: Some("https://example.com/notes.git".into()),
+            drift: "in sync".into(),
+            problems: vec![],
         }
     }
 
