@@ -62,6 +62,22 @@
 //! and the scriptless page is not a different page with fewer rows in it. The
 //! script does not touch anything until the first keystroke: until then what is
 //! on the screen is the server's answer to the URL, and it is already correct.
+//!
+//! ## And what it is allowed to ask for
+//!
+//! Every fetch below takes one region out of the page it gets and drops the
+//! rest: the stylesheet, both scripts and the whole rail are already on the
+//! screen that region is going into. On a note that is 48 of 52 KB thrown away,
+//! on the round trip a reader is waiting through.
+//!
+//! So each fetch says which region it will use — `x-noda-fragment`, one name,
+//! the vocabulary in `web::Part` — and the server sends that region out of the
+//! same function the whole page is built from. **This is the enhancement rule
+//! rather than an exception to it.** What comes back is a piece of the server's
+//! answer, never a different one; every fetch here parses what arrives and asks
+//! it for the element it wants, so a server that ignored the header would still
+//! be answering correctly, and only a reader without a script — who sends no
+//! such header — is ever sent a page to look at.
 
 use std::fmt::Write;
 
@@ -351,7 +367,9 @@ pub const STANDING: &str = r#"
   const tick = async () => {
     let text;
     try {
-      const answer = await fetch(location.href, { headers: { accept: "text/html" } });
+      const answer = await fetch(location.href, {
+        headers: { accept: "text/html", "x-noda-fragment": "news" },
+      });
       if (!answer.ok) return location.reload();
       text = await answer.text();
     } catch {
@@ -434,7 +452,9 @@ pub const PANES: &str = r#"
     asking = true;
     let text;
     try {
-      const answer = await fetch(where, { headers: { accept: "text/html" } });
+      const answer = await fetch(where, {
+        headers: { accept: "text/html", "x-noda-fragment": "index" },
+      });
       if (!answer.ok) return;
       text = await answer.text();
     } catch {
@@ -467,7 +487,9 @@ pub const PANES: &str = r#"
   const swap = async (href) => {
     let text;
     try {
-      const answer = await fetch(href, { headers: { accept: "text/html" } });
+      const answer = await fetch(href, {
+        headers: { accept: "text/html", "x-noda-fragment": "read" },
+      });
       if (!answer.ok) return location.assign(href);
       text = await answer.text();
     } catch {
@@ -601,7 +623,9 @@ pub const BESIDE: &str = r#"
 
     let text;
     try {
-      const got = await fetch(at + "/backlinks", { headers: { accept: "text/html" } });
+      const got = await fetch(at + "/backlinks", {
+        headers: { accept: "text/html", "x-noda-fragment": "rows" },
+      });
       if (!got.ok) throw new Error(got.status);
       text = await got.text();
     } catch {
@@ -852,6 +876,45 @@ mod tests {
     fn a_pane_swap_tells_the_margin_note_the_note_changed() {
         assert!(PANES.contains("\"noda:read\""), "{PANES}");
         assert!(BESIDE.contains("\"noda:read\""), "{BESIDE}");
+    }
+
+    /// Every fetch here names a part of a page, and the server has a vocabulary
+    /// of them. The two halves are a string in JavaScript and a `match` arm in
+    /// Rust, so a name changed on one side alone compiles, passes and quietly
+    /// costs a reader the whole stylesheet on every press — the answer is still
+    /// correct, which is exactly what makes it silent.
+    #[test]
+    fn every_fetch_asks_for_a_part_the_server_can_send() {
+        use crate::web::{PART, Part};
+        for (script, what, part) in [
+            (PANES, "the pane swap", Part::Read),
+            (PANES, "the index column", Part::Index),
+            (BESIDE, "the margin note", Part::Rows),
+            (STANDING, "the poll", Part::News),
+        ] {
+            let asked = format!("\"{PART}\": \"{}\"", part.name());
+            assert!(script.contains(&asked), "{what} stopped asking for {asked}");
+        }
+    }
+
+    /// And every one of them still reads the answer by looking for what it
+    /// wants, rather than assuming the shape of what arrived. That is what
+    /// makes the header an optimisation instead of a protocol: a server that
+    /// ignored it would send the whole page, and every one of these would find
+    /// its element in it exactly as before.
+    #[test]
+    fn a_whole_page_would_still_answer_every_one_of_them() {
+        for (script, looked_for) in [
+            (PANES, "sent.querySelector(\".pane.read\")"),
+            (PANES, "sent.querySelector(\"main.rows\")"),
+            (BESIDE, "sent.querySelectorAll(\"main.rows a.row\")"),
+            (STANDING, "fresh.querySelector(\"main\")"),
+        ] {
+            assert!(
+                script.contains(looked_for),
+                "an answer is being taken apart by position rather than by {looked_for}"
+            );
+        }
     }
 
     #[test]

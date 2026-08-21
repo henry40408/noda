@@ -131,6 +131,19 @@ Feature: The same pages on a wider screen
     Then the note is headed "Budget review"
     And the listing is still on screen
 
+  # A swap replaces the pane, the address and the name of the tab — and the
+  # name is the one thing of the three that is not in the pane. It rides at the
+  # head of the answer as a `<title>`, where a browser's own parser puts it in
+  # the head of what it parsed, so what reaches the tab is the server's string
+  # rather than one this script put together. Nothing below the browser can
+  # check that.
+  @scripted
+  Scenario: The tab takes the name of the note being read
+    Given I open the notebook on a desktop
+    When I press "Budget review"
+    Then the note is headed "Budget review"
+    And the tab is named "Budget review — noda"
+
   # Which row you are on is a question only two panes can ask, so it is only
   # here that there is an answer to mark.
   @scripted

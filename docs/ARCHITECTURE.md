@@ -183,6 +183,15 @@ router in `web/mod.rs`, and the handler wraps its work in `answer(move || …)`.
 the notebook's lock first. If it is reachable without a script, it must work without one — the
 enhancement layer in `script.rs` may make an answer arrive sooner, never differently.
 
+**A part of a page.** When the script fetches a page to take one region out of it, that region gets
+a name in `web::Part`, a function of its own in `page.rs`, and a branch in the handler; the fetch
+sends `x-noda-fragment: <name>`. Two rules hold it together. The whole page must be *built from* the
+part — one rendering, asserted by containment in `page.rs`, never two that look alike — and the
+whole page must stay a correct answer, because an unknown name, a missing header and a reader typing
+the address all get it. That is what keeps the header an optimisation rather than a protocol: the
+script parses what arrives and queries it for the element it wants, so a server that ignored the
+header entirely would still be answering.
+
 ## Testing
 
 Six layers, each catching what the ones above it cannot:
