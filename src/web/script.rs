@@ -87,8 +87,6 @@
 //! be answering correctly, and only a reader without a script — who sends no
 //! such header — is ever sent a page to look at.
 
-use std::fmt::Write;
-
 /// The listing's filter, and the grouping it drew on the way.
 ///
 /// Reads the rows out of the DOM rather than being handed a copy of them. The
@@ -548,28 +546,34 @@ pub const PANES: &str = r#"
     }
   };
 
+  // **The address moves first, and the answer catches up.**
+  //
+  // A navigation changes the address the moment it starts, and this has to do
+  // the same: a reader who presses a row and then presses back before the note
+  // lands would otherwise go back past the page they are standing on — there
+  // was no entry for it yet — and leave the notebook entirely. So the entry is
+  // pushed on the press, and the ways this can fail all end somewhere that
+  // address is correct. `location.replace` and not `assign`, because the entry
+  // is already there and a navigation would be a second one.
   const swap = async (href, push = true) => {
+    if (push) history.pushState(null, "", href);
     let text;
     try {
       const answer = await fetch(href, {
         headers: { accept: "text/html", "x-noda-fragment": "read" },
       });
-      if (!answer.ok) return location.assign(href);
+      if (!answer.ok) return location.replace(href);
       text = await answer.text();
     } catch {
-      return location.assign(href);
+      return location.replace(href);
     }
     const sent = new DOMParser().parseFromString(text, "text/html");
     const next = sent.querySelector(".pane.read");
-    if (!next) return location.assign(href);
+    if (!next) return location.replace(href);
     app.querySelector(".pane.read").replaceWith(next);
     document.title = sent.title;
     app.classList.remove("at-list");
     app.classList.add("at-note");
-    // Pressing a row pushes the address it went to; arriving by `popstate` is
-    // the browser having moved already, and pushing there would bury the entry
-    // the reader was trying to get back to.
-    if (push) history.pushState(null, "", href);
     mark();
     // The reading pane is replaced whole, so anything that hangs off the note
     // being read is now a different, empty element. Said rather than observed:
@@ -626,23 +630,27 @@ pub const PANES: &str = r#"
     if (!field || !action) return;
     event.preventDefault();
     const where = action + "?q=" + encodeURIComponent(field.value);
+    // Before the answer, for the reason `swap` gives: submitting a form moves
+    // the address at once, and a reader who searches and then presses back
+    // must land on the listing they came from rather than out of the notebook.
+    history.pushState(null, "", where);
     (async () => {
       let text;
       try {
         const answer = await fetch(where, {
           headers: { accept: "text/html", "x-noda-fragment": "index" },
         });
-        if (!answer.ok) return form.submit();
+        if (!answer.ok) return location.replace(where);
         text = await answer.text();
       } catch {
         // The search is the reader's question and it has not been answered.
-        // Submitting the form is the scriptless way to ask it, which is the
-        // one thing here that cannot fail differently.
-        return form.submit();
+        // Going to the address the form would have gone to is the scriptless
+        // way to ask it, and it is the one thing here that cannot fail
+        // differently.
+        return location.replace(where);
       }
       const sent = new DOMParser().parseFromString(text, "text/html");
-      if (!column(sent, false)) return form.submit();
-      history.pushState(null, "", where);
+      if (!column(sent, false)) return location.replace(where);
     })();
   });
 
@@ -837,22 +845,6 @@ pub const BESIDE: &str = r#"
   ask();
 })();
 "#;
-
-/// A script, as it goes into a page.
-///
-/// The one thing worth checking is in here rather than at each call site: a
-/// `</script` anywhere in the text ends the element, wherever it appears, and
-/// the rest of the file becomes markup. No script here contains one today and
-/// the assertion is what keeps that true of the next line somebody adds.
-pub fn tag(source: &str) -> String {
-    debug_assert!(
-        !source.to_lowercase().contains("</script"),
-        "a script cannot contain the string that ends it"
-    );
-    let mut out = String::with_capacity(source.len() + 32);
-    let _ = writeln!(out, "<script>{source}</script>");
-    out
-}
 
 #[cfg(test)]
 mod tests {
@@ -1107,16 +1099,47 @@ mod tests {
             "the search stopped checking which screen it is on"
         );
         assert!(
-            PANES.contains("form.submit()"),
-            "nothing falls back to submitting the form"
+            PANES.contains("location.replace(where)"),
+            "nothing falls back to the address the form would have gone to"
         );
     }
 
+    /// **The address moves on the press, not on the answer.** Both of these
+    /// push before they fetch, and a reader who presses back while one is in
+    /// flight has an entry to go back to; pushing afterwards left them going
+    /// back past the page they were standing on and out of the notebook. It is
+    /// also why the failures use `replace` — the entry is already there.
     #[test]
-    fn a_script_arrives_wrapped_in_its_element() {
-        let out = tag("let a = 1;");
-        assert!(out.starts_with("<script>"), "{out}");
-        assert!(out.trim_end().ends_with("</script>"), "{out}");
-        assert!(out.contains("let a = 1;"), "{out}");
+    fn a_press_pushes_its_address_before_it_asks_for_the_answer() {
+        // Read from where each of them starts, because `bring` fetches a
+        // `where` of its own — finding the first one in the file would be
+        // asking the question about the wrong function.
+        for (what, from, push, ask) in [
+            (
+                "the swap",
+                "const swap = async",
+                "history.pushState",
+                "fetch(href",
+            ),
+            (
+                "the search",
+                "app.addEventListener(\"submit\"",
+                "history.pushState",
+                "fetch(where",
+            ),
+        ] {
+            let at = PANES
+                .find(from)
+                .unwrap_or_else(|| panic!("{what} is not in this script any more"));
+            let rest = &PANES[at..];
+            let pushed = rest
+                .find(push)
+                .unwrap_or_else(|| panic!("{what} stopped pushing its address"));
+            let asked = rest
+                .find(ask)
+                .unwrap_or_else(|| panic!("{what} stopped asking for its answer"));
+            assert!(pushed < asked, "{what} asks before it pushes");
+        }
+        assert!(!PANES.contains("location.assign("), "{PANES}");
     }
 }

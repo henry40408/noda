@@ -252,6 +252,35 @@ landing halfway through somebody pressing Save is what that lock is there for. T
 notebook, so a remote that has gone quiet slows nothing down but the notebook whose remote it
 is.
 
+## What every page needs, and no page carries
+
+The stylesheet and the scripts are links, not markup: `/a/style.<hash>.css`, and one address per
+script. The name is a hash of the bytes, so the address changes when the content does and an old
+one is simply an address nobody asks for — which is the whole of the invalidation question. They
+are served `immutable` for a year, and the pages that name them are `no-cache`, because a kept
+page is a page that could ask for bytes this build does not have.
+
+It was the other way round for most of this project's life, and the argument then was a good one:
+one request draws a whole page, which is what a phone at the far end of a tailnet wants. What
+changed is the rest of the layer. Since the enhancement layer started asking for parts of pages,
+most of what a reader fetches after their first page carries no chrome at all — and what was left
+carrying it was the case fragments cannot cover: a note opened from a link, every form page, and
+every screen on a phone, where the panes never split. Each was re-sending 46 KB the browser had
+already been given.
+
+The first view costs the same bytes it always did, in as many as four requests instead of one.
+Every view after it costs the page alone. The first column is also what every view used to cost,
+because it is the second plus everything the page links:
+
+| | first view | every view after |
+| --- | ---: | ---: |
+| the notebooks page | 38,587 | 860 |
+| a listing | 67,743 | 6,135 |
+| a note | 55,800 | 3,876 |
+| the network screen | 41,498 | 2,462 |
+| a backlinks page | 38,510 | 783 |
+| an edit form | 38,747 | 1,020 |
+
 ## And a script on top, that nothing depends on
 
 Every screen works without one, and three of them carry one anyway: the listing filters as

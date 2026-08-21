@@ -23,7 +23,7 @@
 use std::fmt::Write;
 
 use crate::notebook::NoteFile;
-use crate::web::{script, theme};
+use crate::web::asset::Asset;
 
 /// A notebook, as the front page lists it: `noda status` compressed to a row,
 /// the way a listing's row is `ls -l` compressed to one.
@@ -262,10 +262,9 @@ fn tag_line(tags: &[String]) -> String {
 
 /// What every page is wrapped in.
 ///
-/// The stylesheet is inline. One request answers a whole page, which is what a
-/// phone on the far end of a tailnet wants; the alternative buys caching and
-/// costs a round trip on the first view of every session, plus a question about
-/// invalidating it that nothing here is big enough to be worth asking.
+/// The stylesheet is linked rather than carried, and `asset.rs` is where that
+/// decision is argued — it used to be argued here, the other way round.
+///
 /// `app` is the classes the layout hangs off, and there are only ever three of
 /// them: `split` for the two screens made of panes, `at-list`/`at-note` for
 /// which of the two is being shown, and `indexed` for whether the index pane
@@ -275,14 +274,17 @@ fn shell(title: &str, app: &str, body: &str) -> String {
     dressed(title, app, None, &[], body)
 }
 
-/// The shell, plus the script that makes this page quicker and nothing else.
+/// The shell, plus the scripts that make this page quicker and nothing else.
 ///
-/// Inline, for the same reason the stylesheet is: one request answers a whole
-/// page. It goes at the end of the body rather than in the head, because it
-/// reads the rows and there is no `defer` on an inline script — and because a
-/// script that runs after the page is drawn cannot delay the page being drawn,
-/// which is the only guarantee that matters to something optional.
-fn scripted(title: &str, app: &str, scripts: &[&str], body: &str) -> String {
+/// A page links the ones it uses and no others — the rule the inline version
+/// followed, kept now that they are addresses: a note page has never been sent
+/// the listing's filter and is not sent it now.
+///
+/// `defer`, which is what an address buys that an inline script could not have:
+/// they read the rows, so they must run after the document is parsed, and a
+/// deferred script starts downloading while it still is. Nothing optional
+/// delays the page being drawn.
+fn scripted(title: &str, app: &str, scripts: &[Asset], body: &str) -> String {
     dressed(title, app, None, scripts, body)
 }
 
@@ -293,13 +295,9 @@ fn scripted(title: &str, app: &str, scripts: &[&str], body: &str) -> String {
 /// full reload of a page that is a few hundred bytes, which is the cost of not
 /// requiring a script to find out whether a push finished — and the same reload
 /// the reader would perform by hand, so nothing new can go wrong in it.
-fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[&str], body: &str) -> String {
+fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], body: &str) -> String {
     let refresh = refresh(again_in);
-    let enhancement = scripts
-        .iter()
-        .filter(|source| !source.is_empty())
-        .map(|source| script::tag(source))
-        .collect::<String>();
+    let enhancement = scripts.iter().map(|asset| asset.tag()).collect::<String>();
     let classes = if app.is_empty() {
         String::from("app")
     } else {
@@ -309,11 +307,10 @@ fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[&str], body
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         {refresh}{}\n<style>{}{}</style>\n</head>\n<body>\n\
-         <div class=\"{classes}\">\n{}</div>\n{enhancement}</body>\n</html>\n",
+         {refresh}{}\n{}{enhancement}\n</head>\n<body>\n\
+         <div class=\"{classes}\">\n{}</div>\n</body>\n</html>\n",
         titled(title),
-        theme::stylesheet(),
-        CSS,
+        Asset::Style.tag(),
         body
     )
 }
@@ -694,7 +691,7 @@ pub fn listing(
         // `BESIDE` is here for the note this listing turns into. Picking a row
         // replaces the reading pane with a note's, aside and all, and nothing
         // else on the page would ever ask what points at it.
-        &[script::LISTING, script::PANES, script::BESIDE],
+        &[Asset::Listing, Asset::Panes, Asset::Beside],
         &format!(
             "{}{}",
             listing_panes(book, rows, asked, drift, front),
@@ -1257,7 +1254,7 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
     scripted(
         &note_title(reading),
         "split at-note",
-        &[script::PANES, script::BESIDE],
+        &[Asset::Panes, Asset::Beside],
         &format!(
             "{}{}{}",
             index_pane(book, &Asked::nothing(), "", drift, ""),
@@ -1612,7 +1609,7 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
         &format!("Status — {book} — noda"),
         "",
         working(errand).then_some(AGAIN_IN),
-        &[script::STANDING],
+        &[Asset::Standing],
         &format!(
             "<section class=\"pane\">\
              <header class=\"topbar\">{}<span class=\"here\">Status</span>\
@@ -1807,12 +1804,11 @@ fn plural(count: usize, thing: &str) -> String {
     }
 }
 
-/// The layout, for the one test that has to read it.
+/// The layout, for `asset.rs` to serve and for the tests that have to read it.
 ///
 /// `script.rs` writes the split breakpoint a second time, and the two numbers
 /// have to agree. Exposing the sheet is how that is checked rather than
 /// asserted twice in prose.
-#[cfg(test)]
 pub(crate) fn stylesheet() -> &'static str {
     CSS
 }
@@ -2662,7 +2658,7 @@ mod tests {
         );
         assert!(page.contains("<p class=\"hint\" hidden>"), "{page}");
         assert!(page.contains("press ⏎ to search the text"), "{page}");
-        assert!(page.contains("<script>"), "{page}");
+        assert!(page.contains("<script src=\"/a/listing."), "{page}");
     }
 
     /// The signature: the id and the slug drawn as the one filename they are.
@@ -2838,12 +2834,21 @@ mod tests {
         assert!(!page.contains("<script>x"), "{page}");
     }
 
+    /// The viewport is the page's own — it is about this document and cannot be
+    /// linked — and the two themes are in the sheet it links. Both are checked
+    /// here because the pair is the claim: a page says how wide it is to be
+    /// read at, and where to get the rest.
     #[test]
-    fn every_page_carries_both_themes_and_the_viewport() {
+    fn every_page_names_the_viewport_and_links_the_sheet_that_holds_both_themes() {
         let page = listing("work", &[], &Asked::nothing(), "in sync", None);
         assert!(page.contains("width=device-width"), "{page}");
-        assert!(page.contains("prefers-color-scheme:dark"), "{page}");
-        assert!(page.contains("--tap:48px"), "{page}");
+        assert!(
+            page.contains("<link rel=\"stylesheet\" href=\"/a/style."),
+            "{page}"
+        );
+        let sheet = format!("{}{}", crate::web::theme::stylesheet(), stylesheet());
+        assert!(sheet.contains("prefers-color-scheme:dark"), "{sheet}");
+        assert!(sheet.contains("--tap:48px"), "{sheet}");
     }
 
     fn reading() -> Reading {
@@ -2932,25 +2937,40 @@ mod tests {
         assert!(panes.contains("Read me"), "{panes}");
     }
 
-    /// And what it leaves out is the reason for it. None of this is on the
-    /// screen the fragment is going into — it is already there, and it is where
-    /// the weight of a note page is: 48 of its 52 KB.
+    /// And what it leaves out is the reason for it: none of this is on the
+    /// screen the fragment is going into, because it is already there.
+    ///
+    /// It used to be able to say how much — 48 of a note page's 52 KB — and it
+    /// cannot any more, because `asset.rs` took the same 46 KB off the page as
+    /// well. What is left to check is the shape: the fragment is the pane and
+    /// nothing around it, and the page around it is four addresses rather than
+    /// the bytes behind them.
     #[test]
     fn a_fragment_carries_none_of_the_page_around_it() {
         let fragment = note_pane("work", &reading());
         for absent in [
             "<!doctype",
-            "<style>",
-            "<script>",
+            "<link rel=\"stylesheet\"",
+            "<script",
             "class=\"pane index\"",
             "class=\"notebooks\"",
         ] {
             assert!(!fragment.contains(absent), "the fragment carries {absent}");
         }
         assert!(fragment.contains("class=\"pane read\""), "{fragment}");
+
+        let page = note("work", &reading(), "in sync");
+        assert!(fragment.len() < page.len(), "{fragment}");
+        // And the page itself no longer carries what it links. The needle is a
+        // declaration only the stylesheet holds, so finding it on a page would
+        // mean the sheet had been written back into one.
         assert!(
-            fragment.len() * 4 < note("work", &reading(), "in sync").len(),
-            "the fragment is no longer a fraction of the page"
+            !page.contains("--tap:48px"),
+            "the stylesheet is back inside the page"
+        );
+        assert!(
+            page.contains("<link rel=\"stylesheet\" href=\"/a/style."),
+            "{page}"
         );
     }
 
@@ -3036,11 +3056,15 @@ mod tests {
         }
     }
 
-    /// Two writers, one column. The listing route sends the script because
+    /// Two writers, one column. The listing route links the script because
     /// picking a row turns that page into a note page without a reload.
+    ///
+    /// The address rather than the source, now that the source is not on the
+    /// page: what a page has to get right is which scripts it names, and
+    /// `asset.rs` is what keeps a name pointing at the right bytes.
     #[test]
-    fn both_routes_that_can_show_a_note_carry_the_script_that_fills_its_margin() {
-        let hook = "querySelector(\".pane.read .beside\")";
+    fn both_routes_that_can_show_a_note_link_the_script_that_fills_its_margin() {
+        let hook = Asset::Beside.href();
         assert!(note("work", &reading(), "in sync").contains(hook), "note");
         assert!(
             listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
