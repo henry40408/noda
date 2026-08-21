@@ -689,18 +689,63 @@ pub fn listing(
     // class the script sets on a note route, and it means the same thing in
     // both places: this pane has a listing in it.
     scripted(
-        &format!("{book} — noda"),
+        &listing_title(book),
         "split at-list indexed",
         // `BESIDE` is here for the note this listing turns into. Picking a row
         // replaces the reading pane with a note's, aside and all, and nothing
         // else on the page would ever ask what points at it.
         &[script::LISTING, script::PANES, script::BESIDE],
         &format!(
-            "{}{}{}",
-            listing_pane(book, rows, asked, drift),
-            front_pane(book, front),
+            "{}{}",
+            listing_panes(book, rows, asked, drift, front),
             notebook_bar(book, At::Notes)
         ),
+    )
+}
+
+/// Both of the listing's panes, for a screen that is going back to it.
+///
+/// The part [`listing_pane`] cannot answer on its own. Pressing back out of a
+/// note has to put two things right — the rows the listing had, and the pane
+/// the note was standing in, which on this screen holds the notebook's own
+/// README — and they are two panes of one answer. Asking for them separately
+/// would be two round trips to draw one screen, and a moment on the way with
+/// half of each on it.
+///
+/// The listing route answers this and [`listing_pane`] both, which is the first
+/// route to send two different parts. Which one is asked for is the difference
+/// between narrowing a search and returning to the screen: a search leaves the
+/// note pane where it is, and back does not — and only back renames the tab,
+/// which is why this one carries a `<title>` and the column does not.
+pub fn listing_screen(
+    book: &str,
+    rows: &[Row],
+    asked: &Asked<'_>,
+    drift: &str,
+    front: Option<&str>,
+) -> String {
+    format!(
+        "{}{}",
+        titled(&listing_title(book)),
+        listing_panes(book, rows, asked, drift, front)
+    )
+}
+
+fn listing_title(book: &str) -> String {
+    format!("{book} — noda")
+}
+
+fn listing_panes(
+    book: &str,
+    rows: &[Row],
+    asked: &Asked<'_>,
+    drift: &str,
+    front: Option<&str>,
+) -> String {
+    format!(
+        "{}{}",
+        listing_pane(book, rows, asked, drift),
+        front_pane(book, front)
     )
 }
 
@@ -2857,6 +2902,34 @@ mod tests {
 
         let news = standing_main("work", &still(), None);
         assert!(standing("work", &still(), None).contains(&news), "{news}");
+
+        // Two parts off one route, and the wider of them carries the tab's name
+        // the way a note's does — so it is checked in halves, like that one.
+        let both = listing_screen(
+            "work",
+            &rows,
+            &Asked::nothing(),
+            "in sync",
+            Some("<p>Read me</p>"),
+        );
+        let (title, panes) = both
+            .split_once("</title>")
+            .map(|(title, panes)| (format!("{title}</title>"), panes.to_string()))
+            .expect("the listing screen names the tab");
+        let page = listing(
+            "work",
+            &rows,
+            &Asked::nothing(),
+            "in sync",
+            Some("<p>Read me</p>"),
+        );
+        assert!(page.contains(&title), "{page}");
+        assert!(page.contains(&panes), "{page}");
+        // And it is both panes: the one that goes back is the one that has to
+        // put the reading side right as well.
+        assert!(panes.contains("class=\"pane index\""), "{panes}");
+        assert!(panes.contains("class=\"pane read\""), "{panes}");
+        assert!(panes.contains("Read me"), "{panes}");
     }
 
     /// And what it leaves out is the reason for it. None of this is on the

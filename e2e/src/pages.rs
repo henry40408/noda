@@ -537,6 +537,46 @@ impl Page<'_> {
         self.reads("h1").await
     }
 
+    /// Goes back the way the browser's own button does.
+    ///
+    /// Not the chevron on the page — that is a link to somewhere, and a link is
+    /// a navigation whatever the script does. This is the history entry a press
+    /// pushed, which is the only way to ask whether going back is answered or
+    /// reloaded.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the browser cannot be driven.
+    pub async fn go_back(&self) -> Result<()> {
+        self.driver().back().await?;
+        Ok(())
+    }
+
+    /// Puts a mark on the window, and reads it back.
+    ///
+    /// **The only way a scenario can tell a swap from a navigation.** Both end
+    /// with the right thing on the screen; the difference is whether the
+    /// document survived, and a value hung off `window` survives exactly as
+    /// long as it does.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn remember(&self) -> Result<()> {
+        self.0.measure("window.__noda_here = 1; return 1;").await?;
+        Ok(())
+    }
+
+    /// Whether the page marked by [`Self::remember`] is still the one on screen.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn remembered(&self) -> Result<bool> {
+        let held = self.0.measure("return !!window.__noda_here;").await?;
+        Ok(held.as_bool().unwrap_or(false))
+    }
+
     /// The name of the tab.
     ///
     /// The one thing a pane swap changes that is not in the pane. It arrives as

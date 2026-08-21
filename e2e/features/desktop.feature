@@ -144,6 +144,80 @@ Feature: The same pages on a wider screen
     Then the note is headed "Budget review"
     And the tab is named "Budget review — noda"
 
+  # Sending the search replaces the rows and not the page. Marked first,
+  # because the rows would be right either way — a scriptless press lands on
+  # the same listing — and the only difference a scenario can see is whether
+  # the document it started in survived.
+  #
+  # `q3` is in a body and in no title or tag, so it is the case the filter
+  # cannot answer alone: the row arrives because the server was asked, not
+  # because the script found it on the page.
+  @scripted
+  Scenario: Sending a search replaces the rows and not the page
+    Given I open the notebook on a desktop
+    And I remember this page
+    When I search for "q3"
+    Then I see a row for "Budget review"
+    And I do not see a row for "Reading list"
+    And the address carries the search "q3"
+    And it is still the same page
+
+  # And what it pushed can be gone back to. The rows come back from the server,
+  # because the query in the address is the only thing that says what they are.
+  @scripted
+  Scenario: Going back undoes a search without reloading
+    Given I open the notebook on a desktop
+    When I search for "q3"
+    Then I do not see a row for "Reading list"
+    When I remember this page
+    And I go back
+    Then I see a row for "Reading list"
+    And the address carries no search
+    And it is still the same page
+
+  # Back out of a note, on the screen where opening one replaced a pane rather
+  # than the page. Two panes have to be put right — the rows, and the pane the
+  # note was standing in, which with no note picked holds the notebook's own
+  # README.
+  @scripted
+  Scenario: Going back from a note returns to the listing beside it
+    Given I open the notebook on a desktop
+    And I remember this page
+    When I press "Budget review"
+    Then the note is headed "Budget review"
+    When I go back
+    Then I am at "/nb/default"
+    And the tab is named "default — noda"
+    And it is still the same page
+
+  # Two notes deep, and back is the note before it rather than the listing.
+  @scripted
+  Scenario: Going back from a note returns to the note before it
+    Given I open the notebook on a desktop
+    When I press "Budget review"
+    And I press "Reading list"
+    Then the note is headed "Reading list"
+    When I remember this page
+    And I go back
+    Then the note is headed "Budget review"
+    And the tab is named "Budget review — noda"
+    And it is still the same page
+
+  # The margin note is about whichever note is being read, and going back
+  # changes which one that is. It asked for this one once already and the
+  # answer went away with the pane, so it has to ask again — the failure this
+  # catches is a column that is right on the way out and empty on the way back.
+  @scripted
+  Scenario: What points at a note is still there after going back
+    Given I open the notebook on a monitor
+    When I press "Meeting notes"
+    Then the margin note lists "Reading list"
+    When I press "Reading list" in the margin note
+    Then the note is headed "Reading list"
+    When I go back
+    Then the note is headed "Meeting notes"
+    And the margin note lists "Reading list"
+
   # Which row you are on is a question only two panes can ask, so it is only
   # here that there is an answer to mark.
   @scripted

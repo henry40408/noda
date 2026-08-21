@@ -97,6 +97,25 @@ async fn press_back(world: &mut NodaWorld) -> Result<()> {
     world.page()?.tap_back().await
 }
 
+#[when("I go back")]
+async fn go_back(world: &mut NodaWorld) -> Result<()> {
+    world.page()?.go_back().await
+}
+
+#[given("I remember this page")]
+#[when("I remember this page")]
+async fn remember(world: &mut NodaWorld) -> Result<()> {
+    world.page()?.remember().await
+}
+
+#[then("it is still the same page")]
+async fn still_here(world: &mut NodaWorld) -> Result<()> {
+    eventually("the page to still be the one that was marked", || async {
+        world.page()?.remembered().await
+    })
+    .await
+}
+
 #[when(expr = "I search for {string}")]
 async fn search(world: &mut NodaWorld, query: String) -> Result<()> {
     world.page()?.search(&query).await

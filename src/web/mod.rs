@@ -354,6 +354,9 @@ pub(crate) enum Part {
     Read,
     /// The listing's own column, rows and count.
     Index,
+    /// Both of the listing's panes: the column, and the pane a note was being
+    /// read in. What going back to the listing has to put right.
+    Screen,
     /// The rows of a backlinks answer, without the page around them.
     Rows,
     /// The network screen's news, and whether it is still moving.
@@ -367,6 +370,7 @@ impl Part {
         match self {
             Part::Read => "read",
             Part::Index => "index",
+            Part::Screen => "screen",
             Part::Rows => "rows",
             Part::News => "news",
         }
@@ -613,7 +617,12 @@ async fn listing(
     request: Request,
 ) -> Response {
     let typed = parameter(request.uri().query(), "q");
-    let part = Part::Index.wanted(request.headers());
+    // Two parts off one route, and the difference is what the reader is doing:
+    // narrowing a search leaves the note pane alone, and pressing back out of a
+    // note has to put it back. Only the second needs the notebook's front page,
+    // and it is a file read — so it is read for the answer that shows it.
+    let column = Part::Index.wanted(request.headers());
+    let screen = Part::Screen.wanted(request.headers());
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
             return Ok(missing_notebook(&book));
@@ -650,16 +659,18 @@ async fn listing(
         // as well as narrow one — see `page::Row::shown`.
         let mut rows = notes.iter().map(page::Row::of).collect::<Vec<_>>();
         // Read for the pane beside the listing, and only when that pane is going
-        // out: the column asking for this one is putting rows into a page whose
-        // other half is a note, and the notebook's front page is not on it.
-        let front = if part {
+        // out: the column on its own is going into a page whose other half is a
+        // note, and the notebook's front page is not on it.
+        let front = if column {
             None
         } else {
             front_page(&notebook, &book)?
         };
         let drawn = |rows: &[page::Row], asked: &page::Asked<'_>| {
-            if part {
+            if column {
                 page::listing_pane(&book, rows, asked, &drift)
+            } else if screen {
+                page::listing_screen(&book, rows, asked, &drift, front.as_deref())
             } else {
                 page::listing(&book, rows, asked, &drift, front.as_deref())
             }

@@ -902,8 +902,9 @@ pointer, and the editor's scratch buffer are kept out of your synced data on pur
 
 - **The web UI reads, writes and syncs**, and the enhancement layer over it has landed: a
   listing that filters as you type, a network screen that fetches instead of reloading whole,
-  and backlinks beside the prose on a wide screen — none of which gives up the form that works
-  with no script at all. See [In a browser](#in-a-browser) and
+  backlinks beside the prose on a wide screen, and a search and a press of back that replace
+  the rows rather than the page — none of which gives up the form that works with no script
+  at all. See [In a browser](#in-a-browser) and
   [the script layer](docs/web.md#and-a-script-on-top-that-nothing-depends-on).
 - Encrypted notebooks are under consideration.
 
