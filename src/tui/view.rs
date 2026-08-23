@@ -24,7 +24,7 @@ use ratatui::widgets::{
     ScrollbarState, Table, Wrap,
 };
 
-use super::app::{App, Mode, SCOPE_KEYS, View, What};
+use super::app::{App, Choice, Mark, Mode, Proposal, SCOPE_KEYS, View, What};
 use super::command;
 use super::frame::{self, card, plural};
 use super::theme;
@@ -97,7 +97,7 @@ const KEYS: &[(&str, &str)] = &[
     (":, ctrl-a", "run a command · the list of what it takes"),
     ("space, *, Q", "mark · mark all shown · the queue"),
     ("e, a", "edit in $EDITOR · new note"),
-    ("m, #", "retitle · tags: +work -\"two words\""),
+    ("m, #", "retitle · tags: a box each, tab chooses"),
     ("ctrl-d, T", "delete (after a y) · leave updated alone"),
     // One row per group of keys rather than one per key. The card has to stay
     // inside a twenty-four row terminal, which it has already failed to do
@@ -152,6 +152,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::Commands => draw_commands(f, area, app),
         Mode::Confirm(what) => draw_confirm(f, area, app, what),
         Mode::Queue => draw_queue(f, area, app),
+        Mode::Tagging => draw_tagging(f, area, app),
         Mode::Alert => draw_alert(f, area, app),
         _ => {}
     }
@@ -1050,6 +1051,170 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App) {
         muted,
     )));
     card(f, area, " queued ", lines, muted);
+}
+
+/// Which tags the notes picked out should end up with.
+///
+/// A box per tag rather than a line to write `+work -q3` on. The list is every
+/// tag the notebook has, commonest first — the tags screen's own order, because
+/// it is the tags screen's own list — so the tag being reached for is nearly
+/// always already on the card and reaching it is a keystroke rather than a
+/// spelling.
+///
+/// The number down the right-hand side answers the question the boxes cannot.
+/// Over one note the box says everything about that note, so the number says how
+/// established the tag is; over a marked set the box cannot say that twelve of
+/// forty carry it, so the number does.
+fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
+    let muted = theme::from(palette::MUTED);
+    let total = app.picking_notes();
+    let here = app.tags_at();
+    let shown = app.shown_tags();
+    let proposal = app.proposal();
+
+    // As wide as the widest name on it, so the counts line up in a column of
+    // their own. Measured in what a terminal will show and not in characters: a
+    // tag is as likely to be Chinese as the note it is on.
+    let width = shown
+        .iter()
+        .filter_map(|&at| app.choices().get(at))
+        .map(|choice| display_width(&choice.tag))
+        .chain(match &proposal {
+            Some(Proposal::New { tag, .. }) => Some(display_width(tag)),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+
+    let mut rows: Vec<Line> = shown
+        .iter()
+        .enumerate()
+        .filter_map(|(row, &at)| Some((row, app.choices().get(at)?)))
+        .map(|(row, choice)| chosen(choice, total, width, row == here))
+        .collect();
+    if let Some(proposal) = &proposal {
+        rows.push(proposed(proposal, width, shown.len() == here));
+    }
+
+    // Two of border, one blank and one footer: what is left is for the list.
+    let room = (area.height as usize).saturating_sub(4).max(1);
+    let first = here.saturating_sub(room.saturating_sub(1));
+    let mut lines: Vec<Line> = if rows.is_empty() {
+        vec![Line::from(Span::styled(
+            "no tags yet — type one to make it",
+            muted,
+        ))]
+    } else {
+        rows.into_iter().skip(first).take(room).collect()
+    };
+
+    // What Enter does, said in the words for what it will actually do: with a
+    // set marked the change goes into the queue, and a card that said "apply"
+    // would be promising something that does not happen until the queue is sent.
+    let doing = if app.marks.is_empty() {
+        "apply"
+    } else {
+        "queue it"
+    };
+    let more = app.picker_rows().saturating_sub(first + room);
+    let footer = if more > 0 {
+        format!("tab  choose      enter  {doing}      esc  back      {more} more")
+    } else {
+        format!("type to narrow      tab  choose      enter  {doing}      esc  back")
+    };
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(footer, muted)));
+
+    let about = match app.picking_note() {
+        Some(file) => file.slug.clone(),
+        None => plural(total, "note"),
+    };
+    let title = if app.input.is_empty() {
+        format!(" tags: {about} ")
+    } else {
+        format!(" tags: {about} / {} ", app.input.text())
+    };
+    card(f, area, &title, lines, muted);
+}
+
+/// One tag on the picker, with its box and its count.
+///
+/// A tag no note carries is one made a keystroke ago on this very card, and it
+/// goes on saying what it said then. `0 notes` would be true and would read as
+/// a tag that had somehow lost all of them.
+fn chosen(choice: &Choice, total: usize, width: usize, here: bool) -> Line<'static> {
+    let count = if choice.notes == 0 {
+        "new".to_string()
+    } else if total > 1 {
+        format!("{} of {total}", choice.held)
+    } else {
+        plural(choice.notes, "note")
+    };
+    Line::from(vec![
+        Span::styled(format!("{} ", choice.tick(total)), box_style(choice, total)),
+        Span::styled(padded(&choice.tag, width), name_style(here)),
+        Span::styled(format!("  {count}"), theme::from(palette::MUTED)),
+    ])
+}
+
+/// The row for what has been typed, when the notebook has no such tag.
+///
+/// Its box is empty until it is chosen, because it has not been: the row is an
+/// offer, and a row that arrived already ticked would be making the decision the
+/// keystroke is there to make.
+fn proposed(proposal: &Proposal, width: usize, here: bool) -> Line<'static> {
+    match proposal {
+        Proposal::New { tag, near } => {
+            let mut spans = vec![
+                Span::styled("[ ] ", theme::from(palette::MUTED)),
+                Span::styled(padded(tag, width), name_style(here)),
+                Span::styled("  new", theme::from(palette::MUTED)),
+            ];
+            // The one thing on this card that has to be read rather than
+            // glanced at: a tag one keystroke from one the notebook already runs
+            // on is nearly always the one it is a misspelling of, and the whole
+            // cost of getting it wrong is that both go on existing.
+            if let Some((near, notes)) = near {
+                spans.push(Span::styled(
+                    format!(" — close to {near}, {}", plural(*notes, "note")),
+                    theme::from(palette::MATCH),
+                ));
+            }
+            Line::from(spans)
+        }
+        // In `cmd`'s own words. The row cannot be chosen, and saying why is more
+        // use than leaving it off the card and letting `Tab` do nothing.
+        Proposal::Refused(why) => Line::from(Span::styled(
+            format!("    {why}"),
+            theme::from(palette::INVALID),
+        )),
+    }
+}
+
+/// A name padded out to the column's width, in columns and not in characters.
+fn padded(name: &str, width: usize) -> String {
+    let pad = " ".repeat(width.saturating_sub(display_width(name)));
+    format!("{name}{pad}")
+}
+
+fn name_style(here: bool) -> Style {
+    if here {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        theme::from(palette::TAGS)
+    }
+}
+
+/// The box wears the colour of what it is doing: a diff's green and red for the
+/// two that change something, the tags' own colour for a tick, and nothing at
+/// all for a box that is empty.
+fn box_style(choice: &Choice, total: usize) -> Style {
+    match choice.mark {
+        Mark::Add => theme::from(palette::ADDED),
+        Mark::Remove => theme::from(palette::REMOVED),
+        Mark::Leave if total > 0 && choice.held == total => theme::from(palette::TAGS),
+        Mark::Leave => theme::from(palette::MUTED),
+    }
 }
 
 /// Why a command would not do what it was asked, or what it had to say that one

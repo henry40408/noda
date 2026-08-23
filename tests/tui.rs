@@ -183,9 +183,7 @@ fn the_header_holds_still_while_the_session_changes_underneath_it() {
     // rightmost column — so marking a note hid the keys about marking.
     app.on_key(key(KeyCode::Char('*')));
     app.on_key(key(KeyCode::Char('T')));
-    app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "+archive");
-    app.on_key(key(KeyCode::Enter));
+    tag_with(&mut app, "archive");
 
     let after = screen(&paths, &mut app);
     assert_eq!(after[..HEADER], before[..], "the header moved");
@@ -567,6 +565,17 @@ fn mark_all_shown(app: &mut App) {
     app.on_key(key(KeyCode::Char('*')));
 }
 
+/// Puts one tag on whatever the `#` key is aimed at, through the picker: name
+/// it, choose it, apply. Every tag named this way is one the notebook does not
+/// have yet, so it arrives as the row at the end of the list and one press of
+/// `Tab` is a `+`.
+fn tag_with(app: &mut App, tag: &str) {
+    app.on_key(key(KeyCode::Char('#')));
+    typing(app, tag);
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::Enter));
+}
+
 #[test]
 fn a_queue_arrives_in_the_history_as_one_commit() {
     let (_root, paths) = a_notebook();
@@ -576,15 +585,19 @@ fn a_queue_arrives_in_the_history_as_one_commit() {
     mark_all_shown(&mut app);
     assert!(has_line_with(&screen(&paths, &mut app), &["3 marks"]));
 
-    for tags in ["+archive", "-work"] {
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, tags);
-        assert_eq!(
-            app.on_key(key(KeyCode::Enter)),
-            None,
-            "a queued change is not run"
-        );
-    }
+    // One tag added and one taken away, over the three of them. `work` is
+    // already on two of the three, so its box is empty and `Tab` walks it round
+    // to the state that takes it off all of them.
+    tag_with(&mut app, "archive");
+    app.on_key(key(KeyCode::Char('#')));
+    typing(&mut app, "work");
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::Tab));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        None,
+        "a queued change is not run"
+    );
     assert_eq!(app.queue.len(), 2);
     assert!(has_line_with(&screen(&paths, &mut app), &["2 queued"]));
 
@@ -645,9 +658,7 @@ fn marks_made_under_one_query_survive_the_next() {
     // One from each search, and the first was never in sight for the second.
     assert_eq!(app.marks.len(), 2);
 
-    app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "+seen");
-    app.on_key(key(KeyCode::Enter));
+    tag_with(&mut app, "seen");
     app.on_key(key(KeyCode::Char('Q')));
     let action = app.on_key(key(KeyCode::Enter)).expect("a queue to send");
     perform(&paths, &mut app, action);
@@ -729,9 +740,7 @@ fn leaving_with_a_queue_in_hand_is_asked_about() {
     let mut app = tui::load(&paths).expect("load");
 
     app.on_key(key(KeyCode::Char('*')));
-    app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "+archive");
-    app.on_key(key(KeyCode::Enter));
+    tag_with(&mut app, "archive");
 
     assert_eq!(app.on_key(key(KeyCode::Char('q'))), None, "not yet");
     let asked = screen(&paths, &mut app);
@@ -785,19 +794,32 @@ fn a_queued_delete_takes_every_note_it_was_aimed_at() {
 }
 
 #[test]
-fn a_tag_typed_at_the_prompt_is_on_the_note_afterwards() {
+fn a_tag_chosen_on_the_card_is_on_the_note_afterwards() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
 
     app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "+urgent");
-    // The prompt is on the same line the query uses, and says which it is.
-    let prompt = screen(&paths, &mut app);
-    assert!(has_line_with(&prompt, &["tags", "+urgent"]));
-    assert!(
-        has_line_with(&prompt, &["+work -q3"]),
-        "the syntax is shown"
-    );
+    let card = screen(&paths, &mut app);
+    // Which note is about to change, and every tag the notebook has with a box
+    // saying what this note currently says about it.
+    assert!(has_line_with(&card, &["tags: budget-review"]));
+    assert!(has_line_with(&card, &["[x] work"]));
+    assert!(has_line_with(&card, &["[ ] q3"]));
+
+    // A tag the notebook does not have is the row after the last one, and it is
+    // chosen with the same key as any other row.
+    typing(&mut app, "urgent");
+    assert!(has_line_with(
+        &screen(&paths, &mut app),
+        &["[ ] urgent", "new"]
+    ));
+    app.on_key(key(KeyCode::Tab));
+    // Still `new`, because it is: a count of nought would read as a tag that
+    // had lost all its notes rather than one that never had any.
+    assert!(has_line_with(
+        &screen(&paths, &mut app),
+        &["[+] urgent", "new"]
+    ));
 
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
@@ -832,8 +854,19 @@ fn a_tag_with_a_space_in_it_can_be_removed_from_the_screen_it_is_on() {
         Some("Ubuntu notes".to_string())
     );
 
+    // No quoting, because nothing is being spelled out: the tag is a row on the
+    // card, and `dark` is enough of it to be the only row left.
     app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "-\"24.04 Dark patterns\"");
+    typing(&mut app, "dark");
+    let card = screen(&paths, &mut app);
+    assert!(has_line_with(&card, &["[x] 24.04 Dark patterns"]));
+    assert!(!has_line_with(&card, &["[x] work"]), "and only that row");
+
+    app.on_key(key(KeyCode::Tab));
+    assert!(has_line_with(
+        &screen(&paths, &mut app),
+        &["[-] 24.04 Dark patterns"]
+    ));
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to remove");
     perform(&paths, &mut app, action);
 
@@ -957,7 +990,8 @@ fn t_holds_a_notes_own_updated_through_a_change() {
     );
 
     app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "+urgent");
+    typing(&mut app, "urgent");
+    app.on_key(key(KeyCode::Tab));
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
 
@@ -979,8 +1013,11 @@ fn t_holds_a_notes_own_updated_through_a_change() {
         &screen(&paths, &mut app),
         &["keeping updated"]
     ));
+    // And off again by the same row: the note carries `urgent` now, so its box
+    // is ticked and one press of `Tab` is the `-`.
     app.on_key(key(KeyCode::Char('#')));
-    typing(&mut app, "-urgent");
+    typing(&mut app, "urgent");
+    app.on_key(key(KeyCode::Tab));
     let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
     perform(&paths, &mut app, action);
     assert_ne!(updated(&paths, &app), "updated: 2019-03-04T05:06:07Z");
@@ -991,11 +1028,11 @@ fn a_change_the_command_refuses_is_reported_in_its_own_words() {
     let (_root, paths) = a_notebook();
     let mut app = tui::load(&paths).expect("load");
 
-    app.on_key(key(KeyCode::Char('#')));
-    // Tags written the way the listing prints them, which is the way the
-    // frontmatter cannot hold them.
-    typing(&mut app, "+q3,urgent");
-    let action = app.on_key(key(KeyCode::Enter)).expect("a tag to apply");
+    // Through `:`, which is the one place left where a tag is spelled out: the
+    // card will not offer a tag the frontmatter cannot hold, so the refusal
+    // that has to be reported in the command's own words is the one that gets
+    // past the browser altogether.
+    let action = command(&mut app, "tag +q3,urgent").expect("a tag to apply");
     perform(&paths, &mut app, action);
 
     let after = screen(&paths, &mut app);

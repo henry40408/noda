@@ -328,6 +328,134 @@ pub struct Tally {
     pub notes: usize,
 }
 
+/// What is to be done to one tag.
+///
+/// Three states rather than a tick, because a change aimed at forty notes has
+/// three answers and not two: some of them carry a tag and some do not, and
+/// leaving that alone is a different instruction from either giving it to all of
+/// them or taking it from all of them. They are `cmd::tag`'s own three — a `+`,
+/// a `-`, and not being mentioned — so nothing is translated on the way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// Nothing. Whatever each note says about this tag, it goes on saying.
+    Leave,
+    Add,
+    Remove,
+}
+
+/// One row of the tag picker: a tag, how it stands with the notes the picker is
+/// aimed at, and what is to be done about that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub tag: String,
+    /// How many of those notes already carry it.
+    pub held: usize,
+    /// How many notes in the whole notebook do — the number the tags screen
+    /// shows, which is what says whether a tag is one the notebook runs on or
+    /// one somebody typed once.
+    pub notes: usize,
+    pub mark: Mark,
+}
+
+impl Choice {
+    /// The states this tag can be put in that would change something.
+    ///
+    /// A tag every one of the notes already carries can only be taken away; one
+    /// that none of them carries can only be given. So the key that walks these
+    /// walks two states on one note and three on a mixed set, and neither is a
+    /// rule of its own: a state that would change nothing is never offered.
+    fn states(&self, total: usize) -> Vec<Mark> {
+        let mut out = vec![Mark::Leave];
+        if self.held < total {
+            out.push(Mark::Add);
+        }
+        if self.held > 0 {
+            out.push(Mark::Remove);
+        }
+        out
+    }
+
+    /// The next of them, which is what `Tab` means.
+    fn next(&self, total: usize) -> Mark {
+        let states = self.states(total);
+        let at = states.iter().position(|state| *state == self.mark);
+        states[at.map_or(0, |at| (at + 1) % states.len())]
+    }
+
+    /// The box in front of the tag.
+    ///
+    /// A tick says what is *true* and the other three say what is being *done*.
+    /// They can be one box because a tick only ever appears where nothing is
+    /// being done — including over a set of notes that all carry the tag, where
+    /// "all of them have it" is exactly what a tick has to say.
+    ///
+    /// Written out rather than drawn: `☑` is ambiguous-width, and a terminal
+    /// that gives it two columns takes the one back off the end of the row.
+    pub fn tick(&self, total: usize) -> &'static str {
+        match self.mark {
+            Mark::Add => "[+]",
+            Mark::Remove => "[-]",
+            Mark::Leave if total > 0 && self.held == total => "[x]",
+            Mark::Leave => "[ ]",
+        }
+    }
+}
+
+/// The row at the end of the picker, for what has been typed when that is not
+/// one of the tags the notebook has.
+///
+/// A tag that does not exist yet is the one thing in the picker that still has
+/// to be spelled, so it is the one thing that can still be a typo. It costs a
+/// keystroke of its own — the row is reached and chosen like any other — and it
+/// says what it would be sitting next to: `Work` under `work, 37 notes` is a
+/// question answered by looking at it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Proposal {
+    /// A tag that could be made, and the nearest thing the notebook already has
+    /// to it when there is one close enough to be a slip of a finger.
+    New {
+        tag: String,
+        near: Option<(String, usize)>,
+    },
+    /// One that could not, in `note::validate_tag`'s own words.
+    Refused(String),
+}
+
+/// Whether two tags are one keystroke apart: the same but for case, or for a
+/// single character added, dropped, mistyped or swapped with its neighbour.
+///
+/// Not a general edit distance, and cheap on purpose. It is only ever asked
+/// about one typed word against the tags of one notebook, and what it is asked
+/// for is `Work` beside `work` and `wrok` beside it too — a transposition being
+/// two substitutions to anything that counts them one at a time, and the
+/// commonest typo there is.
+fn one_edit_apart(left: &str, right: &str) -> bool {
+    let left: Vec<char> = left.to_lowercase().chars().collect();
+    let right: Vec<char> = right.to_lowercase().chars().collect();
+    if left.len().abs_diff(right.len()) > 1 {
+        return false;
+    }
+    // What they share at each end, and so what lies between: the whole of the
+    // difference, which one edit leaves in one of four shapes.
+    let head = left.iter().zip(&right).take_while(|(a, b)| a == b).count();
+    let tail = left[head..]
+        .iter()
+        .rev()
+        .zip(right[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    match (left.len() - head - tail, right.len() - head - tail) {
+        // At most one character on either side, which covers three of the
+        // four: nothing between them at all is the same tag but for case, one
+        // on one side is a character added or dropped, and one on each is a
+        // character mistyped.
+        (0..=1, 0..=1) => true,
+        // Two each, and the same two the other way round: transposed.
+        (2, 2) => left[head] == right[head + 1] && left[head + 1] == right[head],
+        _ => false,
+    }
+}
+
 /// Something a screen needs that only the runtime can get, because getting it
 /// means opening the repository.
 ///
@@ -411,6 +539,11 @@ pub enum Mode {
     Confirm(What),
     /// Reading the queue: what is waiting to be sent, and what to drop from it.
     Queue,
+    /// Choosing which tags the notes picked out should end up with. A card and
+    /// not a screen, for the reason the queue is one: it is what the keyboard is
+    /// doing rather than somewhere the session has gone, and `Esc` leaves it
+    /// where it was found.
+    Tagging,
     /// A command said why it would not do something, or said more than a line.
     /// Dismissed like the help card, by anything at all.
     Alert,
@@ -439,8 +572,6 @@ pub enum Ask {
     Title,
     /// A new title for the note under the cursor.
     Retitle,
-    /// `+tag` / `-tag` changes, in the words `noda tag` takes them in.
-    Tags,
 }
 
 impl Ask {
@@ -449,7 +580,6 @@ impl Ask {
         match self {
             Ask::Title => "new note",
             Ask::Retitle => "retitle",
-            Ask::Tags => "tags",
         }
     }
 
@@ -459,9 +589,6 @@ impl Ask {
         match self {
             Ask::Title => "Enter alone takes the title from the body",
             Ask::Retitle => "",
-            // The quotes are in the example because a tag with a space in it is
-            // the one case the syntax does not survive being guessed at.
-            Ask::Tags => "+work -q3 -\"two words\"",
         }
     }
 }
@@ -544,6 +671,20 @@ pub struct App {
     pub queue: Vec<Step>,
     /// Where the cursor is in the queue view.
     queue_at: usize,
+    /// The tags the picker is choosing between, and what is to be done to each.
+    ///
+    /// Every tag the notebook has, in the order the tags screen puts them, with
+    /// anything typed in on the end. Built when the picker opens and thrown away
+    /// when it closes: it is a question being asked, not a thing the session
+    /// holds.
+    choices: Vec<Choice>,
+    /// Which notes it is aimed at, by id. Settled when the picker opens, because
+    /// what a cursor is on can change and what a question was asked about
+    /// cannot.
+    aimed_at: Vec<String>,
+    /// Where the cursor is in it. Counted over the rows on screen rather than
+    /// over the choices, so it means the same thing while the list is narrowed.
+    tags_at: usize,
     /// Whether the changes made from here move a note's `updated`.
     ///
     /// A session-long setting rather than something said per keystroke. At a
@@ -612,6 +753,9 @@ impl App {
             marks: BTreeSet::new(),
             queue: Vec::new(),
             queue_at: 0,
+            choices: Vec::new(),
+            aimed_at: Vec::new(),
+            tags_at: 0,
             touch: Touch::Stamp,
             sort: Sort::default(),
             reverse: false,
@@ -1164,6 +1308,7 @@ impl App {
             Mode::Commands => self.listing_commands(key),
             Mode::Confirm(what) => self.confirming(what, key),
             Mode::Queue => self.queueing(key),
+            Mode::Tagging => self.picking(key),
             Mode::Browse => self.browsing(key),
         }
     }
@@ -1226,10 +1371,12 @@ impl App {
             KeyCode::Char('#') => {
                 // Nothing to tag is nothing to ask about — the same reason `m`
                 // and a delete do nothing over an empty list.
-                if self.marks.is_empty() {
-                    self.selected()?;
-                }
-                self.ask(Ask::Tags, String::new());
+                let keys = if self.marks.is_empty() {
+                    vec![self.selected()?.id.clone()]
+                } else {
+                    self.marked_keys()
+                };
+                self.pick(keys);
                 return None;
             }
             KeyCode::Char('Q') => {
@@ -1710,6 +1857,246 @@ impl App {
         self.marks.clear();
     }
 
+    /// Opens the tag picker over whatever the screen is about.
+    ///
+    /// The question it asks is *which tags these notes should end up with*, and
+    /// not which `+`s and `-`s to apply — the same question the browser's tag
+    /// form asks, for the same reason it asks it that way: `+work -q3` is a
+    /// notation for somebody with a keyboard, and a notation is a thing to
+    /// misspell. Every tag the notebook has is already a row here, so the
+    /// commonest mistake the notation allowed — a `-` aimed at a tag spelled
+    /// wrong, which removes nothing and says nothing — has nowhere left to
+    /// happen.
+    ///
+    /// `Tab` chooses, and not the `Space` that picks a note out on the listing.
+    /// The line being typed here is the name of a tag that may not exist yet,
+    /// and a tag is allowed a space — so this is a field, and a field in this
+    /// browser takes every character there is. Making it the one field where the
+    /// space bar did something else would have put the tags an import leaves
+    /// behind, `24.04 Dark patterns` among them, out of reach of the card that
+    /// exists to spare you spelling them.
+    fn pick(&mut self, keys: Vec<String>) {
+        let tallies = match self.derive(&View::Tags) {
+            Some(Content::Tags(tallies)) => tallies,
+            _ => Vec::new(),
+        };
+        self.choices = {
+            let held = |tag: &str| {
+                keys.iter()
+                    .filter_map(|key| self.note_of(key))
+                    .filter(|file| file.note.tags.iter().any(|held| held == tag))
+                    .count()
+            };
+            tallies
+                .into_iter()
+                .map(|tally| Choice {
+                    held: held(&tally.tag),
+                    notes: tally.notes,
+                    tag: tally.tag,
+                    mark: Mark::Leave,
+                })
+                .collect()
+        };
+        self.aimed_at = keys;
+        self.tags_at = 0;
+        self.input.clear();
+        self.mode = Mode::Tagging;
+    }
+
+    fn picking(&mut self, key: KeyEvent) -> Option<Action> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            // Answered before the field is offered the key, which is the whole
+            // of why it is `Tab`: it is not a character, so the filter goes on
+            // taking every character there is.
+            KeyCode::Tab => {
+                self.choose();
+                return None;
+            }
+            KeyCode::Enter => return self.tagged(),
+            KeyCode::Esc => {
+                self.shut();
+                return None;
+            }
+            // Both spellings of the two that move, for the same hands the rest
+            // of this is for. `j` and `k` are not among them: they are letters,
+            // and every letter here goes into the filter.
+            KeyCode::Down => {
+                self.tags_at = (self.tags_at + 1).min(self.picker_rows().saturating_sub(1));
+                return None;
+            }
+            KeyCode::Up => {
+                self.tags_at = self.tags_at.saturating_sub(1);
+                return None;
+            }
+            KeyCode::Char('n') if ctrl => {
+                self.tags_at = (self.tags_at + 1).min(self.picker_rows().saturating_sub(1));
+                return None;
+            }
+            KeyCode::Char('p') if ctrl => {
+                self.tags_at = self.tags_at.saturating_sub(1);
+                return None;
+            }
+            _ => {}
+        }
+        // Typing, and the keys that shorten what has been typed. Erasing only,
+        // for the reason the list of commands takes only those: what is being
+        // typed is shown on the card and there is no cursor on the screen for a
+        // motion key to move. The cursor goes back to the top, because the list
+        // under it is a different list now.
+        if self.input.erasing(key).is_some() {
+            self.tags_at = 0;
+        }
+        None
+    }
+
+    /// Puts the picker away with nothing asked of the notebook.
+    fn shut(&mut self) {
+        self.mode = Mode::Browse;
+        self.input.clear();
+        self.choices.clear();
+        self.aimed_at.clear();
+        self.tags_at = 0;
+    }
+
+    /// What `Tab` does: walks the tag under the cursor through the states that
+    /// would change something, or makes the one that is not there.
+    fn choose(&mut self) {
+        if let Some(&at) = self.shown_tags().get(self.tags_at) {
+            let total = self.aimed_at.len();
+            let choice = &mut self.choices[at];
+            choice.mark = choice.next(total);
+            return;
+        }
+        // Past the last tag is the row that is not a tag yet. It joins the list
+        // where the filter can still see it, so the cursor stays on the row it
+        // was on and the box it just grew is the whole of what changed.
+        let Some(Proposal::New { tag, .. }) = self.proposal() else {
+            return;
+        };
+        self.choices.push(Choice {
+            tag,
+            held: 0,
+            notes: 0,
+            mark: Mark::Add,
+        });
+    }
+
+    /// Turns what the picker holds into the change it stands for.
+    ///
+    /// The `+`s and `-`s are written here and nowhere else. Nothing was typed in
+    /// that notation and nothing has to be split back out of it, which is what
+    /// carries a tag with a space in it through untouched: it is one string from
+    /// the note's own frontmatter to `cmd::tag`'s argument list.
+    fn tagged(&mut self) -> Option<Action> {
+        let changes: Vec<String> = self
+            .choices
+            .iter()
+            .filter_map(|choice| match choice.mark {
+                Mark::Leave => None,
+                Mark::Add => Some(format!("+{}", choice.tag)),
+                Mark::Remove => Some(format!("-{}", choice.tag)),
+            })
+            .collect();
+        let keys = std::mem::take(&mut self.aimed_at);
+        self.shut();
+        // Nothing chosen is a way out rather than a command, for the reason an
+        // emptied prompt is one: somebody who has chosen nothing has changed
+        // their mind, and a refusal would be answering a question they stopped
+        // asking.
+        if changes.is_empty() {
+            return None;
+        }
+        // Aimed the way the key was aimed when it opened this: at the marked set
+        // when there is one, where it joins the queue, and otherwise at the note
+        // the screen is about, where it runs.
+        if self.marks.is_empty() {
+            return Some(Action::Tag {
+                key: keys.into_iter().next()?,
+                changes,
+                touch: self.touch,
+            });
+        }
+        self.enqueue(Step {
+            keys,
+            change: Change::Tag {
+                changes,
+                touch: self.touch,
+            },
+        });
+        None
+    }
+
+    /// Which of the choices the filter admits, in the order they are held —
+    /// commonest first, and anything typed in on the end of that.
+    pub fn shown_tags(&self) -> Vec<usize> {
+        let filter = self.input.text().trim().to_lowercase();
+        self.choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| filter.is_empty() || choice.tag.to_lowercase().contains(&filter))
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// The row after the last tag, when what has been typed is not one of them.
+    pub fn proposal(&self) -> Option<Proposal> {
+        let typed = self.input.text().trim();
+        if typed.is_empty() || self.choices.iter().any(|choice| choice.tag == typed) {
+            return None;
+        }
+        // Refused where it is typed rather than where it is sent. `cmd` decides
+        // what a tag may be and this is that decision read out, not a second
+        // one — the same call the command itself would fail on.
+        if let Err(e) = note::validate_tag(typed) {
+            return Some(Proposal::Refused(e.to_string()));
+        }
+        Some(Proposal::New {
+            tag: typed.to_string(),
+            near: self.nearest(typed),
+        })
+    }
+
+    /// The tag this one is likeliest to be a misspelling of: the commonest of
+    /// the ones a keystroke away, because the commonest is the one meant.
+    ///
+    /// Only tags the notebook already has — a tag made a moment ago in this same
+    /// picker has nothing to say about whether the next one is a slip.
+    fn nearest(&self, tag: &str) -> Option<(String, usize)> {
+        self.choices
+            .iter()
+            .filter(|choice| choice.notes > 0 && one_edit_apart(&choice.tag, tag))
+            .max_by_key(|choice| choice.notes)
+            .map(|choice| (choice.tag.clone(), choice.notes))
+    }
+
+    /// How many rows the picker is showing altogether.
+    pub fn picker_rows(&self) -> usize {
+        self.shown_tags().len() + usize::from(self.proposal().is_some())
+    }
+
+    pub fn choices(&self) -> &[Choice] {
+        &self.choices
+    }
+
+    pub fn tags_at(&self) -> usize {
+        self.tags_at
+    }
+
+    /// How many notes the picker is aimed at, which is what a row's `12/40`
+    /// is out of.
+    pub fn picking_notes(&self) -> usize {
+        self.aimed_at.len()
+    }
+
+    /// Which note, when it is the one under the cursor rather than a marked set.
+    pub fn picking_note(&self) -> Option<&NoteFile> {
+        match self.aimed_at.as_slice() {
+            [only] if self.marks.is_empty() => self.note_of(only),
+            _ => None,
+        }
+    }
+
     fn searching(&mut self, key: KeyEvent) -> Option<Action> {
         // Typing, and every key readline puts around a line, are the field's
         // business — including the rule the field was built around: a chord is
@@ -1804,25 +2191,6 @@ impl App {
                 key: self.selected()?.id.clone(),
                 title: answer,
                 touch: self.touch,
-            }),
-            // The one prompt that answers to the marks: with a set picked out,
-            // the tags it was given are queued against that set rather than run
-            // against the note the screen happens to be about.
-            Ask::Tags if !self.marks.is_empty() => {
-                let keys = self.marked_keys();
-                self.enqueue(Step {
-                    keys,
-                    change: Change::Tag {
-                        changes: query::split(&answer),
-                        touch: self.touch,
-                    },
-                });
-                None
-            }
-            Ask::Tags => Some(Action::Tag {
-                key: self.selected()?.id.clone(),
-                touch: self.touch,
-                changes: query::split(&answer),
             }),
         }
     }
@@ -3064,37 +3432,285 @@ mod tests {
     }
 
     #[test]
-    fn tag_changes_are_split_the_way_a_shell_would_split_them() {
+    fn the_picker_opens_on_every_tag_with_the_notes_own_ticked() {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('#')));
-        assert_eq!(app.mode, Mode::Ask(Ask::Tags));
+        assert_eq!(app.mode, Mode::Tagging);
 
-        typing(&mut app, "+urgent -work");
+        // The tags screen's list and the tags screen's order, because it is the
+        // tags screen's list: commonest first, and both of them on the card
+        // whether or not this note has them.
+        let names: Vec<&str> = app.choices().iter().map(|c| c.tag.as_str()).collect();
+        assert_eq!(names, vec!["work", "q3"]);
+        assert_eq!(app.picking_notes(), 1);
+        assert_eq!(app.picking_note().map(|f| f.id.as_str()), Some("aaaa1111"));
+
+        // The box says what is true of the note, and the count says how much of
+        // the notebook stands behind the tag.
+        assert_eq!(app.choices()[0].tick(1), "[x]");
+        assert_eq!(app.choices()[0].notes, 2);
+        assert_eq!(app.choices()[1].tick(1), "[ ]");
+    }
+
+    #[test]
+    fn tab_walks_a_tag_through_the_states_that_would_change_something() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+
+        // Over one note there are two of them. Giving a note a tag it already
+        // carries is not a state worth a keystroke, so it is not offered.
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Remove);
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Leave);
+
+        // And the other way for one it does not carry.
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[1].mark, Mark::Add);
+        assert_eq!(app.choices()[1].tick(1), "[+]");
+    }
+
+    #[test]
+    fn what_the_picker_sends_is_the_notation_the_command_takes() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        app.on_key(key(KeyCode::Tab));
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Tab));
+
+        // Written here and typed nowhere: what came out is what `noda tag`
+        // takes, and nothing was spelled to get it.
         assert_eq!(
             app.on_key(key(KeyCode::Enter)),
             Some(Action::Tag {
                 key: "aaaa1111".to_string(),
-                changes: vec!["+urgent".to_string(), "-work".to_string()],
+                changes: vec!["-work".to_string(), "+q3".to_string()],
+                touch: Touch::Stamp,
+            })
+        );
+        assert_eq!(app.mode, Mode::Browse);
+        assert!(app.choices().is_empty(), "and nothing is left behind");
+    }
+
+    #[test]
+    fn choosing_nothing_is_a_way_out_rather_than_a_command() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        assert_eq!(app.mode, Mode::Browse);
+        assert!(app.message.is_none(), "and nothing is said about it");
+    }
+
+    #[test]
+    fn esc_leaves_the_picker_with_nothing_asked_of_the_notebook() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.on_key(key(KeyCode::Esc)), None);
+        assert_eq!(app.mode, Mode::Browse);
+        assert!(app.choices().is_empty());
+        assert!(app.queue.is_empty());
+    }
+
+    #[test]
+    fn a_tag_the_notebook_does_not_have_is_a_row_of_its_own() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "urgent");
+
+        // Nothing the filter admits, and one row after the end of that.
+        assert!(app.shown_tags().is_empty());
+        assert_eq!(
+            app.proposal(),
+            Some(Proposal::New {
+                tag: "urgent".to_string(),
+                near: None,
+            })
+        );
+        assert_eq!(app.picker_rows(), 1);
+
+        // Chosen like any other row, and a row like any other once it is.
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.proposal(), None, "it is one of the tags now");
+        assert_eq!(app.choices().last().map(|c| c.mark), Some(Mark::Add));
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Tag {
+                key: "aaaa1111".to_string(),
+                changes: vec!["+urgent".to_string()],
                 touch: Touch::Stamp,
             })
         );
     }
 
     #[test]
-    fn a_tag_with_a_space_in_it_survives_the_prompt() {
+    fn a_new_tag_a_keystroke_from_an_old_one_says_which_one() {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('#')));
-        // What the listing shows for a note imported from TiddlyWiki, and what
-        // you would type at a prompt to be rid of it.
-        typing(&mut app, "-\"24.04 Dark patterns\" +work");
+        // The four shapes a slip takes, against a notebook whose commonest tag
+        // is `work`.
+        for typed in ["wrok", "Work", "wrk", "workk"] {
+            typing(&mut app, typed);
+            assert_eq!(
+                app.proposal(),
+                Some(Proposal::New {
+                    tag: typed.to_string(),
+                    near: Some(("work".to_string(), 2)),
+                }),
+                "{typed}"
+            );
+            for _ in 0..typed.len() {
+                app.on_key(key(KeyCode::Backspace));
+            }
+        }
+
+        // And a word that is nothing like one is left alone: a warning on every
+        // new tag is one nobody reads.
+        typing(&mut app, "budget");
+        assert_eq!(
+            app.proposal(),
+            Some(Proposal::New {
+                tag: "budget".to_string(),
+                near: None,
+            })
+        );
+    }
+
+    #[test]
+    fn a_tag_the_notebook_would_refuse_is_refused_where_it_is_typed() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        typing(&mut app, "a,b");
+        let Some(Proposal::Refused(why)) = app.proposal() else {
+            panic!("a comma is not a tag");
+        };
+        assert!(why.contains(','), "in the words `cmd` uses: {why}");
+
+        // The row cannot be chosen, so there is nothing to send.
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+    }
+
+    #[test]
+    fn over_a_marked_set_a_tag_some_of_them_carry_has_three_states() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('*')));
+        app.on_key(key(KeyCode::Char('#')));
+        assert_eq!(app.picking_notes(), 3);
+        assert!(
+            app.picking_note().is_none(),
+            "it is about a set, not a note"
+        );
+
+        // Two of the three carry `work`, so all three states say something.
+        assert_eq!(app.choices()[0].held, 2);
+        assert_eq!(app.choices()[0].tick(3), "[ ]");
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Add);
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Remove);
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Leave);
+
+        // And with a set marked it queues rather than runs, exactly as the
+        // prompt it replaced did.
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+        assert_eq!(app.queue.len(), 1);
+        assert_eq!(
+            app.queue[0].change,
+            Change::Tag {
+                changes: vec!["+work".to_string()],
+                touch: Touch::Stamp,
+            }
+        );
+        assert_eq!(app.queue[0].keys.len(), 3);
+    }
+
+    #[test]
+    fn a_tick_over_a_set_means_every_one_of_them_carries_it() {
+        let mut app = an_app();
+        // The two notes that have `work`, and nothing else.
+        mark(&mut app, &["aaaa1111", "bbbb2222"]);
+        app.on_key(key(KeyCode::Char('#')));
+
+        assert_eq!(app.choices()[0].tick(2), "[x]");
+        // All of them have it, so giving it to them is not a state on offer.
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Remove);
+    }
+
+    #[test]
+    fn the_filter_narrows_the_list_and_leaves_the_choices_alone() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[0].mark, Mark::Remove);
+
+        typing(&mut app, "q");
+        assert_eq!(app.shown_tags(), vec![1], "only `q3` answers to that");
+        assert_eq!(app.tags_at(), 0, "and the cursor is on the list it can see");
+        // A choice already made is not a row on the screen: narrowing is a way
+        // of looking, and a picker that forgot what had been chosen the moment
+        // it scrolled out of sight would be one you could not use twice.
+        assert_eq!(app.choices()[0].mark, Mark::Remove);
+
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.choices()[1].mark, Mark::Add);
         assert_eq!(
             app.on_key(key(KeyCode::Enter)),
             Some(Action::Tag {
                 key: "aaaa1111".to_string(),
-                changes: vec!["-24.04 Dark patterns".to_string(), "+work".to_string()],
+                changes: vec!["-work".to_string(), "+q3".to_string()],
                 touch: Touch::Stamp,
             })
         );
+    }
+
+    #[test]
+    fn a_tag_with_a_space_in_it_can_be_named_here_like_any_other() {
+        let mut app = an_app();
+        app.on_key(key(KeyCode::Char('#')));
+        // The shape an import leaves behind. The filter is a field like every
+        // other field in the browser, so the space bar puts a space in it —
+        // which is the whole reason the key that chooses is not the space bar.
+        typing(&mut app, "24.04 Dark patterns");
+        assert_eq!(app.input.text(), "24.04 Dark patterns");
+        assert_eq!(
+            app.proposal(),
+            Some(Proposal::New {
+                tag: "24.04 Dark patterns".to_string(),
+                near: None,
+            })
+        );
+
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Some(Action::Tag {
+                key: "aaaa1111".to_string(),
+                // One string from the card to the command's argument list, with
+                // no quoting anywhere between: there is no shell here.
+                changes: vec!["+24.04 Dark patterns".to_string()],
+                touch: Touch::Stamp,
+            })
+        );
+    }
+
+    #[test]
+    fn one_keystroke_apart_is_the_four_shapes_a_slip_takes() {
+        // Case, a character dropped, one mistyped, and two swapped.
+        assert!(one_edit_apart("Work", "work"));
+        assert!(one_edit_apart("wor", "work"));
+        assert!(one_edit_apart("works", "work"));
+        assert!(one_edit_apart("wprk", "work"));
+        assert!(one_edit_apart("wrok", "work"));
+        assert!(one_edit_apart("q4", "q3"));
+        // And what is not one: two edits, and words that merely start alike.
+        assert!(!one_edit_apart("wrko", "work"));
+        assert!(!one_edit_apart("workshop", "work"));
+        assert!(!one_edit_apart("q3", "budget"));
     }
 
     #[test]
@@ -3145,9 +3761,7 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), Some(Action::Quit));
 
         mark(&mut app, &["aaaa1111"]);
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+archive");
-        app.on_key(key(KeyCode::Enter));
+        tag_with(&mut app, "archive");
 
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), None);
         assert_eq!(app.mode, Mode::Confirm(What::Quit));
@@ -3196,7 +3810,8 @@ mod tests {
             })
         );
         app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+urgent");
+        typing(&mut app, "urgent");
+        app.on_key(key(KeyCode::Tab));
         assert_eq!(
             app.on_key(key(KeyCode::Enter)),
             Some(Action::Tag {
@@ -3244,8 +3859,8 @@ mod tests {
         assert_eq!(app.mode, Mode::Browse);
 
         // Esc is the other way out, and leaves nothing behind either.
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+urgent");
+        app.on_key(key(KeyCode::Char('a')));
+        typing(&mut app, "A trip");
         assert_eq!(app.on_key(key(KeyCode::Esc)), None);
         assert_eq!(app.mode, Mode::Browse);
         assert!(app.input.is_empty());
@@ -3290,12 +3905,12 @@ mod tests {
     #[test]
     fn the_prompt_takes_a_word_back_and_puts_it_back_again() {
         let mut app = an_app();
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+work +q3");
+        app.on_key(key(KeyCode::Char('a')));
+        typing(&mut app, "Budget review");
         app.on_key(ctrl('w'));
-        assert_eq!(app.input.text(), "+work ");
+        assert_eq!(app.input.text(), "Budget ");
         app.on_key(ctrl('y'));
-        assert_eq!(app.input.text(), "+work +q3", "and Ctrl-W is undoable");
+        assert_eq!(app.input.text(), "Budget review", "and Ctrl-W is undoable");
     }
 
     #[test]
@@ -3436,6 +4051,17 @@ mod tests {
         );
     }
 
+    /// Puts one tag on whatever the `#` key is aimed at, through the picker:
+    /// name it, choose it, apply. Every tag named this way is one the notebook
+    /// does not have, so it arrives as the row at the end of the list and one
+    /// press of `Tab` is a `+`.
+    fn tag_with(app: &mut App, tag: &str) {
+        app.on_key(key(KeyCode::Char('#')));
+        typing(app, tag);
+        app.on_key(key(KeyCode::Tab));
+        app.on_key(key(KeyCode::Enter));
+    }
+
     /// Marks the notes the ids name, the way `Space` would with the cursor on
     /// each of them.
     fn mark(app: &mut App, ids: &[&str]) {
@@ -3524,8 +4150,13 @@ mod tests {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111", "bbbb2222"]);
 
+        // Both of them carry `work`, so the box in front of it is ticked and
+        // the first press of `Tab` is the one that takes it away.
         app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "-work +archive");
+        assert_eq!(app.choices()[0].tick(2), "[x]");
+        app.on_key(key(KeyCode::Tab));
+        typing(&mut app, "archive");
+        app.on_key(key(KeyCode::Tab));
         // Nothing to run: the change is now waiting rather than done.
         assert_eq!(app.on_key(key(KeyCode::Enter)), None);
         assert_eq!(
@@ -3547,7 +4178,8 @@ mod tests {
     fn with_nothing_marked_the_same_key_still_acts_at_once() {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+archive");
+        typing(&mut app, "archive");
+        app.on_key(key(KeyCode::Tab));
         assert!(matches!(
             app.on_key(key(KeyCode::Enter)),
             Some(Action::Tag { .. })
@@ -3578,9 +4210,7 @@ mod tests {
     fn a_queue_of_tags_goes_without_being_asked_about() {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111"]);
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+archive");
-        app.on_key(key(KeyCode::Enter));
+        tag_with(&mut app, "archive");
 
         app.on_key(key(KeyCode::Char('Q')));
         // A tag can be put back; a confirmation nobody needs is one nobody reads.
@@ -3594,10 +4224,8 @@ mod tests {
     fn an_entry_can_be_dropped_from_the_queue() {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111"]);
-        for tag in ["+one", "+two", "+three"] {
-            app.on_key(key(KeyCode::Char('#')));
-            typing(&mut app, tag);
-            app.on_key(key(KeyCode::Enter));
+        for tag in ["one", "two", "three"] {
+            tag_with(&mut app, tag);
         }
         assert_eq!(app.queue.len(), 3);
 
@@ -3621,25 +4249,26 @@ mod tests {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111"]);
         app.on_key(key(KeyCode::Char('#')));
-        // Refused where it was typed rather than at the end of a sitting.
-        typing(&mut app, "+q3,urgent");
+        // Refused on the row it was typed on rather than at the end of a
+        // sitting: `Tab` has nothing to choose, so there is nothing to send and
+        // nothing for `cmd::check` to catch on the way into the queue.
+        typing(&mut app, "q3,urgent");
+        let Some(Proposal::Refused(why)) = app.proposal() else {
+            panic!("a comma is not a tag");
+        };
+        assert!(why.contains("cannot contain"), "{why}");
+
+        app.on_key(key(KeyCode::Tab));
         assert_eq!(app.on_key(key(KeyCode::Enter)), None);
         assert!(app.queue.is_empty());
-        assert_eq!(app.mode, Mode::Alert);
-        assert!(
-            app.message
-                .as_ref()
-                .is_some_and(|said| said.text.contains("cannot contain"))
-        );
+        assert_eq!(app.mode, Mode::Browse);
     }
 
     #[test]
     fn sending_spends_the_queue_and_the_marks() {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111"]);
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+archive");
-        app.on_key(key(KeyCode::Enter));
+        tag_with(&mut app, "archive");
 
         app.sent();
         assert!(app.queue.is_empty());
@@ -3862,9 +4491,7 @@ mod tests {
     fn quitting_by_name_asks_about_the_queue_too() {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111"]);
-        app.on_key(key(KeyCode::Char('#')));
-        typing(&mut app, "+archive");
-        app.on_key(key(KeyCode::Enter));
+        tag_with(&mut app, "archive");
 
         assert_eq!(command(&mut app, "quit"), None);
         assert_eq!(app.mode, Mode::Confirm(What::Quit));

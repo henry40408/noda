@@ -518,7 +518,7 @@ A key that names both a note and a file is an error listing both, never a guess.
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
-| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about; mark several and the tag and delete keys queue up instead, to be sent as one commit. The view-shaped commands get screens of their own — `todo`, `tags`, `backlinks`, `log`, `blame`, `diff`, `deleted`, `files`, `notebooks` — the first four of those on a letter. `S`, `R` and `Ctrl-w` are `--sort`, `-r` and `-l` asked for from the other end, and `1`–`9` narrow to the commonest tags. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
+| `noda tui` | Browse the notebook: the listing, that same query filtering as you type, and `Enter` to open what the cursor is on as a screen of its own. `e`, `a`, `m`, `#` and `Ctrl-d` run `edit`, `add`, `mv`, `tag` and `rm` on whatever the screen is about — `#` a card of every tag the notebook has, a box apiece, rather than a line to write `+work -q3` on; mark several and the tag and delete keys queue up instead, to be sent as one commit. The view-shaped commands get screens of their own — `todo`, `tags`, `backlinks`, `log`, `blame`, `diff`, `deleted`, `files`, `notebooks` — the first four of those on a letter. `S`, `R` and `Ctrl-w` are `--sort`, `-r` and `-l` asked for from the other end, and `1`–`9` narrow to the commonest tags. `:` runs the commands that have no key, under the names they already have (`Ctrl-a` lists them). |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
 | `noda backlinks <note\|file> [--json\|-q]` | List the notes that link to a note or a file. |
 
@@ -640,8 +640,10 @@ and the editor is handed the file.
 keeps its place while you read a note, a query narrows it as you type rather than once you
 have finished, and **every key that changes a note runs the command that changes it** — `e`
 is `noda edit`, `#` is `noda tag` — so there is no second implementation of what a change
-means. Nine screens, a `:` prompt that takes noda's own subcommand names, readline's
-bindings in every field, and a queue for changing several notes in one commit.
+means. Tags are chosen from a card of the notebook's own, a box apiece, because `+work -q3`
+is a notation and a notation is a thing to misspell. Nine screens, a `:` prompt that takes
+noda's own subcommand names, readline's bindings in every field, and a queue for changing
+several notes in one commit.
 
 **[Browsing in the terminal →](docs/tui.md)**
 
