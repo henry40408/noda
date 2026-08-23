@@ -327,6 +327,95 @@ fn column_of(rows: &[String], needle: &str) -> usize {
         .unwrap_or_else(|| panic!("{needle:?} is not on the screen:\n{}", rows.join("\n")))
 }
 
+/// Where the count beside a tag starts, in columns of the terminal.
+///
+/// Measured from the box rather than from the left of the row: a card lies over
+/// the listing rather than replacing it, so what is to the left of the card on
+/// that row is still a note — and `Meeting notes` holds the very word being
+/// looked for. And measured in columns rather than in bytes, because `find`
+/// answers in bytes and a tag in Chinese is three of them a character.
+fn count_column(row: &str) -> Option<usize> {
+    let boxed = row.find("[x] ").or_else(|| row.find("[ ] "))?;
+    let at = boxed + row[boxed..].find(" note")?;
+    Some(cmd::display_width(&row[..at]))
+}
+
+/// A name padded out by characters lines up in a buffer and not on a terminal.
+/// `專案管理` is four characters and eight columns, so a picker that counted
+/// characters would leave the count beside every ASCII tag four columns short of
+/// the count beside this one — and `tests/tui.rs`, which is a buffer of
+/// characters, would go on passing.
+#[test]
+fn the_tag_picker_lines_its_counts_up_in_columns_and_not_characters() {
+    let (root, paths) = a_notebook();
+    cmd::add(
+        &paths,
+        Some("Ubuntu notes"),
+        Some("body"),
+        &["專案管理".to_string()],
+    )
+    .expect("add");
+
+    let mut browser = Browser::open(&root, 90, 28);
+    browser.wait_for("Budget review");
+
+    // Waited for on the card's own footer: the tag itself is on the listing
+    // underneath as well, so waiting on that returns before the card is drawn.
+    browser.send("#");
+    let screen = browser.wait_for("tab  choose");
+    assert!(screen.contains("專案管理"), "{screen}");
+    let rows = browser.rows();
+
+    let counts: Vec<usize> = rows.iter().filter_map(|row| count_column(row)).collect();
+    assert!(
+        counts.len() >= 3,
+        "three tags, three counts, and there were {}:\n{}",
+        counts.len(),
+        rows.join("\n")
+    );
+    assert!(
+        counts.windows(2).all(|pair| pair[0] == pair[1]),
+        "the counts are at {counts:?}:\n{}",
+        rows.join("\n")
+    );
+
+    // Out of the card before leaving: every letter in it is a letter the filter
+    // takes, `q` included.
+    browser.send("\x1b");
+    browser.wait_until_gone("tab  choose");
+    browser.quit();
+}
+
+/// The key that chooses is the one key in the browser that is not a character
+/// and not a chord, and every test below this layer hands `KeyCode::Tab` to the
+/// state machine directly. What a terminal actually sends is `\t`, and that it
+/// arrives as `Tab` rather than as a character in the filter is a link only a
+/// real terminal can test — and the whole design rests on it, because the filter
+/// takes every character there is.
+#[test]
+fn the_tab_that_chooses_arrives_as_tab_and_not_as_a_character() {
+    let (root, _paths) = a_notebook();
+    let mut browser = Browser::open(&root, 90, 28);
+    browser.wait_for("Budget review");
+
+    // The note under the cursor carries `work`, so the box is ticked and the
+    // only state left to walk to is the one that takes it off.
+    browser.send("#");
+    let screen = browser.wait_for("tab  choose");
+    assert!(screen.contains("[x] work"), "{screen}");
+
+    browser.send("\t");
+    let screen = browser.wait_for("[-] work");
+    assert!(
+        !screen.contains("[x] work"),
+        "the tab went into the filter:\n{screen}"
+    );
+
+    browser.send("\x1b");
+    browser.wait_until_gone("tab  choose");
+    browser.quit();
+}
+
 #[test]
 fn the_listing_arrives_through_a_real_terminal() {
     let (root, _paths) = a_notebook();

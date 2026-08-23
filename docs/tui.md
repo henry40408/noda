@@ -71,7 +71,7 @@ still marked in the note you opened to read it in.
 | `e` | edit in `$EDITOR` |
 | `a` | new note: a title along the bottom, then `$EDITOR` for the body (`Enter` on an empty title takes it from the body, as `noda add` does) |
 | `m` | retitle, starting from the title it has |
-| `#` | tags, written the way `noda tag` takes them: `+work -q3`. A tag may contain a space, so the prompt quotes like a shell: `-"24.04 Dark patterns"` |
+| `#` | tags: a card of every tag the notebook has, `Tab` to choose, `Enter` to apply. Type to narrow it, or to name one it does not have yet |
 | `Ctrl-d` | delete, once you have said `y`. With notes marked, `#` and `Ctrl-d` are aimed at the marked set and go into the queue instead |
 | `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The title band says `keeping updated` for as long as it is on |
 | `t`, `l` | the notebook's unticked boxes; commits — this note's, or the notebook's from the listing |
@@ -215,6 +215,69 @@ and the reason for wanting it — a sitting of small corrections to notes whose 
 somewhere else — outlasts one keystroke anyway. `T` turns it on for the session, `e`, `m` and
 `#` follow it, and the header carries `keeping updated` until you turn it off.
 
+## Tags
+
+`#` opens a card of every tag the notebook has, commonest first — the tags screen's own list,
+because it is the tags screen's own list. A box in front of each says where the note stands
+with it, and `Tab` walks that box through the states that would change something:
+
+```
+╭ tags: budget-review ───────────────────────────────────────────╮
+│[x] work     37 notes                                           │
+│[-] q3       4 notes                                            │
+│[ ] archive  11 notes                                           │
+│[+] urgent   2 notes                                            │
+│                                                                │
+│type to narrow      Tab  choose      Enter  apply      Esc  back│
+╰────────────────────────────────────────────────────────────────╯
+```
+
+**What the card asks is which tags the note should end up with**, not which `+`s and `-`s to
+apply — the same question the browser's tag form asks, and for the same reason: `+work -q3` is
+a notation, and a notation is a thing to misspell. The `+`s and `-`s are worked out from the
+boxes and handed to `noda tag`, so what a change *means* is still written down in one place.
+
+That is worth a key of its own because of what the notation quietly allowed. A `-` aimed at a
+tag spelled wrong removes nothing and says nothing — the note still has the tag, the command
+still reports success, and there is no moment at which you find out. Here there is nothing to
+spell: the tag is a row.
+
+Typing narrows the list, and a tag the notebook does not have appears as the row after the
+last one. It is chosen with the same key as any other row, so a new tag costs a keystroke of
+its own rather than arriving as the side effect of a typo — and when it is one keystroke away
+from a tag the notebook already runs on, the row says which:
+
+```
+╭ tags: budget-review / Work ────────────────────────────────────╮
+│[x] work  37 notes                                              │
+│[ ] Work  new — close to work, 37 notes                         │
+│                                                                │
+│type to narrow      Tab  choose      Enter  apply      Esc  back│
+╰────────────────────────────────────────────────────────────────╯
+```
+
+**`Tab` chooses, and not the `Space` that marks a note out on the listing.** The line being
+typed here is the name of a tag that may not exist yet, and a tag is allowed a space — so this
+is a field, and every field in this browser takes every character there is. Making it the one
+field where the space bar did something else would have put the tags an import leaves behind,
+`24.04 Dark patterns` among them, out of reach of the card that exists to spare you spelling
+them out. Narrowing would have survived it — `dark` finds that tag — but naming a new one
+would not.
+
+With notes marked the card is about the set, and the third state starts saying something: the
+number becomes how many of them carry the tag, an empty box means "leave each of them as it
+is", and `[+]` and `[-]` mean all of them. A tick means all of them have it already.
+
+```
+╭ tags: 12 notes ───────────────────────────────────────────────────╮
+│[-] q3       8 of 12                                               │
+│[x] work     12 of 12                                              │
+│[+] archive  0 of 12                                               │
+│                                                                   │
+│type to narrow      Tab  choose      Enter  queue it      Esc  back│
+╰───────────────────────────────────────────────────────────────────╯
+```
+
 ## Changing several notes at once
 
 Marking and searching are separate, and neither undoes the other. `Space` marks the note under
@@ -225,7 +288,8 @@ is on screen right now", which is what the query already means.
 
 With notes marked, `#` and `Ctrl-d` stop acting on the note under the cursor and start filling a
 queue: one entry per change, each aimed at the notes that were marked when it was added. The
-header counts both, because a key that means two things has to say which one it means.
+header counts both, because a key that means two things has to say which one it means, and the
+tag card says so too — `Enter` reads `queue it` there rather than `apply`.
 
 ```
 personal  (main)  128 notes  12 marked  2 queued
