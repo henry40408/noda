@@ -4,7 +4,8 @@
 //! spent making sure of it before a line of this file existed. That order was
 //! deliberate — write the script first and the scriptless path quietly loses a
 //! corner nobody notices — and it decides what this file may do. **Nothing here
-//! adds a capability. Everything here removes a wait.**
+//! adds a capability. Everything here removes a wait** — with one exception,
+//! set out below, which is a fact no server could have stated.
 //!
 //! Three waits, specifically. The first two the design named up front:
 //!
@@ -30,6 +31,41 @@
 //! thing**, and had been paying for it in full: a press of back was a reload,
 //! which is the one navigation nobody chose to make. Both are answered by the
 //! route the address names, in the shape that route sends.
+//!
+//! ## And one thing here does add something
+//!
+//! **The rule above is not quite the whole of it, and the exception is worth
+//! stating rather than smuggling in.** A stamp in a note's frontmatter is an
+//! instant, and an instant is not a day until somebody says where they are
+//! standing. Nothing in a request says so — there is no header for it, and
+//! asking would be a question the reader never agreed to answer — so the server
+//! genuinely cannot render `2026-08-15T23:30:00Z` as the day it was, because
+//! for half the world it was the sixteenth.
+//!
+//! So `script::STAMPS` says the same instant again in the reader's own zone.
+//! That is not a wait removed. It is the one fact this interface cannot state
+//! from the server at all, and the enhancement layer is the only place it can
+//! be stated from.
+//!
+//! What keeps it honest is the half that did not change. The scriptless page is
+//! not *wrong*, it is unconverted: it shows the stamp exactly as the file holds
+//! it, `Z` or `+08:00` and all, which is the one rendering that cannot be
+//! misread and is what `noda show` and `noda ls -l` print. A reader with no
+//! script gets the notebook's own answer; a reader with one gets the same
+//! instant in their own words. Neither is told something the other is not.
+//!
+//! It follows that a listing's day may differ from the scriptless one by a day,
+//! and that is the point of it rather than a defect in it — but it is the first
+//! time anything here has drawn something the server would have drawn
+//! differently, and pretending otherwise would make the rule above worthless
+//! for the next thing that wants an exception.
+//!
+//! Two stamps are deliberately not touched. A `due:` date on the todo screen is
+//! a calendar day somebody typed, not an instant, and `noda todo` already
+//! decides "has it passed" against git's own offset — converting it would move
+//! an item due today into tomorrow for a reader in another zone. And the count
+//! beside a tag wears the same class as a stamp and is not one, which is why
+//! what this script looks for is `<time datetime>` and never a class.
 //!
 //! ## The rule both halves are written against
 //!
@@ -846,6 +882,73 @@ pub const BESIDE: &str = r#"
 })();
 "#;
 
+/// Every stamp on the page, said again where the reader is standing.
+///
+/// The marker is `<time datetime>` and never a class: `.when` is typography on
+/// these pages and gets used for a tag's note count and for a `due:` date, and
+/// neither is an instant. What carries a `datetime` is what noda wrote out of a
+/// note's frontmatter, and that is the only thing converted.
+///
+/// A page is repainted rather than watched. `script::PANES` already says when
+/// it has replaced the rows or the note — `noda:rows` and `noda:read`, the same
+/// two `script::BESIDE` listens for — and re-reading `datetime` makes a second
+/// pass over an element that was already converted produce exactly what the
+/// first one did.
+pub const STAMPS: &str = r#"
+(() => {
+  // English, and only the zone is the reader's. Every other string noda prints
+  // is English, and what a reader in Taipei needs from this is not a Chinese
+  // month name — it is the hour they were actually at their desk.
+  const clock = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
+
+  // The listing keeps `YYYY-MM-DD`, which is the shape `noda ls -l` prints and
+  // the shape a column of them reads as. Built by hand rather than asked of
+  // `Intl`, because what is wanted is not a locale's idea of a short date — it
+  // is that one spelling, in the reader's zone.
+  const iso = (at) => {
+    const pad = (n) => String(n).padStart(2, "0");
+    return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate());
+  };
+
+  const paint = (root) => {
+    for (const said of root.querySelectorAll("time[datetime]")) {
+      const raw = said.getAttribute("datetime");
+      const at = new Date(raw);
+      // A note may carry a stamp noda never wrote — an import leaves what it
+      // found — and a date nothing can parse is left exactly as it reads. It
+      // is the file's own words, and a guess would be worse than them.
+      if (Number.isNaN(at.getTime())) continue;
+      said.textContent = said.hasAttribute("data-clock") ? clock.format(at) : iso(at);
+      // What the file actually holds, for whoever wants to know which instant
+      // this was. The page no longer shows it, and nothing else records it.
+      said.title = raw;
+    }
+
+    // A row prints its day twice and the stylesheet draws one at a time,
+    // depending on how wide the column is. Only one of them carries the stamp
+    // — the second copy would be about thirty bytes a note on the one page
+    // where bytes are counted — so the other is told what it came to.
+    for (const row of root.querySelectorAll("a.row")) {
+      const said = row.querySelector("time.when");
+      const beside = row.querySelector(".ident .day");
+      if (!said || !beside) continue;
+      beside.textContent = said.textContent;
+      beside.title = said.title;
+    }
+  };
+
+  paint(document);
+
+  // Said rather than observed, for the reason the pane swap gives: one
+  // script's doing is another script's fact.
+  const app = document.querySelector(".app");
+  if (!app) return;
+  for (const done of ["noda:rows", "noda:read"]) {
+    app.addEventListener(done, () => paint(app));
+  }
+})();
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -853,9 +956,44 @@ mod tests {
     /// The whole of the injection defence, and it is one string.
     #[test]
     fn no_script_can_end_its_own_element() {
-        for source in [LISTING, STANDING, PANES, BESIDE] {
+        for source in [LISTING, STANDING, PANES, BESIDE, STAMPS] {
             assert!(!source.to_lowercase().contains("</script"), "{source}");
         }
+    }
+
+    /// The same pact, for the stamps. What this script converts is anything
+    /// carrying a `datetime`, which is a decision as much as a selector: `.when`
+    /// is typography on these pages and gets worn by a tag's note count and by
+    /// a `due:` date, and converting either would be wrong in a way nobody
+    /// would notice until they were in another country.
+    #[test]
+    fn the_stamps_look_for_what_the_pages_write() {
+        for hook in [
+            "time[datetime]",
+            "data-clock",
+            "a.row",
+            "time.when",
+            ".ident .day",
+            "noda:rows",
+            "noda:read",
+        ] {
+            assert!(
+                STAMPS.contains(hook),
+                "the stamps stopped looking for {hook}"
+            );
+        }
+        // English is the decision, not the default. `undefined` here would
+        // follow the browser's locale and print a month name in a language
+        // nothing else on any of these pages is written in; what the reader
+        // needs from this is the hour they were at their desk, not a
+        // translation.
+        assert!(STAMPS.contains("Intl.DateTimeFormat(\"en\""), "{STAMPS}");
+        // The other half of "never a class" is asserted from the page's side,
+        // where it can actually fail: `a_due_date_is_not_an_instant_and_is_not
+        // _marked_as_one` in `web::page` holds the todo screen to writing no
+        // `<time>` at all. Asserting it from in here would mean grepping this
+        // string for a selector it does not contain, which passes for the
+        // wrong reason the moment somebody writes a different one.
     }
 
     /// Not a test of the JavaScript — nothing here runs it, and `e2e/` does.

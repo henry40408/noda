@@ -471,6 +471,47 @@ async fn words_line_up(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
+/// Both stamps are on a note's page, whichever pass this is. What they *read
+/// as* differs between the two, which is the next step's business.
+#[then("the note says when it was made and when it changed")]
+async fn stamps_are_labelled(world: &mut NodaWorld) -> Result<()> {
+    let said = world.page()?.stamps().await?;
+    anyhow::ensure!(
+        said.contains("created"),
+        "the note does not say when it was made: {said}"
+    );
+    anyhow::ensure!(
+        said.contains("updated"),
+        "the note does not say when it changed: {said}"
+    );
+    Ok(())
+}
+
+/// **The one thing in this suite that is about a fact the server cannot state.**
+///
+/// A stamp in the frontmatter is an instant, and nothing in a request says
+/// where the reader is standing, so the page arrives spelled the way the file
+/// spells it — `2026-08-15T09:54:23Z`. The script says the same instant again
+/// in the browser's own zone.
+///
+/// Asserted by shape rather than by value, because the machine running this has
+/// a zone of its own and the answer is different in each of them. What is true
+/// everywhere is that the file's spelling has gone: a `Z` is not in a converted
+/// stamp, and a comma is not in an unconverted one.
+#[then("the stamps are said in the reader's own words")]
+async fn stamps_are_local(world: &mut NodaWorld) -> Result<()> {
+    let said = world.page()?.stamps().await?;
+    anyhow::ensure!(
+        !said.contains('Z'),
+        "the stamps are still the file's own: {said}"
+    );
+    anyhow::ensure!(
+        said.contains(", "),
+        "the stamps were not said again in words: {said}"
+    );
+    Ok(())
+}
+
 /// The whole point of a screen wide enough for two panes: the listing does not
 /// go away when a note is opened.
 #[then("the listing is still on screen")]

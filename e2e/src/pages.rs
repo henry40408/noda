@@ -610,6 +610,19 @@ impl Page<'_> {
         self.reads(".body").await
     }
 
+    /// A note's stamps and tags, as one run of text.
+    ///
+    /// The whole line rather than one stamp, because what the scenarios ask of
+    /// it is about the shape of the two together — which words are there, and
+    /// whether they are still the file's spelling or the reader's.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the page cannot be queried.
+    pub async fn stamps(&self) -> Result<String> {
+        self.reads(".note-meta").await
+    }
+
     /// Whatever the page is saying went wrong, if anything.
     ///
     /// # Errors

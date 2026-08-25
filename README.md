@@ -663,6 +663,12 @@ and every other Markdown you read says it is. Anything pointing off the notebook
 tab of its own and is told nothing about where it was pressed: an address here holds a note's
 id, and it does not travel.
 
+A note also says when it was made and when it last changed, and the browser says both again in
+the zone you are standing in — a listing's day too. The page itself carries what the file
+carries, offset and all, so with JavaScript off you get the frontmatter's own spelling rather
+than a guess: an instant is not a day until somebody says where they are, and a request does
+not say.
+
 **There is no password on it, and there is not going to be one.** It is meant to be reached
 over a tailnet or from behind something that already authenticates. So it listens on **this
 machine only** until `--listen` says otherwise, refuses a request whose `Origin` is another
