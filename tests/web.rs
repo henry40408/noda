@@ -220,10 +220,15 @@ impl Answer {
     /// on this page" cannot be asked of the page as a whole.
     fn stamps(&self) -> Vec<String> {
         self.body
-            .match_indices("<span class=\"when\">")
-            .filter_map(|(at, opening)| {
-                let rest = &self.body[at + opening.len()..];
-                rest.split_once("</span>").map(|(text, _)| text.to_string())
+            .match_indices("class=\"when\"")
+            .filter_map(|(at, _)| {
+                // Past the rest of the opening tag, then up to whatever ends
+                // the text. The element is a `<time>` on a listing and a
+                // `<span>` around one on a note, and what is being asked is
+                // the same of both: what does a reader see here.
+                let (_, inner) = self.body[at..].split_once('>')?;
+                let (text, _) = inner.split_once('<')?;
+                Some(text.to_string())
             })
             .collect()
     }
@@ -761,10 +766,21 @@ fn the_note_page_names_the_file_and_stamps_it_whole() {
     assert!(answer.says(&format!(">{id}</span>")), "{}", answer.body);
     assert!(answer.says(">-budget-review</span>"), "{}", answer.body);
     assert!(answer.says(">.md</span>"), "{}", answer.body);
-    // The stamp whole, `Z` and all — this is the page with room for it, and the
-    // whole thing is the only version that cannot be misread.
-    assert!(answer.says("updated 20"), "{}", answer.body);
-    assert!(answer.says("Z</span>"), "{}", answer.body);
+    // Both stamps, whole, `Z` and all — this is the page with room for them,
+    // and the whole thing is the only version that cannot be misread. It is
+    // also what a reader with no script keeps: the conversion into their own
+    // zone is the script's, and this is what it converts *from*.
+    assert!(
+        answer.says("created <time datetime=\"20"),
+        "{}",
+        answer.body
+    );
+    assert!(
+        answer.says("updated <time datetime=\"20"),
+        "{}",
+        answer.body
+    );
+    assert!(answer.says("Z</time>"), "{}", answer.body);
 }
 
 /// **A note page carries the index pane's frame and none of its rows.**

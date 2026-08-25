@@ -218,6 +218,33 @@ due first, a passed date in red, and the row goes to the note the box is written
 no way to tick one, for the reason there is no `noda done` — an item inside a note has no
 address, and giving each one an id would turn the file into a noda-only format.
 
+**A note says when it was made and when it last changed, and the browser says both again where
+you are.** The page carries the stamps exactly as the frontmatter holds them — `Z` or `+08:00`
+and all, which is the one spelling that cannot be misread and what `noda show` prints — wrapped
+in a `<time>` that carries the same value for the script to read. What the script does with it
+is the one thing in this whole layer that is not a shortcut: it is a fact the server has no way
+of stating. An instant is not a day until somebody says where they are standing, and nothing in
+a request says so, so `2026-08-15T23:30:00Z` is the fifteenth here and the sixteenth in Taipei
+and the server cannot choose between them.
+
+So it is stated from the only place that knows. A note's page reads `Aug 15, 2026, 4:59 PM`; a
+listing's row keeps `YYYY-MM-DD`, which is what `noda ls -l` prints and what a column of them
+reads as, moved into your zone. English either way, and only the zone is yours — every other
+string noda prints is English, and what a reader in another country needs from this is the hour
+they were at their desk, not a translated month. With scripts off the file's own spelling stays
+on the screen: not wrong, just unconverted. Hover either and the exact stamp is in the tooltip.
+
+It follows that a listing's day can differ by one from the day the same page shows with scripts
+off, and that is the point of it rather than a defect. It is also the first thing here that the
+script draws differently from the server, which is why `web/script.rs` names it as the exception
+its opening rule now has.
+
+Two stamps are left alone on purpose. A `due:` date is a calendar day somebody typed rather than
+an instant, and `noda todo` already decides whether it has passed against git's own offset, so
+converting it would move an item due today into tomorrow for a reader one zone east. And the
+count beside a tag wears the same class as a stamp without being one. That is why what the
+script converts is `<time datetime>` and never a class.
+
 `/nb/<book>/n/<id>/backlinks` is what points *at* a note, reached from `Links` on the note's
 own bar; the count beside a file on the files page is the same question asked of a file, which
 is the only way to ask it since a file has no page of its own. Both match on the id in the
@@ -317,21 +344,33 @@ because it is the second plus everything the page links:
 
 | | first view | every view after |
 | --- | ---: | ---: |
-| the notebooks page | 38,587 | 860 |
-| a listing | 67,743 | 6,135 |
-| a note | 55,800 | 3,876 |
-| the network screen | 41,498 | 2,462 |
-| a backlinks page | 38,510 | 783 |
-| an edit form | 38,747 | 1,020 |
+| the notebooks page | 38,781 | 905 |
+| a listing | 71,325 | 6,437 |
+| a note | 59,540 | 4,336 |
+| the network screen | 41,692 | 2,507 |
+| a backlinks page | 38,704 | 828 |
+| an edit form | 38,941 | 1,065 |
+
+Measured against a notebook of five notes. The two screens that show a stamp cost more than
+they did: a listing 215 bytes, a note 248, and the first view of either about 2.6 KB for the
+script that converts them — fetched once, and never again at that address. Of the listing's
+215, 32 are per note: a row prints its day twice and only one of the two carries the instant,
+because the second copy would have been another 32 bytes a note on the one page where bytes
+are counted. The script tells the other copy what it came to.
 
 ## And a script on top, that nothing depends on
 
-Every screen works without one, and three of them carry one anyway: the listing filters as
-you type, the network screen asks for its own news instead of reloading whole, and on a
-screen wide enough for two panes, picking a note replaces the reading half instead of the
-page — as do sending the search and pressing back, which are the same press seen from
-either end. All of them are shortcuts: they remove a wait, never add an ability, and with
-scripts off every screen does what it always did.
+Every screen works without one, and four of them carry one anyway: the listing filters as
+you type, the network screen asks for its own news instead of reloading whole, on a screen
+wide enough for two panes picking a note replaces the reading half instead of the page — as
+do sending the search and pressing back, which are the same press seen from either end — and
+every stamp is said again in the zone the reader is standing in.
+
+The first three are shortcuts: they remove a wait, never add an ability, and with scripts off
+every screen does what it always did. The fourth is the exception, and it is worth naming
+rather than smuggling in: it states a fact no server here could have stated, because nothing
+in a request says what time it is where the reader is. With scripts off that stamp is not
+wrong, it is unconverted — the file's own spelling, which is the one that cannot be misread.
 
 What the ones that go to the server ask for is a *part* of a page rather than a page. A
 press on a row replaces the reading pane and leaves the rest of the screen where it is, so

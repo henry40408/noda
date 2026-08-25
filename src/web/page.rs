@@ -141,6 +141,12 @@ pub struct Reading {
     pub slug: String,
     pub title: String,
     pub tags: Vec<String>,
+    /// When the note came into existence, which until now no screen showed.
+    /// `ls -l` has never printed it either — a listing is about what changed —
+    /// but a note's own page is the one place with room for the question "how
+    /// long has this been here", and the frontmatter has been answering it
+    /// since the first commit.
+    pub created: Option<String>,
     pub updated: Option<String>,
     /// The body, **already HTML** — `web::render::body` made it, and it is the
     /// one string on any of these pages that is written out as it stands. The
@@ -751,7 +757,7 @@ pub fn listing(
         // `BESIDE` is here for the note this listing turns into. Picking a row
         // replaces the reading pane with a note's, aside and all, and nothing
         // else on the page would ever ask what points at it.
-        &[Asset::Listing, Asset::Panes, Asset::Beside],
+        &[Asset::Listing, Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}",
             listing_panes(book, rows, asked, drift, front),
@@ -1314,7 +1320,7 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
     scripted(
         &note_title(reading),
         "split at-note",
-        &[Asset::Panes, Asset::Beside],
+        &[Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}{}",
             index_pane(book, &Asked::nothing(), "", drift, ""),
@@ -1354,11 +1360,15 @@ fn note_title(reading: &Reading) -> String {
 /// about the same note.
 fn read_pane(book: &str, reading: &Reading) -> String {
     let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
-    let meta = [tag_line(&reading.tags), updated(reading.updated.as_deref())]
-        .into_iter()
-        .filter(|piece| !piece.is_empty())
-        .collect::<Vec<_>>()
-        .join("<span class=\"sep\">·</span>");
+    let meta = [
+        tag_line(&reading.tags),
+        stamp("created", reading.created.as_deref()),
+        stamp("updated", reading.updated.as_deref()),
+    ]
+    .into_iter()
+    .filter(|piece| !piece.is_empty())
+    .collect::<Vec<_>>()
+    .join("<span class=\"sep\">·</span>");
 
     // The box, and not the answer in it. What points at a note is a walk of
     // every note in the notebook — about 8% on top of what `ls` already costs,
@@ -1857,18 +1867,28 @@ pub fn failure(heading: &str, detail: &str) -> String {
 /// A listing's stamp: the day, and nothing that could be read as a clock.
 fn when(updated: Option<&str>) -> String {
     updated.map_or_else(String::new, |value| {
-        format!("<span class=\"when\">{}</span>", escape(&day(value)))
+        format!(
+            "<time class=\"when\" datetime=\"{}\">{}</time>",
+            escape(value),
+            escape(&day(value))
+        )
     })
 }
 
-/// A note's own stamp, exactly as the file holds it.
+/// One of a note's own stamps, exactly as the file holds it.
 ///
 /// The `Z` or the `+08:00` comes with it, which is the point: this is the one
 /// place with room for the whole thing, and the whole thing is the only version
-/// that cannot be misread.
-fn updated(value: Option<&str>) -> String {
+/// that cannot be misread. It is also what a reader with no script keeps.
+///
+/// `data-clock` is the note page saying that this stamp has room for a time of
+/// day and a listing's has not. It rides on this one rather than on the
+/// listing's because the listing is where bytes are counted: a note page sends
+/// one of these twice and a listing sends its own once per note.
+fn stamp(what: &str, value: Option<&str>) -> String {
     value.map_or_else(String::new, |value| {
-        format!("<span class=\"when\">updated {}</span>", escape(value))
+        let value = escape(value);
+        format!("<span class=\"when\">{what} <time datetime=\"{value}\" data-clock>{value}</time></span>")
     })
 }
 
@@ -2580,6 +2600,7 @@ mod tests {
                 slug: "notes".into(),
                 title: "Notes".into(),
                 tags: vec![],
+                created: None,
                 updated: None,
                 rendered: "<p>a <em>rendered</em> note</p>".into(),
             },
@@ -2600,11 +2621,19 @@ mod tests {
         assert_eq!(day(""), "");
     }
 
-    /// The note's own page prints the stamp whole, `Z` and all, the way `ls -l`
-    /// does — this is where the minute lives, and where it can be read
+    /// The note's own page prints both stamps whole, `Z` and all, the way `ls
+    /// -l` does — this is where the minute lives, and where it can be read
     /// correctly because the zone came with it.
+    ///
+    /// **What is asserted is the page a reader with no script gets**, which is
+    /// the only rendering this file is responsible for. Saying the same instant
+    /// in the reader's own zone is `script::STAMPS`'s job and cannot be done
+    /// from here at all: nothing in a request says where the reader is. What
+    /// this page owes that script is a machine-readable stamp to convert from,
+    /// which is what the `datetime` is, and a `data-clock` to say that this one
+    /// has room for a time of day where a listing's has not.
     #[test]
-    fn the_note_page_prints_the_stamp_as_the_file_holds_it() {
+    fn the_note_page_prints_both_stamps_as_the_file_holds_them() {
         let page = note(
             "work",
             &Reading {
@@ -2612,12 +2641,26 @@ mod tests {
                 slug: "notes".into(),
                 title: "Notes".into(),
                 tags: vec![],
+                created: Some("2026-08-12T08:03:00Z".into()),
                 updated: Some("2026-08-15T09:54:23Z".into()),
                 rendered: String::new(),
             },
             "in sync",
         );
-        assert!(page.contains("updated 2026-08-15T09:54:23Z"), "{page}");
+        for (what, value) in [
+            ("created", "2026-08-12T08:03:00Z"),
+            ("updated", "2026-08-15T09:54:23Z"),
+        ] {
+            assert!(
+                page.contains(&format!(
+                    "{what} <time datetime=\"{value}\" data-clock>{value}</time>"
+                )),
+                "{page}"
+            );
+        }
+        // The label is outside the element, so what the script overwrites is
+        // the stamp and never the word in front of it.
+        assert!(!page.contains(">created 20"), "{page}");
     }
 
     #[test]
@@ -2751,6 +2794,7 @@ mod tests {
                 slug: "budget-review".into(),
                 title: "Budget review".into(),
                 tags: vec!["work".into()],
+                created: Some("2026-08-12T08:03:00Z".into()),
                 updated: Some("2026-08-15T16:59:00Z".into()),
                 rendered: "late".into(),
             },
@@ -2776,8 +2820,22 @@ mod tests {
         let page = listing("work", &rows, &Asked::nothing(), "in sync", None);
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
-        // The clock is not in a listing at all, in either spelling.
-        assert!(!page.contains("08:03"), "{page}");
+        // **The clock is not shown in a listing, and now it is in one.** The
+        // stamp had to arrive whole — an instant cannot be moved into somebody
+        // else's zone without the time of day in it — so what the rule was
+        // always about has to be said precisely: not that the characters are
+        // absent from the bytes, but that no reader is ever shown them. A UTC
+        // clock with its `Z` cut off to fit a row reads as a local one, wrong
+        // by whatever the reader's offset is and wrong in a way nothing on the
+        // page admits to. In an attribute it is machine-readable, carries its
+        // `Z`, and is read by the one thing that knows where the reader is.
+        for shown in page
+            .split('>')
+            .skip(1)
+            .filter_map(|rest| rest.split_once('<'))
+        {
+            assert!(!shown.0.contains("08:03"), "a clock is on the page: {page}");
+        }
     }
 
     /// The signature, on the listing's side: a row is `ls -l`'s row, in `ls
@@ -2806,7 +2864,7 @@ mod tests {
         let under = page.split("<div class=\"under\">").nth(1).unwrap();
         assert!(
             under.starts_with(
-                "<span class=\"when\">2026-08-12</span>\
+                "<time class=\"when\" datetime=\"2026-08-12T08:03:00Z\">2026-08-12</time>\
                  <span class=\"sep\">·</span><span class=\"tags\">work</span>"
             ),
             "{under}"
@@ -2881,6 +2939,7 @@ mod tests {
                 slug: "budget-review".into(),
                 title: "Budget review".into(),
                 tags: vec![],
+                created: None,
                 updated: None,
                 rendered: String::new(),
             },
@@ -2937,6 +2996,7 @@ mod tests {
             slug: "budget-review".into(),
             title: "Budget review".into(),
             tags: vec![],
+            created: None,
             updated: None,
             rendered: "late".into(),
         }
@@ -3183,6 +3243,43 @@ mod tests {
             listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
             "listing"
         );
+    }
+
+    /// The two screens that show an instant link the script that says it again
+    /// where the reader is standing. The tags screen does not, and that is the
+    /// decision rather than an omission: what it draws in the same class is a
+    /// count of notes, which is not a time and would be nonsense as one.
+    #[test]
+    fn the_screens_that_show_an_instant_link_the_script_that_converts_it() {
+        let hook = Asset::Stamps.href();
+        assert!(note("work", &reading(), "in sync").contains(hook), "note");
+        assert!(
+            listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
+            "listing"
+        );
+        assert!(!tags("work", &[]).contains(hook), "tags");
+    }
+
+    /// A todo's `due:` is a calendar day somebody typed, not an instant, and
+    /// `noda todo` already decides whether it has passed against git's own
+    /// offset. Converting it here would move an item due today into tomorrow
+    /// for a reader in another zone — so it must not carry a `datetime`, which
+    /// is the only thing the script converts.
+    #[test]
+    fn a_due_date_is_not_an_instant_and_is_not_marked_as_one() {
+        let page = todo(
+            "work",
+            &[Task {
+                id: "em0xvn4e".into(),
+                title: "Budget review".into(),
+                text: "send the revised contract".into(),
+                due: Some("2026-08-10".into()),
+                overdue: false,
+            }],
+        );
+        assert!(page.contains("2026-08-10"), "{page}");
+        assert!(!page.contains("<time"), "{page}");
+        assert!(!page.contains(Asset::Stamps.href()), "{page}");
     }
 
     fn book(name: &str) -> Book {

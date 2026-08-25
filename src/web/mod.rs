@@ -819,6 +819,7 @@ async fn reading(
             slug,
             title: note.title,
             tags: note.tags,
+            created: note.created,
             updated: note.updated,
             rendered: render::body(&note.body, &around),
         };
