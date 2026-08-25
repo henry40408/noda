@@ -141,6 +141,15 @@ tags ticked on and off, and it can be deleted. Every one of those runs the comma
 it — the same `add`, `mv`, `tag` and `rm` the terminal calls — so what a change *means* has
 one implementation, and each lands as its own commit with the same message it would have had.
 
+**A note's own bar is five things to do to it** — Edit, Tags, Rename, Links and Delete — and
+Delete is the only item on any bar here that carries a colour. It was a line past the end of
+the prose until it was not, on the argument that the one action that cannot be undone by doing
+it again should cost a scroll of the whole note to reach. What that argument missed is that
+the friction was already built and is somewhere else: `/delete` is a confirmation page, so a
+thumb that lands on the wrong item spends a page and never a note. Hiding the way in bought no
+safety the confirmation was not already providing, and what it did cost was a reader learning
+that a note can be deleted at all.
+
 The tags form ticks off what should go and takes the new ones in one field, separated by
 spaces — `ops docs "24.04 Dark patterns"` adds three, quoted the way the `:` prompt and the
 search box quote, and the whole change is one commit.

@@ -55,11 +55,12 @@ Feature: Writing from a phone
     Then the body says "one"
     And the body says "three"
 
-  Scenario: Deleting asks first, and the way to it is past the note
+  Scenario: Deleting asks first, and the way to it is on the note's own bar
     Given I open the notebook
     When I press "Budget review"
-    And I press "Delete this note"
+    And I press "Delete"
     Then the page says "Delete Budget review?"
+    And the words line up with the buttons under them
     And no control is smaller than 48 by 48
 
   Scenario: Renaming keeps the address

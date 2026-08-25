@@ -2116,6 +2116,36 @@ fn the_listing_says_where_the_notebook_stands_and_leads_to_the_rest() {
     );
 }
 
+/// Deleting a note is on the note's own bar, in the colour nothing else on any
+/// bar wears, and the page it leads to is unchanged: it still asks first.
+///
+/// Here rather than only in the unit test because the bar is chrome, and chrome
+/// is what a fragment is allowed to leave out — a note fetched by the script
+/// has to carry the same five items as a note fetched by a browser, or the two
+/// halves of this interface have drifted.
+#[test]
+fn deleting_is_on_the_bar_and_still_asks_first() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let at = format!("/nb/default/n/{id}");
+    let mark = format!("/n/{id}/delete\" class=\"danger\"");
+
+    let whole = server.get(&at);
+    assert!(whole.says(&mark), "{}", whole.body);
+    assert!(!whole.says("perilous"), "{}", whole.body);
+
+    let part = server.request(&at, &[("X-Noda-Fragment", "read")]);
+    assert!(part.says(&mark), "{}", part.body);
+
+    let asked = server.get(&format!("{at}/delete"));
+    assert!(asked.says("Delete Budget review?"), "{}", asked.body);
+    // The paragraph is above the form, not inside it: a `.said` nested in a
+    // padded form is inset twice and stops lining up with its own button.
+    let said = asked.body.find("class=\"said\"").expect("it says nothing");
+    let form = asked.body.find("<form").expect("it has no form");
+    assert!(said < form, "{}", asked.body);
+}
+
 /// The network screen is not on the bar — the bar holds places inside the
 /// notebook — but it carries the bar, so it is not a dead end.
 #[test]
