@@ -373,6 +373,31 @@ impl About {
     }
 }
 
+/// What an item on a bar is, beyond somewhere to go.
+///
+/// Three states rather than two flags: an item is at most one of these, and a
+/// pair of booleans would have made room for the combination that means
+/// nothing — the screen you are standing on, in the colour of the thing that
+/// removes it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    /// Somewhere to go, and nothing further to say about it.
+    Plain,
+    /// The screen the bar is being drawn on.
+    Here,
+    /// The one item that cannot be undone by doing it again.
+    Danger,
+}
+
+impl Mark {
+    /// `Here` when the bar is on the screen this item names, `Plain` when it is
+    /// not — which is the shape every caller had before there was a third state
+    /// to tell apart.
+    fn at(here: bool) -> Mark {
+        if here { Mark::Here } else { Mark::Plain }
+    }
+}
+
 /// The bar along the bottom, and the reason it exists at all.
 ///
 /// PR 1 shipped without one, because there was nothing to put in it and two
@@ -380,9 +405,9 @@ impl About {
 /// slot it has. Adding it changed nothing above it — a fixed strip at the foot
 /// of a page is an extension, not a rearrangement, which is the rule this
 /// project applies to a listing's row and applies here to its chrome.
-fn action_bar(items: &[(&str, &str, String, bool)]) -> String {
+fn action_bar(items: &[(&str, &str, String, Mark)]) -> String {
     let mut out = String::from("<nav class=\"actionbar\">");
-    for (icon, label, href, here) in items {
+    for (icon, label, href, mark) in items {
         let _ = write!(
             out,
             "<a href=\"{}\"{}><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
@@ -392,7 +417,17 @@ fn action_bar(items: &[(&str, &str, String, bool)]) -> String {
             // is for: a screen reader says "current page" and the stylesheet
             // hangs the brighter colour off the same fact. One statement, read
             // two ways.
-            if *here { " aria-current=\"page\"" } else { "" }
+            //
+            // Danger goes the other way round and is a class, because there is
+            // nothing here for assistive software to announce that the item
+            // does not already say: the word is Delete. The colour is the
+            // stylesheet saying it a second time, to a reader who is aiming
+            // rather than reading.
+            match mark {
+                Mark::Plain => "",
+                Mark::Here => " aria-current=\"page\"",
+                Mark::Danger => " class=\"danger\"",
+            }
         );
     }
     out.push_str("</nav>");
@@ -418,6 +453,12 @@ const FILES: &str = "<path d=\"M18.5 10.5 11 18a4 4 0 0 1-5.7-5.7l7.8-7.8a2.6 2.
 /// An arrow arriving at a line, because backlinks are the inbound half. The
 /// line is the note being pointed at, and the arrow is everything pointing.
 const LINKS: &str = "<path d=\"M19 5v14\"/><path d=\"M4 12h11\"/><path d=\"M11 8l4 4-4 4\"/>";
+/// A bin with a lid: the shape everything uses for the action that removes
+/// something, drawn in the same stroke as the rest. It is the odd one out by
+/// colour, and being the odd one out by weight as well would read as a mistake
+/// rather than as a warning.
+const TRASH: &str = "<path d=\"M5 7h14\"/><path d=\"M9.5 7V4.5h5V7\"/>\
+<path d=\"M6.5 7l1 12.5h9L17.5 7\"/><path d=\"M10 10.5v6\"/><path d=\"M14 10.5v6\"/>";
 /// Two arrows passing, one up and one down: what a notebook and its remote do to
 /// each other. Not a cloud — a notebook syncs with a repository somebody else's
 /// machine is holding, and half the time that machine is their own.
@@ -495,6 +536,11 @@ enum At {
 /// it was until this existed.
 fn notebook_bar(book: &str, here: At) -> String {
     let at = escape(book);
+    // The only distinction this bar has ever drawn: one of the four is the
+    // screen being looked at and the rest are somewhere to go. Named so that a
+    // row stays one line — the third state a `Mark` can hold is a note's, not a
+    // notebook's, and none of these four is ever it.
+    let mark = |screen: At| Mark::at(here == screen);
     // Wrapped together, and the wrapper is what sticks to the bottom rather
     // than the bar inside it. The button has to travel with the bar: on a
     // screen with little on it the bar has not stuck to anything yet and sits
@@ -504,10 +550,10 @@ fn notebook_bar(book: &str, here: At) -> String {
         "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
          <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
         action_bar(&[
-            (NOTES, "Notes", format!("/nb/{at}"), here == At::Notes),
-            (TAGS, "Tags", format!("/nb/{at}/tags"), here == At::Tags),
-            (TODO, "Todo", format!("/nb/{at}/todo"), here == At::Todo),
-            (FILES, "Files", format!("/nb/{at}/files"), here == At::Files),
+            (NOTES, "Notes", format!("/nb/{at}"), mark(At::Notes)),
+            (TAGS, "Tags", format!("/nb/{at}/tags"), mark(At::Tags)),
+            (TODO, "Todo", format!("/nb/{at}/todo"), mark(At::Todo)),
+            (FILES, "Files", format!("/nb/{at}/files"), mark(At::Files)),
         ])
     )
 }
@@ -1300,13 +1346,6 @@ fn read_pane(book: &str, reading: &Reading) -> String {
         .collect::<Vec<_>>()
         .join("<span class=\"sep\">·</span>");
 
-    // Past the end of the note, and quiet. Deleting is the one thing here that
-    // cannot be undone by doing it again, so it is the one thing not on the bar
-    // under a thumb — you scroll the whole note to reach it, and that friction
-    // is proportionate rather than invented.
-    let perilous =
-        format!("<p class=\"perilous\"><a href=\"{at}/delete\">Delete this note</a></p>");
-
     // The box, and not the answer in it. What points at a note is a walk of
     // every note in the notebook — about 8% on top of what `ls` already costs,
     // measured, but all of it spent on a column no screen under 1440px draws.
@@ -1316,13 +1355,28 @@ fn read_pane(book: &str, reading: &Reading) -> String {
     // button, which is the page this has always been.
     let beside = "<aside class=\"beside\" hidden><div class=\"pane-head\">Backlinks</div>\
                   <div class=\"answer\"></div></aside>";
-    // Nothing marked as current: a note's bar is four things to do *to* the note
+    // Nothing marked as current: a note's bar is five things to do *to* the note
     // you are already on, and there is no "here" among them to be at.
+    //
+    // **Delete is on it, and it used to be a line past the end of the prose.**
+    // The argument for putting it there was that the one action that cannot be
+    // undone by doing it again should cost a scroll of the whole note to reach.
+    // What that missed is that the friction was already built and is somewhere
+    // else: `/delete` is a confirmation page, so a thumb that lands here spends
+    // a page and never a note. Hiding the way in bought no safety the
+    // confirmation was not already providing, and it cost a reader who does not
+    // already know the notebook the knowledge that a note can be deleted at all.
+    //
+    // It goes last, so the four that were here keep the positions a hand has
+    // learned — the rule this project applies to a listing's row applies to its
+    // chrome — and it is the only item on any bar in this interface that carries
+    // a colour.
     let bar = action_bar(&[
-        (EDIT, "Edit", format!("{at}/edit"), false),
-        (TAGS, "Tags", format!("{at}/tags"), false),
-        (RENAME, "Rename", format!("{at}/rename"), false),
-        (LINKS, "Links", format!("{at}/backlinks"), false),
+        (EDIT, "Edit", format!("{at}/edit"), Mark::Plain),
+        (TAGS, "Tags", format!("{at}/tags"), Mark::Plain),
+        (RENAME, "Rename", format!("{at}/rename"), Mark::Plain),
+        (LINKS, "Links", format!("{at}/backlinks"), Mark::Plain),
+        (TRASH, "Delete", format!("{at}/delete"), Mark::Danger),
     ]);
     let home = format!("/nb/{}", escape(book));
 
@@ -1335,7 +1389,7 @@ fn read_pane(book: &str, reading: &Reading) -> String {
          <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
          <div class=\"note-meta\">{meta}</div></div>\
          <div class=\"body\">{}</div>\
-         {perilous}{beside}</main>{bar}</section>",
+         {beside}</main>{bar}</section>",
         back(&home, book),
         // The note, not the notebook. On a phone this bar is the whole
         // chrome and either would do; beside an index pane already headed
@@ -1547,15 +1601,24 @@ pub fn deleting(book: &str, about: &About) -> String {
         book,
         "Delete",
         &about.at(book),
-        "",
+        // In the slot every other form page says its piece from, and this one
+        // had it inside the form. `.said` is a strip across the top of a pane —
+        // its own padding, and a rule under it that reaches both edges — so a
+        // copy nested inside a padded form was inset twice: the words sat 16px
+        // to the right of the button they were about (32px on anything wider
+        // than a phone), under a rule that stopped short at either end. Moving
+        // it is the fix rather than unpicking the padding, because the strip
+        // was never a thing to put inside a form.
+        &format!(
+            "<p class=\"said\"><b>Delete {}?</b> The file goes and the commit that \
+             removed it stays, so <code>noda restore</code> brings it back with its id.</p>",
+            escape(&about.title)
+        ),
         &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/delete\">\
-             <p class=\"said\"><b>Delete {}?</b> The file goes and the commit that \
-             removed it stays, so <code>noda restore</code> brings it back with its id.</p>\
              <div class=\"buttons\"><button class=\"danger\" type=\"submit\">Delete</button>\
              <a class=\"button\" href=\"{}\">Keep it</a></div></form>",
             about.at(book),
-            escape(&about.title),
             about.at(book)
         ),
     )
@@ -2014,6 +2077,11 @@ align-items:center;justify-content:center;gap:4px;color:var(--muted);\
    fact. Brighter rather than another hue: the palette's colours mark what a \
    thing is, and this marks which one of them you are standing on. */\
 .actionbar a[aria-current]{color:var(--text)}\
+/* The one item on any bar here that removes something, and the only place the \
+   alert colour is used for anything other than a refusal. Colour in this \
+   palette says what a thing *is*, and what this one is is the action that \
+   cannot be undone by doing it again. */\
+.actionbar a.danger{color:var(--alert)}\
 /* The one action, lifted off the row of places. It sits above the bar and to \
    the right, where a thumb already is, and it is the only round thing on any \
    of these pages — a shape nothing else uses cannot be mistaken for a row. */\
@@ -2111,9 +2179,6 @@ animation:breathe 1.4s ease-in-out infinite}\
 .theirs{margin:0;padding:14px;border:1px solid var(--rule);border-radius:10px;\
 background:var(--bg-sunk);font-family:var(--read);font-size:16px;line-height:1.55;\
 white-space:pre-wrap;overflow-wrap:break-word}\
-.perilous{padding:8px 16px 24px;margin:0}\
-.perilous a{color:var(--alert);display:inline-flex;align-items:center;min-height:var(--tap);\
-text-decoration:underline;text-underline-offset:3px;font-size:14px}\
 /* ------------------------------------------------------------ label role */\
 /* Mono, small, uppercase, tracked — a terminal's header line. It names a \
    region and never appears inside content. */\
@@ -2227,7 +2292,6 @@ margin:14px auto 12px;box-shadow:none}\
    prose is not in. It is the body that is read, so it is the body that is \
    capped. */\
 .body{font-size:18px;line-height:1.65;max-width:34em;padding:24px 32px 8px}\
-.perilous{padding:8px 32px 40px}\
 .said{padding:14px 32px}\
 .empty{padding:34px 32px}\
 /* A form on a screen with a rail has vertical room the phone never had, and \
@@ -2247,6 +2311,9 @@ border-bottom:1px solid var(--rule);justify-content:flex-start;gap:2px;padding:7
 .read .actionbar a{flex:0 0 auto;flex-direction:row;gap:8px;min-height:38px;\
 padding:0 13px;border-radius:9px;font-size:13px}\
 .read .actionbar a:hover{background:var(--press);color:var(--text)}\
+/* The rule above lifts every item to `--text` under the pointer, which would \
+   take the colour off the one item whose colour is the point. */\
+.read .actionbar a.danger:hover{color:var(--alert)}\
 .read .actionbar svg{width:17px;height:17px}\
 .read main{order:0;flex:1 1 auto}}\
 /* ================================================================ DESKTOP */\
@@ -2278,8 +2345,8 @@ padding:0 13px;border-radius:9px;font-size:13px}\
 .app.split .index .rows .row .under .when,.app.split .index .rows .row .under .sep{display:none}\
 .app.split .index .searchbar,.app.split .index .topbar{padding-left:20px;padding-right:20px}\
 .app.split .index .empty{padding:26px 20px}\
-/* Head, body and the delete line share one column so the rule under the title \
-   spans exactly what the prose does. The pane keeps the slack. */\
+/* Head and body share one column so the rule under the title spans exactly \
+   what the prose does. The pane keeps the slack. */\
 .app.split .read main.note{width:100%;max-width:44em;margin-inline:auto}\
 .app.split .read .body{max-width:none}\
 /* The note's chevron points at the listing, and here the listing is already \
@@ -2301,22 +2368,21 @@ padding:0 13px;border-radius:9px;font-size:13px}\
 /* `align-content:start` is load-bearing, not tidiness. `main` fills the pane, \
    so a note shorter than the screen leaves the grid with room to spare — and \
    the default (`normal`, resolving to `stretch`) hands that room out among the \
-   auto rows. The aside spans a row more than column one has, so the moment it \
-   stops being hidden there is one more row to share with and everything above \
-   shrinks: the body of a short note jumped up about 40px as the answer landed. \
-   Packing the rows at the start leaves the spare room at the bottom, where it \
-   belongs, and the row count stops being something the reader can see. */\
+   auto rows, which moves everything below the first row down by a distance \
+   that depends on nothing but how short the note is. It was found as a 40px \
+   jump in the body of a short note the moment the margin note landed. Packing \
+   the rows at the start leaves the spare room at the bottom, where it belongs, \
+   and how tall a note is stops being something the layout spends on gaps. */\
 .app.split.at-note.margined .read main.note{max-width:none;margin-inline:0;\
 display:grid;grid-template-columns:minmax(0,38em) 236px;column-gap:48px;\
 align-items:start;align-content:start;justify-content:center}\
-/* Head, body and the delete line share one column, so the rule under the title \
-   spans exactly what the prose does and the measure is the track rather than \
-   the track less two paddings. */\
+/* Head and body share one column, so the rule under the title spans exactly \
+   what the prose does and the measure is the track rather than the track less \
+   two paddings. */\
 .app.split.at-note.margined .read .note-head,\
 .app.split.at-note.margined .read .body{grid-column:1;padding-left:0;padding-right:0}\
-.app.split.at-note.margined .read .perilous{grid-column:1;padding-left:0}\
 .app.split.at-note.margined .read .beside:not([hidden]){display:block;grid-column:2;\
-grid-row:1/span 3;position:sticky;top:24px;padding:26px 0 0}}\
+grid-row:1/span 2;position:sticky;top:24px;padding:26px 0 0}}\
 /* A monitor wider than a laptop spends the extra on the index and the margin \
    note, never on the measure: a line of prose has a right length and it is not \
    \"however wide the window is\". */\
@@ -3036,6 +3102,39 @@ mod tests {
             sheet.contains(".read .beside:not([hidden]){display:block"),
             "the margin note can now out-order its own hidden attribute"
         );
+    }
+
+    /// Deleting is on the bar now, and the assertions are about the two things
+    /// that were argued over rather than about the markup: that it is *there*,
+    /// and that it is the only item wearing the colour. The count matters — a
+    /// second `danger` on this page would mean the mark had stopped saying
+    /// "this one is not like the rest of the row".
+    #[test]
+    fn the_note_bar_carries_delete_and_marks_only_that() {
+        let page = note("work", &reading(), "in sync");
+        assert!(
+            page.contains("/n/em0xvn4e/delete\" class=\"danger\""),
+            "{page}"
+        );
+        assert_eq!(page.matches("class=\"danger\"").count(), 1, "{page}");
+        assert!(page.contains("<span>Delete</span>"), "{page}");
+        // The line past the end of the prose is gone rather than doubled up
+        // with the bar: one action reached two ways is a page you have to read.
+        assert!(!page.contains("perilous"), "{page}");
+    }
+
+    /// The strip a form page says its piece from sits above the form, where its
+    /// own padding is the pane's and the rule under it reaches both edges. The
+    /// delete page had a copy of it *inside* the form, inset a second time by
+    /// the form's own padding — the words 16px to the right of the button they
+    /// were about. This is the assertion that keeps it out.
+    #[test]
+    fn the_delete_page_says_its_piece_from_outside_the_form() {
+        let about = About::of("em0xvn4e", "budget-review", "Budget review");
+        let page = deleting("work", &about);
+        let said = page.find("class=\"said\"").expect("the page says nothing");
+        let form = page.find("<form").expect("the page has no form");
+        assert!(said < form, "the paragraph is back inside the form: {page}");
     }
 
     /// The reading pane on the listing route is a README in the same

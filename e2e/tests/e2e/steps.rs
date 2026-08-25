@@ -448,6 +448,29 @@ async fn reading_is_centred(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
+/// A form page says its piece in a strip above the form, and the strip is a
+/// strip *across a pane*: its own padding, and a rule under it that reaches
+/// both edges. The delete page had a copy of it inside the form instead, where
+/// the form's padding applied to it a second time — so the words stood 16px to
+/// the right of the button they were about, under a rule that stopped short at
+/// either end.
+///
+/// Nothing above this layer can see it. The markup was valid either way and
+/// every string was where it belonged; what was wrong was two boxes, and only a
+/// laid-out page knows where a box ended up. Measured on the first bold run
+/// rather than on the paragraph, because the paragraph is full-bleed by design
+/// and it is the *words* that have to line up.
+#[then("the words line up with the buttons under them")]
+async fn words_line_up(world: &mut NodaWorld) -> Result<()> {
+    let (words, _, _) = world.page()?.box_in(".said b", "main").await?;
+    let (buttons, _, _) = world.page()?.box_in(".buttons button", "main").await?;
+    anyhow::ensure!(
+        (words - buttons).abs() <= 1.0,
+        "the words start {words} into the pane and the buttons {buttons}"
+    );
+    Ok(())
+}
+
 /// The whole point of a screen wide enough for two panes: the listing does not
 /// go away when a note is opened.
 #[then("the listing is still on screen")]

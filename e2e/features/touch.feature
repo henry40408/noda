@@ -50,3 +50,11 @@ Feature: Everything can be pressed with a thumb
     Given I open the notebook on a 320 pixel phone
     Then the page does not scroll sideways
     And no control is smaller than 48 by 48
+
+  # A note's bar is five items and the listing's is four, so this is the width
+  # where the fifth either fits or is the reason a phone scrolls sideways.
+  Scenario: The narrowest phone still fits a note's five actions
+    Given I open the notebook on a 320 pixel phone
+    When I press "Budget review"
+    Then the page does not scroll sideways
+    And no control is smaller than 48 by 48
