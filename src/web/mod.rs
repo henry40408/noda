@@ -595,6 +595,33 @@ fn html(body: String) -> impl IntoResponse {
             // would hand it to the next reader who typed the address. Saying it
             // once here means a route added later cannot forget to.
             (header::VARY, header::HeaderValue::from_static(PART)),
+            // **An address here is somebody's note id.** `web::log` will not
+            // write one into a log for that reason, and this is the same fact
+            // said to the network: without it, following a link out of a note
+            // hands `/nb/<book>/n/<id>` to whoever's site is on the other end,
+            // and so does every image a note embeds from one.
+            //
+            // On the answer rather than only in the page because it is free
+            // here — no bytes, no markup, and no route can forget it. The page
+            // says it again in its own head, which is the copy that survives a
+            // reverse proxy stripping headers it did not expect.
+            //
+            // **`same-origin` and not `no-referrer`, and the difference is not
+            // one of degree.** Both send nothing at all to another site, which
+            // is the whole of what is being protected here. But a document whose
+            // policy is `no-referrer` also posts its forms with `Origin: null` —
+            // Fetch nulls the origin under that policy exactly as it nulls the
+            // referrer — and `web::guard` refuses an opaque origin, because an
+            // opaque origin is what a sandboxed frame posting at somebody else's
+            // server sends. Set it, and every write from a browser is turned
+            // away by noda's own defence, with a refusal in the log that reads
+            // exactly like the attack the check is there for. `same-origin`
+            // keeps the origin on a request that stays here, and keeps the
+            // referrer off every request that does not.
+            (
+                header::REFERRER_POLICY,
+                header::HeaderValue::from_static("same-origin"),
+            ),
             // And the other half of what `asset.rs` serves for a year: a page
             // names the addresses this build wrote, so a kept page is a page
             // that could ask for bytes this build does not have. `no-cache` is

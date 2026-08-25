@@ -2146,6 +2146,79 @@ fn deleting_is_on_the_bar_and_still_asks_first() {
     assert!(said < form, "{}", asked.body);
 }
 
+/// **An address here is somebody's note id, and it does not travel.** Three
+/// statements of that, checked on a real answer because two of them are not in
+/// the markup at all and the third is only in the markup of a rendered note.
+///
+/// The note is written by this test rather than added to the fixture: every
+/// other test in this file counts the notebook's notes, and a fixture that
+/// grew would move numbers that have nothing to do with what is being asked
+/// here.
+#[test]
+fn nothing_a_note_points_at_is_told_where_it_was_pointed_from() {
+    let (server, paths) = serving();
+    cmd::add(
+        &paths,
+        Some("Sources"),
+        Some("the figures are at https://example.com/q3, and so is the rest"),
+        &[],
+    )
+    .expect("add");
+    let id = id_of(&paths, "sources");
+    let answer = server.get(&format!("/nb/default/n/{id}"));
+
+    // One: the header, on every HTML answer this server gives.
+    assert_eq!(
+        answer.header("referrer-policy").as_deref(),
+        Some("same-origin"),
+        "{}",
+        answer.head
+    );
+    // Two: the page saying it again itself, which is the copy that survives a
+    // proxy stripping headers — and the only one that reaches an image.
+    assert!(
+        answer.says("<meta name=\"referrer\" content=\"same-origin\">"),
+        "{}",
+        answer.body
+    );
+    // Three: the link the note only mentioned, opened as one and told not to
+    // talk back through the tab it opens.
+    assert!(
+        answer.says(
+            "<a href=\"https://example.com/q3\" target=\"_blank\" \
+             rel=\"noopener noreferrer\">https://example.com/q3</a>"
+        ),
+        "{}",
+        answer.body
+    );
+    // And the comma after it is still the sentence's.
+    assert!(answer.says("</a>, and so is the rest"), "{}", answer.body);
+}
+
+/// The header is on every HTML answer and not only on a note, because a listing
+/// row's address names a note as surely as the note's own page does.
+///
+/// **The value is asserted exactly, and `no-referrer` would be the wrong kind
+/// of wrong.** It reads as the stricter of the two and it is the one that
+/// breaks writing: a document under that policy posts its forms with
+/// `Origin: null`, and `web::guard` refuses an opaque origin because that is
+/// what a sandboxed frame aimed at somebody else's server sends. Nothing in
+/// this file could catch it — every request here carries an `Origin` this file
+/// wrote — so what stands in for that is this line and the paragraph above it.
+#[test]
+fn every_page_says_an_address_does_not_travel() {
+    let (server, _paths) = serving();
+    for path in ["/", "/nb/default", "/nb/default/tags", "/nb/default/status"] {
+        let answer = server.get(path);
+        assert_eq!(
+            answer.header("referrer-policy").as_deref(),
+            Some("same-origin"),
+            "{path}: {}",
+            answer.head
+        );
+    }
+}
+
 /// The network screen is not on the bar — the bar holds places inside the
 /// notebook — but it carries the bar, so it is not a dead end.
 #[test]

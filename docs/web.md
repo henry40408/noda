@@ -172,6 +172,40 @@ else in noda, so a link that stays inside the notebook looks different from one 
 A link to anything else the notebook holds becomes a download, and an image is shown where it
 stands.
 
+**An address a note only mentions is a link too.** CommonMark says otherwise — a bare
+`https://example.com` is a word to it, and only `<https://example.com>` in angle brackets is a
+link — but every other Markdown anybody reads disagrees, so a note written anywhere else
+arrives with its references as prose nobody can press. noda finds them on GFM's rules, narrowed
+to `http://` and `https://`: the punctuation a sentence ends with is not part of the address,
+and a `)` is part of it only when the address opened one. `www.example.com` is deliberately
+left alone, because making it a link means picking a scheme for the writer and picking the
+wrong one sends the reader somewhere else. An address inside code, inside a link's own words,
+or inside markup `noda import` could not convert is left exactly as it is: it is being shown,
+not offered.
+
+**Nothing a note points at is told where it was pointed from.** An address here holds
+somebody's note id — it is why `web/log.rs` will not write one into a log — and the `Referer`
+on a followed link would hand `/nb/<book>/n/<id>` to whoever is on the other end. So a link
+that leaves opens in a tab of its own carrying `rel="noopener noreferrer"`, and the page it
+left says `Referrer-Policy: same-origin` twice more: once as a response header on every HTML
+answer, and once in its own `<head>`.
+
+Three statements of one rule, because each covers what the others cannot. The header is free
+and is also what a reverse proxy may strip. The meta survives that, and it is the only one that
+reaches an image — a picture embedded from somebody else's site is fetched without the reader
+choosing anything, which makes it the larger leak and one no attribute on a link would have
+touched. And `noopener` is the half neither of them says: a page opened in a new tab can reach
+back through `window.opener` at the page that opened it.
+
+`same-origin` and not `no-referrer`, which sounds like the stricter choice and is the one that
+does not work. Both send nothing whatsoever to another site. But a document whose policy is
+`no-referrer` also posts its forms with `Origin: null` — the same rule nulls both — and the
+`Origin` check below is what stands between this server and a cross-site write, so it refuses
+an opaque origin. With `no-referrer` set, every write from a browser is turned away by noda's
+own defence, and the refusal in the log is indistinguishable from the attack it exists for. It
+took a real browser to find: nothing below that layer sends an `Origin` it did not write
+itself.
+
 `/nb/<book>/files` lists everything that is not a note: how big it is, what it will arrive as,
 and how many notes point at it — a file nothing points at is exactly what `doctor --links`
 calls an orphan.

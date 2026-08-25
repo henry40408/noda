@@ -25,9 +25,49 @@
 //! among them — keeps its text and loses its link. That is the whole of the
 //! script defence and it is small on purpose: with raw HTML already turned into
 //! code, a URL is the only thing left that can carry one.
+//!
+//! **What is a link without having been written as one.** `CommonMark` has no
+//! bare URLs: `<https://example.com>` is a link because the angle brackets say
+//! so, and `https://example.com` on its own is a word to it. Every other
+//! Markdown anybody reads makes the second one a link as well, so a note
+//! written in the expectation that it would — which is every note written
+//! anywhere else — arrived here with its references as prose that could not be
+//! pressed. `pulldown-cmark` has no option for it, so the scan is this module's,
+//! on the event stream like everything else here.
+//!
+//! It is GFM's rules, narrowed to `http://` and `https://`: where a URL may
+//! start, and which trailing punctuation belongs to the sentence rather than to
+//! the address. `www.example.com` is deliberately not matched — making it a link
+//! means choosing a scheme on the writer's behalf, and choosing the wrong one
+//! sends the reader somewhere else entirely. A bare email is not matched either,
+//! for a smaller reason: `<me@example.com>` already is one, and that spelling is
+//! the writer saying they meant it to be pressed.
+//!
+//! **What a link that leaves carries.** A note's address holds somebody's note
+//! id — `web/log.rs` refuses to write one into a log for exactly that reason —
+//! and the `Referer` on a followed link hands the whole of it to whoever is on
+//! the other end. So a destination that leaves this notebook is opened here by
+//! hand, carrying `target="_blank"` and `rel="noopener noreferrer"`, and the
+//! page it leaves from says `Referrer-Policy: same-origin` twice more: once as
+//! a response header (`web::html`) and once in its own `<head>`
+//! (`page::dressed`). That value sends nothing to another site, and it is not
+//! `no-referrer` for a reason `web::html` sets out — the stricter value also
+//! nulls the `Origin` on a form post, which is the header `web::guard` is
+//! built on.
+//!
+//! Three statements of one rule rather than one, because each covers what the
+//! others cannot. The header is the cheap one and it is also the one a reverse
+//! proxy is free to strip. The meta survives that, and it is the half that
+//! covers an image — a picture from somebody else's site is fetched without the
+//! reader choosing anything, which makes it the larger leak of the two and the
+//! one no attribute on a link would have reached. And `noopener` is the half
+//! neither of them says: a page opened in a new tab can reach back through
+//! `window.opener` at the page that opened it, and `target="_blank"` is what
+//! makes that a question worth answering.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd, html};
 
@@ -64,9 +104,16 @@ enum Route {
     /// leaves it — the pages colour the two differently for the same reason
     /// `style.rs` colours an id: it says what a thing *is*.
     Note(String),
-    /// Somewhere else: a file the notebook holds, or somebody else's site. This
-    /// URL, which may be the one that was written.
+    /// Somewhere else that is not somebody else's site: a fragment inside this
+    /// very page, a file the notebook holds, a `mailto:` or a `tel:`. Nothing is
+    /// added to these — the first two are this origin, and the last two are not
+    /// a page at all, so opening them in a tab of their own would be asking for
+    /// a blank one beside a mail client.
     To(String),
+    /// Somebody else's site, over http or https. The one destination that gives
+    /// something away by being followed, and the only one this module opens by
+    /// hand — a `Tag::Link` has nowhere to put the two attributes it needs.
+    Away(String),
     /// Nowhere the browser should be pointed. The link is dropped and its text
     /// stays — losing the words as well would hide from the reader that the
     /// note says anything there at all.
@@ -99,17 +146,61 @@ pub fn body(markdown: &str, around: &Around) -> String {
     // link, so the two nest and their ends arrive tagged differently.
     let mut links: Vec<Closing> = Vec::new();
     let mut images: Vec<bool> = Vec::new();
+    // Whether the text arriving is the inside of a code block. `Event::Code` is
+    // its own event and needs no flag, but a fenced block's contents arrive as
+    // `Event::Text` like any other prose — and an address inside one is being
+    // shown, not offered.
+    let mut fenced = false;
+    // Text gathered but not yet written out, and the reason the loop below has
+    // a step before its `match`.
+    let mut prose = String::new();
     let mut rewritten = Vec::new();
 
     for event in Parser::new_ext(markdown, options) {
+        // **A run of prose is gathered before it is looked at.** The parser
+        // hands text back in pieces, cut wherever it had to consider a `_` or a
+        // `*` — `.../A_(b)` arrives as two events even though neither is
+        // emphasis — and an address read one piece at a time is an address cut
+        // short at the first underscore in it, which is most of Wikipedia. So
+        // consecutive text is joined and scanned whole, and anything that is
+        // not text spills what has been gathered first.
+        //
+        // The context cannot change inside such a run: it takes an event to
+        // enter a link, an image or a code block, and that event is the one
+        // that spills.
+        if let Event::Text(text) = &event
+            && links.is_empty()
+            && images.is_empty()
+            && !fenced
+        {
+            prose.push_str(text);
+            continue;
+        }
+        spill(&mut prose, &mut rewritten);
+
         match event {
             // A block of raw HTML becomes a fenced block of it. `html` is the
             // language it is, and a highlighter that arrives later will want to
             // have been told.
-            Event::Start(Tag::HtmlBlock) => rewritten.push(Event::Start(Tag::CodeBlock(
-                CodeBlockKind::Fenced("html".into()),
-            ))),
-            Event::End(TagEnd::HtmlBlock) => rewritten.push(Event::End(TagEnd::CodeBlock)),
+            Event::Start(Tag::HtmlBlock) => {
+                fenced = true;
+                rewritten.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
+                    "html".into(),
+                ))));
+            }
+            // The block a note actually fenced, marked for the same reason: the
+            // two arrive here as the same events from this point on, which is
+            // what makes turning one into the other a defence at all — and it
+            // is why the two ends are one arm. There is nothing left by then
+            // that could tell them apart, and nothing that should.
+            Event::Start(Tag::CodeBlock(kind)) => {
+                fenced = true;
+                rewritten.push(Event::Start(Tag::CodeBlock(kind)));
+            }
+            Event::End(TagEnd::HtmlBlock | TagEnd::CodeBlock) => {
+                fenced = false;
+                rewritten.push(Event::End(TagEnd::CodeBlock));
+            }
             // Text and code are escaped by the renderer, which is what makes
             // the two lines above a defence and not a presentation choice.
             Event::Html(raw) => rewritten.push(Event::Text(raw)),
@@ -153,6 +244,14 @@ pub fn body(markdown: &str, around: &Around) -> String {
                         id,
                     }));
                 }
+                // Written out for the same reason a note's link is, and the
+                // same way a bare URL further down is: what a reader gets when
+                // a link leaves must not depend on whether the note spelled it
+                // `[text](url)` or just said the address.
+                Route::Away(url) => {
+                    links.push(Closing::Written);
+                    rewritten.push(Event::Html(leaving(&url).into()));
+                }
                 Route::Nowhere => links.push(Closing::Nothing),
             },
             Event::End(TagEnd::Link) => match links.pop() {
@@ -167,7 +266,11 @@ pub fn body(markdown: &str, around: &Around) -> String {
                 title,
                 id,
             }) => match route(&dest_url, around, true) {
-                Route::To(url) => {
+                // Both, and no attribute between them. What an image gives away
+                // is the fetch itself, and the `<head>` of the page it is on is
+                // where that is answered — for every kind of subresource at
+                // once, rather than for the one this module happens to build.
+                Route::To(url) | Route::Away(url) => {
                     images.push(false);
                     rewritten.push(Event::Start(Tag::Image {
                         link_type,
@@ -195,10 +298,144 @@ pub fn body(markdown: &str, around: &Around) -> String {
             other => rewritten.push(other),
         }
     }
+    spill(&mut prose, &mut rewritten);
 
     let mut out = String::with_capacity(markdown.len());
     html::push_html(&mut out, rewritten.into_iter());
     out
+}
+
+/// Writes a gathered run of prose out, opening any bare address in it.
+///
+/// One allocation per run, and the run is a paragraph's worth of a note being
+/// rendered for a request — not a path anything measures its startup by, and
+/// the alternative is handing the scanner a sentence in pieces and calling the
+/// half of an address it can see a link.
+fn spill(prose: &mut String, out: &mut Vec<Event<'_>>) {
+    if prose.is_empty() {
+        return;
+    }
+    let text = std::mem::take(prose);
+    let mut at = 0;
+    for span in bare_urls(&text) {
+        if span.start > at {
+            out.push(Event::Text(text[at..span.start].to_string().into()));
+        }
+        let url = &text[span.start..span.end];
+        out.push(Event::Html(leaving(url).into()));
+        // The words are the address, handed back as text so that the renderer
+        // escapes them — the same division of labour a note's own links are
+        // written with.
+        out.push(Event::Text(url.to_string().into()));
+        out.push(Event::Html("</a>".into()));
+        at = span.end;
+    }
+    if at < text.len() {
+        out.push(Event::Text(text[at..].to_string().into()));
+    }
+}
+
+/// The anchor this module opens for a destination that leaves the notebook.
+///
+/// One function, called from both places a link can leave from, so a reader
+/// cannot tell by what they get whether the note wrote `[text](url)` or only
+/// said the address. `target` is the reason `noopener` is not decoration: a page
+/// opened in a tab of its own is handed a reference back to this one unless the
+/// link says otherwise.
+fn leaving(url: &str) -> String {
+    format!(
+        "<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">",
+        escape(url)
+    )
+}
+
+/// The bare `http://` and `https://` addresses in a run of prose.
+///
+/// GFM's autolink literals, narrowed to the two schemes and with the two rules
+/// that only exist to keep `www.` from swallowing prose left out. What is kept
+/// is the pair that decide where a match begins and where it ends, and both are
+/// about the sentence around the address rather than the address itself.
+///
+/// **Where one may start.** After nothing, after a space, or after one of
+/// `*_~(` — so `(https://example.com)` matches and `xhttps://example.com` does
+/// not. Anything else in front of it is a word this is the tail of, and a URL
+/// glued to a word is not one somebody meant.
+///
+/// **Where one ends.** At the first space or `<`, and then walking back over the
+/// punctuation a sentence ends with — `?!.,:*_~` — because `see https://a.example.`
+/// ends in a full stop that belongs to the sentence. A closing bracket is the
+/// case that needs counting rather than a list: `https://en.example.org/A_(b)`
+/// keeps its `)` and `(see https://a.example)` does not, and what tells them
+/// apart is whether the address holds more of them closing than opening.
+///
+/// Quotes and `;` are left in, which is GFM's answer too, and it is worth being
+/// deliberate about: a note that renders one way on a git host should not render
+/// another way here, and *this* is the direction that surprise would run in.
+///
+/// One thing this cannot see, because it runs after the parser rather than
+/// inside it. Text arrives in pieces and [`spill`] joins them, so an address
+/// merely *considered* for emphasis survives; one that is actually cut by it
+/// does not. `https://a.example/x*y*z` has become a link around an emphasis by
+/// the time it reaches here, and only the part before the emphasis is scanned.
+/// GFM does not have this problem because its autolinks are found during inline
+/// parsing rather than after it. It is rare, it fails towards prose rather than
+/// towards a wrong address, and closing it would mean owning an inline parser.
+fn bare_urls(text: &str) -> Vec<Range<usize>> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find("http") {
+        let start = from + offset;
+        from = start + "http".len();
+
+        let before = text[..start].chars().next_back();
+        if !before.is_none_or(|c| c.is_whitespace() || matches!(c, '*' | '_' | '~' | '(')) {
+            continue;
+        }
+        let rest = &text[start..];
+        let scheme = if rest.starts_with("https://") {
+            "https://".len()
+        } else if rest.starts_with("http://") {
+            "http://".len()
+        } else {
+            continue;
+        };
+
+        let host = start + scheme;
+        let tail = &text[host..];
+        let stop = tail
+            .find(|c: char| c.is_whitespace() || c == '<')
+            .unwrap_or(tail.len());
+        let end = sentence_off(text, host, host + stop);
+        // A scheme and nothing after it is not an address, it is the word
+        // "https" with punctuation on it.
+        if end > host {
+            found.push(start..end);
+            from = end;
+        }
+    }
+    found
+}
+
+/// Walks `end` back over the punctuation that belongs to the sentence.
+///
+/// `host` is where the address's own text begins, so the walk can never eat the
+/// scheme it was told to keep.
+fn sentence_off(text: &str, host: usize, mut end: usize) -> usize {
+    while let Some(last) = text[host..end].chars().next_back() {
+        match last {
+            '?' | '!' | '.' | ',' | ':' | '*' | '_' | '~' => end -= last.len_utf8(),
+            ')' => {
+                let inside = &text[host..end];
+                if inside.matches(')').count() > inside.matches('(').count() {
+                    end -= 1;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    end
 }
 
 /// Where `dest` leads once the notebook is taken into account.
@@ -228,7 +465,16 @@ fn route(dest: &str, around: &Around, embed: bool) -> Route {
     // climbed out of the notebook and `link::target` refused it — and a path
     // that climbed out is exactly the one not to hand back to the browser.
     match link::scheme(dest) {
-        Some(scheme) if serveable(scheme, embed) => Route::To(dest.to_string()),
+        // http and https are somebody else's site; `mailto:` and `tel:` are not
+        // a site at all, and the two are told apart here rather than at the
+        // point of writing so that "does this leave" is answered once.
+        Some(scheme) if serveable(scheme, embed) => {
+            if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+                Route::Away(dest.to_string())
+            } else {
+                Route::To(dest.to_string())
+            }
+        }
         // A scheme noda does not serve, or none at all. The second case is a
         // path `link::target` refused — one that climbed out of the notebook —
         // and handing that back would be asking the browser to fetch it.
@@ -314,7 +560,10 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("<a href=\"/nb/work/f/rack.png\">"), "{out}");
-        assert!(out.contains("<a href=\"https://example.com\">"), "{out}");
+        assert!(
+            out.contains("<a href=\"https://example.com\" target=\"_blank\""),
+            "{out}"
+        );
         assert_eq!(out.matches("class=\"note\"").count(), 1, "{out}");
         // Opened by hand, so the closing tag is worth an assertion of its own:
         // one `</a>` per `<a`, and nothing left hanging over the rest of the note.
@@ -323,6 +572,131 @@ mod tests {
             out.matches("</a>").count(),
             "{out}"
         );
+    }
+
+    /// The address a note only says, rather than writes as a link.
+    ///
+    /// The assertion is the whole anchor and not a piece of it, because what is
+    /// being claimed is that the reader gets exactly what they would have got
+    /// had the note spelled the link out — and that the prose either side of it
+    /// is still prose.
+    #[test]
+    fn a_bare_address_becomes_the_link_it_looks_like() {
+        let out = body("see https://example.com/plan for the rest", &around());
+        assert!(
+            out.contains(
+                "<a href=\"https://example.com/plan\" target=\"_blank\" \
+                 rel=\"noopener noreferrer\">https://example.com/plan</a>"
+            ),
+            "{out}"
+        );
+        assert!(out.contains("see <a"), "{out}");
+        assert!(out.contains("</a> for the rest"), "{out}");
+    }
+
+    /// Where an address ends, when the sentence holding it ends as well.
+    ///
+    /// The bracket is the case that cannot be a list of characters: the same
+    /// `)` is punctuation in one of these and part of the address in the other,
+    /// and only counting tells them apart.
+    #[test]
+    fn the_sentence_around_an_address_is_not_part_of_it() {
+        for (markdown, want) in [
+            ("go to https://a.example.", "https://a.example"),
+            ("go to https://a.example, then", "https://a.example"),
+            ("go to https://a.example/x?y=1!", "https://a.example/x?y=1"),
+            ("(https://a.example)", "https://a.example"),
+            (
+                "https://en.example.org/A_(b)",
+                "https://en.example.org/A_(b)",
+            ),
+        ] {
+            let out = body(markdown, &around());
+            assert!(
+                out.contains(&format!("href=\"{want}\"")),
+                "{markdown} gave {out}"
+            );
+        }
+    }
+
+    /// The trap the underscore sets, and it is set across most of Wikipedia.
+    ///
+    /// `pulldown-cmark` cuts a run of text wherever it had to weigh a `_` or a
+    /// `*`, so `.../Budget_(finance)` arrives as more than one event although
+    /// none of it is emphasis. Scanned an event at a time, the address stops at
+    /// the underscore — and what is left is a link to somewhere else with the
+    /// rest of the real address sitting beside it as words.
+    #[test]
+    fn an_address_the_parser_cut_up_is_still_one_address() {
+        let out = body("https://en.example.org/wiki/Budget_(finance)", &around());
+        assert!(
+            out.contains("href=\"https://en.example.org/wiki/Budget_(finance)\""),
+            "{out}"
+        );
+        assert_eq!(out.matches("<a ").count(), 1, "{out}");
+    }
+
+    /// Three things that look like the start of an address and are not one.
+    #[test]
+    fn what_is_not_an_address_stays_words() {
+        for markdown in ["xhttps://a.example", "https:// nothing", "http://"] {
+            let out = body(markdown, &around());
+            assert!(!out.contains("<a "), "{markdown} gave {out}");
+        }
+    }
+
+    /// The four places an address is being shown rather than offered.
+    ///
+    /// The raw-HTML one is the one worth having: this module turns raw HTML
+    /// into a fenced block itself, so the flag that says "this is code now" has
+    /// to be set on the block *it* writes and not only on the ones a note
+    /// wrote. Getting that wrong would turn an address inside unconverted
+    /// markup — which is exactly what `noda import tiddlywiki` leaves behind —
+    /// into a link nobody wrote.
+    #[test]
+    fn an_address_in_code_or_in_a_link_is_left_where_it_is() {
+        let inline = body("run `curl https://a.example`", &around());
+        assert!(!inline.contains("<a "), "{inline}");
+
+        let fenced = body("```\nhttps://a.example\n```", &around());
+        assert!(!fenced.contains("<a "), "{fenced}");
+
+        let raw = body("<p>https://a.example</p>", &around());
+        assert!(!raw.contains("<a "), "{raw}");
+
+        let inside = body("[https://a.example](k3f9m2p1-the-plan.md)", &around());
+        assert_eq!(inside.matches("<a ").count(), 1, "{inside}");
+        assert!(inside.contains("href=\"/nb/work/n/k3f9m2p1\""), "{inside}");
+    }
+
+    /// However it was written, a link that leaves carries the same two things.
+    ///
+    /// One assertion made twice, on purpose: the two are opened by different
+    /// arms of the same match, and the day they stop agreeing is the day a
+    /// reader can tell which of them they pressed.
+    #[test]
+    fn a_link_that_leaves_carries_the_same_two_attributes_either_way() {
+        let opening =
+            "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">";
+        let written = body("[the site](https://example.com)", &around());
+        assert!(written.contains(opening), "{written}");
+        let bare = body("https://example.com", &around());
+        assert!(bare.contains(opening), "{bare}");
+    }
+
+    /// And what does not leave carries neither. A fragment and a file are this
+    /// origin; `mailto:` and `tel:` are not a page at all, and a tab of their
+    /// own would be a blank one left beside a mail client.
+    #[test]
+    fn what_does_not_leave_the_notebook_is_opened_plainly() {
+        let out = body(
+            "[a note](k3f9m2p1-the-plan.md), [a file](rack.png), [here](#top), \
+             [write](mailto:me@example.com)",
+            &around(),
+        );
+        assert!(!out.contains("target="), "{out}");
+        assert!(!out.contains("rel="), "{out}");
+        assert_eq!(out.matches("<a ").count(), 4, "{out}");
     }
 
     /// Anything else the notebook holds is a file, and files are served from one

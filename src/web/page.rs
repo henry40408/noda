@@ -295,6 +295,19 @@ fn scripted(title: &str, app: &str, scripts: &[Asset], body: &str) -> String {
 /// full reload of a page that is a few hundred bytes, which is the cost of not
 /// requiring a script to find out whether a push finished — and the same reload
 /// the reader would perform by hand, so nothing new can go wrong in it.
+///
+/// The `referrer` meta is the second of the three places noda says one thing —
+/// that an address here is somebody's note id and does not travel. `web::html`
+/// says it as a header, which costs nothing and which a reverse proxy is free
+/// to strip; this says it inside the page, where nothing between here and the
+/// browser can. It is also the copy that reaches an image: a picture a note
+/// embeds from somebody else's site is fetched without the reader choosing
+/// anything, and no attribute on a link would ever have covered it. The third
+/// is `rel="noopener noreferrer"` on the links themselves, in `web::render`.
+///
+/// `same-origin` rather than `no-referrer`, for the reason `web::html` sets out
+/// at length: the stricter of the two also nulls the `Origin` on a form post,
+/// and `web::guard` is built on that header.
 fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], body: &str) -> String {
     let refresh = refresh(again_in);
     let enhancement = scripts.iter().map(|asset| asset.tag()).collect::<String>();
@@ -307,6 +320,7 @@ fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], bod
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <meta name=\"referrer\" content=\"same-origin\">\n\
          {refresh}{}\n{}{enhancement}\n</head>\n<body>\n\
          <div class=\"{classes}\">\n{}</div>\n</body>\n</html>\n",
         titled(title),
