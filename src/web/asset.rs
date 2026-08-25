@@ -10,11 +10,11 @@
 //! Both halves of that have changed.
 //!
 //! **The price is now paid on every page rather than saved on one.** The
-//! stylesheet is 37,273 bytes and the scripts up to 17,027, against a listing's
-//! own few thousand — and since the enhancement layer started asking for parts
-//! of pages, most of what a reader fetches after their first page is a fragment
-//! that carries none of this. What is left carrying it is the case the
-//! fragments could not cover: opening a second notebook, following a link into
+//! stylesheet is 39,598 bytes and the four scripts 28,458 between them, against
+//! a listing's own few thousand — and since the enhancement layer started
+//! asking for parts of pages, most of what a reader fetches after their first
+//! page is a fragment that carries none of this. What is left carrying it is the
+//! case the fragments could not cover: opening a second notebook, following a link into
 //! a note from outside, every form page, and every screen on a phone, where
 //! the panes never split and every press is still a whole page. Each of those
 //! was re-sending 46 KB of identical bytes the browser had already been given.

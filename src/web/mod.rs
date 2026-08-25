@@ -692,6 +692,18 @@ async fn listing(
     request: Request,
 ) -> Response {
     let typed = parameter(request.uri().query(), "q");
+    // `--sort` and `-r`, arrived at over HTTP.
+    //
+    // An unknown order is the default order rather than a complaint, and the
+    // difference from `q` is who wrote it. A query is typed, so half of one is a
+    // thought in progress and worth saying something about; `?sort=` is written
+    // by a link on the page, so anything else in it is a hand-edited address —
+    // and the listing it names still exists, in the order a listing has always
+    // been in. `r` is the same bargain a checkbox makes: sent means yes.
+    let order = page::Order {
+        sort: cmd::Sort::named(&parameter(request.uri().query(), "sort")).unwrap_or_default(),
+        reversed: !parameter(request.uri().query(), "r").is_empty(),
+    };
     // Two parts off one route, and the difference is what the reader is doing:
     // narrowing a search leaves the note pane alone, and pressing back out of a
     // note has to put it back. Only the second needs the notebook's front page,
@@ -706,7 +718,12 @@ async fn listing(
         // The same order `ls` and the browser use, from the same function. An
         // order that came out differently depending on where you asked would be
         // two features wearing one name.
-        cmd::sort_notes(&mut notes, cmd::Sort::default());
+        cmd::sort_notes(&mut notes, order.sort);
+        // And the reversal after it, exactly as `ls` applies `-r`: every order
+        // gets one for free, and the sort keeps having one job.
+        if order.reversed {
+            notes.reverse();
+        }
         // For the chip in the corner of the bar. `drift` and not `status`: the
         // full status walks the working tree twice more — once for the notes
         // this handler has already read and once for a whole `git status` — and
@@ -732,7 +749,10 @@ async fn listing(
         // shows rather than which of them the page has. The excluded ones ride
         // along `hidden`, which is what lets the enhancement layer widen a query
         // as well as narrow one — see `page::Row::shown`.
-        let mut rows = notes.iter().map(page::Row::of).collect::<Vec<_>>();
+        let mut rows = notes
+            .iter()
+            .map(|file| page::Row::of(file, order.sort))
+            .collect::<Vec<_>>();
         // Read for the pane beside the listing, and only when that pane is going
         // out: the column on its own is going into a page whose other half is a
         // note, and the notebook's front page is not on it.
@@ -743,11 +763,11 @@ async fn listing(
         };
         let drawn = |rows: &[page::Row], asked: &page::Asked<'_>| {
             if column {
-                page::listing_pane(&book, rows, asked, &drift)
+                page::listing_pane(&book, rows, asked, order, &drift)
             } else if screen {
-                page::listing_screen(&book, rows, asked, &drift, front.as_deref())
+                page::listing_screen(&book, rows, asked, order, &drift, front.as_deref())
             } else {
-                page::listing(&book, rows, asked, &drift, front.as_deref())
+                page::listing(&book, rows, asked, order, &drift, front.as_deref())
             }
         };
         let tokens = query::split(&typed);
@@ -1080,7 +1100,9 @@ async fn note_backlinks(
         let rows = notebook
             .backlinks_to_note(&id)?
             .iter()
-            .map(page::Row::of)
+            // Not a listing, so there is no order to choose: what comes back is
+            // in slug order, which is what `Sort::default()` names.
+            .map(|file| page::Row::of(file, cmd::Sort::default()))
             .collect::<Vec<_>>();
         let subject = page::Subject {
             what: note.title,
@@ -1135,7 +1157,7 @@ async fn file_backlinks(
         let rows = notebook
             .backlinks_to_file(&path)?
             .iter()
-            .map(page::Row::of)
+            .map(|file| page::Row::of(file, cmd::Sort::default()))
             .collect::<Vec<_>>();
         let subject = page::Subject {
             at: format!("/nb/{}/files", encoded(&book)),
