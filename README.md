@@ -657,6 +657,12 @@ $ noda web
 noda is at http://127.0.0.1:8080
 ```
 
+A note's links work the way they do on disk — a relative link to another note opens that
+note — and an address a note only mentions is a link as well, which CommonMark says it is not
+and every other Markdown you read says it is. Anything pointing off the notebook opens in a
+tab of its own and is told nothing about where it was pressed: an address here holds a note's
+id, and it does not travel.
+
 **There is no password on it, and there is not going to be one.** It is meant to be reached
 over a tailnet or from behind something that already authenticates. So it listens on **this
 machine only** until `--listen` says otherwise, refuses a request whose `Origin` is another
