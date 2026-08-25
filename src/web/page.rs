@@ -22,8 +22,10 @@
 
 use std::fmt::Write;
 
+use crate::cmd::Sort;
 use crate::notebook::NoteFile;
 use crate::web::asset::Asset;
+use crate::web::encoded;
 
 /// A notebook, as the front page lists it: `noda status` compressed to a row,
 /// the way a listing's row is `ls -l` compressed to one.
@@ -75,7 +77,21 @@ pub struct Row {
     pub id: String,
     pub title: String,
     pub tags: Vec<String>,
-    pub updated: Option<String>,
+    /// The one stamp the row has room for, and **which one it is follows the
+    /// order the listing is in**.
+    ///
+    /// A row prints `updated`, because a listing is about what changed. But a
+    /// listing put in `created` order and still printing `updated` is a column
+    /// of days in no discernible order beside a list that claims to be sorted,
+    /// and the reader has no way to tell a working sort from a broken one —
+    /// both look like an answer. So the stamp shown is the stamp sorted by, and
+    /// the two orders that are not about time (`slug`, `title`) keep `updated`,
+    /// which is what a listing has always shown.
+    ///
+    /// Not called `updated` for that reason: it was the right name while there
+    /// was only one, and it should not be possible to read this as "the note's
+    /// updated stamp" now that it is sometimes the other one.
+    pub stamp: Option<String>,
     /// Whether the query lets this row through.
     ///
     /// **Every row of the notebook is on the listing whatever is typed** — the
@@ -157,12 +173,21 @@ pub struct Reading {
 }
 
 impl Row {
-    pub fn of(file: &NoteFile) -> Row {
+    /// The row a note makes, in a listing that is in `by` order.
+    ///
+    /// `by` decides one thing and it is [`Row::stamp`] — which of the note's two
+    /// times the row has room to print. A page that is not a listing passes
+    /// `Sort::default()` and gets `updated`, which is both the old behaviour and
+    /// the true one: a backlinks answer comes back in slug order.
+    pub fn of(file: &NoteFile, by: Sort) -> Row {
         Row {
             id: file.id.clone(),
             title: file.note.title.clone(),
             tags: file.note.tags.clone(),
-            updated: file.note.updated.clone(),
+            stamp: match by {
+                Sort::Created => file.note.created.clone(),
+                Sort::Slug | Sort::Updated | Sort::Title => file.note.updated.clone(),
+            },
             shown: true,
         }
     }
@@ -485,6 +510,25 @@ const TRASH: &str = "<path d=\"M5 7h14\"/><path d=\"M9.5 7V4.5h5V7\"/>\
 const SYNC: &str = "<path d=\"M7 9l5-5 5 5\"/><path d=\"M12 4v10\"/>\
 <path d=\"M17 15l-5 5-5-5\"/><path d=\"M12 20V10\"/>";
 
+/// What the order row is, in the space a word would not fit in.
+///
+/// Three lines getting shorter: the shape a sorted list has, and the one glyph
+/// every interface with a sort in it has settled on. The word `order` reads
+/// better and costs 55px, which is the difference between four chips fitting in
+/// a split view's index column and three of them fitting with the fourth on a
+/// line of its own.
+const ORDER: &str = "<path d=\"M4 7h13\"/><path d=\"M4 12h9\"/><path d=\"M4 17h5\"/>";
+
+/// Which way the order runs, on the chip that is in force.
+///
+/// Down is the order as `--sort` gives it, up is the same order under `-r`. Not
+/// "ascending" and "descending", which are the wrong words twice over: `updated`
+/// runs newest-first and `title` runs A-to-Z, so the same arrow would have to
+/// mean opposite things, and neither word survives being the only label on a
+/// 12px glyph.
+const DOWNWARDS: &str = "<path d=\"M12 5v14\"/><path d=\"M6 13l6 6 6-6\"/>";
+const UPWARDS: &str = "<path d=\"M12 19V5\"/><path d=\"M6 11l6-6 6 6\"/>";
+
 /// Where the notebook stands, in the corner of the screen you are already on.
 ///
 /// It is the way to the network screen and it is also the answer that screen
@@ -731,6 +775,47 @@ impl Asked<'_> {
     }
 }
 
+/// What order the listing is in — `--sort` and `-r`, arrived at over HTTP.
+///
+/// Two fields rather than one enum of eight, because that is what they are at
+/// the prompt: an order, and a reversal applied after it. Folding them together
+/// would make `-r` a property of each order rather than one thing that happens
+/// to whichever was asked for, and the eight-way match that follows is the
+/// shape of a decision nobody made.
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Order {
+    pub sort: Sort,
+    pub reversed: bool,
+}
+
+impl Order {
+    /// The query string this order is asked for by, `?` and all, with `q`
+    /// carried through it.
+    ///
+    /// **The default order writes nothing.** `slug` is what a listing has always
+    /// been in, so `/nb/work` keeps meaning what it meant and no address in
+    /// anybody's history grew a parameter. It also means there is exactly one
+    /// address for the listing as it stands by default, rather than one plain
+    /// and one spelled out.
+    fn asked(self, typed: &str) -> String {
+        let mut parts = Vec::new();
+        if !typed.is_empty() {
+            parts.push(format!("q={}", encoded(typed)));
+        }
+        if self.sort != Sort::default() {
+            parts.push(format!("sort={}", self.sort.name()));
+        }
+        if self.reversed {
+            parts.push("r=1".to_string());
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", parts.join("&"))
+        }
+    }
+}
+
 /// A notebook's notes, narrowed by whatever was typed.
 ///
 /// `total` is how many the notebook holds, which is only interesting when it
@@ -745,6 +830,7 @@ pub fn listing(
     book: &str,
     rows: &[Row],
     asked: &Asked<'_>,
+    order: Order,
     drift: &str,
     front: Option<&str>,
 ) -> String {
@@ -760,7 +846,7 @@ pub fn listing(
         &[Asset::Listing, Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}",
-            listing_panes(book, rows, asked, drift, front),
+            listing_panes(book, rows, asked, order, drift, front),
             notebook_bar(book, At::Notes)
         ),
     )
@@ -784,13 +870,14 @@ pub fn listing_screen(
     book: &str,
     rows: &[Row],
     asked: &Asked<'_>,
+    order: Order,
     drift: &str,
     front: Option<&str>,
 ) -> String {
     format!(
         "{}{}",
         titled(&listing_title(book)),
-        listing_panes(book, rows, asked, drift, front)
+        listing_panes(book, rows, asked, order, drift, front)
     )
 }
 
@@ -802,12 +889,13 @@ fn listing_panes(
     book: &str,
     rows: &[Row],
     asked: &Asked<'_>,
+    order: Order,
     drift: &str,
     front: Option<&str>,
 ) -> String {
     format!(
         "{}{}",
-        listing_pane(book, rows, asked, drift),
+        listing_pane(book, rows, asked, order, drift),
         front_pane(book, front)
     )
 }
@@ -818,7 +906,13 @@ fn listing_panes(
 /// pane empty because a phone will never draw it; `script::PANES` asks for it
 /// on a screen that will, and what it takes out of the answer is this — the
 /// rows, and the count over them. The page around them it already has.
-pub fn listing_pane(book: &str, rows: &[Row], asked: &Asked<'_>, drift: &str) -> String {
+pub fn listing_pane(
+    book: &str,
+    rows: &[Row],
+    asked: &Asked<'_>,
+    order: Order,
+    drift: &str,
+) -> String {
     let total = rows.len();
     let shown = rows.iter().filter(|row| row.shown).count();
 
@@ -828,7 +922,7 @@ pub fn listing_pane(book: &str, rows: &[Row], asked: &Asked<'_>, drift: &str) ->
         // column a note may not have, and anything after them would shift from
         // row to row. Here that would be a day sitting under a different part
         // of the line depending on whether the note above it was tagged.
-        let under = [when(row.updated.as_deref()), tag_line(&row.tags)]
+        let under = [when(row.stamp.as_deref()), tag_line(&row.tags)]
             .into_iter()
             .filter(|piece| !piece.is_empty())
             .collect::<Vec<_>>()
@@ -851,7 +945,7 @@ pub fn listing_pane(book: &str, rows: &[Row], asked: &Asked<'_>, drift: &str) ->
             // choose keeps the choice at the width that knows it — the server
             // is not told how wide the screen is, and asking would be a worse
             // page than sending eleven bytes twice.
-            row.updated
+            row.stamp
                 .as_deref()
                 .map_or_else(String::new, |value| format!(
                     "<span class=\"day\">{}</span>",
@@ -895,7 +989,7 @@ pub fn listing_pane(book: &str, rows: &[Row], asked: &Asked<'_>, drift: &str) ->
         format!("{shown} of {total}")
     };
 
-    index_pane(book, asked, &counted, drift, &body)
+    index_pane(book, asked, Some(order), &counted, drift, &body)
 }
 
 /// The index pane's frame, and what is under it.
@@ -909,7 +1003,14 @@ pub fn listing_pane(book: &str, rows: &[Row], asked: &Asked<'_>, drift: &str) ->
 /// note route leaves it empty and `script::PANES` fills it in, because a phone
 /// that will never show this column should not be sent a copy of it. `counted`
 /// is empty for the same reason: a count of rows nobody has is not a fact yet.
-fn index_pane(book: &str, asked: &Asked<'_>, counted: &str, drift: &str, rows: &str) -> String {
+fn index_pane(
+    book: &str,
+    asked: &Asked<'_>,
+    order: Option<Order>,
+    counted: &str,
+    drift: &str,
+    rows: &str,
+) -> String {
     format!(
         "<section class=\"pane index\">\
          <header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
@@ -918,13 +1019,27 @@ fn index_pane(book: &str, asked: &Asked<'_>, counted: &str, drift: &str, rows: &
          <input type=\"search\" name=\"q\" value=\"{}\" \
          placeholder=\"tag:work OR tag:q3 budget\" \
          autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" \
-         enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}{}</form>\
+         enterkeyhint=\"search\" aria-label=\"Search this notebook\">{}{}{}{}{}{}</form>\
          <main class=\"rows\">{rows}</main></section>",
         back("/", "the notebooks"),
         escape(book),
         drift_chip(book, drift),
         escape(book),
         escape(asked.typed),
+        // **The order, in the form, because the form is what would drop it.**
+        // A search field on its own submits `?q=…` and nothing else, so a reader
+        // who put the listing in `updated` order and then searched it would get
+        // their notes back in `slug` order without being told why. These carry
+        // it across the press. Written only when there is something to carry,
+        // for the reason `Order::asked` gives: the default order is the address
+        // with nothing on it.
+        held(
+            "sort",
+            order
+                .filter(|order| order.sort != Sort::default())
+                .map(|order| order.sort.name()),
+        ),
+        held("r", order.filter(|order| order.reversed).map(|_| "1")),
         // Written by the server and hidden by the server, so that the only
         // thing the script does with it is decide when it applies. A sentence
         // that exists only inside a script is a sentence nothing else can test
@@ -935,7 +1050,93 @@ fn index_pane(book: &str, asked: &Asked<'_>, counted: &str, drift: &str, rows: &
             "<p class=\"problem\">{}</p>",
             escape(why)
         )),
+        // Last, under the field and under what the field has to say about
+        // itself. The three above are all the server answering the query, and
+        // they come and go with it; putting the order between the question and
+        // the answer to it would separate two halves of one thing to keep a
+        // fourth from moving.
+        order.map_or_else(String::new, |order| sortbar(book, asked, order)),
     )
+}
+
+/// One of the form's own fields, when there is something in it.
+///
+/// A hidden input carrying a default is a parameter that appears in the address
+/// as soon as anybody searches, and then never leaves — the point of not writing
+/// the default is lost the first time ⏎ is pressed.
+fn held(name: &str, value: Option<&str>) -> String {
+    value.map_or_else(String::new, |value| {
+        format!(
+            "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+            escape(name),
+            escape(value)
+        )
+    })
+}
+
+/// The four orders `--sort` names, one chip apiece, and the one in force marked.
+///
+/// **Four links, and that is the whole of it.** There is no menu to open and
+/// nothing to press twice: the four names are on the screen, and each is the
+/// address of the listing in that order. Which means this works with the script
+/// off, the way the field beside it does — and that the vocabulary is on the
+/// screen rather than behind a press, so a reader who has never run `noda ls`
+/// meets the same four words they would meet at the prompt.
+///
+/// **Pressing the order already in force turns it round**, which is what `-r`
+/// does and where every table with a sortable heading has taught people to look
+/// for it. The arrow on that chip is the only place direction is written, so it
+/// is on the chip whose press changes it.
+///
+/// Choosing a *different* order drops the reversal. `-r` is orthogonal at the
+/// prompt and could have been kept, but each order has a direction it means
+/// first — `updated` newest-first, `title` A-to-Z — and arriving somewhere other
+/// than what `--sort updated` gives you is not what pressing `updated` looks
+/// like it will do.
+fn sortbar(book: &str, asked: &Asked<'_>, order: Order) -> String {
+    let mut out = format!(
+        "<nav class=\"sortbar\" aria-label=\"Order\">\
+         <span class=\"lab\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{ORDER}</svg></span>"
+    );
+    for sort in Sort::ALL {
+        let here = sort == order.sort;
+        let next = Order {
+            sort,
+            reversed: here && !order.reversed,
+        };
+        let _ = write!(
+            out,
+            "<a href=\"/nb/{}{}\"{} aria-label=\"{}\"><span class=\"pill\">{}{}</span></a>",
+            escape(book),
+            escape(&next.asked(asked.typed)),
+            if here { " aria-current=\"true\"" } else { "" },
+            // The arrow is `aria-hidden` like every other icon here, so the
+            // direction has to be said in words somewhere, and this is the one
+            // place with room. It also says what the press does, which on the
+            // chip in force is not what the other three do.
+            escape(&if here {
+                format!(
+                    "Ordered by {}{}. Press to {}.",
+                    sort.name(),
+                    if order.reversed { ", reversed" } else { "" },
+                    if order.reversed { "undo" } else { "reverse" }
+                )
+            } else {
+                format!("Order by {}", sort.name())
+            }),
+            escape(sort.name()),
+            if here {
+                format!(
+                    "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{}</svg>",
+                    if order.reversed { UPWARDS } else { DOWNWARDS }
+                )
+            } else {
+                String::new()
+            }
+        );
+    }
+    out.push_str("</nav>");
+    out
 }
 
 /// What was typed, as noda grouped it.
@@ -1323,7 +1524,13 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
         &[Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}{}",
-            index_pane(book, &Asked::nothing(), "", drift, ""),
+            // `None`, and it is the same argument the empty `rows` beside it
+            // makes: this pane is a frame for a column that is not here yet. An
+            // order over no rows orders nothing, and on a phone — where the
+            // column is never drawn at all — it would be 450 bytes of a control
+            // nobody can see. `script::PANES` brings the column and the order
+            // together, out of the listing route that decides both.
+            index_pane(book, &Asked::nothing(), None, "", drift, ""),
             read_pane(book, reading),
             notebook_bar(book, At::Notes),
         ),
@@ -1990,6 +2197,32 @@ border:1px solid var(--rule);border-radius:999px;background:var(--bg-sunk)}\
 .parse .g b.t{color:var(--tag)}\
 .parse .g i{font-style:normal;color:var(--punct);font-size:11px;letter-spacing:.06em}\
 .parse .and{color:var(--punct);font-size:11px;letter-spacing:.09em;text-transform:uppercase}\
+/* ------------------------------------------------ SIGNATURE: the order */\
+/* Four chips, and they are `.drift .pill`'s chip: a 32px pill inside a 48px \
+   press, which is how this sheet has drawn every small control since the \
+   first one. Nothing new is being invented for the fourth thing that is a \
+   row of pills. \
+   It wraps rather than scrolling. A chip that has slid out of sight is a \
+   chip a reader does not know exists, and there are only four of them — in \
+   the index column of a split screen the last one takes a line of its own, \
+   which costs 48px and hides nothing. */\
+.sortbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:2px 2px 0}\
+/* The glyph, because the word `order` costs 55px and that is the difference \
+   between four chips on one line in a split view's index column and three. */\
+.sortbar .lab{flex:0 0 auto;display:inline-flex;align-items:center;\
+color:var(--punct);padding-right:2px}\
+.sortbar .lab svg{width:15px;height:15px}\
+.sortbar a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:var(--tap);\
+color:var(--muted);-webkit-tap-highlight-color:transparent}\
+.sortbar a .pill{display:inline-flex;align-items:center;gap:5px;min-height:32px;\
+padding:0 11px;border:1px solid var(--rule);border-radius:999px;\
+background:var(--bg-sunk);font-size:12px;white-space:nowrap}\
+.sortbar a:active .pill{background:var(--press)}\
+/* The one in force steps forward by losing its fill and taking the id's hue \
+   on its edge — the same move `.parse .g` makes in reverse. It is not a \
+   different colour of text: nothing in this palette colours a state. */\
+.sortbar a[aria-current] .pill{background:transparent;border-color:var(--id);color:var(--text)}\
+.sortbar a svg{width:12px;height:12px;flex:0 0 auto;color:var(--id)}\
 a{color:inherit;text-decoration:none}\
 .row{display:block;min-height:64px;padding:12px 16px;border-bottom:1px solid var(--rule);\
 -webkit-tap-highlight-color:transparent}\
@@ -2688,9 +2921,228 @@ mod tests {
             id: id.into(),
             title: title.into(),
             tags: vec!["work".into()],
-            updated: Some("2026-08-12T08:03:00Z".into()),
+            stamp: Some("2026-08-12T08:03:00Z".into()),
             shown,
         }
+    }
+
+    /// **The listing's address does not change until somebody asks it to.**
+    ///
+    /// `slug` is the order a listing has always been in, so it is the one the
+    /// bare address means, and every link anybody has ever bookmarked still
+    /// names the page it named. It also keeps there being one address for the
+    /// default listing rather than a plain one and a spelled-out one.
+    #[test]
+    fn the_default_order_writes_no_parameter_and_the_rest_write_one() {
+        let page = listing(
+            "work",
+            &[row("k3f9", "Budget review", true)],
+            &Asked::nothing(),
+            Order::default(),
+            "in sync",
+            None,
+        );
+        assert!(page.contains("<nav class=\"sortbar\""), "{page}");
+        // The one in force is the bare address, because it is the one in force
+        // and the default: pressing it turns it round, and that is the only
+        // thing on this row that writes `r=1`.
+        assert!(page.contains("href=\"/nb/work?r=1\""), "{page}");
+        assert!(page.contains("href=\"/nb/work?sort=created\""), "{page}");
+        assert!(page.contains("href=\"/nb/work?sort=updated\""), "{page}");
+        assert!(page.contains("href=\"/nb/work?sort=title\""), "{page}");
+        // And nothing in the form is carrying an order nobody asked for. A
+        // hidden field holding the default is a parameter that appears in the
+        // address the first time ⏎ is pressed and never leaves again.
+        assert!(!page.contains("name=\"sort\""), "{page}");
+        assert!(!page.contains("name=\"r\""), "{page}");
+    }
+
+    /// Every order `--sort` accepts is on the screen, under the name it is
+    /// accepted by.
+    ///
+    /// The list is `Sort::ALL` rather than four literals, so an order added to
+    /// the command cannot quietly fail to reach the browser — which is the
+    /// direction this would go wrong in, the CLI being where an order gets
+    /// added.
+    #[test]
+    fn every_order_the_command_names_is_on_the_screen() {
+        let page = listing(
+            "work",
+            &[],
+            &Asked::nothing(),
+            Order::default(),
+            "in sync",
+            None,
+        );
+        for sort in Sort::ALL {
+            assert!(
+                page.contains(&format!("<span class=\"pill\">{}", sort.name())),
+                "the browser stopped offering {}: {page}",
+                sort.name()
+            );
+        }
+    }
+
+    /// **Pressing the order in force turns it round; pressing another starts it
+    /// the way that order means first.**
+    ///
+    /// The second half is the one worth a test. `-r` is orthogonal at the
+    /// prompt and could have been carried across, but `updated` means
+    /// newest-first and `title` means A-to-Z, and a press that landed on the
+    /// opposite of what `--sort updated` gives is not what the chip looks like
+    /// it will do.
+    #[test]
+    fn the_order_in_force_reverses_and_the_others_start_the_right_way_up() {
+        let order = Order {
+            sort: Sort::Updated,
+            reversed: false,
+        };
+        let page = listing("work", &[], &Asked::nothing(), order, "in sync", None);
+        // Itself, turned round.
+        assert!(
+            page.contains("href=\"/nb/work?sort=updated&amp;r=1\""),
+            "{page}"
+        );
+        // The others, forwards.
+        assert!(page.contains("href=\"/nb/work?sort=title\""), "{page}");
+        assert!(page.contains("href=\"/nb/work\""), "{page}");
+
+        // And once round the other way: the press that reversed it undoes it,
+        // which is the same chip going back to the address it came from.
+        let back = listing(
+            "work",
+            &[],
+            &Asked::nothing(),
+            Order {
+                sort: Sort::Updated,
+                reversed: true,
+            },
+            "in sync",
+            None,
+        );
+        assert!(back.contains("href=\"/nb/work?sort=updated\""), "{back}");
+        assert!(!back.contains("sort=title&r=1"), "{back}");
+        // The arrow is the only place direction is written, so it turns too.
+        assert!(back.contains(UPWARDS), "{back}");
+        assert!(!back.contains(DOWNWARDS), "{back}");
+    }
+
+    /// **A search and an order survive each other**, which takes both halves:
+    /// the chips carry what was typed, and the form carries the order.
+    ///
+    /// The second half is the one with no other way to work. A `GET` form sends
+    /// its own fields and nothing else, so without those two hidden inputs a
+    /// reader who ordered the listing and then searched it would get their notes
+    /// back in `slug` order with nothing on the screen to say why.
+    #[test]
+    fn an_order_and_a_search_survive_each_other() {
+        let order = Order {
+            sort: Sort::Created,
+            reversed: true,
+        };
+        let page = listing(
+            "work",
+            &[],
+            &Asked {
+                typed: "tag:q3 budget",
+                ..Asked::nothing()
+            },
+            order,
+            "in sync",
+            None,
+        );
+        // What was typed, on every chip, encoded as an address and not as
+        // markup: a query holds spaces and may hold an `&`.
+        assert!(
+            page.contains("href=\"/nb/work?q=tag%3Aq3%20budget&amp;sort=title\""),
+            "{page}"
+        );
+        // And the order, in the form, for the press that would otherwise drop
+        // it.
+        assert!(
+            page.contains("<input type=\"hidden\" name=\"sort\" value=\"created\">"),
+            "{page}"
+        );
+        assert!(
+            page.contains("<input type=\"hidden\" name=\"r\" value=\"1\">"),
+            "{page}"
+        );
+    }
+
+    /// **The stamp a row prints is the stamp the listing is ordered by.**
+    ///
+    /// A row has room for one, and it is `updated` because a listing is about
+    /// what changed. But `created` order printing `updated` is a column of days
+    /// in no order beside a list claiming to be sorted, and there is no way to
+    /// tell that from a sort that is broken — both look like an answer.
+    #[test]
+    fn a_listing_ordered_by_created_prints_created() {
+        let file = NoteFile {
+            id: "k3f9".into(),
+            slug: "budget-review".into(),
+            note: crate::note::Note {
+                title: "Budget review".into(),
+                tags: vec![],
+                created: Some("2019-03-14T16:21:00+08:00".into()),
+                updated: Some("2026-08-12T08:03:00Z".into()),
+                extra: vec![],
+                body: String::new(),
+            },
+        };
+        assert_eq!(
+            Row::of(&file, Sort::Created).stamp.as_deref(),
+            Some("2019-03-14T16:21:00+08:00")
+        );
+        // The two orders that are not about a time keep what a listing has
+        // always shown.
+        for sort in [Sort::Slug, Sort::Updated, Sort::Title] {
+            assert_eq!(
+                Row::of(&file, sort).stamp.as_deref(),
+                Some("2026-08-12T08:03:00Z"),
+                "{} stopped printing updated",
+                sort.name()
+            );
+        }
+    }
+
+    /// **A note page's index pane is a frame, and a frame has no order in it.**
+    ///
+    /// The column it stands over is sent empty on purpose — a row is about 290
+    /// bytes and below 1024px not one of them is ever drawn — and the same
+    /// argument covers the order: it orders no rows, and on a phone it is a
+    /// control that is never on the screen. `script::PANES` fetches the column
+    /// and the order together, from the route that decides both.
+    #[test]
+    fn a_note_page_is_sent_without_an_order_over_its_empty_column() {
+        let reading = Reading {
+            id: "em0xvn4e".into(),
+            slug: "budget-review".into(),
+            title: "Budget review".into(),
+            tags: vec![],
+            created: None,
+            updated: None,
+            rendered: "<p>late</p>".into(),
+        };
+        let page = note("work", &reading, "in sync");
+        // The frame is there — the field a reader searches from is on a note
+        // page at every width, and it is the way back to the listing.
+        assert!(page.contains("<form class=\"searchbar\""), "{page}");
+        assert!(!page.contains("class=\"sortbar\""), "{page}");
+        assert!(!page.contains("name=\"sort\""), "{page}");
+
+        // And the fragment that fills that column carries both.
+        let column = listing_pane(
+            "work",
+            &[row("k3f9", "Budget review", true)],
+            &Asked::nothing(),
+            Order {
+                sort: Sort::Title,
+                reversed: false,
+            },
+            "in sync",
+        );
+        assert!(column.contains("class=\"sortbar\""), "{column}");
+        assert!(column.contains("name=\"sort\""), "{column}");
     }
 
     #[test]
@@ -2705,6 +3157,7 @@ mod tests {
                 typed: "tag:ghost",
                 ..Asked::nothing()
             },
+            Order::default(),
             "in sync",
             None,
         );
@@ -2736,6 +3189,7 @@ mod tests {
                 terms: &terms,
                 ..Asked::nothing()
             },
+            Order::default(),
             "in sync",
             None,
         );
@@ -2758,7 +3212,14 @@ mod tests {
 
     #[test]
     fn an_empty_notebook_says_what_to_do_instead_of_nothing() {
-        let page = listing("work", &[], &Asked::nothing(), "in sync", None);
+        let page = listing(
+            "work",
+            &[],
+            &Asked::nothing(),
+            Order::default(),
+            "in sync",
+            None,
+        );
         assert!(page.contains("No notes yet"), "{page}");
         assert!(page.contains("noda add"), "{page}");
         // Not the other empty. A notebook with nothing in it is not a query
@@ -2776,6 +3237,7 @@ mod tests {
             "work",
             &[row("k3f9", "Budget review", true)],
             &Asked::nothing(),
+            Order::default(),
             "in sync",
             None,
         );
@@ -2814,10 +3276,17 @@ mod tests {
             id: "k3f9".into(),
             title: "Reading list".into(),
             tags: vec![],
-            updated: Some("2026-08-12T08:03:00Z".into()),
+            stamp: Some("2026-08-12T08:03:00Z".into()),
             shown: true,
         }];
-        let page = listing("work", &rows, &Asked::nothing(), "in sync", None);
+        let page = listing(
+            "work",
+            &rows,
+            &Asked::nothing(),
+            Order::default(),
+            "in sync",
+            None,
+        );
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
         // **The clock is not shown in a listing, and now it is in one.** The
@@ -2847,6 +3316,7 @@ mod tests {
             "work",
             &[row("em0xvn4e", "Budget review", true)],
             &Asked::nothing(),
+            Order::default(),
             "in sync",
             None,
         );
@@ -2887,6 +3357,7 @@ mod tests {
                 grouping: &grouping,
                 ..Asked::nothing()
             },
+            Order::default(),
             "in sync",
             None,
         );
@@ -2914,6 +3385,7 @@ mod tests {
                 problem: Some("`OR` needs a term on both sides"),
                 ..Asked::nothing()
             },
+            Order::default(),
             "in sync",
             None,
         );
@@ -2966,6 +3438,7 @@ mod tests {
                 grouping: &grouping,
                 ..Asked::nothing()
             },
+            Order::default(),
             "in sync",
             None,
         );
@@ -2979,7 +3452,14 @@ mod tests {
     /// read at, and where to get the rest.
     #[test]
     fn every_page_names_the_viewport_and_links_the_sheet_that_holds_both_themes() {
-        let page = listing("work", &[], &Asked::nothing(), "in sync", None);
+        let page = listing(
+            "work",
+            &[],
+            &Asked::nothing(),
+            Order::default(),
+            "in sync",
+            None,
+        );
         assert!(page.contains("width=device-width"), "{page}");
         assert!(
             page.contains("<link rel=\"stylesheet\" href=\"/a/style."),
@@ -3025,12 +3505,26 @@ mod tests {
             id: "em0xvn4e".into(),
             title: "Budget review".into(),
             tags: vec!["work".into()],
-            updated: None,
+            stamp: None,
             shown: true,
         }];
-        let column = listing_pane("work", &rows, &Asked::nothing(), "in sync");
+        let column = listing_pane(
+            "work",
+            &rows,
+            &Asked::nothing(),
+            Order::default(),
+            "in sync",
+        );
         assert!(
-            listing("work", &rows, &Asked::nothing(), "in sync", None).contains(&column),
+            listing(
+                "work",
+                &rows,
+                &Asked::nothing(),
+                Order::default(),
+                "in sync",
+                None
+            )
+            .contains(&column),
             "{column}"
         );
 
@@ -3054,6 +3548,7 @@ mod tests {
             "work",
             &rows,
             &Asked::nothing(),
+            Order::default(),
             "in sync",
             Some("<p>Read me</p>"),
         );
@@ -3065,6 +3560,7 @@ mod tests {
             "work",
             &rows,
             &Asked::nothing(),
+            Order::default(),
             "in sync",
             Some("<p>Read me</p>"),
         );
@@ -3240,7 +3736,15 @@ mod tests {
         let hook = Asset::Beside.href();
         assert!(note("work", &reading(), "in sync").contains(hook), "note");
         assert!(
-            listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
+            listing(
+                "work",
+                &[],
+                &Asked::nothing(),
+                Order::default(),
+                "in sync",
+                None
+            )
+            .contains(hook),
             "listing"
         );
     }
@@ -3254,7 +3758,15 @@ mod tests {
         let hook = Asset::Stamps.href();
         assert!(note("work", &reading(), "in sync").contains(hook), "note");
         assert!(
-            listing("work", &[], &Asked::nothing(), "in sync", None).contains(hook),
+            listing(
+                "work",
+                &[],
+                &Asked::nothing(),
+                Order::default(),
+                "in sync",
+                None
+            )
+            .contains(hook),
             "listing"
         );
         assert!(!tags("work", &[]).contains(hook), "tags");

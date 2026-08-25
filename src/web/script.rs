@@ -647,6 +647,33 @@ pub const PANES: &str = r#"
     app.dispatchEvent(new CustomEvent("noda:read"));
   };
 
+  // The listing's own column, asked for and put on the screen.
+  //
+  // Two presses arrive here and they are the same press: sending the search and
+  // choosing an order both change which rows there are and nothing else, and
+  // the page they would be drawn on is the one already up. The address moves
+  // first for the reason `swap` gives, and every way this can fail ends at the
+  // address a scriptless press would have gone to.
+  const relist = async (where) => {
+    history.pushState(null, "", where);
+    let text;
+    try {
+      const answer = await fetch(where, {
+        headers: { accept: "text/html", "x-noda-fragment": "index" },
+      });
+      if (!answer.ok) return location.replace(where);
+      text = await answer.text();
+    } catch {
+      return location.replace(where);
+    }
+    const sent = new DOMParser().parseFromString(text, "text/html");
+    // `false`: the reader is the one who just typed in that field, and the
+    // answer catching up must not take the keystrokes made while it was in
+    // flight. An order press does not touch the field at all, so the same
+    // answer is right for both.
+    if (!column(sent, false)) return location.replace(where);
+  };
+
   // Sending the search: the rows change and the page does not.
   //
   // **Only on the listing screen.** The same form is in the index column of a
@@ -665,29 +692,30 @@ pub const PANES: &str = r#"
     const action = form.getAttribute("action");
     if (!field || !action) return;
     event.preventDefault();
-    const where = action + "?q=" + encodeURIComponent(field.value);
-    // Before the answer, for the reason `swap` gives: submitting a form moves
-    // the address at once, and a reader who searches and then presses back
-    // must land on the listing they came from rather than out of the notebook.
-    history.pushState(null, "", where);
-    (async () => {
-      let text;
-      try {
-        const answer = await fetch(where, {
-          headers: { accept: "text/html", "x-noda-fragment": "index" },
-        });
-        if (!answer.ok) return location.replace(where);
-        text = await answer.text();
-      } catch {
-        // The search is the reader's question and it has not been answered.
-        // Going to the address the form would have gone to is the scriptless
-        // way to ask it, and it is the one thing here that cannot fail
-        // differently.
-        return location.replace(where);
-      }
-      const sent = new DOMParser().parseFromString(text, "text/html");
-      if (!column(sent, false)) return location.replace(where);
-    })();
+    // **Every field, not just the one that was typed in.** The form also holds
+    // what order the listing is in, and a press that rebuilt the address out of
+    // `q` alone put the notes back in the default order without saying so —
+    // which is the script answering differently from the server, the one thing
+    // this file may not do. `FormData` is what the form would have submitted.
+    const where = action + "?" + new URLSearchParams(new FormData(form));
+    relist(where);
+  });
+
+  // Choosing an order: the same press, from the other control on that form.
+  //
+  // **Only on the listing screen**, for the reason the search gives one comment
+  // up: the same form is in the index column of a note page, and there a press
+  // is the way *to* the listing. Answering it here would keep the note on the
+  // screen, which is not the answer the server would have given.
+  app.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey ||
+        event.shiftKey || event.altKey) return;
+    const chip = event.target.closest(".index form.searchbar .sortbar a");
+    if (!chip || !app.classList.contains("at-list")) return;
+    const href = chip.getAttribute("href");
+    if (!href) return;
+    event.preventDefault();
+    relist(href);
   });
 
   app.addEventListener("click", (event) => {
@@ -1058,6 +1086,7 @@ mod tests {
             ".index form.searchbar",
             ".index main.rows",
             ".index .topbar .count",
+            ".index form.searchbar .sortbar a",
             ".pane.read",
             "a.row",
             "indexed",
@@ -1066,6 +1095,18 @@ mod tests {
             "here",
         ] {
             assert!(PANES.contains(hook), "the panes stopped looking for {hook}");
+        }
+        // The order rides in the form's own fields, so the press that sends the
+        // search has to send the form and not a line built out of `q`. Rebuilt
+        // by hand, it would drop the order silently — the notes come back, in
+        // the wrong order, with nothing to say why.
+        assert!(PANES.contains("new FormData(form)"), "{PANES}");
+        let sheet = crate::web::page::stylesheet();
+        for rule in [".sortbar", ".sortbar a[aria-current] .pill"] {
+            assert!(
+                sheet.contains(rule),
+                "the stylesheet stopped drawing {rule}"
+            );
         }
     }
 
@@ -1260,8 +1301,10 @@ mod tests {
                 "fetch(href",
             ),
             (
-                "the search",
-                "app.addEventListener(\"submit\"",
+                // The search and the order are one function now — they are the
+                // same press, and this is the property they share.
+                "the relisting",
+                "const relist = async",
                 "history.pushState",
                 "fetch(where",
             ),
@@ -1279,5 +1322,9 @@ mod tests {
             assert!(pushed < asked, "{what} asks before it pushes");
         }
         assert!(!PANES.contains("location.assign("), "{PANES}");
+        // And both presses go through it rather than one of them growing its
+        // own copy, which is how the two would come to disagree about what
+        // happens when the fetch fails.
+        assert_eq!(PANES.matches("relist(").count(), 2, "{PANES}");
     }
 }

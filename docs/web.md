@@ -206,6 +206,33 @@ own defence, and the refusal in the log is indistinguishable from the attack it 
 took a real browser to find: nothing below that layer sends an `Origin` it did not write
 itself.
 
+**The listing has two controls and the second one is the order.** Under the search field are
+the four orders `--sort` accepts — `slug`, `created`, `updated`, `title` — one chip apiece,
+with the one in force marked and carrying an arrow. Pressing another chip is that order;
+pressing the one in force turns it round, which is `-r`. They are four links, so this works
+with scripts off exactly as the search box does, and the vocabulary is on the screen rather
+than behind a press: the four words here are the four words at the prompt, and
+`cmd::sort_notes` puts the notes in order for both.
+
+It rides in the address — `/nb/work?sort=updated`, `&r=1` for the reversal — and the default
+writes nothing, so `/nb/work` goes on meaning what it has always meant and no bookmark grew a
+parameter. The search field carries the order in two hidden inputs, because a `GET` form sends
+its own fields and nothing else: without them, searching a listing you had just put in
+`updated` order would hand the notes back in `slug` order with nothing on the screen to say
+why. The chips carry the query the same way, from the other end.
+
+Choosing a different order drops the reversal rather than carrying it across. `-r` is
+orthogonal at the prompt and could have been kept, but each order has a direction it means
+first — `updated` newest-first, `title` A-to-Z — and a press of `updated` that landed on
+oldest-first is not what the chip looks like it will do.
+
+**The day on a row is the stamp the listing is ordered by.** A row has space for one and it is
+`updated`, because a listing is about what changed; in `created` order it is `created` instead.
+Printing `updated` down a list sorted by `created` gives a column of days in no visible order
+beside rows that claim to be sorted, and there is no way to tell that from a sort that is
+simply broken — both look like an answer. The two orders that are not about a time keep
+`updated`.
+
 `/nb/<book>/files` lists everything that is not a note: how big it is, what it will arrive as,
 and how many notes point at it — a file nothing points at is exactly what `doctor --links`
 calls an orphan.
@@ -344,12 +371,12 @@ because it is the second plus everything the page links:
 
 | | first view | every view after |
 | --- | ---: | ---: |
-| the notebooks page | 38,781 | 905 |
-| a listing | 71,325 | 6,437 |
-| a note | 59,540 | 4,336 |
-| the network screen | 41,692 | 2,507 |
-| a backlinks page | 38,704 | 828 |
-| an edit form | 38,941 | 1,065 |
+| the notebooks page | 40,503 | 905 |
+| a listing | 75,194 | 7,138 |
+| a note | 62,708 | 4,336 |
+| the network screen | 43,416 | 2,509 |
+| a backlinks page | 40,426 | 828 |
+| an edit form | 40,663 | 1,065 |
 
 Measured against a notebook of five notes. The two screens that show a stamp cost more than
 they did: a listing 215 bytes, a note 248, and the first view of either about 2.6 KB for the
@@ -357,6 +384,14 @@ script that converts them — fetched once, and never again at that address. Of 
 215, 32 are per note: a row prints its day twice and only one of the two carries the instant,
 because the second copy would have been another 32 bytes a note on the one page where bytes
 are counted. The script tells the other copy what it came to.
+
+The order cost 701 bytes on a listing and **nothing at all on a note**, which is the whole of
+why the frame a note page sends carries no order: it carries no rows either, and an order over
+no rows orders nothing. It is a fixed cost rather than a per-note one — four chips, whatever
+the notebook holds — so it is the one addition here that gets cheaper the more notes there
+are. A first view went up 3,168 everywhere: 1,722 of stylesheet and 1,446 of script, both at
+an address that changes only when their bytes do, and both already in the browser by the second
+page.
 
 ## And a script on top, that nothing depends on
 

@@ -167,6 +167,14 @@ fn id_of(paths: &Paths, slug: &str) -> String {
     panic!("no note called {slug}");
 }
 
+/// The file holding the note with this slug.
+fn note_file(paths: &Paths, slug: &str) -> PathBuf {
+    paths
+        .notebooks_dir()
+        .join("default")
+        .join(format!("{}-{slug}.md", id_of(paths, slug)))
+}
+
 /// What came back.
 struct Answer {
     status: u16,
@@ -200,6 +208,25 @@ impl Answer {
                     .is_some_and(|(row, _)| row.contains(title))
             })
             .map(|row| !row.starts_with(" hidden"))
+    }
+
+    /// Every row's title, in the order the page put them in.
+    ///
+    /// Read out of `main.rows` and not out of the page: the pane beside the
+    /// listing holds the notebook's own README, rendered, and a heading in
+    /// somebody's Markdown is not a row.
+    fn titles(&self) -> Vec<String> {
+        let rows = self
+            .body
+            .split_once("<main class=\"rows\">")
+            .map_or("", |(_, rest)| rest);
+        rows.split("<div class=\"title\">")
+            .skip(1)
+            .filter_map(|rest| {
+                rest.split_once("</div>")
+                    .map(|(title, _)| title.to_string())
+            })
+            .collect()
     }
 
     /// One header, by name.
@@ -633,6 +660,147 @@ fn the_listing_names_every_note() {
         "an unfiltered listing complained:\n{}",
         answer.body
     );
+}
+
+/// **`?sort=` is `--sort` under another name**, and the two get their answer
+/// out of one function — an order that came out differently depending on
+/// whether you asked for it at the prompt or on a screen would be two features
+/// wearing one name.
+///
+/// One note is pinned at both ends of the calendar before the server starts.
+/// Every other note in this fixture was written in the same second, and an
+/// order settled by a tie-break on a minted id is not one a test can assert
+/// anything about.
+#[test]
+fn a_listing_comes_back_in_the_order_the_address_asks_for() {
+    let (root, paths) = a_notebook();
+    let path = note_file(&paths, "reading-list");
+    let text = std::fs::read_to_string(&path).expect("the note");
+    let pinned = text
+        .lines()
+        .map(|line| {
+            if line.starts_with("created: ") {
+                "created: 2019-01-02T00:00:00Z".to_string()
+            } else if line.starts_with("updated: ") {
+                "updated: 2099-01-02T00:00:00Z".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, format!("{pinned}\n")).expect("pin the stamps");
+    let server = Serving::start(root, &[]);
+
+    let plain = server.get("/nb/default");
+    assert_eq!(plain.status, 200);
+
+    // Alphabetical, whole and in order.
+    assert_eq!(
+        server.get("/nb/default?sort=title").titles(),
+        [
+            "Budget review",
+            "Meeting notes",
+            "Raw html import",
+            "Reading list",
+            "The rack"
+        ]
+    );
+
+    // Newest first, which is the way a question put to a time nearly always
+    // runs — and the day the row prints is the one it was ordered by, or the
+    // column of days beside a sorted list would be in no order at all.
+    let newest = server.get("/nb/default?sort=updated");
+    assert_eq!(
+        newest.titles().first().map(String::as_str),
+        Some("Reading list"),
+        "{}",
+        newest.body
+    );
+    assert!(newest.says("2099-01-02"), "{}", newest.body);
+
+    // The same note, oldest of them all by the other stamp — so `created` is
+    // its own order and not `updated` under a second name.
+    let oldest = server.get("/nb/default?sort=created");
+    assert_eq!(
+        oldest.titles().last().map(String::as_str),
+        Some("Reading list"),
+        "{}",
+        oldest.body
+    );
+    assert!(oldest.says("2019-01-02"), "{}", oldest.body);
+
+    // `-r` applied after the sort, so it turns whichever order was asked for —
+    // and on its own it turns the default one, which is `ls -r`'s own bargain
+    // and the reason it needs no `--sort` beside it.
+    let mut backwards = plain.titles();
+    backwards.reverse();
+    assert_eq!(server.get("/nb/default?r=1").titles(), backwards);
+    let mut down_the_alphabet = server.get("/nb/default?sort=title").titles();
+    down_the_alphabet.reverse();
+    assert_eq!(
+        server.get("/nb/default?sort=title&r=1").titles(),
+        down_the_alphabet
+    );
+
+    // An order nobody offers is the order a listing has always been in, and it
+    // is not complained about. A query is typed, so half of one is worth saying
+    // something about; `?sort=` is written by a link on this page, so anything
+    // else in it is a hand-edited address — and the listing it names exists.
+    let odd = server.get("/nb/default?sort=newest");
+    assert_eq!(odd.titles(), plain.titles());
+    assert!(!odd.says("class=\"problem\""), "{}", odd.body);
+}
+
+/// **A search and an order survive each other**, which needs both halves: the
+/// chips carry what was typed, and the form carries the order.
+///
+/// The second half has no other way to work. A `GET` form sends its own fields
+/// and nothing else, so without those hidden inputs a reader who ordered the
+/// listing and then searched it would get the notes back in the default order
+/// with nothing on the screen to say why.
+#[test]
+fn an_order_survives_a_search_and_a_search_survives_an_order() {
+    let (server, _paths) = serving();
+    // `tag:` rather than a bare word, so a title is not `<mark>`ed in the
+    // middle of the string this reads rows by.
+    let answer = server.get("/nb/default?q=tag:work&sort=title");
+    assert_eq!(answer.status, 200);
+
+    // Still a search.
+    assert_eq!(answer.row("Budget review"), Some(true));
+    assert_eq!(answer.row("Meeting notes"), Some(true));
+    assert_eq!(answer.row("Reading list"), Some(false));
+    // Still in order.
+    assert_eq!(
+        answer.titles(),
+        [
+            "Budget review",
+            "Meeting notes",
+            "Raw html import",
+            "Reading list",
+            "The rack"
+        ]
+    );
+    // And the press that would drop the order carries it instead.
+    assert!(
+        answer.says("<input type=\"hidden\" name=\"sort\" value=\"title\">"),
+        "{}",
+        answer.body
+    );
+    // Every chip carries the query, encoded as an address rather than as
+    // markup: a query holds spaces and may hold an `&`.
+    assert!(
+        answer.says("href=\"/nb/default?q=tag%3Awork&amp;sort=created\""),
+        "{}",
+        answer.body
+    );
+
+    // The default order still writes nothing, so the bare address goes on
+    // meaning what it has always meant.
+    let plain = server.get("/nb/default");
+    assert!(!plain.says("name=\"sort\""), "{}", plain.body);
+    assert!(!plain.says("name=\"r\""), "{}", plain.body);
 }
 
 #[test]

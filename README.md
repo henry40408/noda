@@ -657,6 +657,12 @@ $ noda web
 noda is at http://127.0.0.1:8080
 ```
 
+The listing is searched and ordered from one bar: under the search field are
+the four orders `--sort` accepts — `slug`, `created`, `updated`, `title` — one chip apiece.
+Pressing the one already in force turns it round, which is `-r`. The order rides in the address
+(`?sort=updated`), and the default writes nothing, so `/nb/work` still means what it always
+meant.
+
 A note's links work the way they do on disk — a relative link to another note opens that
 note — and an address a note only mentions is a link as well, which CommonMark says it is not
 and every other Markdown you read says it is. Anything pointing off the notebook opens in a

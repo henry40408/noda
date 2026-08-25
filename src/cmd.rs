@@ -319,6 +319,14 @@ pub enum Sort {
 }
 
 impl Sort {
+    /// Every order, in the order `--sort` lists them.
+    ///
+    /// For a screen with room to draw all four at once — the browser has one,
+    /// the TUI's `S` walks them one press at a time instead. Written here so
+    /// that the list a page draws and the ring [`Sort::next`] walks cannot come
+    /// apart; the test below is what holds them together.
+    pub const ALL: [Sort; 4] = [Sort::Slug, Sort::Created, Sort::Updated, Sort::Title];
+
     /// What `--sort` is spelled with, which is what a screen showing the order
     /// in force should call it too.
     pub fn name(self) -> &'static str {
@@ -328,6 +336,16 @@ impl Sort {
             Sort::Updated => "updated",
             Sort::Title => "title",
         }
+    }
+
+    /// The order spelled that way, or `None`.
+    ///
+    /// The inverse of [`Sort::name`], for the one caller that receives an order
+    /// as text rather than as a flag: a browser, where the order rides in the
+    /// address. Nothing else needs it — clap does this for `--sort` and a key
+    /// press does it for the TUI.
+    pub fn named(said: &str) -> Option<Sort> {
+        Sort::ALL.into_iter().find(|sort| sort.name() == said)
     }
 
     /// The next one round, for a key that has one press and four orders to
@@ -3594,6 +3612,36 @@ pub fn print(output: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The list a screen draws and the ring a key walks are one list.**
+    ///
+    /// `Sort::ALL` is what the browser puts on the screen, `Sort::next` is what
+    /// the TUI's `S` steps through, and `--sort`'s help is a third copy in
+    /// prose. Two of those are code and can be held together; this is what
+    /// holds them. An order added to one and not the other is not a compile
+    /// error — it is a browser quietly offering three of the four.
+    #[test]
+    fn every_order_is_on_the_ring_the_key_walks() {
+        let mut at = Sort::default();
+        for sort in Sort::ALL {
+            assert_eq!(at, sort, "the ring and the list came apart");
+            at = at.next();
+        }
+        assert_eq!(at, Sort::default(), "the ring stopped coming round");
+    }
+
+    /// The browser is the one caller that receives an order as text, and it
+    /// receives it under the name `--sort` accepts. Anything else is a
+    /// hand-edited address, and what it names is the order a listing has always
+    /// been in.
+    #[test]
+    fn an_order_is_read_back_out_of_the_name_it_is_written_with() {
+        for sort in Sort::ALL {
+            assert_eq!(Sort::named(sort.name()), Some(sort));
+        }
+        assert_eq!(Sort::named("newest"), None);
+        assert_eq!(Sort::named(""), None);
+    }
 
     /// What `todo` gets wrong if it asks UTC what day it is. At this instant it
     /// is already the 3rd in Taipei and still the 2nd in London, and an item
