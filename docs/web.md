@@ -369,14 +369,14 @@ The first view costs the same bytes it always did, in as many as four requests i
 Every view after it costs the page alone. The first column is also what every view used to cost,
 because it is the second plus everything the page links:
 
-| | first view | every view after |
-| --- | ---: | ---: |
-| the notebooks page | 40,503 | 905 |
-| a listing | 75,194 | 7,138 |
-| a note | 62,708 | 4,336 |
-| the network screen | 43,416 | 2,509 |
-| a backlinks page | 40,426 | 828 |
-| an edit form | 40,663 | 1,065 |
+| | first view | first, gzip | every view after | after, gzip |
+| --- | ---: | ---: | ---: | ---: |
+| the notebooks page | 40,503 | 12,934 | 905 | 445 |
+| a listing | 75,194 | 25,250 | 7,138 | 2,531 |
+| a note | 62,708 | 20,684 | 4,336 | 1,432 |
+| the network screen | 43,416 | 14,050 | 2,509 | 925 |
+| a backlinks page | 40,426 | 12,962 | 828 | 473 |
+| an edit form | 40,663 | 13,095 | 1,065 | 606 |
 
 Measured against a notebook of five notes. The two screens that show a stamp cost more than
 they did: a listing 215 bytes, a note 248, and the first view of either about 2.6 KB for the
@@ -392,6 +392,47 @@ the notebook holds — so it is the one addition here that gets cheaper the more
 are. A first view went up 3,168 everywhere: 1,722 of stylesheet and 1,446 of script, both at
 an address that changes only when their bytes do, and both already in the browser by the second
 page.
+
+**And then everything goes through a deflater**, which is the two right-hand columns and the
+largest single number on this page. A listing is a column of rows differing in a few words each,
+so it is the most compressible thing this server sends: at two hundred notes an ordered listing
+falls from 74,163 bytes to 4,043, and the whole first view of a notebook from 75 KB to 25.
+
+The question that bought it was narrower than that — **what does switching the order cost?** A
+sort switch re-sends the index column, and at two hundred notes 97.7% of that is rows. Three
+answers were costed:
+
+| a sort switch, 200 notes | bytes | |
+| --- | ---: | ---: |
+| as it was | 74,163 | |
+| a fragment narrower than the column | 73,164 | −1.3% |
+| gzip | 4,043 | −94.6% |
+| sending the order rather than the rows | 4,704 | −93.7% |
+| both | 1,640 | −97.8% |
+
+The narrow fragment is not worth building: the frame around the rows is 995 bytes, and the rows
+are everything else. **And the clever answer lost to the boring one.** Sending only the new order
+— a list of ids, for the script to reorder rows it already holds — is *larger than gzip alone*
+before compression and worth another 2.3 KB after it, and it would have cost a new fragment
+vocabulary plus a client that rewrites each row's stamp. So the protocol stayed exactly as it
+was and the bytes go through a deflater instead.
+
+It is also worth saying why the script cannot simply reorder what it has and send nothing at all,
+because that is the first thing anybody proposes. It has neither the slug nor the second stamp —
+a row carries one `<time>` and its address carries an id, not a filename — so `slug` and
+`created` order are not reconstructible from the page. And `title` order is not either: Rust
+compares strings by UTF-8 bytes and JavaScript by UTF-16 code units, and the two disagree above
+the BMP, so a notebook with an emoji in a title could be ordered one way by the server and
+another by the script. That is precisely the disagreement the rule at the top of this section
+forbids.
+
+What is *not* compressed is as deliberate. A body under 32 bytes is left alone — `/health` is
+the word `ok`, and a gzip header would be longer than what it describes — and so is anything
+`holding` calls an image, a PDF, or `application/octet-stream`, which is a notebook's zips,
+videos and disk images. The risk of guessing wrong runs the cheap way: a `.json` attachment also
+falls to `octet-stream` and would have compressed well, and what that costs is one download being
+larger. Guessing the other way costs a laptop a core re-deflating a video that is already
+deflated.
 
 ## And a script on top, that nothing depends on
 
