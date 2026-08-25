@@ -349,6 +349,38 @@ landing halfway through somebody pressing Save is what that lock is there for. T
 notebook, so a remote that has gone quiet slows nothing down but the notebook whose remote it
 is.
 
+**It stops when it is asked to, and stopping is three steps.** Ctrl-C or a `SIGTERM` — which
+is what `docker stop` and `systemctl stop` send — closes the listener, so nothing new is
+accepted. The requests already in flight are answered, which is what finishes a commit
+somebody's browser is waiting on. And then it waits for the one piece of work that was never
+a request:
+
+```
+$ noda web
+noda is at http://127.0.0.1:8080
+^CSIGINT — finishing what is in flight
+waiting for sync in work — signal again to leave it unfinished
+```
+
+That wait is the reason any of this exists. A `sync` is a commit, a fetch, a merge and a push
+in one repository, under git's `index.lock`; a process killed halfway through leaves the lock
+file behind, and the next write from anywhere — the browser, a terminal, another machine —
+fails with libgit2 saying a file exists, which is a true statement about a lock file and no
+help at all. So the wait has no deadline: there is no length of time after which abandoning a
+half-finished push becomes the right answer.
+
+What ends it early is a second signal, and only that. It stops the *waiting*, not the errand,
+which nothing here can stop; the process leaves with the errand halfway and says which one:
+
+```
+^CSIGINT again — not waiting
+noda: left sync in work unfinished
+```
+
+Which is also the difference in the exit status. Asked to stop and stopped is `0` — a
+supervisor reading that is entitled to tell it from a crash — and walking away from an errand
+is not.
+
 ## What every page needs, and no page carries
 
 The stylesheet and the scripts are links, not markup: `/a/style.<hash>.css`, and one address per

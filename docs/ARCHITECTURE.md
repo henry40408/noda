@@ -162,6 +162,15 @@ on a plain `std::thread` — the blocking pool is for work a request is waiting 
 precisely the work no request waits on — and the outcome outlives the errand, because a page that
 says nothing after a sync looks exactly like a page that ignored the button.
 
+**And that is the only reason stopping is more than closing the listener.** A signal — `SIGINT` or
+the `SIGTERM` a supervisor sends — makes `axum::serve` stop accepting and finish what is in flight,
+which by itself covers every kind of work here *except* an errand, because an errand is by
+definition the one that outlives its request. So `serve` ends with `work::Errands::settle`, a
+condvar the errand thread wakes on its way out. The wait has no deadline: an errand is a commit and
+a push under `index.lock`, and a process killed halfway through leaves that lock file for whoever
+writes next. A second signal ends the waiting — not the errand, which nothing here can stop — and
+the process leaves non-zero to say it did.
+
 ## Adding to it
 
 **A new command.** Five places, in this order: a variant in `main.rs`'s `Command` enum (clap

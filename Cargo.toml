@@ -154,12 +154,35 @@ axum = { version = "0.8.9", default-features = false, features = [
 tower-http = { version = "0.7.0", default-features = false, features = [
     "compression-gzip",
 ] }
-# The runtime and nothing else: no timers, no signals, no process spawning. The
-# blocking pool that `rt-multi-thread` brings is the part that matters, because
-# that is where every one of these handlers actually runs.
+# The runtime, the socket, and the two signals that mean stop: no timers, no
+# process spawning, no `fs`. The blocking pool that `rt-multi-thread` brings is
+# the part that matters, because that is where every one of these handlers
+# actually runs.
+#
+# `signal` is what makes `noda web` stop rather than die. Everything else here
+# finishes inside a request, so closing the listener would be the whole of
+# stopping — except that `sync`, `pull` and `push` deliberately outlive the
+# request that started them, and a `push` killed halfway is a repository with
+# `index.lock` still in it. `web::serve` says what the three steps are.
+#
+# `macros` is `tokio::select!`, used once, to wait on `SIGINT` and `SIGTERM`
+# together.
+#
+# **Neither of them brings a new crate to the binary.** `signal` wants
+# `signal-hook-registry`, which is already here — `crossterm` brings it for the
+# TUI — and `macros` builds `tokio-macros`, a proc macro, whose own `syn` and
+# `quote` are here for clap's derives. What they cost, release profile, against
+# the commit this branched from:
+#
+#     main                     7,657,680 bytes
+#     with `signal` + `macros` 7,690,848   (+33,168, +0.43%)
+#
+# Which is half of what gzip was accepted at one dependency up.
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt-multi-thread",
     "net",
+    "signal",
+    "macros",
 ] }
 # What `noda web` says about itself while it runs. Every other command answers
 # and exits, so its output is its answer; a server outlives the question, and

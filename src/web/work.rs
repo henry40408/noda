@@ -33,9 +33,14 @@
 //! handler does — `git2::Repository` is `!Send` — and it takes the same write
 //! lock every write takes, because a merge landing in the middle of somebody
 //! pressing Save is the collision the lock is there for.
+//!
+//! And because it outlives its request, it is the one thing here a shutdown has
+//! to wait for: closing the listener finishes every other kind of work by
+//! definition, and finishes this one halfway through a commit. `settle` is that
+//! wait.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::notebook::Notebook;
@@ -156,8 +161,43 @@ impl Report {
 /// Keyed by notebook, because two notebooks are two repositories and there is
 /// nothing for them to collide over. The write lock they both take is a
 /// different question, and it is the server's.
+///
+/// **The condvar is what a shutdown waits on**, and it is here rather than in
+/// the server because this is the only state in the whole of `noda web` that
+/// outlives the request that made it. Everything else finishes inside a
+/// request, so closing the listener is the whole of stopping; an errand is
+/// still going afterwards, and what it is in the middle of is a commit, a fetch
+/// and a push holding one repository's `index.lock`. See `settle`.
 #[derive(Default)]
-pub struct Errands(Mutex<BTreeMap<String, Doing>>);
+pub struct Errands {
+    state: Mutex<State>,
+    ended: Condvar,
+}
+
+/// The map, and the one thing about it that is not about a notebook.
+#[derive(Default)]
+struct State {
+    each: BTreeMap<String, Doing>,
+    /// Somebody signalled a second time: stop waiting for what is left.
+    ///
+    /// Under the same lock as the map and not an `AtomicBool` beside it,
+    /// because `settle` tests it and then sleeps on the condvar. A flag set
+    /// between those two steps by a thread that held no lock would be a
+    /// wake-up sent to a waiter that had not started waiting yet — which is the
+    /// one bug in a condvar that reproduces only when somebody is in a hurry.
+    abandoned: bool,
+}
+
+impl State {
+    /// The errands still going, as `(notebook, errand)`, in notebook order.
+    fn running(&self) -> Vec<(String, Errand)> {
+        self.each
+            .iter()
+            .filter(|(_, doing)| doing.outcome.is_none())
+            .map(|(book, doing)| (book.clone(), doing.errand))
+            .collect()
+    }
+}
 
 impl Errands {
     /// Marks an errand as under way, unless the notebook already has one.
@@ -166,14 +206,15 @@ impl Errands {
     /// mark happen under one lock — two requests arriving together must not both
     /// be told they are the first.
     pub fn begin(&self, book: &str, errand: Errand) -> bool {
-        let mut errands = self.held();
-        if errands
+        let mut state = self.held();
+        if state
+            .each
             .get(book)
             .is_some_and(|doing| doing.outcome.is_none())
         {
             return false;
         }
-        errands.insert(
+        state.each.insert(
             book.to_string(),
             Doing {
                 errand,
@@ -187,15 +228,64 @@ impl Errands {
 
     /// Records how it ended. Called by the thread that ran it, always.
     pub fn finish(&self, book: &str, outcome: Outcome) {
-        if let Some(doing) = self.held().get_mut(book) {
+        if let Some(doing) = self.held().each.get_mut(book) {
             doing.took = Some(doing.started.elapsed());
             doing.outcome = Some(outcome);
         }
+        // Outside the `if`, and after the guard has gone: whoever is waiting in
+        // `settle` has to be woken however this ended, and an errand whose
+        // record has somehow gone missing is still an errand that has stopped.
+        self.ended.notify_all();
+    }
+
+    /// The errands still going, as `(notebook, errand)`, in notebook order.
+    ///
+    /// For the one caller that needs to say out loud what it is about to wait
+    /// for. A page asks `report` about the notebook it is showing; this is the
+    /// question nothing but a shutdown asks.
+    pub fn running(&self) -> Vec<(String, Errand)> {
+        self.held().running()
+    }
+
+    /// Blocks until no errand is running, and answers with what it gave up on
+    /// — which is nothing at all in every ordinary shutdown.
+    ///
+    /// **The last thing `serve` does, and the reason a signal is worth handling
+    /// at all here.** A `sync` is `cmd::sync_in`: a commit, a fetch, a merge and
+    /// a push, in one repository, under `index.lock`. A process killed in the
+    /// middle of that leaves the lock file behind, and the next write — from the
+    /// browser, from a terminal, from anywhere — fails with libgit2 reporting
+    /// that a file exists, which is a true statement about a lock file and no
+    /// help at all to whoever meets it.
+    ///
+    /// It waits rather than timing out, because there is no length of time after
+    /// which abandoning a half-finished push becomes the right answer. What ends
+    /// the wait early is `abandon` — a second signal, a deliberate one, and not
+    /// a guess made in advance about how slow somebody's network is allowed to
+    /// be.
+    pub fn settle(&self) -> Vec<(String, Errand)> {
+        let mut state = self.held();
+        while !state.abandoned && !state.running().is_empty() {
+            state = self
+                .ended
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        state.running()
+    }
+
+    /// Stops `settle` waiting, now.
+    ///
+    /// The second signal. It does not stop the errand — nothing can, short of
+    /// the process ending, which is what happens next — it stops the waiting.
+    pub fn abandon(&self) {
+        self.held().abandoned = true;
+        self.ended.notify_all();
     }
 
     /// What that notebook's errand is doing, or did.
     pub fn report(&self, book: &str) -> Option<Report> {
-        self.held().get(book).map(|doing| Report {
+        self.held().each.get(book).map(|doing| Report {
             errand: doing.errand,
             outcome: doing.outcome.clone(),
             took: doing.took.unwrap_or_else(|| doing.started.elapsed()),
@@ -207,8 +297,8 @@ impl Errands {
     /// A panic in one errand must not take the button away for the rest of the
     /// session: the map is a record of what happened, and a record that refuses
     /// to be read because a reader of it once panicked is worse than the panic.
-    fn held(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Doing>> {
-        self.0
+    fn held(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -274,6 +364,65 @@ mod tests {
         let report = errands.report("work").expect("it was begun");
         assert_eq!(report.errand, Errand::Push);
         assert!(report.running());
+    }
+
+    /// What a shutdown waits for, and what it says it is waiting for.
+    ///
+    /// The wake-up is the part worth a test: if `finish` stopped notifying,
+    /// every other test here would still pass and `noda web` would hang on
+    /// Ctrl-C until somebody pressed it again.
+    #[test]
+    fn stopping_waits_for_an_errand_to_end() {
+        let errands = std::sync::Arc::new(Errands::default());
+        assert!(errands.begin("work", Errand::Sync));
+        assert_eq!(errands.running(), vec![("work".to_string(), Errand::Sync)]);
+
+        let ending = std::sync::Arc::clone(&errands);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            ending.finish("work", Outcome::Went("push: sent 1 commit".into()));
+        });
+
+        let waited = Instant::now();
+        assert!(errands.settle().is_empty(), "it gave up on something");
+        assert!(
+            waited.elapsed() >= Duration::from_millis(50),
+            "it came back before the errand had ended"
+        );
+        assert!(errands.running().is_empty());
+        thread.join().expect("the errand's thread");
+    }
+
+    /// And a second signal ends the wait rather than the errand: `settle` comes
+    /// back at once, naming what it walked away from, and the errand is still
+    /// running because nothing here can stop one.
+    #[test]
+    fn a_second_signal_stops_the_waiting() {
+        let errands = Errands::default();
+        assert!(errands.begin("work", Errand::Push));
+
+        errands.abandon();
+        let waited = Instant::now();
+        assert_eq!(errands.settle(), vec![("work".to_string(), Errand::Push)]);
+        assert!(
+            waited.elapsed() < Duration::from_millis(500),
+            "it kept waiting after being told not to"
+        );
+    }
+
+    /// And nothing running is nothing to wait for — both before anything has
+    /// happened and after everything has. A shutdown of an idle server has to be
+    /// immediate, or the common case is the slow one.
+    #[test]
+    fn nothing_running_is_nothing_to_wait_for() {
+        let errands = Errands::default();
+        assert!(errands.running().is_empty());
+        assert!(errands.settle().is_empty());
+
+        errands.begin("work", Errand::Pull);
+        errands.finish("work", Outcome::Went("pull: already up to date".into()));
+        assert!(errands.running().is_empty());
+        assert!(errands.settle().is_empty());
     }
 
     /// A finished errand stops ageing: what the page shows is how long it took,
