@@ -42,6 +42,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
 use crate::note::{self, Note};
 use crate::notebook::Notebook;
@@ -223,6 +225,33 @@ fn router(server: Shared) -> Router {
         // answer. It still runs after routing — axum matches the route before
         // handing the request to the layers — which is what puts the template
         // within reach at all.
+        // **Compression, and the two content types it is kept away from.**
+        //
+        // Inside the log's layer, so what the log times is what the reader
+        // waits for: an answer is not finished until it is compressed.
+        //
+        // `DefaultPredicate` already declines a body under 32 bytes and
+        // anything whose type starts `image/` — which covers every attachment
+        // noda shows in place, and `/health`, whose whole body is the word
+        // `ok`. The two added here are the rest of what a notebook holds: a PDF
+        // is a container of already-deflated streams, and
+        // `application/octet-stream` is what `holding` falls back to for an
+        // extension it does not know, which in a notebook is most often a zip,
+        // a video or a disk image. Spending a core on those buys tens of bytes.
+        //
+        // The risk of being wrong runs the cheap way round. A `.json` or a
+        // `.rs` attachment also lands on `octet-stream` and would have
+        // compressed well, and what that costs is one download being bigger. A
+        // predicate that guessed the other way costs a phone's battery
+        // re-deflating a video that is already deflated, on a machine that is
+        // usually somebody's laptop.
+        .layer(
+            CompressionLayer::new().compress_when(
+                DefaultPredicate::new()
+                    .and(NotForContentType::const_new("application/pdf"))
+                    .and(NotForContentType::const_new("application/octet-stream")),
+            ),
+        )
         .layer(middleware::from_fn(log::timed))
         .with_state(server)
 }

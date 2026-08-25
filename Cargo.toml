@@ -115,6 +115,45 @@ axum = { version = "0.8.9", default-features = false, features = [
     # name, and both of those are the reader's own. See `web::log`.
     "matched-path",
 ] }
+# gzip on the way out, and it is here for one number: a listing is a column of
+# rows that differ in a few words each, and that is the most compressible thing
+# this server sends. Measured against the five-note fixture and a two-hundred
+# note notebook, release profile, one machine:
+#
+#     a sort switch (the index fragment, 200 notes)   74,163 -> 4,043  (-94.6%)
+#     a listing page                                  75,900 -> 4,802  (-93.7%)
+#     the stylesheet                                  39,598 -> 12,489 (-68.5%)
+#
+# **Three ways of making a sort switch smaller were costed, and this is the one
+# that beat the clever one.** Sending only the new order — a list of ids for the
+# script to reorder the rows it already has — comes to 4,704 bytes, which is
+# *larger than gzip alone* and worth another 2.3 KB after it. It would have cost
+# a new fragment vocabulary and a client that rewrites stamps, so the protocol
+# stayed as it was and the bytes went through a deflater instead.
+#
+# What it costs, same profile, against the commit this branched from:
+#
+#     main                      7,591,472 bytes
+#     with `compression-gzip`  +   66,208   (+0.87%)
+#
+# Which is a third of what `Targets` was accepted at a few dependencies down,
+# and an eighth of what `EnvFilter` was turned down at. Cold start moves about
+# +0.04 ms on `ls`, against a run-to-run spread of ~0.02 ms on one binary —
+# `scripts/bench-coldstart.sh` cannot quite resolve it.
+#
+# `compression-gzip` alone: no brotli, which compresses a little better and
+# carries a dictionary to do it, and no zstd. gzip is the encoding every browser
+# has sent since before this project started, and the second one would be paying
+# again for the same 94%.
+#
+# The features are the minimum: `compression-gzip` brings `futures-core` and
+# `tokio-util` with it and nothing else. `tower-http` has forty other features
+# and noda wants none of them — the guard, the logging and the caching headers
+# here are all noda's own, written against what a notebook needs rather than
+# what a server usually needs.
+tower-http = { version = "0.7.0", default-features = false, features = [
+    "compression-gzip",
+] }
 # The runtime and nothing else: no timers, no signals, no process spawning. The
 # blocking pool that `rt-multi-thread` brings is the part that matters, because
 # that is where every one of these handlers actually runs.

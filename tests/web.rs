@@ -803,6 +803,84 @@ fn an_order_survives_a_search_and_a_search_survives_an_order() {
     assert!(!plain.says("name=\"r\""), "{}", plain.body);
 }
 
+/// **An answer is compressed when the reader asks for it, and not otherwise.**
+///
+/// The whole of what this can fail on. Whether the bytes gunzip correctly is
+/// `flate2`'s business and not noda's, and it is covered where it can actually
+/// break: `e2e/` drives a real browser, which sends `Accept-Encoding` on every
+/// request and would render a broken page if the answer were corrupt. What is
+/// noda's is *which* answers get compressed, and that is what is asserted here.
+///
+/// Note that the harness never sends `Accept-Encoding` anywhere else, which is
+/// why every other test in this file still reads a body: a compressed answer is
+/// `transfer-encoding: chunked` and the raw socket sees the framing.
+#[test]
+fn an_answer_is_compressed_only_when_the_reader_asks_for_it() {
+    let (server, _paths) = serving();
+
+    let asked = server.request("/nb/default", &[("Accept-Encoding", "gzip")]);
+    assert_eq!(asked.status, 200);
+    assert_eq!(asked.header("content-encoding").as_deref(), Some("gzip"));
+    // Without it, a cache that kept this answer would hand gzip to a reader who
+    // never said they could read it. `tower-http` says so itself; the assertion
+    // is here because the header is the whole of what makes the year-long
+    // `cache-control` on an asset safe.
+    assert!(
+        asked.head.to_lowercase().contains("vary: accept-encoding"),
+        "{}",
+        asked.head
+    );
+
+    let plain = server.get("/nb/default");
+    assert_eq!(plain.header("content-encoding"), None, "{}", plain.head);
+    // And it is still the page it always was — the reader with no
+    // `Accept-Encoding` is the scriptless reader's neighbour, and neither gets a
+    // different answer.
+    assert!(plain.says("Budget review"), "{}", plain.body);
+}
+
+/// **What is already compressed is not compressed again.**
+///
+/// Both files here hold the same thousand bytes of the most compressible text
+/// there is, so the only thing telling them apart is what `holding` says they
+/// are. That is the point: if the predicate were wrong, gzip would fire on the
+/// `.bin` and this would catch it — a test whose two halves differ only in the
+/// decision being tested.
+#[test]
+fn what_is_already_compressed_is_not_compressed_again() {
+    let (root, paths) = a_notebook();
+    let filler = "the quarterly budget is late\n".repeat(40);
+    for name in ["notes.txt", "archive.bin"] {
+        let path = root.0.join(name);
+        std::fs::write(&path, &filler).expect("write the attachment");
+        cmd::file_add(&paths, &[path], None).expect("file add");
+    }
+    let server = Serving::start(root, &[]);
+
+    // Text, and worth the CPU: a thousand bytes of one repeated line.
+    let text = server.request("/nb/default/f/notes.txt", &[("Accept-Encoding", "gzip")]);
+    assert_eq!(text.status, 200);
+    assert_eq!(text.header("content-encoding").as_deref(), Some("gzip"));
+
+    // The same bytes under an extension `holding` does not know, which makes it
+    // `application/octet-stream` — a zip, a video or a disk image, as far as
+    // anything here can tell.
+    let blob = server.request("/nb/default/f/archive.bin", &[("Accept-Encoding", "gzip")]);
+    assert_eq!(blob.status, 200);
+    assert_eq!(blob.header("content-encoding"), None, "{}", blob.head);
+
+    // An image, which `DefaultPredicate` declines on noda's behalf.
+    let png = server.request("/nb/default/f/rack.png", &[("Accept-Encoding", "gzip")]);
+    assert_eq!(png.status, 200);
+    assert_eq!(png.header("content-encoding"), None, "{}", png.head);
+
+    // And the floor: `/health` is the word `ok`, and a gzip header would be
+    // longer than the body it describes.
+    let health = server.request("/health", &[("Accept-Encoding", "gzip")]);
+    assert_eq!(health.status, 200);
+    assert_eq!(health.header("content-encoding"), None, "{}", health.head);
+}
+
 #[test]
 fn a_query_narrows_the_listing_and_marks_what_matched() {
     let (server, _paths) = serving();
