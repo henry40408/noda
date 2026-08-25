@@ -681,6 +681,11 @@ machine only** until `--listen` says otherwise, refuses a request whose `Origin`
 site, and answers to a hostname only when `--allow-host` has named it — which is the
 DNS-rebinding half, and what you will need behind a reverse proxy.
 
+**Ctrl-C stops it rather than killing it**, and so does the `SIGTERM` a supervisor sends. It
+stops accepting, answers what is in flight, and then waits for a `sync` that is still running
+— a push interrupted halfway leaves git's own lock file behind, and the next write from
+anywhere meets it. A second signal stops the waiting.
+
 **[In a browser →](docs/web.md)** — every screen, the security model in full, what it logs
 and how to turn it up, and the script layer that nothing depends on.
 

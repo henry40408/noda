@@ -67,4 +67,10 @@ ENV HOME=/data
 VOLUME /data
 WORKDIR /data
 
+# Exec form, so `noda` is PID 1 and `docker stop` sends it the `SIGTERM` itself
+# rather than to a shell that would keep it. That matters for exactly one
+# subcommand: `noda web` answers what is in flight and waits for a running
+# `sync` before it goes, and an interrupted `sync` is a repository left holding
+# git's `index.lock`. Under the shell form the signal would go nowhere, the ten
+# seconds would run out, and `SIGKILL` is precisely the ending that leaves it.
 ENTRYPOINT ["/noda"]

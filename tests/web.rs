@@ -21,7 +21,7 @@ use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use noda::cmd;
@@ -265,8 +265,25 @@ struct Serving {
     // Declared before the root so it is killed before the directory it is
     // reading goes away.
     child: Child,
+    /// The server's stdout, still open past the first line.
+    ///
+    /// **Held rather than dropped, and that is not tidiness.** Reading the port
+    /// out of the first line used to be the end of it, and dropping the reader
+    /// closed the pipe — which was invisible while the only thing on stdout was
+    /// those first lines. A server that says something on the way out would
+    /// meet a closed pipe instead, and `println!` panics on one: the harness
+    /// would have turned a clean shutdown into a crash and then reported the
+    /// crash as the behaviour.
+    said: BufReader<ChildStdout>,
     port: u16,
     _root: TempRoot,
+}
+
+/// How a server that was asked to stop ended.
+struct Stopped {
+    status: ExitStatus,
+    /// Everything it wrote to stdout after the address.
+    said: String,
 }
 
 impl Serving {
@@ -302,9 +319,9 @@ impl Serving {
         // rather than when the process ends — which is just as well, because it
         // does not end.
         let stdout = child.stdout.take().expect("stdout");
+        let mut said = BufReader::new(stdout);
         let mut first = String::new();
-        BufReader::new(stdout)
-            .read_line(&mut first)
+        said.read_line(&mut first)
             .expect("the server should say where it is");
         let port = first
             .trim()
@@ -314,9 +331,51 @@ impl Serving {
 
         Serving {
             child,
+            said,
             port,
             _root: root,
         }
+    }
+
+    /// Asks it to stop the way a person or a supervisor does, and waits.
+    ///
+    /// `kill(1)` rather than a crate: the two signals under test are the two
+    /// every shell can send, and a dependency added to a test would be a
+    /// dependency in the binary's lockfile.
+    #[cfg(unix)]
+    fn signalled(&mut self, signal: &str) -> Stopped {
+        let pid = self.child.id().to_string();
+        let sent = Command::new("kill")
+            .arg(format!("-{signal}"))
+            .arg(&pid)
+            .status()
+            .expect("send a signal");
+        assert!(sent.success(), "could not send {signal} to {pid}");
+
+        let status = self.waited();
+        // After it has gone, so the pipe holds everything it had to say and
+        // there is no arrangement of reads that can miss the last line.
+        let mut said = String::new();
+        self.said
+            .read_to_string(&mut said)
+            .expect("the rest of stdout");
+        Stopped { status, said }
+    }
+
+    /// Five seconds, and then it is a failure rather than a hung test.
+    ///
+    /// The point of the whole feature is that it stops, so a version of it that
+    /// does not stop has to be reported as broken and not as slow.
+    #[cfg(unix)]
+    fn waited(&mut self) -> ExitStatus {
+        for _ in 0..200 {
+            if let Some(status) = self.child.try_wait().expect("wait on the server") {
+                return status;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let _ = self.child.kill();
+        panic!("the server was asked to stop and did not");
     }
 
     /// The same server with the request stream turned on.
@@ -2547,4 +2606,113 @@ fn there_is_nothing_called_fetch_to_do_to_a_notebook() {
     assert_eq!(server.post("/nb/default/status/fetch", &[]).status, 404);
     assert_eq!(server.post("/nb/nowhere/status/sync", &[]).status, 404);
     assert_eq!(server.get("/nb/nowhere/status").status, 404);
+}
+
+// ---------------------------------------------------------------- stopping it
+
+/// `SIGTERM` is what a supervisor sends: `docker stop`, `systemctl stop`, and
+/// anything else that is not a person at a keyboard.
+///
+/// **The exit status is half of what is under test.** A server that was asked
+/// to stop and did has not failed, and the whole reason to send `SIGTERM`
+/// rather than `SIGKILL` is to be able to tell the difference afterwards.
+#[test]
+#[cfg(unix)]
+fn a_supervisor_can_stop_it() {
+    let (root, _paths) = a_notebook();
+    let mut server = Serving::start(root, &[]);
+    // It is answering first, so what follows is about the stop and not about a
+    // server that never came up.
+    assert_eq!(server.get("/health").status, 200);
+
+    let stopped = server.signalled("TERM");
+    assert!(
+        stopped.status.success(),
+        "asked to stop, it should exit 0: {:?}",
+        stopped.status
+    );
+    assert!(
+        stopped.said.contains("SIGTERM"),
+        "it should name what stopped it: {:?}",
+        stopped.said
+    );
+}
+
+/// And `SIGINT` is the person at the keyboard. Both, because a server that
+/// handled only Ctrl-C would be careful exactly when somebody could see it.
+#[test]
+#[cfg(unix)]
+fn ctrl_c_stops_it_too() {
+    let (root, _paths) = a_notebook();
+    let mut server = Serving::start(root, &[]);
+    assert_eq!(server.get("/health").status, 200);
+
+    let stopped = server.signalled("INT");
+    assert!(
+        stopped.status.success(),
+        "asked to stop, it should exit 0: {:?}",
+        stopped.status
+    );
+    assert!(
+        stopped.said.contains("SIGINT"),
+        "it should name what stopped it: {:?}",
+        stopped.said
+    );
+}
+
+/// Stopped means the socket is gone, not merely that the process is quieter.
+#[test]
+#[cfg(unix)]
+fn nothing_answers_once_it_has_stopped() {
+    let (root, _paths) = a_notebook();
+    let mut server = Serving::start(root, &[]);
+    let port = server.port;
+    assert_eq!(server.get("/health").status, 200);
+
+    server.signalled("TERM");
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "port {port} is still accepting connections"
+    );
+}
+
+/// A browser that is still holding a connection open does not keep it running.
+///
+/// **The failure this is written against is a hang, not a wrong answer.** A
+/// graceful shutdown waits for connections, and a phone that read a page and
+/// left the tab open has an idle keep-alive connection sitting there — so a
+/// shutdown that waited for *every* connection to close of its own accord would
+/// be waiting for somebody to close a tab. `Serving::waited` is what turns that
+/// into a failing test rather than a hanging one.
+#[test]
+#[cfg(unix)]
+fn an_idle_connection_does_not_hold_it_open() {
+    let (root, _paths) = a_notebook();
+    let mut server = Serving::start(root, &[]);
+
+    // Deliberately without the `Connection: close` every other request in this
+    // file sends — so the server keeps this one alive, and only the status line
+    // is read back off it.
+    let mut socket = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    let wire = format!(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        server.port
+    );
+    socket.write_all(wire.as_bytes()).expect("write a request");
+    let mut answered = String::new();
+    BufReader::new(&socket)
+        .read_line(&mut answered)
+        .expect("read the status line");
+    assert!(answered.contains("200"), "{answered:?}");
+
+    // And a second connection that was accepted and never said anything at all,
+    // which is the other shape of the same problem.
+    let _silent = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+
+    let stopped = server.signalled("TERM");
+    assert!(
+        stopped.status.success(),
+        "it should have stopped anyway: {:?}",
+        stopped.status
+    );
 }

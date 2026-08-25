@@ -126,12 +126,21 @@ fn fingerprint(path: &std::path::Path) -> Result<String> {
 
 type Shared = Arc<Server>;
 
-/// Serves until killed.
+/// Serves until it is asked to stop.
 ///
 /// The address is printed rather than returned, unlike every other command here:
-/// this one does not finish, and what a reader needs is the URL to type into a
-/// phone — now, not when the process ends. The `String` it answers with is the
-/// shape `main` prints and is always empty, for the same reason.
+/// this one does not finish while anybody is using it, and what a reader needs
+/// is the URL to type into a phone — now, not when the process ends. The
+/// `String` it answers with is the shape `main` prints and is always empty, for
+/// the same reason.
+///
+/// **Stopping is three steps, and the order is the whole of it.** A signal
+/// closes the listener, so nothing new is accepted; the requests already in
+/// flight are answered, which is what finishes a commit somebody's browser is
+/// waiting on; and then `settle` waits for the one kind of work that outlives a
+/// request. Only then does the process end, with a `0` — a server that was asked
+/// to stop and did has not failed, and a supervisor reading the exit status is
+/// entitled to tell that from a crash.
 pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format) -> Result<String> {
     // Before the bind, so a failure to listen is the first thing the log says
     // rather than the first thing it misses.
@@ -144,28 +153,147 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
     });
 
     // Built by hand rather than with `#[tokio::main]`: `main` is a clap match
-    // arm and every other arm is ordinary blocking code. Only I/O is enabled —
-    // there are no timers here, and no signal handling beyond what the terminal
-    // already does to a foreground process.
+    // arm and every other arm is ordinary blocking code. I/O and nothing else,
+    // which is also what makes the signals below arrive — tokio's signal driver
+    // is part of its I/O driver. There are still no timers: nothing here waits
+    // for a length of time, the shutdown included.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .build()?;
 
-    runtime.block_on(async move {
-        let listener = tokio::net::TcpListener::bind(listen)
-            .await
-            .map_err(|e| Error::msg(format!("could not listen on {listen}: {e}")))?;
-        let at = listener.local_addr()?;
-        println!("noda is at http://{at}");
-        // Said every time, because it is the difference between a notebook on
-        // one machine and a notebook on the network, and it is not something to
-        // find out about afterwards.
-        if !at.ip().is_loopback() {
-            println!("reachable from the network — there is no password on it");
+    runtime.block_on({
+        let server = Arc::clone(&server);
+        async move {
+            // Before the bind, so that a signal arriving in the first
+            // millisecond of the process has somewhere to go.
+            let stop = Stop::listen()?;
+            let listener = tokio::net::TcpListener::bind(listen)
+                .await
+                .map_err(|e| Error::msg(format!("could not listen on {listen}: {e}")))?;
+            let at = listener.local_addr()?;
+            println!("noda is at http://{at}");
+            // Said every time, because it is the difference between a notebook
+            // on one machine and a notebook on the network, and it is not
+            // something to find out about afterwards.
+            if !at.ip().is_loopback() {
+                println!("reachable from the network — there is no password on it");
+            }
+            axum::serve(listener, router(Arc::clone(&server)))
+                .with_graceful_shutdown(asked_to_stop(stop, server))
+                .await?;
+            Ok::<(), Error>(())
         }
-        axum::serve(listener, router(server)).await?;
-        Ok(String::new())
-    })
+    })?;
+
+    // Nothing is listening any more and every request that was in flight has
+    // been answered. What can still be running is a `sync`, a `pull` or a
+    // `push`, which never was a request — `work::Errands::settle` is why that
+    // wait has no length and what ends it early.
+    for (book, errand) in server.errands.running() {
+        println!(
+            "waiting for {} in {book} — signal again to leave it unfinished",
+            errand.name()
+        );
+    }
+    let left = server.errands.settle();
+    if left.is_empty() {
+        return Ok(String::new());
+    }
+    // Somebody signalled twice. The process is about to end with an errand
+    // halfway through, which is the thing the wait exists to avoid — so it is
+    // said out loud, and it is a failure: `noda web` that was asked to stop and
+    // stopped exits `0`, and this did not.
+    Err(Error::msg(format!(
+        "left {} unfinished",
+        left.iter()
+            .map(|(book, errand)| format!("{} in {book}", errand.name()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
+}
+
+/// Resolves on the first signal that means stop, and arms the second.
+///
+/// The future axum waits on before it closes the listener. What it does *after*
+/// resolving is the half that is easy to miss: it hands the same signal streams
+/// to a task that waits for the next one. Making that task any later — after the
+/// shutdown, or at the top of the wait for an errand — leaves a window in which
+/// a signal is delivered to nobody, and that window is exactly the moment
+/// somebody presses again because nothing seems to be happening.
+///
+/// **A second signal cuts short the wait, and not the shutdown.** What it ends
+/// is `settle`, which is unbounded because a push to a host that has stopped
+/// answering is minutes of libgit2 sitting on a socket. The other half — the
+/// requests in flight — is bounded by what a request here does, which is a file
+/// or a commit, and there is nothing to escape from.
+///
+/// The line it prints goes to stdout, next to the two the startup prints, and
+/// for the same reason: this is the command talking about itself rather than an
+/// event about a request, and `web::log` says why those are different streams
+/// here.
+async fn asked_to_stop(mut stop: Stop, server: Shared) {
+    println!("{} — finishing what is in flight", stop.next().await);
+    tokio::spawn(async move {
+        println!("{} again — not waiting", stop.next().await);
+        server.errands.abandon();
+    });
+}
+
+/// The signals that mean stop, listened for once and consumed twice.
+///
+/// **Both of them, and the pair is the point.** `SIGINT` is somebody at a
+/// terminal pressing Ctrl-C. `SIGTERM` is `docker stop`, `systemctl stop` and
+/// every other supervisor, and it is the one that arrives when nobody is
+/// watching — so a server that handled only the first would be careful exactly
+/// when a person could see it and abrupt the rest of the time.
+///
+/// Each is named in what is printed, because a line in a container's log saying
+/// `SIGTERM` is the difference between "the orchestrator stopped it" and "it
+/// fell over".
+#[cfg(unix)]
+struct Stop {
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl Stop {
+    fn listen() -> std::io::Result<Stop> {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        Ok(Stop {
+            interrupt: signal(SignalKind::interrupt())?,
+            terminate: signal(SignalKind::terminate())?,
+        })
+    }
+
+    /// The next one to arrive, by name.
+    ///
+    /// Streams and not `tokio::signal::ctrl_c()`, because this is awaited twice:
+    /// a `Signal` holds its registration across both, so one that lands between
+    /// them is remembered rather than delivered to nobody.
+    async fn next(&mut self) -> &'static str {
+        tokio::select! {
+            _ = self.interrupt.recv() => "SIGINT",
+            _ = self.terminate.recv() => "SIGTERM",
+        }
+    }
+}
+
+/// Ctrl-C alone, where there is no `SIGTERM` to have an opinion about.
+#[cfg(not(unix))]
+struct Stop;
+
+#[cfg(not(unix))]
+impl Stop {
+    fn listen() -> std::io::Result<Stop> {
+        Ok(Stop)
+    }
+
+    async fn next(&mut self) -> &'static str {
+        let _ = tokio::signal::ctrl_c().await;
+        "Ctrl-C"
+    }
 }
 
 fn router(server: Shared) -> Router {
