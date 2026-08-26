@@ -1,22 +1,17 @@
-//! What `:` accepts.
+//! What `:` accepts — noda's own subcommand names, because the whole reason for
+//! a prompt is that the vocabulary already exists: thirty subcommands, of which
+//! a key can only ever reach the handful worth a letter.
 //!
-//! The names are noda's own subcommand names. A browser that invented a second
-//! vocabulary for the same commands would be a second thing to learn, and the
-//! whole reason for a prompt here is that the vocabulary already exists — thirty
-//! subcommands, of which a key can only ever reach the handful worth a letter.
-//!
-//! The table is data rather than a `match` arm apiece so that it can be read
-//! back: `Ctrl-a` shows it, filtered as you type, and the help card counts it.
-//! What each one *means* is in `app`, next to the state it moves, because that
-//! is the part that needs the session in hand.
+//! Data rather than a `match` arm apiece so it can be read back: `Ctrl-a` shows
+//! it and the help card counts it. What each one *means* is in `app`, next to
+//! the state it moves.
 
 /// One command, as it is typed and as it is listed.
 pub struct Spec {
-    /// The name this command is known by, which is the noda subcommand's.
+    /// The noda subcommand's own name.
     pub name: &'static str,
-    /// Other spellings, shortest first. A prefix is not enough on its own —
-    /// `s` would have to choose between `status`, `snapshot` and `sync`, and a
-    /// prompt that guessed would eventually guess wrong about a `push`.
+    /// Other spellings, shortest first. A prefix is not enough: `s` would have
+    /// to choose between `status`, `snapshot` and `sync`.
     pub aliases: &'static [&'static str],
     /// What it takes after the name, in the notation the CLI's own help uses:
     /// `<required>`, `[optional]`, `...` for more than one.
@@ -26,7 +21,7 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// The name and what it takes, as one thing to show in a list.
+    /// The name and what it takes, as one string for a list.
     pub fn usage(&self) -> String {
         if self.takes.is_empty() {
             self.name.to_string()
@@ -51,9 +46,8 @@ pub const COMMANDS: &[Spec] = &[
         takes: "[query...]",
         what: "back to the listing, filtered if a query is given",
     },
-    // The screens. Each shows what the subcommand of the same name prints, so
-    // `:` stays one vocabulary — and each is a full-width screen because that is
-    // what these outputs need: a blame or a patch does not fit beside anything.
+    // The screens, each showing what the subcommand of the same name prints.
+    // Full width, because a blame or a patch does not fit beside anything.
     Spec {
         name: "todo",
         aliases: &["t"],
@@ -72,9 +66,8 @@ pub const COMMANDS: &[Spec] = &[
         takes: "[note]",
         what: "what links to a note — the one shown, or one named",
     },
-    // No note means the notebook here, and one note means that note. The only
-    // command on this list that reads either, which is why it is the only one
-    // whose empty form is not "the note in front of you".
+    // No note means the notebook, one note means that note — the only command
+    // here whose empty form is not "the note in front of you".
     Spec {
         name: "log",
         aliases: &["l"],
@@ -135,20 +128,16 @@ pub const COMMANDS: &[Spec] = &[
         takes: "[note] +tag -tag...",
         what: "add and remove tags: +work -q3 -\"two words\"",
     },
-    // No note may be named. A delete is the one thing here that asks a
-    // question, and the question is only worth asking about a note you can see
-    // — naming one would put the answer on a screen showing something else.
+    // No note may be named: the question is only worth asking about a note you
+    // can see.
     Spec {
         name: "rm",
         aliases: &[],
         takes: "",
         what: "delete the note on screen, after a y",
     },
-    // Two arguments and no confirmation, deliberately: `restore` writes a note
-    // back as a new commit, so nothing is lost by it — and naming both a note
-    // and a revision is not something anybody does by accident. The deleted and
-    // log screens put the line here rather than running it, which is where the
-    // deciding happens.
+    // No confirmation, deliberately: `restore` writes a new commit so nothing
+    // is lost, and naming both a note and a revision is not an accident.
     Spec {
         name: "restore",
         aliases: &[],
@@ -223,23 +212,17 @@ pub const COMMANDS: &[Spec] = &[
     },
 ];
 
-/// The command a name spells, by its own name or by one of its other spellings.
-///
-/// Exact only. A prompt that completed a prefix would have to choose between
-/// `push` and `pull` on `pu`, and the wrong choice there is a network call you
-/// did not ask for.
+/// Exact only: completing a prefix would have to choose between `push` and
+/// `pull` on `pu`, and the wrong choice is a network call nobody asked for.
 pub fn find(name: &str) -> Option<&'static Spec> {
     COMMANDS
         .iter()
         .find(|spec| spec.name == name || spec.aliases.contains(&name))
 }
 
-/// The commands whose name, spelling or description contains what has been
-/// typed, in table order.
-///
-/// The description is searched as well as the name, because the list is for
-/// somebody who knows what they want to do and not what it is called — `remote`
-/// finds `push` and `pull` that way.
+/// Name, spelling and description all searched, in table order — the list is
+/// for somebody who knows what they want to do and not what it is called, so
+/// `remote` finds `push` and `pull`.
 pub fn matching(filter: &str) -> impl Iterator<Item = &'static Spec> {
     let filter = filter.trim().to_lowercase();
     COMMANDS.iter().filter(move |spec| {
@@ -276,23 +259,19 @@ mod tests {
         assert_eq!(find("o").map(|spec| spec.name), Some("open"));
         assert_eq!(find("show").map(|spec| spec.name), Some("open"));
         assert!(find("").is_none());
-        // Not a prefix: `pu` spells both `push` and `pull`, and guessing there
-        // is a network call nobody asked for.
+        // `pu` spells both `push` and `pull`.
         assert!(find("pu").is_none());
         assert!(find("stat").is_none());
     }
 
     #[test]
     fn the_list_is_searched_by_what_a_command_does_as_well_as_by_its_name() {
-        // Both, in table order: the screen of every tag comes before the command
-        // that changes a note's. Narrowing is a filter and not a guess, so a
-        // word that is the whole of one name and the start of another finds
-        // both rather than choosing.
+        // Narrowing is a filter and not a guess, so a word that is the whole of
+        // one name and the start of another finds both.
         let named: Vec<&str> = matching("tag").map(|spec| spec.name).collect();
         assert_eq!(named, vec!["tags", "tag"]);
 
-        // What somebody who wants to get their notes onto the remote would type,
-        // knowing that and not the three names it goes by.
+        // Typed by somebody who knows the goal, not the three names for it.
         let described: Vec<&str> = matching("remote").map(|spec| spec.name).collect();
         assert!(described.contains(&"push"), "{described:?}");
         assert!(described.contains(&"pull"), "{described:?}");

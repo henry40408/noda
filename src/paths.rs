@@ -1,8 +1,6 @@
-//! XDG base directory resolution.
-//!
-//! noda honors the XDG variables on every platform, including macOS. A variable is
-//! only honored when it holds an absolute path, per the spec; otherwise the default
-//! under `$HOME` applies.
+//! XDG base directory resolution, honoured on every platform including macOS.
+//! Per the spec a variable only counts when it holds an absolute path; otherwise
+//! the default under `$HOME` applies.
 
 use std::path::{Path, PathBuf};
 
@@ -64,7 +62,6 @@ impl Paths {
         self.state.join("active")
     }
 
-    /// Create every directory noda writes to.
     pub fn create_dirs(&self) -> Result<()> {
         for dir in [&self.config, &self.state, &self.cache] {
             std::fs::create_dir_all(dir)?;
@@ -75,9 +72,8 @@ impl Paths {
 
     pub fn active_notebook(&self) -> Result<String> {
         let file = self.active_file();
-        // A missing pointer is the ordinary case and gets the ordinary advice.
-        // Anything else — an unreadable file, a permission problem — must say so
-        // instead, because `noda init` will not fix it.
+        // A missing pointer gets the ordinary advice; an unreadable one must say
+        // so instead, because `noda init` will not fix it.
         let name = match std::fs::read_to_string(&file) {
             Ok(name) => name,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

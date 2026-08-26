@@ -41,14 +41,12 @@ fn initialized() -> (TempRoot, Paths) {
 
 /// Turns signing off for a test notebook, before anything commits.
 ///
-/// The XDG roots are per-test, but git's are not: libgit2 reads the real
-/// `~/.config/git/config`, and a developer who signs their own commits has
-/// `commit.gpgsign = true` there. Without this every test would shell out to gpg
-/// — slowly, and on a locked keyring not at all. noda's own setting outranks
-/// git's, which is exactly what makes one line here enough.
+/// The XDG roots are per-test and git's are not: libgit2 reads the real
+/// `~/.config/git/config`, so a developer with `commit.gpgsign = true` would
+/// send every test to gpg — slowly, and on a locked keyring not at all. noda's
+/// own setting outranks git's, which is what makes one line enough.
 ///
-/// Tests that write `config.toml` wholesale have to say `sign = false` in it
-/// themselves; the signing tests turn it back on deliberately.
+/// Tests that write `config.toml` wholesale say `sign = false` themselves.
 fn unsigned(paths: &Paths) {
     std::fs::create_dir_all(paths.config_dir()).expect("config dir");
     std::fs::write(paths.config_dir().join("config.toml"), "sign = false\n").expect("config");
@@ -214,10 +212,9 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     );
 }
 
-/// Two notes may share a slug: the id in front of it keeps the filenames apart.
-/// The `-2` suffix this used to append was only ever a local fix — two machines
-/// adding "Notes" at once could not see each other's, so both wrote `notes.md`
-/// and the sync conflicted. Now they write two files and git merges them.
+/// The id in front of the slug keeps the filenames apart. The `-2` suffix this
+/// used to append was a local fix only: two machines adding "Notes" at once both
+/// wrote `notes.md` and the sync conflicted.
 #[test]
 fn two_notes_may_share_a_slug_because_the_id_separates_them() {
     let (_root, paths) = initialized();
@@ -475,10 +472,9 @@ fn backdate(paths: &Paths, summary: &str) -> PathBuf {
     path
 }
 
-/// `--no-touch` is for the changes that are not the note being rewritten: a
-/// typo, a tag, a title that was wrong from the start. The commit still records
-/// that something happened — it is `updated`, the note's own claim about itself,
-/// that is left alone.
+/// For the changes that are not the note being rewritten. The commit still
+/// records that something happened; `updated`, the note's own claim about
+/// itself, is what is left alone.
 #[test]
 fn no_touch_leaves_updated_where_it_stands() {
     let (_root, paths) = initialized();
@@ -1090,10 +1086,9 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
     );
 }
 
-/// The commands that only need to know *which* note they were pointed at used
-/// to parse the file anyway, and so refused to run on one whose frontmatter had
-/// gone — leaving the tools for clearing that up unusable exactly when they were
-/// wanted.
+/// The commands that only need to know *which* note used to parse the file
+/// anyway, so they refused to run on a broken one — leaving the tools for
+/// clearing it up unusable exactly when they were wanted.
 #[test]
 fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
     let (_root, paths) = initialized();
@@ -1294,10 +1289,9 @@ fn notebook_rm_asks_before_deleting_and_takes_no_for_an_answer() {
     assert!(!paths.notebook_dir("work").exists());
 }
 
-/// `noda status` speaks only about the active notebook, which left every other
-/// one silent — a notebook untouched for a fortnight could be thirty commits
-/// behind and nothing on the terminal ever said so. This is the row that says
-/// it, and it says it without going to the network.
+/// `noda status` speaks only about the active notebook, so one untouched for a
+/// fortnight could be thirty commits behind with nothing saying so. This is the
+/// row that says it, without going to the network.
 #[test]
 fn notebook_ls_says_where_each_notebook_stands() {
     let (root, paths) = initialized();
@@ -1404,11 +1398,9 @@ fn merge_commits(notebook: &Path) -> usize {
         .count()
 }
 
-/// A token in the remote URL is how the container image authenticates over
-/// HTTPS: the credential helper it would otherwise consult has to be executed,
-/// and that image carries no shell to execute it with. So a remote is something
-/// to assume is carrying a secret, and none of the screens that show one may
-/// hand it back.
+/// A token in the URL is how the container image authenticates over HTTPS, the
+/// credential helper needing a shell that image does not carry. So a remote is
+/// something to assume is carrying a secret.
 #[test]
 fn a_token_in_the_remote_is_never_printed_back() {
     const URL: &str = "https://x-access-token:ghp_secret@github.com/me/notes.git";
@@ -1438,10 +1430,8 @@ fn a_token_in_the_remote_is_never_printed_back() {
     );
 }
 
-/// The command that acts on the difference was the one command never reporting
-/// it: a push carrying twenty commits printed the same line as a push carrying
-/// nothing. These are the three things it can say instead, and which one it
-/// picks is the whole of what was missing.
+/// The command that acts on the difference was the one never reporting it: a
+/// push of twenty commits printed the same line as a push of nothing.
 #[test]
 fn push_says_how_much_it_sent() {
     let (root, paths) = initialized();
@@ -2713,10 +2703,9 @@ fn ls_json_always_carries_the_times() {
     assert!(out.contains("\"updated\":\"20"), "{out}");
 }
 
-/// The default listing answers "which note is this", and the title is the
-/// answer. The slug says the same words with the spaces taken out, and two
-/// RFC 3339 columns are forty characters of a question nobody asked — none of
-/// which costs anything to read, which is why this is about width and not cost.
+/// The title is the answer to "which note is this"; the slug says the same words
+/// without the spaces, and two RFC 3339 columns are forty characters nobody
+/// asked for. Neither costs anything to read, so this is about width.
 #[test]
 fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     let (_root, paths) = initialized();
@@ -2765,11 +2754,9 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     );
 }
 
-/// Colour is painted per column, and the padding stays outside the escape
-/// sequences. Both halves of that are easy to break at once: a cell measured
-/// with its escapes in it would push every column after it out of line, and
-/// spaces parked before a reset sequence are past the reach of the row's own
-/// `trim_end`.
+/// Painted per column, with the padding outside the escapes. Both halves break
+/// at once: a cell measured with its escapes pushes every column after it out of
+/// line, and spaces before a reset are past the row's `trim_end`.
 #[test]
 fn ls_colours_the_columns_without_moving_them() {
     let (_root, paths) = initialized();
@@ -2820,10 +2807,8 @@ fn ls_colours_the_columns_without_moving_them() {
     assert_eq!(slug_at(&short), slug_at("undated"), "{stripped}");
 }
 
-/// The tag column is two colours, not one: the brackets and the comma grey, the
-/// tags themselves cyan. Two colours rather than one colour dimmed, so that no
-/// assertion here mentions `dim` — a terminal free to ignore it is the reason
-/// the grey was chosen. Like the overdue date, this has to be read before
+/// Two colours and not one dimmed, which is why no assertion here mentions
+/// `dim`: a terminal free to ignore it is why the grey was chosen. Read before
 /// `plain` strips it.
 #[test]
 fn ls_greys_the_punctuation_a_tag_list_is_written_with() {
@@ -2859,10 +2844,9 @@ fn ls_greys_the_punctuation_a_tag_list_is_written_with() {
     assert!(plain(&out).contains("[work, q3]"), "{out}");
 }
 
-/// `-l` extends the default row rather than rearranging it. A script that cuts
-/// the first two fields off the front reads the same thing either way, and the
-/// one field a note may not have stays at the end of both, where its absence
-/// moves nothing.
+/// `-l` extends the default row rather than rearranging it: a script cutting the
+/// first two fields reads the same thing either way, and the one field a note
+/// may not have stays at the end of both.
 #[test]
 fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
     let (_root, paths) = initialized();
@@ -2909,10 +2893,8 @@ fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
     );
 }
 
-/// Ordering parses the stamps rather than comparing them as text. noda's own
-/// are fixed-width UTC and would sort either way, but an imported note carries
-/// the offset its own system used — and that is exactly the case this exists
-/// for.
+/// Parsed rather than compared as text: noda's own are fixed-width UTC and would
+/// sort either way, but an imported note carries its old offset.
 #[test]
 fn ls_sorts_by_time_across_the_offsets_an_import_brings() {
     let (_root, paths) = initialized();
@@ -3172,11 +3154,10 @@ fn ls_can_leave_out_either_half() {
 
 /// The one test that runs the real binary.
 ///
-/// Everything else here calls the command functions, which is where the
-/// behaviour lives — but `-0` is a promise about the *bytes that leave the
-/// process*, and the layer between the two ate them: colour handling strips NUL
-/// along with the escape sequences it exists to remove, and the newline every
-/// other command wants would have arrived after the last terminator.
+/// Everything else calls the command functions, but `-0` is a promise about the
+/// *bytes that leave the process* — and the layer between ate them: colour
+/// handling strips NUL along with the escapes, and the newline every other
+/// command wants would arrive after the last terminator.
 #[test]
 fn ls_null_separators_survive_the_way_out_of_the_process() {
     let (root, _paths, _) = listable();
@@ -3497,10 +3478,8 @@ fn file_mv_renames_and_reports_the_links_it_stranded() {
     );
 }
 
-/// Renaming an attachment rewrites links in notes the command was not pointed
-/// at. That is a mechanical fixup, not somebody editing their notes, and dating
-/// every one of them today would flatten the order they are read in — which is
-/// most of what `updated` is for.
+/// A mechanical fixup rather than somebody editing their notes, and dating every
+/// one today would flatten the order they are read in.
 #[test]
 fn renaming_a_file_does_not_date_the_notes_that_linked_to_it() {
     let (root, paths) = initialized();
@@ -3856,10 +3835,9 @@ fn log_marks_the_commits_the_remote_has_not_seen() {
     }
 }
 
-/// **The trap this whole thing had to be built around.** A `pull` that merges
-/// puts the remote's commits in beside yours, and from then on the unpushed ones
-/// are not a run along the top of the log — walking down from `HEAD` until
-/// something familiar appears would mark a commit the remote already has.
+/// **The trap this had to be built around.** After a merging `pull` the unpushed
+/// commits are not a run along the top of the log, so walking down from `HEAD`
+/// would mark one the remote already has.
 #[test]
 fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
     let (root, paths) = initialized();
@@ -4161,10 +4139,9 @@ fn restore_dates_the_note_now_rather_than_then() {
         "the date they were written did not: {after}"
     );
 
-    // That same revision is now two back, the restore having moved history
-    // forward. Asking for it again is not a change: its contents are already on
-    // disk, and the only thing that differs is the timestamp the restore itself
-    // wrote — which is not what is being compared.
+    // Two back now, the restore having moved history forward. Asking again is
+    // not a change: only the timestamp the restore wrote differs, and that is
+    // not what is compared.
     let out = cmd::restore(&paths, "alpha", "HEAD~2", cmd::Touch::Stamp).unwrap();
     assert!(out.contains("(no change)"), "{out}");
 }
@@ -4689,11 +4666,9 @@ fn blame_credits_each_line_to_the_commit_that_wrote_it() {
     );
 }
 
-/// The reason this is not libgit2's blame. Every one of its `TRACK_COPIES`
-/// options is documented as not implemented, so it stops at a rename — and
-/// `noda mv` renames a note whenever its title changes, which would make the
-/// wrong answer the normal one. Picking the note out of each commit by id
-/// instead means a rename never comes up.
+/// Why this is not libgit2's blame: every `TRACK_COPIES` option is documented as
+/// not implemented, so it stops at a rename — and `noda mv` renames on every
+/// retitle. Picking the note out by id means a rename never comes up.
 #[test]
 fn blame_reaches_past_a_rename() {
     let (_root, paths) = initialized();
@@ -4818,10 +4793,9 @@ fn backlinks_name_the_notes_that_point_at_one() {
     assert!(out.contains("nothing links to"), "{out}");
 }
 
-/// The reason the match is on the id and not on the filename. `noda mv` moves
-/// the slug half and says nothing to the notes that linked to the note, so the
-/// destination is left naming a path that no longer exists — and still naming
-/// exactly one note.
+/// Why the match is on the id: `noda mv` moves the slug half and says nothing to
+/// the notes that linked here, so the destination names a path that is gone and
+/// an id that is not.
 #[test]
 fn backlinks_survive_a_retitle() {
     let (_root, paths) = initialized();
@@ -5596,10 +5570,9 @@ fn a_file_that_cannot_be_read_stops_the_import_before_it_writes() {
     assert!(cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty());
 }
 
-/// A stand-in for gpg: reads the commit on stdin and answers with a fixed
-/// armored block. The tests are about what noda does with a signature — builds
-/// the right text, attaches what comes back, moves the branch onto it — and a
-/// real key would test gpg instead, on a keyring that may well be locked.
+/// Reads the commit on stdin and answers with a fixed armored block. The tests
+/// are about what noda does with a signature; a real key would test gpg
+/// instead, on a keyring that may well be locked.
 fn stub_gpg(root: &TempRoot, name: &str, script: &str) -> String {
     let path = root.0.join(name);
     std::fs::write(&path, format!("#!/bin/sh\n{script}")).expect("write stub");
@@ -5614,12 +5587,10 @@ const SIGNS: &str = "cat > /dev/null\n\
      printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nc3R1Yg==\\n-----END PGP SIGNATURE-----\\n'\n";
 const FAILS: &str = "cat > /dev/null\nexit 1\n";
 
-/// Points a notebook's own git config at `program` and turns noda's signing on.
-///
 /// `gpg.openpgp.program` rather than `gpg.program`, and `gpg.format` pinned:
-/// both are what the resolution actually consults first, and a developer whose
-/// own `~/.config/git/config` sets them would otherwise have this test signing
-/// with their real key — which passes, and proves nothing about the stub.
+/// both are what the resolution consults first, and a developer who sets them
+/// would otherwise have this test sign with their real key — which passes, and
+/// proves nothing about the stub.
 fn sign_with(paths: &Paths, notebook: &str, program: &str) {
     let repo = git2::Repository::open(paths.notebook_dir(notebook)).expect("open repo");
     let mut config = repo.config().expect("config");

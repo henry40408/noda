@@ -1,27 +1,19 @@
-//! `noda tui` — the notebook as a screen you can go into and come back out of:
-//! the listing, whatever the cursor was on, and the query language `noda search`
-//! takes in the line along the bottom.
+//! `noda tui` — the notebook as a screen you can go into and come back out of.
 //!
-//! It exists for the one thing a command cannot do, which is stay. Reading a
-//! notebook is `ls`, then `show`, then `ls` again to find where you were; here
-//! the listing keeps its place while a note is read, and a query narrows it as
-//! it is typed rather than once it is finished.
+//! It exists for the one thing a command cannot do, which is stay: the listing
+//! keeps its place while a note is read, and a query narrows it as it is typed.
 //!
-//! A screen is the whole width and there is a stack of them. That is what lets a
-//! note be read at the width it was written at, and what leaves room for a
-//! screen to be about something a listing cannot hold — the pane the note used
-//! to share with the listing was never going to be wide enough for either.
+//! A screen is the whole width and there is a stack of them, which is what lets
+//! a note be read at the width it was written at — the pane it used to share
+//! with the listing was never wide enough for either.
 //!
-//! It changes notes by asking the commands to. Every command that changes a
-//! note validates it, stamps it and commits it, and there must not be a second
-//! implementation of what a change means — so `e` runs `noda edit`, `Ctrl-d`
+//! It changes notes by asking the commands to: `e` runs `noda edit`, `Ctrl-d`
 //! runs `noda rm`, and what comes back is the line that command would have
-//! printed. Nothing in this module writes a note itself.
+//! printed. Nothing here writes a note itself.
 //!
-//! The parts are kept apart so that most of this can be tested with no terminal
-//! in the room: [`app`] is the state and takes no input but keystrokes, [`field`]
-//! is the one line at a time that is typed into it, [`view`] and [`frame`] turn
-//! that state into a frame, and this module is the only place that opens a
+//! The parts are kept apart so most of this can be tested with no terminal:
+//! [`app`] is the state, [`field`] the line typed into it, [`view`] and
+//! [`frame`] the drawing, and this module is the only place that opens a
 //! repository, reads a file, runs a command or touches a terminal.
 
 pub mod app;
@@ -49,16 +41,11 @@ use crate::{Error, Result};
 
 pub use app::{Action, App, Content, Look, Need, Run};
 
-/// Opens the active notebook in the browser, and returns when it is closed.
-///
-/// The empty string is what comes back: everything this command had to say was
-/// said on a screen that no longer exists, and printing an epitaph for it under
-/// the shell prompt would only be noise.
+/// The empty string comes back: everything it had to say was said on a screen
+/// that no longer exists.
 pub fn run(paths: &Paths) -> Result<String> {
-    // Checked before anything is read, and on both ends. `noda tui | less` can
-    // only produce a screenful of escape sequences, and a TUI with no keyboard
-    // is a program that cannot be quit — better to say so than to be killed
-    // from another window.
+    // Both ends: `noda tui | less` is a screenful of escape sequences, and a TUI
+    // with no keyboard cannot be quit.
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return Err(Error::msg(
             "noda tui needs a terminal at both ends; \
@@ -66,43 +53,34 @@ pub fn run(paths: &Paths) -> Result<String> {
         ));
     }
 
-    // Before the screen is taken over: a notebook that cannot be opened should
-    // say so at the prompt, not in the corner of an alternate screen that is
-    // about to be torn down.
+    // Before the screen is taken over, so a notebook that cannot be opened says
+    // so at the prompt.
     let mut app = load(paths)?;
 
-    // ratatui's own: raw mode, the alternate screen, and a panic hook that
-    // undoes both before the panic is reported. The hook matters more here than
-    // the usual — this crate aborts on panic in release, so a `Drop` guard would
-    // never run and the terminal would be left in raw mode with no echo.
+    // ratatui's own, hook included — which matters more than usual here: this
+    // crate aborts on panic in release, so a `Drop` guard would never run and
+    // the terminal would be left in raw mode with no echo.
     let mut terminal = ratatui::try_init()?;
     let outcome = browse(paths, &mut terminal, &mut app);
     let restored = ratatui::try_restore();
 
-    // The session's own failure is the one worth reporting; a terminal that
-    // could not be put back is reported only when there is nothing else to say.
+    // A terminal that could not be put back is reported only when there is
+    // nothing else to say.
     outcome?;
     restored?;
     Ok(String::new())
 }
 
-/// Reads the active notebook into a session.
-///
-/// Every note is held for as long as the session lasts, bodies and all. That is
-/// what a query costs `noda search` on every invocation, paid once instead —
-/// and it is the difference between a filter that narrows as you type and one
-/// that walks the notebook per keystroke.
+/// Every note is held for the session, bodies and all: what `noda search` pays
+/// on every invocation, paid once instead.
 pub fn load(paths: &Paths) -> Result<App> {
     let notebook = Notebook::open_active(paths)?;
     let session = read(paths, &notebook)?;
     Ok(App::new(notebook.name, notebook.path, session))
 }
 
-/// Everything a session holds that does not depend on which screen is on top.
-///
-/// One walk of the directory answers both the notes and the files, which is why
-/// `inventory` is asked rather than `notes`: the files screen would otherwise be
-/// a second walk for a list the first one already went past.
+/// `inventory` rather than `notes`, so one walk answers both: the files screen
+/// would otherwise be a second walk for a list the first went past.
 fn read(paths: &Paths, notebook: &Notebook) -> Result<app::Session> {
     let status = notebook.status()?;
     let (notes, files) = notebook.inventory()?;
@@ -115,12 +93,8 @@ fn read(paths: &Paths, notebook: &Notebook) -> Result<app::Session> {
     })
 }
 
-/// Reads the notebook again into a session already under way, keeping the query
-/// and — where the note is still there — the cursor.
-///
-/// What `r` asks for. noda watches no files: a note written from another window
-/// is somebody else's edit, and a browser that rearranged itself underneath a
-/// reader mid-sentence would be worse than one that waits to be asked.
+/// What `r` asks for. noda watches no files: a browser rearranging itself under
+/// a reader mid-sentence is worse than one that waits to be asked.
 pub fn reload(paths: &Paths, app: &mut App) -> Result<()> {
     let notebook = Notebook::open_active(paths)?;
     let session = read(paths, &notebook)?;
@@ -133,19 +107,15 @@ fn browse(paths: &Paths, terminal: &mut DefaultTerminal, app: &mut App) -> Resul
         refresh(paths, app);
         terminal.draw(|frame| view::draw(frame, app))?;
         // Blocking: a browser has nothing to do between keystrokes, and polling
-        // to find that out would keep a laptop awake for the privilege.
-        //
-        // A resize needs no arm of its own. The top of this loop draws, and
-        // `terminal.draw` fits the frame to whatever the size is by then.
+        // would keep a laptop awake to find that out. A resize needs no arm —
+        // the top of this loop draws to whatever the size is by then.
         if let Event::Key(key) = event::read()? {
             match app.on_key(key) {
                 Some(Action::Quit) => return Ok(()),
                 Some(Action::Reload) => reload(paths, app)?,
                 Some(action) => {
-                    // A command that goes to the network takes long enough that
-                    // the last frame would sit there looking like nothing had
-                    // happened. Draw once, saying what is being waited for,
-                    // before handing over.
+                    // Long enough that the last frame would look like nothing
+                    // had happened, so draw once before handing over.
                     if let Some(said) = action.working() {
                         app.working = Some(said);
                         terminal.draw(|frame| view::draw(frame, app))?;
@@ -159,36 +129,26 @@ fn browse(paths: &Paths, terminal: &mut DefaultTerminal, app: &mut App) -> Resul
     }
 }
 
-/// Runs the command a keystroke asked for, and puts the screen back in step with
-/// the notebook afterwards.
-///
-/// The command is the same one the shell would have run, called the same way.
-/// Nothing is decided here about what the change means — only which command
-/// means it, and where its answer goes.
+/// The same command the shell would have run, called the same way. Nothing is
+/// decided here about what a change means — only which command means it.
 fn perform(
     paths: &Paths,
     terminal: &mut DefaultTerminal,
     app: &mut App,
     action: Action,
 ) -> Result<()> {
-    // Taken before the command runs, so a note that `a` has just made can be
-    // told apart from the ones that were already there. The alternative is
-    // reading it out of `add`'s answer, and that answer is a sentence written
-    // for a person.
+    // Before the command runs, so a note `a` just made can be told from the
+    // ones already there — `add`'s answer is a sentence written for a person.
     let before: Option<HashSet<String>> =
         matches!(action, Action::Add(_)).then(|| app.ids().map(str::to_string).collect());
 
     let outcome = match action {
-        // Both are the caller's, and named rather than left to a wildcard so
-        // that an action added later cannot be quietly swallowed here.
+        // Named rather than left to a wildcard, so a later action cannot be
+        // quietly swallowed.
         Action::Quit | Action::Reload => return Ok(()),
-        // What a key names is `Notebook::resolve`'s question, and this is the
-        // only place that may ask it: an id prefix that names two notes has one
-        // answer, and it is the refusal the prompt would have printed.
-        //
-        // Read again first, because the note being asked for may be newer than
-        // the listing — a note written from another window is exactly the sort
-        // of thing somebody opens by name.
+        // `Notebook::resolve`'s question, asked only here: a prefix naming two
+        // notes has one answer. Read again first, because a note written from
+        // another window is exactly what somebody opens by name.
         Action::Open(key) => {
             let notebook = Notebook::open_active(paths)?;
             match notebook.resolve(&key) {
@@ -210,10 +170,8 @@ fn perform(
             }
             return Ok(());
         }
-        // A different notebook is a different session: the name, the directory,
-        // the notes and every screen in the stack were all about the last one.
-        // Built fresh rather than reloaded, because `reload` keeps precisely the
-        // things that do not survive the move.
+        // A different notebook is a different session, built fresh rather than
+        // reloaded: `reload` keeps precisely what does not survive the move.
         Action::Use(name) => {
             match cmd::use_notebook(paths, &name) {
                 Ok(said) => {
@@ -225,9 +183,8 @@ fn perform(
             return Ok(());
         }
         Action::Run(run) => match run {
-            // Reporting only. `doctor` writes when it is asked to at the prompt;
-            // from a browser it says what it found, because a keystroke that
-            // rewrote a directory is not something to discover afterwards.
+            // Reporting only: a keystroke that rewrote a directory is not
+            // something to discover afterwards.
             Run::Doctor { links, times } => cmd::doctor(paths, true, links, times),
             Run::Status => cmd::status(paths),
             Run::Readme => cmd::readme(paths, false),
@@ -243,9 +200,8 @@ fn perform(
         Action::Add(title) => {
             in_the_foreground(terminal, || cmd::add(paths, title.as_deref(), None, &[]))?
         }
-        // Links are left alone: `--update-links` edits the prose of notes the
-        // command was not pointed at, and a browser is not the place to do that
-        // to a note nobody is looking at. `noda mv --update-links` still is.
+        // `--update-links` edits the prose of notes nobody is looking at, which
+        // is not a thing a browser should do.
         Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
         Action::Tag {
             key,
@@ -254,14 +210,11 @@ fn perform(
         } => cmd::tag(paths, &key, &changes, touch),
         Action::Remove(key) => cmd::rm(paths, &key),
         Action::Restore { key, rev, touch } => cmd::restore(paths, &key, &rev, touch),
-        // The whole queue, in one commit. Nothing is decided here about what any
-        // of it means — `bulk` runs the same code the keys above run, and the
-        // only thing that moved is where the commit falls.
+        // The whole queue in one commit: `bulk` runs the same code the keys
+        // above run, and only the commit boundary moved.
         Action::Send(steps) => {
             let sent = cmd::bulk(paths, &steps);
-            // Only when it went through: a queue that was refused is a queue you
-            // still have, which is the difference between an error you can fix
-            // and an afternoon's work you have to remember.
+            // A refused queue is a queue you still have.
             if sent.is_ok() {
                 app.sent();
             }
@@ -270,13 +223,10 @@ fn perform(
     };
     app.report(outcome);
 
-    // Whatever happened, the notebook on screen is now a guess: a change that
-    // was committed, an edit that was rejected and left on disk, or a file
-    // another window wrote while the editor had the terminal.
+    // Whatever happened, the notebook on screen is now a guess.
     reload(paths, app)?;
 
-    // The one note the reader is certainly looking for is the one they have just
-    // made. Anything else keeps the cursor `reload` already kept.
+    // The one note they are certainly looking for is the one just made.
     let made = before.and_then(|ids| app.ids().find(|id| !ids.contains(*id)).map(str::to_string));
     if let Some(id) = made {
         app.select_id(&id);
@@ -284,25 +234,18 @@ fn perform(
     Ok(())
 }
 
-/// Hands the terminal back for the length of a command that wants one of its
-/// own — which means `$EDITOR`, the only kind noda runs.
+/// Hands the terminal back for `$EDITOR`, the only such command noda runs.
 ///
-/// The alternate screen goes away and raw mode with it, so the editor starts on
-/// a terminal in the state it would have found had it been run from the shell.
-/// Coming back the screen is cleared rather than redrawn from what was there:
-/// the alternate screen is a fresh buffer, and ratatui's record of what is on it
-/// describes a frame that has been gone for as long as the edit took.
+/// The alternate screen and raw mode go, so the editor starts as it would from
+/// the shell. Coming back the screen is cleared rather than redrawn: ratatui's
+/// record describes a frame gone for as long as the edit took.
 ///
-/// Done with crossterm's own calls rather than by `ratatui::try_init` and
-/// `try_restore`, for two reasons. `try_init` installs a panic hook around the
-/// one already there, and an editor opened twenty times would leave twenty of
-/// them. And the terminal is replaced rather than cleared: `Terminal::clear`
-/// asks the terminal where its cursor is and waits for the reply, which is a
-/// question the alternate screen has just made pointless and which some
-/// terminals answer slowly or not at all — under a pty with nothing to answer
-/// it, that wait ends the session with "the cursor position could not be read".
-/// A terminal built fresh has two empty buffers, which is exactly what a screen
-/// that has just been switched back to needs anyway.
+/// crossterm's own calls rather than `ratatui::try_init`/`try_restore`, for two
+/// reasons. `try_init` installs a panic hook around the one already there, and
+/// twenty edits would leave twenty. And the terminal is *replaced* rather than
+/// cleared: `Terminal::clear` asks where the cursor is and waits for a reply
+/// some terminals never send — under a pty that wait ends the session with "the
+/// cursor position could not be read".
 fn in_the_foreground<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T) -> Result<T> {
     disable_raw_mode()?;
     execute!(std::io::stdout(), LeaveAlternateScreen, cursor::Show)?;
@@ -310,9 +253,8 @@ fn in_the_foreground<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T)
     let out = run();
 
     enable_raw_mode()?;
-    // Cleared as well as entered. Switching to the alternate screen is specified
-    // to clear it, but the fresh terminal below believes the screen is blank,
-    // and that belief is cheap to make true rather than to rely on.
+    // Switching is specified to clear it, but the fresh terminal below believes
+    // the screen is blank and that belief is cheap to make true.
     execute!(
         std::io::stdout(),
         EnterAlternateScreen,
@@ -323,38 +265,31 @@ fn in_the_foreground<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T)
     Ok(out)
 }
 
-/// Fetches whatever the screen that has just been opened is a screen of.
+/// Fetches whatever the screen just opened is a screen of.
 ///
-/// Once per screen rather than once per keystroke: [`App::wanted`] answers
-/// `None` as soon as the screen has what it is about, so the ordinary frame
-/// opens no repository at all. Moving a cursor reads nothing.
+/// Once per screen rather than per keystroke: [`App::wanted`] answers `None` as
+/// soon as the screen has what it is about, so the ordinary frame opens no
+/// repository.
 ///
-/// A note's file is read rather than the note re-rendered from memory, for the
-/// reason `noda show` reads it: what is on screen should be what is on disk,
-/// down to a frontmatter field noda does not interpret. The rest come from
-/// `notebook`, which is where a browser reads from — `cmd` is the layer that
-/// turns them into text for a pipe, and this is a second reader of the same
-/// answers rather than a second source of them.
+/// A note's file is read rather than re-rendered from memory, for `noda show`'s
+/// reason. The rest come from `notebook` — a second reader of the same answers
+/// rather than a second source of them.
 ///
-/// What cannot be fetched closes the screen and says why. Leaving an empty
-/// screen up with the reason on a card over the top of it would leave the reader
-/// somewhere with nothing on it once the card was dismissed.
+/// What cannot be fetched closes the screen and says why, rather than leaving an
+/// empty one behind once the card is dismissed.
 ///
-/// Public because it is the one step between a keystroke and a frame that the
-/// state cannot take for itself: a test that draws a screen has to take it too.
+/// Public because it is the one step between a keystroke and a frame the state
+/// cannot take for itself: a test that draws a screen takes it too.
 pub fn refresh(paths: &Paths, app: &mut App) {
     let Some(need) = app.wanted() else {
         return;
     };
-    // Taken before the fetch, so what comes back can be checked against the
-    // screen that asked for it: a slow blame must not land on whatever screen
-    // the reader has moved to in the meantime.
+    // Before the fetch, so a slow blame does not land on whatever screen the
+    // reader has moved to.
     let asked = app.view().clone();
 
-    // A note's file is the one thing here that needs no repository, and it is
-    // also the one whose failure is not worth closing a screen over — a note
-    // deleted from another window is more likely than anything else, and the
-    // reason belongs where the note would have been.
+    // The one thing needing no repository, and the one whose failure is not
+    // worth closing a screen over: the reason belongs where the note would be.
     if let Need::Note { id: _, path } = &need {
         let text =
             std::fs::read_to_string(path).unwrap_or_else(|e| format!("{}: {e}\n", path.display()));
@@ -374,15 +309,13 @@ pub fn refresh(paths: &Paths, app: &mut App) {
 fn fetch(paths: &Paths, need: Need) -> Result<Content> {
     let notebook = Notebook::open_active(paths)?;
     Ok(match need {
-        // Answered by the caller, which reads a file rather than opening a
-        // repository. Said rather than panicked over if it ever gets here: a
-        // browser is a loop, and this crate aborts on panic — ending somebody's
-        // session over an impossible case is a worse answer than a card.
+        // Answered by the caller. Said rather than panicked over: this crate
+        // aborts on panic, and ending a session over an impossible case is a
+        // worse answer than a card.
         Need::Note { .. } => {
             return Err(Error::msg("a note's file is read without the repository"));
         }
-        // Two refs compared beside the walk that was happening anyway, and
-        // nothing on the network — the same bargain the chrome's `↑2 ↓3` makes.
+        // Two refs beside a walk that was happening anyway, and no network.
         Need::Log(id) => Content::Log(
             notebook.log(id.as_deref(), None)?,
             notebook.unpushed(&notebook.branch()?)?,

@@ -1,16 +1,12 @@
 //! The chrome every screen wears, and the card that goes over the top of it.
 //!
-//! A screen is the same five bands whatever it is showing: where the notebook
-//! stands, what the keys do here, what this screen is of, how deep you are, and
-//! what the last command said. Only the middle changes — which is the point of
-//! keeping it here rather than in the drawing of each view. A browser whose
-//! furniture moved between screens would have to be re-read on every one.
+//! A screen is the same five bands whatever it shows, and only the middle
+//! changes — which is why they are here rather than in each view's drawing: a
+//! browser whose furniture moved between screens has to be re-read on every one.
 //!
-//! The keys live in the band along the top rather than behind `?`. They are what
-//! is different about the screen you are on, and a screen that only tells you
-//! what it can do once you ask is a screen you have to ask about every time.
-//! That also takes the pressure off the help card, which had grown to the point
-//! of not fitting on a short terminal.
+//! The keys are along the top rather than behind `?`, being what is different
+//! about the screen you are on. That also takes the pressure off the help card,
+//! which had grown past fitting on a short terminal.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -26,24 +22,16 @@ use crate::style as palette;
 /// How many rows the standing information wants when there is room for it.
 pub const INFO_ROWS: u16 = 5;
 
-/// Below this many rows the header is a single line instead. The card that
-/// outgrew a twenty-four row terminal is the reason this is checked at all: a
-/// browser has to keep working on the terminal it is given, and five rows of
-/// header on a screen that only has fourteen is five rows of notes it does not
-/// have.
+/// Below this the header is a single line: five rows of header on a screen with
+/// fourteen is five rows of notes it does not have.
 const ROOM_FOR_INFO: u16 = 20;
 
-/// How many rows of keys the header shows, and therefore how the list of them is
-/// cut into columns.
+/// How many rows of keys, and so how the list is cut into columns.
 const MENU_ROWS: usize = 5;
 
-/// The width of the labels down the left of the header, so their values line up.
-///
-/// One wider than the longest label written with its colon, which is `Notebook:`
-/// at nine. Sized to the longest exactly, the padding for that one row is empty
-/// and `Notebook:work` comes out with no gap at all while the four rows under it
-/// have two or three — the column lines up and the longest entry in it still
-/// reads as a mistake.
+/// One wider than the longest label with its colon. Sized to the longest
+/// exactly, `Notebook:work` comes out with no gap while the rows under it have
+/// two or three — the column lines up and still reads as a mistake.
 const LABEL: usize = 10;
 
 /// The gap between one column of keys and the next.
@@ -52,15 +40,13 @@ const MENU_GAP: usize = 2;
 /// What separates one thing from the next along the title band.
 const GAP: &str = "  ";
 
-/// The gap between a key and what it does, which is what makes the two read as
-/// one thing rather than as two columns.
+/// What makes a key and its description read as one thing.
 const KEY_GAP: usize = 2;
 
 /// One column of the key grid, which is what the list is cut into.
 type Column = [(&'static str, &'static str); MENU_ROWS];
 
-/// What the keys do on the listing. Read down each column of five, not across:
-/// moving, then changing, then picking out, then the screens worth a letter.
+/// Read down each column of five, not across.
 const LISTING_KEYS: &[Column] = &[
     [
         ("enter", "read"),
@@ -83,18 +69,13 @@ const LISTING_KEYS: &[Column] = &[
         ("T", "keep updated"),
         ("q", "quit"),
     ],
-    // The listing's own density and order, which no other screen has: `S` walks
-    // the four orders `--sort` names, `R` is `-r`, `ctrl-w` is `-l`, and `1`–`9`
-    // are the commonest tags.
+    // The listing's own density and order, which no other screen has.
     //
-    // Behind the other three because every one of them is a way of *looking*
-    // rather than a way of doing, and because each has a second way of being
-    // found when the column goes: all five are on the `?` card, `?` is in the
-    // first column of every screen there is, the order and the density say
-    // themselves on the title band once used, and the tags screen numbers its
-    // first nine rows with the very digits that reach them. That is the test a
-    // key has to pass to sit out here — the same one `ctrl-f/b` passes by being
-    // on the card and nowhere else.
+    // Behind the other three because each is a way of *looking* rather than of
+    // doing, and each has a second way of being found when the column goes: all
+    // five are on the `?` card, the order and density say themselves on the
+    // title band once used, and the tags screen numbers its first nine rows with
+    // the digits that reach them. That is the test a key passes to sit here.
     [
         ("S", "sort"),
         ("R", "reverse"),
@@ -105,15 +86,13 @@ const LISTING_KEYS: &[Column] = &[
     VIEW_KEYS,
 ];
 
-/// What the keys do on a note. The same words for the same keys — a key that
-/// changes a note is the same key here, aimed at the note you are reading rather
-/// than at the row under a cursor.
+/// The same words for the same keys, aimed at the note you are reading rather
+/// than the row under a cursor.
 ///
-/// The way to everything else comes first, and `g` / `G` is not here at all: the
-/// columns are dropped from the right when they do not fit, so what goes in the
-/// last one has to be what can afford to go. A reader who does not know `:`
-/// exists cannot look it up; one who does not know `G` has both `j` and the
-/// card.
+/// The way to everything else comes first and `g`/`G` is absent: columns drop
+/// from the right, so the last has to hold what can afford to go. A reader who
+/// does not know `:` exists cannot look it up; one who does not know `G` has
+/// both `j` and the card.
 const NOTE_KEYS: &[Column] = &[
     [
         ("esc", "back"),
@@ -133,17 +112,12 @@ const NOTE_KEYS: &[Column] = &[
     VIEW_KEYS,
 ];
 
-/// A cell with nothing in it, padding a column out to five so the grid stays a
-/// grid. Nothing is drawn for it.
+/// Pads a column out to five so the grid stays a grid. Nothing is drawn.
 const BLANK: (&str, &str) = ("", "");
 
-/// The four screens worth a letter, and they go last on every screen.
-///
-/// Last because the columns are dropped from the right, and these are the ones
-/// that can afford to go: every one of them has a name as well — `:todo`,
-/// `:log` — and `:` is in the first column of every screen there is. Nothing
-/// else on a grid has a second way of being found, which is why nothing else may
-/// sit out here.
+/// Last on every screen, because columns drop from the right and these can
+/// afford to go: each has a name as well, and `:` is in the first column
+/// everywhere. Nothing else on a grid has a second way of being found.
 const VIEW_KEYS: Column = [
     ("t", "todo"),
     ("l", "log"),
@@ -152,26 +126,21 @@ const VIEW_KEYS: Column = [
     BLANK,
 ];
 
-/// The keys any other list answers to: walking it, leaving it, and whatever
-/// `enter` is for on this one.
+/// Walking it, leaving it, and whatever `enter` is for on this one.
 ///
-/// One shape for all of them, because that is what they are — the notebook
-/// answering a different question each time, in the same rows-and-a-cursor. Only
-/// the first entry differs, and it differs because it has to: what `enter` does
+/// One shape for all of them, only the first entry differing: what `enter` does
 /// to a tag and what it does to a notebook are not the same act.
-/// `None` for a list whose rows lead nowhere, which is the notebook's own log:
-/// every commit on it is a version of *some* note, and there is no one note to
-/// put a revision against. A key that says it restores something and then does
-/// nothing is worse than no key at all.
+///
+/// `None` where the rows lead nowhere — the notebook's own log, every commit on
+/// which is a version of *some* note with no one note to put a revision
+/// against.
 fn rows_keys(enter: Option<&'static str>) -> Vec<Column> {
-    // What the screen is for, the way out of it, and the way to everything else.
-    // The first column is the one that is never dropped, so it holds what cannot
-    // be looked up when it is not shown.
+    // The first column is never dropped, so it holds what cannot be looked up
+    // when it is not shown.
     //
-    // `ctrl-f/b` is on neither column, and nothing else here could be spelled
-    // shorter: twelve columns for a key that `j` already covers is twelve
-    // columns taken off whatever falls off the right-hand end, and on these
-    // screens that is the keys which change a note.
+    // `ctrl-f/b` is on neither: twelve columns for a key `j` already covers come
+    // off whatever falls from the right-hand end, which here is the keys that
+    // change a note.
     match enter {
         Some(what) => vec![
             [
@@ -208,12 +177,9 @@ fn rows_keys(enter: Option<&'static str>) -> Vec<Column> {
     }
 }
 
-/// The keys the screen in front of you answers to.
-///
-/// A screen whose rows are notes gets the keys that change a note as well: the
-/// todo list and the backlinks are listings of notes, and `e` there means what
-/// it means on the listing. Those come before the view keys, because a key that
-/// changes a note has no other way of being found and a view key has a name.
+/// A screen whose rows are notes gets the keys that change one as well, before
+/// the view keys: a key that changes a note has no other way of being found and
+/// a view key has a name.
 pub fn keys_for(view: &View) -> Vec<Column> {
     let changing: Column = [
         ("e", "edit"),
@@ -225,10 +191,9 @@ pub fn keys_for(view: &View) -> Vec<Column> {
     let mut keys = match view {
         View::Notes => return LISTING_KEYS.to_vec(),
         View::Note(_) => return NOTE_KEYS.to_vec(),
-        // The two whose rows are notes. `read it` and not `read the note`
-        // because this is the one shape with four columns to fit, and the two
-        // words come out of the column that would otherwise be dropped — the
-        // one saying that `e` edits and `ctrl-d` deletes.
+        // `read it` and not `read the note`: this is the one shape with four
+        // columns to fit, and the words come out of the column that would
+        // otherwise be dropped.
         View::Todo | View::Backlinks(_) => {
             let mut keys = rows_keys(Some("read it"));
             keys.push(changing);
@@ -237,8 +202,8 @@ pub fn keys_for(view: &View) -> Vec<Column> {
         View::Tags => rows_keys(Some("filter by it")),
         View::Files => rows_keys(Some("what links here")),
         View::Notebooks => rows_keys(Some("switch to it")),
-        // The rows that name a version of a note. The ellipsis is the promise
-        // that the key writes the command rather than running it.
+        // The ellipsis promises the key writes the command rather than running
+        // it.
         View::Deleted | View::Log(Some(_)) => rows_keys(Some("restore it…")),
         View::Log(None) => rows_keys(None),
         // A page of text, so there is no row to press `enter` on.
@@ -292,12 +257,9 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(mark), right);
 }
 
-/// The standing information, one fact to a line.
-///
-/// The same five labels every time, in the same order, whatever the values are.
-/// A block that dropped a line when a value was uninteresting would move the
-/// four below it, and the whole reason for putting these in a fixed block is
-/// that the eye learns where each one is.
+/// The same five labels in the same order whatever the values are: a block that
+/// dropped an uninteresting line would move the four below it, and the point of
+/// a fixed block is that the eye learns where each one is.
 fn info(app: &App) -> Vec<Line<'_>> {
     let muted = theme::from(palette::MUTED);
     let mut branch = vec![Span::raw(app.status.branch.as_str())];
@@ -340,16 +302,12 @@ fn info(app: &App) -> Vec<Line<'_>> {
     ]
 }
 
-/// What this session is doing that the notebook on disk knows nothing about.
+/// All three are state you got into by pressing something, and all three change
+/// what the next keystroke does.
 ///
-/// All three are state you can only have got into by pressing something, and all
-/// three change what the next keystroke will do — which is exactly the sort of
-/// thing a browser must not keep to itself.
-///
-/// Said on the title band rather than among the standing facts, because they are
-/// the only ones that change while you sit there. In the block they widened it,
-/// and a block that widens pushes the keys along and drops the rightmost column
-/// off the end — so marking a note was what hid the keys about marking.
+/// On the title band rather than among the standing facts, because they are the
+/// only ones that change while you sit there — and in the block they widened it,
+/// so marking a note was what hid the keys about marking.
 fn session(app: &App) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut add = |text: String, style: Style| {
@@ -382,19 +340,14 @@ fn labelled<'a>(label: &'a str, mut value: Vec<Span<'a>>) -> Line<'a> {
     Line::from(spans)
 }
 
-/// How wide the block of standing information needs to be, measured rather than
-/// guessed: a notebook may be called anything, and a branch name is somebody
-/// else's decision.
+/// Measured rather than guessed: a notebook may be called anything.
 fn info_width(app: &App) -> u16 {
     let widest = info(app).iter().map(Line::width).max().unwrap_or(0);
     (widest + MENU_GAP) as u16
 }
 
-/// The keys, in as many columns of five as there is room for.
-///
-/// Columns are dropped from the right rather than squeezed. A key list that has
-/// been narrowed until its words are cut is a key list that has stopped saying
-/// what the keys do, and the ones that go are the ones furthest from the hand.
+/// Columns are dropped from the right rather than squeezed: a key list narrowed
+/// until its words are cut has stopped saying what the keys do.
 fn menu(app: &App, width: u16) -> Vec<Line<'static>> {
     let columns = keys_for(app.view());
 
@@ -464,8 +417,8 @@ fn wordmark() -> Vec<Line<'static>> {
     ]
 }
 
-/// The header for a terminal with no room for one: the same facts, run together
-/// on a line, and no keys — the space goes to the notes instead.
+/// The same facts run together on a line, and no keys: the space goes to the
+/// notes.
 fn compact(app: &App) -> Vec<Span<'_>> {
     let muted = theme::from(palette::MUTED);
     let mut spans = vec![
@@ -482,19 +435,14 @@ fn compact(app: &App) -> Vec<Span<'_>> {
             theme::from(palette::MATCH),
         ));
     }
-    // What the session is holding is not repeated here: the title band carries
-    // it at whatever height the terminal is, and this line has the least room of
-    // anything on the screen.
+    // The title band carries it at any height, and this line has least room.
     spans
 }
 
-/// How the listing is being looked at, when it is not the way it comes.
-///
-/// Spelled the way `--sort`, `-r` and `-l` spell it, because these are the same
-/// three settings asked for from the other end. Nothing is said when nothing has
-/// been changed: a band that read `by slug` on every screen would be four
-/// columns spent saying nothing, and the reason for saying it at all is that
-/// `S`, `R` and `ctrl-w` rearrange rows and leave nothing else behind.
+/// Spelled as `--sort`, `-r` and `-l` spell it, these being the same three
+/// settings from the other end. Silent when nothing has changed — the reason for
+/// saying it at all is that those keys rearrange rows and leave nothing
+/// behind.
 fn looking(app: &App) -> Option<String> {
     let mut said = Vec::new();
     if app.sort != Sort::Slug || app.reverse {
@@ -509,21 +457,16 @@ fn looking(app: &App) -> Option<String> {
     (!said.is_empty()).then(|| said.join(" "))
 }
 
-/// What this screen is of, and how much of it there is.
-///
-/// The rule follows the notebook's own naming: a listing says what it is
-/// narrowed to and how many that leaves, and a note says its id and then its
-/// title — the same two things in the same order as every row of `noda ls`.
+/// A listing says what it is narrowed to and how many that leaves; a note says
+/// its id and then its title, in `noda ls`'s order.
 pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let bold = Style::default().add_modifier(Modifier::BOLD);
-    // The heading, what narrows it, and how many that leaves — in that order on
-    // every screen, so the eye learns one place to look for each.
-    // Set apart by a gap rather than wrapped in brackets: the three are read
-    // one after another and the punctuation was doing the work of a space,
-    // which is the one thing a band with columns to spare has plenty of. The
-    // same two-space gap the note's own heading has always used between its id
-    // and its title, so the band is spaced one way and not two.
+    // The same order on every screen, so the eye learns one place for each.
+    //
+    // Set apart by a gap rather than brackets: the punctuation was doing the
+    // work of a space, which a band with columns to spare has plenty of. The
+    // same gap a note's heading uses between its id and title.
     let banner = |name: &'static str, scope: Option<String>, count: Option<usize>| {
         let mut spans = vec![Span::styled(name, bold)];
         if let Some(scope) = scope {
@@ -572,9 +515,8 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
         ),
         View::Deleted => banner("Deleted", None, Some(app.gone().len())),
         View::Diff => banner("Diff", None, None),
-        // What a screen about one note is about is said here rather than in the
-        // crumb trail: the trail names the kind of screen, and a stack three
-        // deep with an id on every crumb would be as wide as the terminal.
+        // Here rather than in the crumb trail, which names the kind of screen:
+        // three crumbs with an id apiece would be as wide as the terminal.
         View::Log(id) => {
             let mut spans = banner(
                 "Log",
@@ -599,9 +541,8 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
             spans
         }
     };
-    // Ruled out to the far end, so the band reads as the top of the body rather
-    // than as another line of header — and what this session is holding is put
-    // at that end, next to what the screen is of.
+    // Ruled to the far end, so the band reads as the top of the body rather than
+    // another line of header.
     let mut held = session(app);
     let used = spans.iter().map(Span::width).sum::<usize>();
     let mut wanted = held.iter().map(Span::width).sum::<usize>();
@@ -619,10 +560,8 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Line::from(spans), area);
 }
 
-/// How far down you are, outermost first.
-///
-/// Worth a line of its own even when there is only one crumb on it: a stack you
-/// cannot see the depth of is a stack whose Escape key you have to guess at.
+/// Worth a line even with one crumb on it: a stack whose depth you cannot see
+/// is one whose Escape key you guess at.
 pub fn draw_crumbs(frame: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let here = Style::default().add_modifier(Modifier::REVERSED);
@@ -638,27 +577,22 @@ pub fn draw_crumbs(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Line::from(spans), area);
 }
 
-/// What is being typed, or what the last command said. Returns where the cursor
-/// belongs, when there is a field for it to be in.
+/// What is being typed, or what the last command said, and where the cursor
+/// belongs.
 ///
-/// One line and one field. The prompt and the query take the same place because
-/// only one of them can be open at a time, and a browser with two places to type
-/// would be one you had to look at to find out where your keystrokes were going.
+/// One line and one field: only one can be open at a time, and two places to
+/// type is a browser you look at to find where your keystrokes went.
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
     let muted = theme::from(palette::MUTED);
-    // What is being waited for wins the line outright: it is drawn on a frame of
-    // its own, before the thing it is waiting for has begun, and nothing else on
-    // the screen is going to change until it is over.
+    // Wins the line outright: drawn on a frame of its own, before the thing it
+    // waits for has begun.
     if let Some(waiting) = app.working {
         frame.render_widget(Line::from(Span::styled(waiting, muted)), area);
         return None;
     }
-    // Where the cursor goes is measured from what is to the *left* of it rather
-    // than from the whole line: the two are the same only while it is at the end
-    // of what has been typed, and a cursor drawn at the end of a line somebody
-    // is editing the middle of would be pointing at the wrong character with
-    // every keystroke. Measured in columns and not characters, because a title
-    // in Chinese is two columns a character.
+    // Measured from what is to the *left* of the cursor: the whole line only
+    // agrees while the cursor is at the end. In columns and not characters,
+    // because a title in Chinese is two columns a character.
     let (left, cursor) = match (&app.message, app.mode) {
         (_, Mode::Command) => {
             let typed = Span::raw(app.input.text());
@@ -682,11 +616,9 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
             let width = label.width() as u16 + Span::raw(app.input.before()).width() as u16;
             (Line::from(vec![label, typed]), Some(area.x + width))
         }
-        // What the last command said, in its own words. The next key takes it
-        // away again — and a line that says why something did *not* run is
-        // coloured like the query that is not a query yet, because it is the
-        // same class of thing: not a refusal by the notebook, a sentence that
-        // never reached it.
+        // In its own words, and the next key takes it away. A line saying why
+        // something did *not* run is coloured like half a query, being the same
+        // class of thing: a sentence that never reached the notebook.
         (Some(said), _) => {
             let style = if said.failed {
                 theme::from(palette::INVALID)
@@ -695,8 +627,8 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
             };
             (Line::from(Span::styled(said.line(), style)), None)
         }
-        // A query that has been left in force is worth showing even when the
-        // keyboard has moved on from it, because it is why the listing is short.
+        // Worth showing after the keyboard moves on: it is why the listing is
+        // short.
         _ if !app.search().is_empty() => (
             Line::from(vec![
                 Span::styled("/", muted),
@@ -707,9 +639,8 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) -> Option<u16> {
         _ => (Line::default(), None),
     };
 
-    // The right-hand end says why a query is not one yet, which is the more
-    // urgent of the two things this line can carry — and the hint for a prompt
-    // whose name does not say everything about what it takes.
+    // The more urgent of the two things this line can carry, and the hint for a
+    // prompt whose name does not say everything.
     let right = match (app.error(), app.mode) {
         (Some(message), _) => Line::from(Span::styled(
             message.to_string(),
@@ -740,21 +671,16 @@ pub fn plural(n: usize, thing: &str) -> String {
     }
 }
 
-/// A card in the middle of the screen, as wide as what is on it.
+/// As wide as what is on it, measured after the lines are built: a card that cut
+/// the help's search example would lose the one thing not worked out from the
+/// key beside it. `Line::width` counts what a terminal shows.
 ///
-/// Measured rather than guessed, and measured after the lines are built: a card
-/// that cut the help's search example off would be losing the one thing on it
-/// that cannot be worked out from the key beside it. `Line::width` counts what a
-/// terminal will show, so an arrow counts once and not three times.
-///
-/// Clamped to the screen, and what does not fit is wrapped rather than cut — the
-/// same bargain a note makes, and for the same reason: it is prose.
+/// Clamped to the screen, and what does not fit wraps rather than cuts.
 pub fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border: Style) {
     let width = (2 + lines.iter().map(Line::width).max().unwrap_or(0) as u16)
         .max(title.chars().count() as u16 + 2)
         .min(area.width);
-    // Counted after the clamp, so a line the screen was too narrow to hold is
-    // given the rows it will wrap onto rather than being pushed off the bottom.
+    // After the clamp, so a line too wide gets the rows it wraps onto.
     let inner = width.saturating_sub(2).max(1);
     let rows: u16 = lines
         .iter()
@@ -772,13 +698,11 @@ pub fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered()
-                // Rounded, which is the whole of the difference between a
-                // card lying over the screen and a box drawn on it. The
-                // corner is the only part of a border anybody reads.
+                // The difference between a card lying over the screen and a box
+                // drawn on it: the corner is the part anybody reads.
                 .border_type(BorderType::Rounded)
-                // The title in the border's own colour rather than the
-                // text's: it names the card, and a card whose name is as
-                // loud as what is on it is a card you read twice.
+                // In the border's colour: a card whose name is as loud as what
+                // is on it is one you read twice.
                 .title(Span::styled(title, border.add_modifier(Modifier::BOLD)))
                 .border_style(border),
         ),
@@ -791,9 +715,8 @@ mod tests {
     use super::*;
     use crate::tui::app::Subject;
 
-    /// The labels down the left of the header, which is the column `LABEL`
-    /// sizes. Restated here rather than reached for, because what is being
-    /// checked is that the constant is wide enough for all of them.
+    /// Restated rather than reached for, because what is checked is that `LABEL`
+    /// is wide enough for all of them.
     const LABELS: [&str; 5] = ["Notebook", "Branch", "Remote", "Notes", "Changes"];
 
     #[test]

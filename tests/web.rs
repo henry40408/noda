@@ -1,21 +1,17 @@
-//! The web server, driven the way a browser drives it: the real binary, a real
-//! socket, and requests written by hand.
+//! The web server as a browser drives it: the real binary, a real socket, and
+//! requests written by hand.
 //!
-//! **By hand, and that is not stubbornness.** Half of what is under test here is
-//! the guard, and the guard reads `Host` and `Origin` — headers a decent HTTP
-//! client exists to fill in correctly and will not let a caller lie about. A
-//! rebinding attack is exactly a request whose `Host` is a lie, so a test that
-//! cannot write one cannot test the thing.
+//! **By hand, and that is not stubbornness.** Half of what is under test is the
+//! guard, which reads `Host` and `Origin` — headers a decent HTTP client exists
+//! to fill in correctly and will not let a caller lie about. A rebinding attack
+//! is exactly a request whose `Host` is a lie.
 //!
-//! The port is `0`, so the operating system picks one and the tests can run
-//! together without agreeing on numbers in advance. The server says which one it
-//! got on its first line of output, which is also the line a reader needs, so
-//! nothing exists here purely for the tests.
+//! The port is `0`, so the tests run together without agreeing on numbers, and
+//! the server says which it got on the line a reader needs anyway.
 //!
-//! The harness is `tests/cli.rs`'s and `tests/pty.rs`'s, restated rather than
-//! shared: an integration test is its own crate. `sign = false` is not optional
-//! — libgit2 reads the developer's real git config, so a machine that signs its
-//! commits would send every commit here to gpg.
+//! The harness is restated rather than shared: an integration test is its own
+//! crate. `sign = false` is not optional — libgit2 reads the developer's real
+//! git config, so a machine that signs would send every commit here to gpg.
 
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -45,10 +41,9 @@ impl Drop for TempRoot {
     }
 }
 
-/// A notebook holding five notes, two files, and one note that embeds one of
-/// them. One note carries raw HTML on purpose:
-/// `noda import tiddlywiki` deliberately leaves such bodies alone, so a note
-/// that is markup is an ordinary note and not a hypothetical.
+/// Five notes, two files, and one note embedding one of them. One carries raw
+/// HTML on purpose: `noda import tiddlywiki` leaves such bodies alone, so a note
+/// that is markup is ordinary rather than hypothetical.
 fn a_notebook() -> (TempRoot, Paths) {
     let root = TempRoot::new();
     let paths = Paths::rooted(&root.0);
@@ -106,12 +101,8 @@ fn a_notebook() -> (TempRoot, Paths) {
     (root, paths)
 }
 
-/// The stylesheet a page links, fetched the way a browser fetches it.
-///
-/// Two things at once, and the second is the point: the rules are on the other
-/// end of a link now, so reading one means following the link — which is also
-/// the only way to find out that the address on the page is an address this
-/// build answers.
+/// Reading a rule means following the link, which is also the only way to find
+/// out that the address on the page is one this build answers.
 fn linked_stylesheet(server: &Serving, from: &str) -> Answer {
     let page = server.get(from);
     let opening = "<link rel=\"stylesheet\" href=\"";
@@ -126,10 +117,7 @@ fn linked_stylesheet(server: &Serving, from: &str) -> Answer {
     server.get(&href)
 }
 
-/// Percent-encoding, for the handful of characters a test actually sends.
-///
-/// Not a general encoder: a test that needed one would be a test whose fixture
-/// had got away from it.
+/// Not a general encoder: a test needing one has a fixture that got away.
 fn urlencode(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
@@ -146,10 +134,7 @@ fn urlencode(value: &str) -> String {
     out
 }
 
-/// The id of the note with this slug, read off the filename.
-///
-/// An id is minted, so it cannot be spelled out in a test — the standing rule
-/// about fixtures built from minted ids, one layer up.
+/// An id is minted, so it cannot be spelled out in a test.
 fn id_of(paths: &Paths, slug: &str) -> String {
     let ending = format!("-{slug}.md");
     let notebooks = std::fs::read_dir(paths.notebooks_dir()).expect("notebooks");
@@ -191,14 +176,10 @@ impl Answer {
         self.body.contains(needle)
     }
 
-    /// Whether the row naming `title` is one the query let through.
-    ///
-    /// **"Not on the page" stopped being the question when the enhancement
-    /// layer arrived.** Every row of the notebook is on every listing now; the
-    /// ones the query excludes arrive with `hidden` on them, so that the script
-    /// can widen a query as well as narrow one without a second copy of the
-    /// notes to filter from. `None` when no row names it at all, which is a
-    /// different failure and should read as one.
+    /// **"Not on the page" stopped being the question with the enhancement
+    /// layer**: every row is on every listing and the excluded ones arrive
+    /// `hidden`, so the script can widen a query without a second copy of the
+    /// notes. `None` when no row names it, a different failure.
     fn row(&self, title: &str) -> Option<bool> {
         self.body
             .split("<a class=\"row\"")
@@ -210,11 +191,8 @@ impl Answer {
             .map(|row| !row.starts_with(" hidden"))
     }
 
-    /// Every row's title, in the order the page put them in.
-    ///
-    /// Read out of `main.rows` and not out of the page: the pane beside the
-    /// listing holds the notebook's own README, rendered, and a heading in
-    /// somebody's Markdown is not a row.
+    /// Out of `main.rows` and not the page: the pane beside holds the rendered
+    /// README, and a heading in somebody's Markdown is not a row.
     fn titles(&self) -> Vec<String> {
         let rows = self
             .body
@@ -239,20 +217,14 @@ impl Answer {
         })
     }
 
-    /// What every timestamp on the page actually reads as.
-    ///
-    /// Pulled out rather than searched for, because the question is what the
-    /// stamps *are* and not whether some string appears somewhere: a page is
-    /// full of colons — in its stylesheet, in every URL — so "there is no clock
-    /// on this page" cannot be asked of the page as a whole.
+    /// Pulled out rather than searched for: a page is full of colons, so "there
+    /// is no clock here" cannot be asked of the page as a whole.
     fn stamps(&self) -> Vec<String> {
         self.body
             .match_indices("class=\"when\"")
             .filter_map(|(at, _)| {
-                // Past the rest of the opening tag, then up to whatever ends
-                // the text. The element is a `<time>` on a listing and a
-                // `<span>` around one on a note, and what is being asked is
-                // the same of both: what does a reader see here.
+                // A `<time>` on a listing and a `<span>` around one on a note,
+                // and the question is the same of both.
                 let (_, inner) = self.body[at..].split_once('>')?;
                 let (text, _) = inner.split_once('<')?;
                 Some(text.to_string())
@@ -265,15 +237,11 @@ struct Serving {
     // Declared before the root so it is killed before the directory it is
     // reading goes away.
     child: Child,
-    /// The server's stdout, still open past the first line.
-    ///
-    /// **Held rather than dropped, and that is not tidiness.** Reading the port
-    /// out of the first line used to be the end of it, and dropping the reader
-    /// closed the pipe — which was invisible while the only thing on stdout was
-    /// those first lines. A server that says something on the way out would
-    /// meet a closed pipe instead, and `println!` panics on one: the harness
-    /// would have turned a clean shutdown into a crash and then reported the
-    /// crash as the behaviour.
+    /// **Held rather than dropped**: dropping the reader closes the pipe, which
+    /// was invisible while stdout only carried the first lines. A server that
+    /// says something on the way out meets a closed pipe, and `println!` panics
+    /// on one — the harness would turn a clean shutdown into a crash and then
+    /// report the crash as the behaviour.
     said: BufReader<ChildStdout>,
     port: u16,
     _root: TempRoot,
@@ -314,10 +282,8 @@ impl Serving {
             .stderr(Stdio::piped());
 
         let mut child = command.spawn().expect("spawn noda web");
-        // The address it actually got, from the line it prints for the reader.
-        // `println!` is line buffered, so this arrives as soon as it is written
-        // rather than when the process ends — which is just as well, because it
-        // does not end.
+        // From the line it prints for the reader. `println!` is line buffered,
+        // so it arrives when written rather than when the process ends.
         let stdout = child.stdout.take().expect("stdout");
         let mut said = BufReader::new(stdout);
         let mut first = String::new();
@@ -337,10 +303,7 @@ impl Serving {
         }
     }
 
-    /// Asks it to stop the way a person or a supervisor does, and waits.
-    ///
-    /// `kill(1)` rather than a crate: the two signals under test are the two
-    /// every shell can send, and a dependency added to a test would be a
+    /// `kill(1)` rather than a crate: a dependency added to a test is a
     /// dependency in the binary's lockfile.
     #[cfg(unix)]
     fn signalled(&mut self, signal: &str) -> Stopped {
@@ -362,10 +325,8 @@ impl Serving {
         Stopped { status, said }
     }
 
-    /// Five seconds, and then it is a failure rather than a hung test.
-    ///
-    /// The point of the whole feature is that it stops, so a version of it that
-    /// does not stop has to be reported as broken and not as slow.
+    /// Five seconds, then a failure rather than a hung test: the point of the
+    /// feature is that it stops.
     #[cfg(unix)]
     fn waited(&mut self) -> ExitStatus {
         for _ in 0..200 {
@@ -378,20 +339,14 @@ impl Serving {
         panic!("the server was asked to stop and did not");
     }
 
-    /// The same server with the request stream turned on.
-    ///
-    /// The default filter is quiet — `error,noda=info` logs nothing per
-    /// request — so a test that wants to see one has to ask for it the way a
-    /// person would.
+    /// The default filter logs nothing per request, so a test that wants to see
+    /// one asks for it the way a person would.
     fn start_logging(root: TempRoot, allow: &[&str]) -> Serving {
         Serving::start_with(root, allow, Some("noda=debug"))
     }
 
-    /// Everything the server wrote to its log, read once it has stopped.
-    ///
-    /// Draining the pipe to EOF is what makes this readable at all, and that
-    /// only happens when the process is gone — so it consumes the harness
-    /// rather than being something to call in the middle of a test.
+    /// Draining to EOF only happens once the process is gone, so this consumes
+    /// the harness rather than being callable mid-test.
     fn logged(mut self) -> String {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -405,11 +360,8 @@ impl Serving {
         self.request(path, &[])
     }
 
-    /// A form, submitted the way a browser submits one.
-    ///
-    /// `application/x-www-form-urlencoded` and nothing else: there is no script
-    /// on any of these pages, so a form is the only thing that can ask for a
-    /// change, and this is the only shape a form without a file in it sends.
+    /// `application/x-www-form-urlencoded` and nothing else: a form is the only
+    /// thing that can ask for a change, and this is the only shape it sends.
     fn post(&self, path: &str, fields: &[(&str, &str)]) -> Answer {
         let body = fields
             .iter()
@@ -419,13 +371,9 @@ impl Serving {
         self.send("POST", path, &[], Some(&body))
     }
 
-    /// A page whose errand has stopped running.
-    ///
-    /// **"Not finished yet" is not a failure**, which is the rule the browser
-    /// tests learned the hard way: one round trip, an answer that can say "not
-    /// yet", and a loop that can see it. A network errand is the one thing here
-    /// that does not finish inside the request that started it, so this is the
-    /// only place a test has to wait at all.
+    /// **"Not finished yet" is not a failure.** A network errand is the one
+    /// thing that does not finish inside the request that started it, so this is
+    /// the only place a test waits at all.
     fn settled(&self, path: &str) -> Answer {
         for _ in 0..200 {
             let answer = self.get(path);
@@ -533,11 +481,9 @@ fn serving() -> (Serving, Paths) {
     (Serving::start(root, &[]), paths)
 }
 
-/// The same notebook, wired to a bare repository standing in for a git host.
-///
-/// libgit2's local transport is the same push and fetch machinery HTTPS and SSH
-/// use, so a `sync` here goes through the real code without a network or
-/// credentials — which is what `tests/cli.rs` does for the same reason.
+/// libgit2's local transport is the same push and fetch machinery HTTPS uses, so
+/// a `sync` here goes through the real code without a network — as
+/// `tests/cli.rs` does.
 fn serving_with_a_remote() -> (Serving, Paths, PathBuf) {
     let (root, paths) = a_notebook();
     let branch = noda::notebook::Notebook::open(&paths, "default")
@@ -646,10 +592,8 @@ fn a_front_page_row_says_what_status_says() {
     assert!(!stamp.contains(':'), "{stamp} has a clock in it");
 }
 
-/// Two destinations in one row: the notebook, and where that notebook stands.
 /// The second is the only way to the network screen from here, and a notebook
-/// with no remote does not get it — which is this notebook, so the link must be
-/// absent and the words still there.
+/// with no remote does not get it — so the link is absent and the words stay.
 #[test]
 fn the_front_page_leads_to_a_notebook_and_to_where_it_stands() {
     let (server, _paths, _remote) = serving_with_a_remote();
@@ -721,15 +665,11 @@ fn the_listing_names_every_note() {
     );
 }
 
-/// **`?sort=` is `--sort` under another name**, and the two get their answer
-/// out of one function — an order that came out differently depending on
-/// whether you asked for it at the prompt or on a screen would be two features
-/// wearing one name.
+/// **`?sort=` is `--sort` under another name**, out of one function.
 ///
-/// One note is pinned at both ends of the calendar before the server starts.
-/// Every other note in this fixture was written in the same second, and an
-/// order settled by a tie-break on a minted id is not one a test can assert
-/// anything about.
+/// One note is pinned at both ends of the calendar before the server starts:
+/// every other note here was written in the same second, and an order settled by
+/// a tie-break on a minted id is not one a test can assert anything about.
 #[test]
 fn a_listing_comes_back_in_the_order_the_address_asks_for() {
     let (root, paths) = a_notebook();
@@ -802,22 +742,19 @@ fn a_listing_comes_back_in_the_order_the_address_asks_for() {
         down_the_alphabet
     );
 
-    // An order nobody offers is the order a listing has always been in, and it
-    // is not complained about. A query is typed, so half of one is worth saying
-    // something about; `?sort=` is written by a link on this page, so anything
-    // else in it is a hand-edited address — and the listing it names exists.
+    // An order nobody offers is the default, uncomplained about: `q` is typed
+    // and half of one is worth a word, while `?sort=` is written by a link.
     let odd = server.get("/nb/default?sort=newest");
     assert_eq!(odd.titles(), plain.titles());
     assert!(!odd.says("class=\"problem\""), "{}", odd.body);
 }
 
-/// **A search and an order survive each other**, which needs both halves: the
-/// chips carry what was typed, and the form carries the order.
+/// **A search and an order survive each other**: the chips carry what was typed
+/// and the form carries the order.
 ///
-/// The second half has no other way to work. A `GET` form sends its own fields
-/// and nothing else, so without those hidden inputs a reader who ordered the
-/// listing and then searched it would get the notes back in the default order
-/// with nothing on the screen to say why.
+/// The second half has no other way to work — a `GET` form sends its own fields
+/// and nothing else, so an ordered listing searched would come back in the
+/// default order with nothing to say why.
 #[test]
 fn an_order_survives_a_search_and_a_search_survives_an_order() {
     let (server, _paths) = serving();
@@ -864,15 +801,13 @@ fn an_order_survives_a_search_and_a_search_survives_an_order() {
 
 /// **An answer is compressed when the reader asks for it, and not otherwise.**
 ///
-/// The whole of what this can fail on. Whether the bytes gunzip correctly is
-/// `flate2`'s business and not noda's, and it is covered where it can actually
-/// break: `e2e/` drives a real browser, which sends `Accept-Encoding` on every
-/// request and would render a broken page if the answer were corrupt. What is
-/// noda's is *which* answers get compressed, and that is what is asserted here.
+/// Whether the bytes gunzip correctly is `flate2`'s business, covered where it
+/// can break: `e2e/` drives a real browser. What is noda's is *which* answers
+/// get compressed.
 ///
-/// Note that the harness never sends `Accept-Encoding` anywhere else, which is
-/// why every other test in this file still reads a body: a compressed answer is
-/// `transfer-encoding: chunked` and the raw socket sees the framing.
+/// The harness sends `Accept-Encoding` nowhere else, which is why every other
+/// test still reads a body: a compressed answer is chunked, and the raw socket
+/// sees the framing.
 #[test]
 fn an_answer_is_compressed_only_when_the_reader_asks_for_it() {
     let (server, _paths) = serving();
@@ -900,11 +835,9 @@ fn an_answer_is_compressed_only_when_the_reader_asks_for_it() {
 
 /// **What is already compressed is not compressed again.**
 ///
-/// Both files here hold the same thousand bytes of the most compressible text
-/// there is, so the only thing telling them apart is what `holding` says they
-/// are. That is the point: if the predicate were wrong, gzip would fire on the
-/// `.bin` and this would catch it — a test whose two halves differ only in the
-/// decision being tested.
+/// Both files hold the same thousand bytes of the most compressible text there
+/// is, so the only thing telling them apart is what `holding` says they are —
+/// a test whose two halves differ only in the decision being tested.
 #[test]
 fn what_is_already_compressed_is_not_compressed_again() {
     let (root, paths) = a_notebook();
@@ -1090,11 +1023,9 @@ fn the_note_page_names_the_file_and_stamps_it_whole() {
 
 /// **A note page carries the index pane's frame and none of its rows.**
 ///
-/// This is the whole of the bargain the two-pane layout makes. The listing is
-/// about 290 bytes a note, and below 1024px not one of those bytes is drawn —
-/// so the page goes out with the pane's frame, and the script asks for the rest
-/// where the column is actually on screen. A regression here is invisible on a
-/// desktop, which is exactly why it is asserted rather than looked at.
+/// The two-pane layout's whole bargain: about 290 bytes a note, none of it drawn
+/// below 1024px. A regression here is invisible on a desktop, which is why it is
+/// asserted rather than looked at.
 #[test]
 fn a_note_page_is_sent_without_the_listing_beside_it() {
     let (server, paths) = serving();
@@ -1131,11 +1062,9 @@ fn a_note_page_is_sent_without_the_listing_beside_it() {
     );
 }
 
-/// The same bargain, made for a costlier walk. What points at a note is every
-/// note in the notebook read and scanned; a note page reads one file. Sending
-/// the answer with the page would turn one read into all of them on every
-/// phone, so the box goes out closed and empty and `script::BESIDE` fills it
-/// where the column is drawn.
+/// The same bargain for a costlier walk: what points at a note is every note
+/// read and scanned, against a note page's one file. So the box goes out closed
+/// and `script::BESIDE` fills it where the column is drawn.
 #[test]
 fn a_note_page_is_sent_without_what_points_at_it() {
     let (server, paths) = serving();
@@ -1198,11 +1127,9 @@ fn the_backlinks_page_writes_the_shape_the_margin_note_reads() {
     );
 }
 
-/// **The saving, on the wire.** A swap replaces one pane and keeps the rest of
-/// the screen, so a request that says so is sent one pane — and what arrives is
-/// a piece of the page the same address answers with, byte for byte, which is
-/// the assertion that matters. The rest of this file is about the page; this is
-/// about the two answers being one rendering.
+/// **The saving, on the wire.** A request that says it wants one pane gets one
+/// pane, and what arrives is a piece of the page the same address answers with,
+/// byte for byte — the two answers being one rendering.
 #[test]
 fn a_note_can_be_asked_for_without_the_page_around_it() {
     let (server, paths) = serving();
@@ -1272,11 +1199,9 @@ fn an_address_asked_for_plainly_is_still_the_whole_page() {
     );
 }
 
-/// The other three, each named by the fetch that asks for it. The listing's
-/// column is fetched once per note page opened cold, the backlinks answer once
-/// per note read on a monitor, and the network screen's news every two seconds
-/// while a sync runs — which is the one that used to re-send the whole
-/// stylesheet to move a line of text.
+/// The other three, each named by the fetch that asks for it — the last being
+/// the one that used to re-send the whole stylesheet every two seconds to move a
+/// line of text.
 #[test]
 fn the_other_three_parts_arrive_without_their_pages() {
     let (server, paths) = serving();
@@ -1320,12 +1245,8 @@ fn the_other_three_parts_arrive_without_their_pages() {
     }
 }
 
-/// The second part off the listing route, and the one going back asks for.
-///
-/// A press of back out of a note has two panes to put right — the rows, and the
-/// pane the note was standing in — so this carries both, and the tab's name,
-/// which is the one thing on the screen that a search does not change and back
-/// does.
+/// Back out of a note has two panes to put right, so this carries both — and the
+/// tab's name, which a search does not change and back does.
 #[test]
 fn the_listing_screen_arrives_as_both_of_its_panes() {
     let (server, _paths) = serving();
@@ -1389,13 +1310,9 @@ fn the_listing_carries_its_own_rows_and_says_so() {
     assert!(answer.says("Budget review"), "{}", answer.body);
 }
 
-/// The pane beside the listing, on a screen wide enough to show one.
-///
-/// A notebook that has a `README.md` has already written the page that is about
-/// the whole of it — the same file `noda readme` writes and a git host shows —
-/// so that is what stands there. Rendered, because it is Markdown and the
-/// notebook's own; and only ever drawn above 1024px, which is why the phone
-/// tests never see it.
+/// A notebook with a `README.md` has already written the page about the whole of
+/// itself, so that is what stands there — rendered, and only ever drawn above
+/// 1024px, which is why the phone tests never see it.
 #[test]
 fn the_notebooks_front_page_stands_where_no_note_is_picked() {
     let (server, paths) = serving();
@@ -1701,12 +1618,10 @@ fn the_health_check_says_the_server_is_answering() {
     );
 }
 
-/// **The point of the endpoint, and the one thing a unit test cannot see.** A
-/// probe sends whatever `Host` the thing running it decided on — a pod address,
-/// a service name, the name on a proxy's certificate — and the guard refuses a
-/// name nobody allowed. That refusal is right for a browser and would report a
-/// healthy server as dead, so the health check is declared outside the guard's
-/// layer and this is what says it stayed there.
+/// **The point of the endpoint, and what a unit test cannot see.** A probe sends
+/// whatever `Host` the thing running it decided on, and the guard's refusal —
+/// right for a browser — would report a healthy server as dead. This says the
+/// check stayed outside that layer.
 #[test]
 fn the_health_check_answers_a_name_the_guard_would_refuse() {
     let (server, _paths) = serving();
@@ -1860,11 +1775,10 @@ fn the_add_field_takes_more_than_one_tag() {
     assert!(form.says("Add tags"), "{}", form.body);
 }
 
-/// A tag row is a box beside a word, centred against each other. The rule that
-/// makes it one has to out-specify `form.write label` above it, which is the
-/// field-label rule and says `display:block`; a bare `.tick` loses that contest,
-/// and the row falls back to a baseline with the box and its tag jammed
-/// together. The assertion is on the selector because that is where it broke.
+/// The rule making a tag row one line has to out-specify `form.write label`,
+/// which says `display:block`; a bare `.tick` loses that contest and the box and
+/// its tag jam together. Asserted on the selector because that is where it
+/// broke.
 #[test]
 fn a_tag_row_centres_its_box_against_its_name() {
     let (server, paths) = serving();
@@ -1958,13 +1872,10 @@ fn another_site_cannot_write_either() {
     assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
 }
 
-/// The stylesheet, on the other end of the link every page carries.
-///
 /// **The two headers are the whole bargain.** The address names the bytes, so
-/// the answer may be kept for a year and never asked for again; and the page
-/// that names it may not be kept at all, so a reader always has the addresses
-/// this build wrote. Either half alone is a way to serve somebody a page whose
-/// stylesheet is a 404.
+/// the answer keeps for a year; the page that names it keeps not at all, so a
+/// reader always has the addresses this build wrote. Either half alone serves
+/// somebody a page whose stylesheet is a 404.
 #[test]
 fn the_stylesheet_is_linked_once_and_kept_for_a_year() {
     let (server, _paths) = serving();
@@ -2021,12 +1932,9 @@ fn a_page_links_the_scripts_it_uses_and_no_others() {
     assert!(!status.says("/a/panes."), "{}", status.body);
 }
 
-/// An address this build did not write is nothing.
-///
-/// Not the current bytes under a name that promised different ones: a hash in
-/// an address is a promise, and `immutable` is a year of somebody keeping it.
-/// It is also how the route stays a lookup — there is no path here to join to
-/// anything, so the traversal question is one it cannot be asked.
+/// Not the current bytes under a name that promised different ones: a hash is a
+/// promise and `immutable` is a year of keeping it. It is also how the route
+/// stays a lookup, with no path to join to anything.
 #[test]
 fn an_asset_address_this_build_did_not_write_is_not_answered() {
     let (server, _paths) = serving();
@@ -2045,16 +1953,12 @@ fn an_asset_address_this_build_did_not_write_is_not_answered() {
     }
 }
 
-/// Only two pages carry a script, and this is the assertion that keeps the
-/// number down.
+/// Only two pages carry a script, and this is what keeps the number down.
 ///
-/// It began life as "no page carries a script" and held for six pull requests,
-/// which was the point of writing it that early: the scriptless path was
-/// finished before anything could quietly start leaning on the other one. What
-/// replaces it is the same claim narrowed rather than dropped — a script is
-/// allowed exactly where it removes a wait the design named in advance, and
-/// nowhere else. A screen that grows one later has to come here and argue for
-/// it.
+/// It began as "no page carries a script" and held for six pull requests, which
+/// was the point of writing it that early. What replaces it is the same claim
+/// narrowed rather than dropped: a script is allowed exactly where it removes a
+/// wait the design named in advance.
 #[test]
 fn only_the_screens_that_wait_carry_a_script() {
     let (server, paths) = serving();
@@ -2071,12 +1975,10 @@ fn only_the_screens_that_wait_carry_a_script() {
         assert!(!answer.says("<script"), "{path} carries a script");
     }
 
-    // The listing, which can narrow itself without asking; the network screen,
-    // which can ask for news without reloading whole; and a note, whose index
-    // pane and margin note are the two things on any of these pages the server
-    // does not send — see `script::PANES` and `script::BESIDE` for what each
-    // costs and why. The backlinks page above is the margin note's source and
-    // carries nothing itself: it is read, not run.
+    // The listing narrows without asking, the network screen asks for news
+    // without reloading, and a note's index pane and margin note are the two
+    // things the server does not send. The backlinks page above is the margin
+    // note's source and carries nothing: it is read, not run.
     for path in &[
         "/nb/default".to_string(),
         "/nb/default/status".to_string(),
@@ -2138,11 +2040,9 @@ fn the_tags_screen_counts_them_and_leads_into_the_listing() {
     );
 }
 
-/// The list `noda todo` prints, in the same order, with the same idea of late.
-///
-/// The dates are absurd on purpose. `due:2000-01-01` is overdue whenever this
-/// test runs and `due:2999-12-31` is not, so what is asserted is the comparison
-/// rather than the clock the machine happens to have.
+/// The dates are absurd on purpose: `due:2000-01-01` is overdue whenever this
+/// runs and `due:2999-12-31` is not, so what is asserted is the comparison
+/// rather than the machine's clock.
 #[test]
 fn the_todo_screen_lists_unticked_boxes_soonest_first() {
     let (server, paths) = serving();
@@ -2382,11 +2282,9 @@ fn the_status_screen_says_where_a_notebook_stands() {
     }
 }
 
-/// Of every screen that shows a remote this is the one with the widest
-/// audience: `noda web` asks nobody who they are, so whoever can open the page
-/// can read what is on it. A remote authenticated by a token in its URL — which
-/// is how the container image reaches an HTTPS host at all — must not put that
-/// token on it.
+/// The widest audience of any screen that shows a remote: `noda web` asks nobody
+/// who they are. A token in the URL — how the container image reaches an HTTPS
+/// host at all — must not land on it.
 #[test]
 fn the_status_screen_shows_a_remote_without_its_token() {
     let (root, paths) = a_notebook();
@@ -2437,13 +2335,12 @@ fn the_listing_says_where_the_notebook_stands_and_leads_to_the_rest() {
     );
 }
 
-/// Deleting a note is on the note's own bar, in the colour nothing else on any
-/// bar wears, and the page it leads to is unchanged: it still asks first.
+/// On the note's own bar, in the colour nothing else wears, and the page it
+/// leads to still asks first.
 ///
-/// Here rather than only in the unit test because the bar is chrome, and chrome
-/// is what a fragment is allowed to leave out — a note fetched by the script
-/// has to carry the same five items as a note fetched by a browser, or the two
-/// halves of this interface have drifted.
+/// Here as well as in the unit test because the bar is chrome, and chrome is
+/// what a fragment may leave out: a note fetched by the script has to carry the
+/// same five items as one fetched by a browser.
 #[test]
 fn deleting_is_on_the_bar_and_still_asks_first() {
     let (server, paths) = serving();
@@ -2468,13 +2365,11 @@ fn deleting_is_on_the_bar_and_still_asks_first() {
 }
 
 /// **An address here is somebody's note id, and it does not travel.** Three
-/// statements of that, checked on a real answer because two of them are not in
-/// the markup at all and the third is only in the markup of a rendered note.
+/// statements of that, on a real answer because two are not in the markup at
+/// all.
 ///
-/// The note is written by this test rather than added to the fixture: every
-/// other test in this file counts the notebook's notes, and a fixture that
-/// grew would move numbers that have nothing to do with what is being asked
-/// here.
+/// The note is written by this test rather than added to the fixture, which
+/// would move counts that have nothing to do with what is asked here.
 #[test]
 fn nothing_a_note_points_at_is_told_where_it_was_pointed_from() {
     let (server, paths) = serving();
@@ -2516,16 +2411,14 @@ fn nothing_a_note_points_at_is_told_where_it_was_pointed_from() {
     assert!(answer.says("</a>, and so is the rest"), "{}", answer.body);
 }
 
-/// The header is on every HTML answer and not only on a note, because a listing
-/// row's address names a note as surely as the note's own page does.
+/// On every HTML answer and not only a note, a listing row's address naming one
+/// as surely as the note's own page.
 ///
-/// **The value is asserted exactly, and `no-referrer` would be the wrong kind
-/// of wrong.** It reads as the stricter of the two and it is the one that
-/// breaks writing: a document under that policy posts its forms with
-/// `Origin: null`, and `web::guard` refuses an opaque origin because that is
-/// what a sandboxed frame aimed at somebody else's server sends. Nothing in
-/// this file could catch it — every request here carries an `Origin` this file
-/// wrote — so what stands in for that is this line and the paragraph above it.
+/// **The value is asserted exactly, and `no-referrer` would be the wrong kind of
+/// wrong**: it reads as the stricter of the two and is the one that breaks
+/// writing, posting forms with `Origin: null` that `web::guard` refuses. Nothing
+/// in this file could catch it — every request here carries an `Origin` this
+/// file wrote.
 #[test]
 fn every_page_says_an_address_does_not_travel() {
     let (server, _paths) = serving();
@@ -2610,12 +2503,11 @@ fn there_is_nothing_called_fetch_to_do_to_a_notebook() {
 
 // ---------------------------------------------------------------- stopping it
 
-/// `SIGTERM` is what a supervisor sends: `docker stop`, `systemctl stop`, and
-/// anything else that is not a person at a keyboard.
+/// `SIGTERM` is what a supervisor sends.
 ///
-/// **The exit status is half of what is under test.** A server that was asked
-/// to stop and did has not failed, and the whole reason to send `SIGTERM`
-/// rather than `SIGKILL` is to be able to tell the difference afterwards.
+/// **The exit status is half of what is under test**: a server asked to stop and
+/// did has not failed, and the reason to send `SIGTERM` rather than `SIGKILL` is
+/// to tell the difference afterwards.
 #[test]
 #[cfg(unix)]
 fn a_supervisor_can_stop_it() {

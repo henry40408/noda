@@ -1,53 +1,44 @@
 //! Signing a commit with GPG.
 //!
-//! libgit2 shells out to nothing. The same reason `pre-commit` never fires under
-//! `noda add` (see the hooks note in the README) applies to signing: a
-//! `commit.gpgsign = true` that `git commit` honours does nothing here unless
-//! noda calls gpg itself. So it does — the commit object is built, handed to gpg
-//! as text, and written back with the detached signature attached.
+//! libgit2 shells out to nothing, so a `commit.gpgsign = true` that `git commit`
+//! honours does nothing here unless noda calls gpg itself. It does: build the
+//! commit object, hand it to gpg as text, write it back with the signature.
 //!
-//! Only `OpenPGP`. `gpg.format` also admits `ssh` and `x509`, and a notebook
-//! configured for either is told so rather than quietly committed unsigned: an
-//! unsigned commit that was asked to be signed is the one outcome worth
-//! refusing, because nothing downstream can tell it from one nobody asked about.
+//! Only `OpenPGP` — a notebook configured for `ssh` or `x509` is told so rather
+//! than quietly committed unsigned, because nothing downstream can tell an
+//! unsigned commit from one nobody asked about.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 use crate::{Error, Result};
 
-/// What an armored `OpenPGP` signature opens with. gpg exiting 0 is not on its own
-/// evidence that it signed anything — a program named by `gpg.program` that is
-/// not gpg would also exit 0.
+/// gpg exiting 0 is not evidence it signed anything — a `gpg.program` that is
+/// not gpg exits 0 too.
 const ARMOR_HEADER: &str = "-----BEGIN PGP SIGNATURE-----";
 
-/// The gpg to run and the key to run it with, once the configuration has been
-/// read. Its existence is the decision: resolving to `None` means unsigned.
+/// Its existence is the decision: resolving to `None` means unsigned.
 #[derive(Debug)]
 pub struct Signer {
-    /// `gpg.openpgp.program`, then `gpg.program`, then plain `gpg` — the order
-    /// git resolves it in, so a notebook signs with whatever `git commit` in the
-    /// same directory would have used.
+    /// `gpg.openpgp.program`, `gpg.program`, then `gpg` — git's own order, so a
+    /// notebook signs with whatever `git commit` here would have used.
     program: String,
-    /// `user.signingkey`. Absent means gpg picks its own default key, which is
-    /// what `git commit -S` without a configured key does.
+    /// `user.signingkey`. Absent lets gpg pick its default, as `git commit -S`
+    /// without a configured key does.
     key: Option<String>,
 }
 
-/// Whether this commit gets signed, and with what.
-///
-/// `configured` is noda's own `sign`, which outranks git's `commit.gpgsign` the
-/// same way `config.toml`'s `author` outranks `user.name` — a notebook is one
-/// program's worth of decision, and `commit.gpgsign` is a blanket one.
+/// `configured` is noda's own `sign`, outranking `commit.gpgsign` the way
+/// `config.toml`'s `author` outranks `user.name`: a notebook is one program's
+/// worth of decision and `commit.gpgsign` is a blanket one.
 pub fn resolve(configured: Option<bool>, git: &git2::Config) -> Result<Option<Signer>> {
     let wanted = configured.unwrap_or_else(|| git.get_bool("commit.gpgsign").unwrap_or(false));
     if !wanted {
         return Ok(None);
     }
 
-    // Unset is git's own default of `openpgp`. Anything else is refused by name:
-    // an ssh-signing user who is told "noda cannot do ssh" can act on it, and
-    // one whose commits are silently unsigned cannot.
+    // Unset is git's default of `openpgp`. Anything else is refused by name: a
+    // user told "noda cannot do ssh" can act on it, one silently unsigned cannot.
     let format = git
         .get_string("gpg.format")
         .unwrap_or_else(|_| "openpgp".to_string());
@@ -70,11 +61,8 @@ pub fn resolve(configured: Option<bool>, git: &git2::Config) -> Result<Option<Si
 }
 
 impl Signer {
-    /// Signs the commit object's text and returns the armored signature.
-    ///
-    /// stderr is inherited rather than captured: gpg talks to its agent through
-    /// it, and a captured stderr is how a pinentry prompt turns into a hang with
-    /// nothing on screen to explain it.
+    /// stderr is inherited, not captured: gpg talks to its agent through it, and
+    /// capturing turns a pinentry prompt into a hang with nothing on screen.
     pub fn sign(&self, content: &str) -> Result<String> {
         let mut command = Command::new(&self.program);
         // `-b` detached, `-s` sign, `-a` armored: the three git passes too.
@@ -96,8 +84,8 @@ impl Signer {
                 _ => Error::msg(format!("could not run `{}`: {e}", self.program)),
             })?;
 
-        // A commit object is a few hundred bytes, so this fits the pipe buffer
-        // and cannot deadlock against a reader that has not started yet.
+        // A few hundred bytes fits the pipe buffer, so this cannot deadlock
+        // against a reader that has not started.
         child
             .stdin
             .take()
@@ -134,8 +122,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A config file that deletes itself. libgit2's in-memory config is
-    /// read-only, so a config to write into has to be one on disk.
+    /// libgit2's in-memory config is read-only, so one to write into is on disk.
     struct Scratch(PathBuf);
 
     impl Drop for Scratch {
@@ -144,8 +131,7 @@ mod tests {
         }
     }
 
-    /// A config with no file behind it: every lookup misses, which is the state
-    /// a machine with no git configuration is in.
+    /// Every lookup misses — a machine with no git configuration.
     fn empty() -> git2::Config {
         git2::Config::new().expect("empty config")
     }
@@ -189,8 +175,7 @@ mod tests {
         assert!(err.contains("ssh"), "{err}");
         assert!(err.contains("OpenPGP only"), "{err}");
 
-        // But only when it would have signed: an ssh-format config that is not
-        // signing has nothing to complain about.
+        // Only when it would have signed.
         assert!(resolve(Some(false), &config).unwrap().is_none());
     }
 

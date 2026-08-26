@@ -132,10 +132,16 @@ crate.
 
 ## Conventions
 
-- **Module `//!` comments are where design decisions are recorded**, and they are thorough — read a
-  module's header before changing it. `Cargo.toml` does the same for every dependency, including
-  the measurements behind a choice (e.g. `tracing-subscriber`'s `env-filter` was dropped for
-  `Targets` after measuring it at 355 KB, 69% of the whole of the logging).
+- **Module `//!` comments are where design decisions are recorded** — read a module's header before
+  changing it. `Cargo.toml` does the same for every dependency, including the measurements behind a
+  choice (e.g. `tracing-subscriber`'s `env-filter` was dropped for `Targets` after measuring it at
+  355 KB, 69% of the whole of the logging).
+- **A comment states the decision and its reason, and stops.** The rejected alternative, the
+  measurement and the failure a rule prevents are all worth a clause; restating them, or restating
+  what the code beside them plainly says, is not. Where a name and a signature already answer the
+  question, write no comment at all.
+- **`main.rs`'s `///` comments are clap's `--help` text, not documentation.** Editing one changes
+  what the CLI prints, which is user-facing behaviour and belongs in README.md with it.
 - **Startup time is a feature.** A quick `noda ls` costs more in process startup than in work, so
   the release profile is tuned for size and anything that grows the binary is measured, not
   assumed.

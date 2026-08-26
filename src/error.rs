@@ -18,10 +18,9 @@ impl Error {
         Error::Msg(text.into())
     }
 
-    /// Whether this is just the reader going away — `noda log | head`, or
-    /// quitting a pager before the end. Rust leaves `SIGPIPE` ignored, so the
-    /// write comes back as an error instead of ending the process; nothing is
-    /// wrong and there is nobody left to tell.
+    /// Rust leaves `SIGPIPE` ignored, so `noda log | head` comes back as a write
+    /// error instead of ending the process. Nothing is wrong and nobody is left
+    /// to tell.
     pub fn is_broken_pipe(&self) -> bool {
         matches!(self, Error::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe)
     }

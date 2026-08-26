@@ -1,43 +1,33 @@
 //! The three commands that talk to the network, and the fact that they take
 //! time.
 //!
-//! Everything else `noda web` does finishes while the browser waits: reading a
-//! note is a file, writing one is a commit, and both are over in milliseconds.
-//! `sync` is a fetch, a merge and a push over somebody's tailnet, and a phone
-//! that shows a white screen for eleven seconds has not told its reader anything
-//! about whether it is working.
+//! Everything else finishes while the browser waits. `sync` is a fetch, a merge
+//! and a push over somebody's tailnet, and a phone showing a white screen for
+//! eleven seconds has said nothing about whether it is working.
 //!
-//! So the request does not wait for it. A `POST` starts the errand and answers
-//! `303` at once; the page it lands on says what is going on and comes back for
-//! more. Three things follow from that, and each of them is why this file
-//! exists rather than a `spawn_blocking` in a handler:
+//! So the request does not wait: a `POST` starts the errand and answers `303`,
+//! and the page it lands on says what is going on. Three things follow, and each
+//! is why this is a file rather than a `spawn_blocking` in a handler:
 //!
 //! - **A reload must not start it again.** Only a `POST` begins anything, and
-//!   what the reader is left holding after the redirect is a `GET` — so the
-//!   refresh a stalled page invites, and the one the meta refresh performs, both
-//!   ask the same harmless question.
+//!   what the reader holds after the redirect is a `GET`.
 //!
-//! - **One notebook, one errand.** Two pushes at once meet in `index.lock` and
-//!   what comes back is libgit2 naming a file. Asking again while one is running
+//! - **One notebook, one errand.** Two pushes meet in `index.lock`. Asking again
 //!   is not an error, though: it is somebody who could not tell whether the
-//!   first press landed, and the honest answer is the screen that says the
-//!   errand is under way.
+//!   first press landed.
 //!
-//! - **It has to be told apart from having never run.** A page that says
-//!   nothing after a sync looks exactly like a page that ignored the button, so
-//!   the outcome outlives the errand and stays until the next one replaces it.
+//! - **It has to be told apart from having never run**, or a page that says
+//!   nothing looks like one that ignored the button — so the outcome outlives
+//!   the errand.
 //!
-//! The thread is a plain `std::thread` and not a `spawn_blocking`, because the
-//! pool is for work a request is waiting on and this is precisely the work no
-//! request waits on. It opens its own `Notebook` for the same reason every
-//! handler does — `git2::Repository` is `!Send` — and it takes the same write
-//! lock every write takes, because a merge landing in the middle of somebody
-//! pressing Save is the collision the lock is there for.
+//! A plain `std::thread` and not `spawn_blocking`, that pool being for work a
+//! request waits on. It opens its own `Notebook` because `git2::Repository` is
+//! `!Send`, and takes the write lock because a merge landing mid-Save is the
+//! collision the lock is for.
 //!
-//! And because it outlives its request, it is the one thing here a shutdown has
-//! to wait for: closing the listener finishes every other kind of work by
-//! definition, and finishes this one halfway through a commit. `settle` is that
-//! wait.
+//! Outliving its request makes it the one thing a shutdown has to wait for:
+//! closing the listener finishes everything else by definition, and finishes
+//! this halfway through a commit. `settle` is that wait.
 
 use std::collections::BTreeMap;
 use std::sync::{Condvar, Mutex};
@@ -55,8 +45,7 @@ pub enum Errand {
 }
 
 impl Errand {
-    /// The word in the URL, which is also the name of the command it runs. One
-    /// spelling for the route, the button and the terminal.
+    /// One spelling for the route, the button and the terminal.
     pub fn of(word: &str) -> Option<Errand> {
         match word {
             "sync" => Some(Errand::Sync),
@@ -92,11 +81,8 @@ impl Errand {
         }
     }
 
-    /// And what to call it when it did not.
-    ///
     /// Named after the errand rather than apologising: "Push failed" is a fact
-    /// about what was attempted, and the line under it is the reason in the
-    /// words the command used.
+    /// about what was attempted, and the reason is on the line under it.
     pub fn stuck(self) -> &'static str {
         match self {
             Errand::Sync => "Sync failed",
@@ -105,13 +91,9 @@ impl Errand {
         }
     }
 
-    /// Runs it, in a notebook the caller already has open.
-    ///
-    /// Through `cmd` and not through `notebook`, on the rule the rest of the web
-    /// module follows: reads go to the notebook, writes go to the command. It
-    /// matters most here — `sync` is a commit, a pull and a push *in that
-    /// order*, and a second arrangement of those three steps living in the web
-    /// module would be a second `sync` that nobody would think to keep in step.
+    /// Through `cmd` and not `notebook`, on the module's rule. It matters most
+    /// here: `sync` is a commit, a pull and a push *in that order*, and a second
+    /// arrangement of the three would be a second `sync`.
     fn run(self, notebook: &Notebook) -> Result<String> {
         match self {
             Errand::Sync => cmd::sync_in(notebook),
@@ -121,10 +103,8 @@ impl Errand {
     }
 }
 
-/// How an errand ended.
-///
-/// The failure is a `String` and not an `Error`, because by the time anybody
-/// reads it the thread that produced it is gone. What survives is what it said.
+/// The failure is a `String` and not an `Error`: by the time anybody reads it
+/// the thread that produced it is gone.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Outcome {
     /// What the command printed. Several lines, for `sync`.
@@ -156,18 +136,13 @@ impl Report {
     }
 }
 
-/// What every notebook's network errand is doing.
+/// Keyed by notebook, two notebooks being two repositories with nothing to
+/// collide over.
 ///
-/// Keyed by notebook, because two notebooks are two repositories and there is
-/// nothing for them to collide over. The write lock they both take is a
-/// different question, and it is the server's.
-///
-/// **The condvar is what a shutdown waits on**, and it is here rather than in
-/// the server because this is the only state in the whole of `noda web` that
-/// outlives the request that made it. Everything else finishes inside a
-/// request, so closing the listener is the whole of stopping; an errand is
-/// still going afterwards, and what it is in the middle of is a commit, a fetch
-/// and a push holding one repository's `index.lock`. See `settle`.
+/// **The condvar is what a shutdown waits on**, and it is here because this is
+/// the only state in `noda web` outliving the request that made it: everything
+/// else finishes inside a request, so closing the listener is the whole of
+/// stopping. See `settle`.
 #[derive(Default)]
 pub struct Errands {
     state: Mutex<State>,
@@ -178,13 +153,9 @@ pub struct Errands {
 #[derive(Default)]
 struct State {
     each: BTreeMap<String, Doing>,
-    /// Somebody signalled a second time: stop waiting for what is left.
-    ///
-    /// Under the same lock as the map and not an `AtomicBool` beside it,
-    /// because `settle` tests it and then sleeps on the condvar. A flag set
-    /// between those two steps by a thread that held no lock would be a
-    /// wake-up sent to a waiter that had not started waiting yet — which is the
-    /// one bug in a condvar that reproduces only when somebody is in a hurry.
+    /// Under the same lock as the map and not an `AtomicBool` beside it, because
+    /// `settle` tests it and then sleeps on the condvar: a flag set between
+    /// those two steps is a wake-up sent to a waiter that has not started.
     abandoned: bool,
 }
 
@@ -200,11 +171,9 @@ impl State {
 }
 
 impl Errands {
-    /// Marks an errand as under way, unless the notebook already has one.
-    ///
     /// The caller starts the thread only if this says yes, and the check and the
-    /// mark happen under one lock — two requests arriving together must not both
-    /// be told they are the first.
+    /// mark are under one lock: two requests arriving together must not both be
+    /// told they are the first.
     pub fn begin(&self, book: &str, errand: Errand) -> bool {
         let mut state = self.held();
         if state
@@ -232,37 +201,27 @@ impl Errands {
             doing.took = Some(doing.started.elapsed());
             doing.outcome = Some(outcome);
         }
-        // Outside the `if`, and after the guard has gone: whoever is waiting in
-        // `settle` has to be woken however this ended, and an errand whose
-        // record has somehow gone missing is still an errand that has stopped.
+        // Outside the `if` and after the guard: `settle` has to be woken however
+        // this ended.
         self.ended.notify_all();
     }
 
-    /// The errands still going, as `(notebook, errand)`, in notebook order.
-    ///
-    /// For the one caller that needs to say out loud what it is about to wait
-    /// for. A page asks `report` about the notebook it is showing; this is the
-    /// question nothing but a shutdown asks.
+    /// For the one caller that says out loud what it is about to wait for. A
+    /// page asks `report`; nothing but a shutdown asks this.
     pub fn running(&self) -> Vec<(String, Errand)> {
         self.held().running()
     }
 
-    /// Blocks until no errand is running, and answers with what it gave up on
-    /// — which is nothing at all in every ordinary shutdown.
+    /// Blocks until no errand is running, answering with what it gave up on —
+    /// nothing at all in an ordinary shutdown.
     ///
-    /// **The last thing `serve` does, and the reason a signal is worth handling
-    /// at all here.** A `sync` is `cmd::sync_in`: a commit, a fetch, a merge and
-    /// a push, in one repository, under `index.lock`. A process killed in the
-    /// middle of that leaves the lock file behind, and the next write — from the
-    /// browser, from a terminal, from anywhere — fails with libgit2 reporting
-    /// that a file exists, which is a true statement about a lock file and no
-    /// help at all to whoever meets it.
+    /// **The last thing `serve` does, and why a signal is worth handling here.**
+    /// A process killed mid-`sync` leaves `index.lock` behind, and the next write
+    /// from anywhere fails with libgit2 saying a file exists.
     ///
-    /// It waits rather than timing out, because there is no length of time after
-    /// which abandoning a half-finished push becomes the right answer. What ends
-    /// the wait early is `abandon` — a second signal, a deliberate one, and not
-    /// a guess made in advance about how slow somebody's network is allowed to
-    /// be.
+    /// It waits rather than timing out: there is no length of time after which
+    /// abandoning a half-finished push is right. `abandon` ends it — a second,
+    /// deliberate signal, not a guess about somebody's network.
     pub fn settle(&self) -> Vec<(String, Errand)> {
         let mut state = self.held();
         while !state.abandoned && !state.running().is_empty() {
@@ -274,10 +233,8 @@ impl Errands {
         state.running()
     }
 
-    /// Stops `settle` waiting, now.
-    ///
     /// The second signal. It does not stop the errand — nothing can, short of
-    /// the process ending, which is what happens next — it stops the waiting.
+    /// the process ending — it stops the waiting.
     pub fn abandon(&self) {
         self.held().abandoned = true;
         self.ended.notify_all();
@@ -292,11 +249,8 @@ impl Errands {
         })
     }
 
-    /// The map, whatever happened to whoever held it last.
-    ///
-    /// A panic in one errand must not take the button away for the rest of the
-    /// session: the map is a record of what happened, and a record that refuses
-    /// to be read because a reader of it once panicked is worse than the panic.
+    /// A panic in one errand must not take the button away for the session: a
+    /// record refusing to be read because a reader once panicked is worse.
     fn held(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()

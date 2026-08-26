@@ -1,43 +1,23 @@
 //! The two things every page needs, and no page carries.
 //!
-//! **This file is a correction to a decision, not an addition to one.** Until
-//! now the stylesheet and the scripts were written into every answer, and
-//! `page::shell` said why: one request draws a whole page, which is what a
-//! phone on the far end of a tailnet wants, and the alternative bought caching
-//! at the price of a round trip and a question about invalidation "nothing here
-//! is big enough to be worth asking".
+//! **A correction to a decision, not an addition to one.** These used to be
+//! written into every answer, on the argument that one request draws a whole
+//! page and nothing here was big enough to be worth a round trip. Both halves
+//! of that changed: the stylesheet is 39,598 bytes and the four scripts 28,458,
+//! and once the enhancement layer started asking for fragments, what was left
+//! carrying them — a second notebook, a link in from outside, every form page,
+//! every screen on a phone — was re-sending 46 KB the browser already had.
 //!
-//! Both halves of that have changed.
+//! **Invalidation answers itself when the name is the content.**
+//! `/a/style.<hash>.css` cannot go stale, so there is nothing to expire. The two
+//! ways to get it wrong are serving a hash nobody wrote, which is a 404, and
+//! caching a page that links one, which `no-cache` prevents.
 //!
-//! **The price is now paid on every page rather than saved on one.** The
-//! stylesheet is 39,598 bytes and the four scripts 28,458 between them, against
-//! a listing's own few thousand — and since the enhancement layer started
-//! asking for parts of pages, most of what a reader fetches after their first
-//! page is a fragment that carries none of this. What is left carrying it is the
-//! case the fragments could not cover: opening a second notebook, following a link into
-//! a note from outside, every form page, and every screen on a phone, where
-//! the panes never split and every press is still a whole page. Each of those
-//! was re-sending 46 KB of identical bytes the browser had already been given.
+//! The hash is git's `hash_object` — not for any property of SHA-1, but because
+//! a notebook is a git repository and this is its name for "these exact bytes".
 //!
-//! **And the invalidation question answers itself when the name is the
-//! content.** `/a/style.<hash>.css` cannot go stale: change the bytes and the
-//! hash changes, the page points somewhere else, and the old address is one
-//! nobody asks for. There is nothing to expire and nothing to purge — the only
-//! two ways to get this wrong are to serve a hash you did not write, which is a
-//! 404, or to let a page linking one be cached, which is what `no-cache` on
-//! every page is for.
-//!
-//! The hash is git's, from the same `hash_object` a blob id comes from. Not for
-//! any property of SHA-1 that matters here — twelve hex digits of anything
-//! would do — but because a notebook is a git repository and this is the naming
-//! it already uses for "these exact bytes".
-//!
-//! What is *not* here is a bundle. Each script is its own address and a page
-//! links the ones it uses, which is the rule the inline version already
-//! followed: a note page has never been sent the listing's filter, and putting
-//! all of them in one file to save a request would send it 8,765 bytes to run
-//! none of. The first view of a notebook costs at most four requests that are
-//! never made again.
+//! No bundle: a page links only the scripts it uses, as the inline version did.
+//! One file would send a note page 8,765 bytes to run none of.
 
 use std::sync::OnceLock;
 
@@ -61,8 +41,7 @@ pub enum Asset {
 }
 
 impl Asset {
-    /// Every one of them, which is what the addresses are built from at startup
-    /// and what a request is answered out of.
+    /// What the addresses are built from, and what a request is answered out of.
     const ALL: [Asset; 6] = [
         Asset::Style,
         Asset::Listing,
@@ -88,8 +67,7 @@ impl Asset {
         self == Asset::Style
     }
 
-    /// What noda says it is, and it is the only thing the browser will treat it
-    /// as — `nosniff` goes out beside it.
+    /// The only thing the browser will treat it as: `nosniff` goes out beside.
     fn kind(self) -> &'static str {
         if self.css() {
             "text/css; charset=utf-8"
@@ -98,9 +76,8 @@ impl Asset {
         }
     }
 
-    /// The bytes, built once. `theme::stylesheet` formats the palette into
-    /// custom properties and the rest is `const`, so this is the same string
-    /// every time it is asked for — which is what makes hashing it once honest.
+    /// The same string every time it is asked for, which is what makes hashing
+    /// it once honest.
     fn body(self) -> String {
         match self {
             Asset::Style => format!("{}{}", crate::web::theme::stylesheet(), page::stylesheet()),
@@ -117,13 +94,9 @@ impl Asset {
         &self.held().at
     }
 
-    /// The element that links it, which is the only difference between the two
-    /// kinds worth having in the markup.
-    ///
-    /// `defer` and not the end of the body: the scripts read the rows, so they
-    /// have to run after the document is parsed, and a deferred script in the
-    /// head starts downloading while it still is. They run in the order they
-    /// are written, which is the order the page lists them in.
+    /// `defer` and not the end of the body: the scripts read the rows so they
+    /// must run after parsing, and a deferred script in the head downloads while
+    /// parsing is still going. They run in the order the page lists them.
     pub fn tag(self) -> String {
         if self.css() {
             format!("<link rel=\"stylesheet\" href=\"{}\">", self.href())
@@ -151,12 +124,8 @@ pub struct Held {
     pub kind: &'static str,
 }
 
-/// All of them, hashed once.
-///
-/// At first use rather than at startup: `noda ls` is a process that will never
-/// serve a page, and the release profile is tuned for a binary that starts
-/// quickly. Hashing five strings costs microseconds, and the ones it costs are
-/// spent by `noda web` on its way to the first request.
+/// All of them, hashed at first use rather than at startup — `noda ls` will
+/// never serve a page, and the release profile is tuned for a quick start.
 fn held() -> &'static Vec<Held> {
     static HELD: OnceLock<Vec<Held>> = OnceLock::new();
     HELD.get_or_init(|| {
@@ -181,12 +150,8 @@ fn held() -> &'static Vec<Held> {
     })
 }
 
-/// Twelve hex digits of the git blob id these bytes would have.
-///
-/// Short on purpose: this is a cache key, not an identity, and the whole set of
-/// them is five strings written by this repository. The failure it has to rule
-/// out is a stale page reaching a changed asset, which any change to the hash
-/// rules out.
+/// Twelve hex digits of the git blob id these bytes would have. Short on
+/// purpose: a cache key over five strings, not an identity.
 fn fingerprint(body: &str) -> String {
     git2::Oid::hash_object(git2::ObjectType::Blob, body.as_bytes()).map_or_else(
         |_| "0000".to_string(),
@@ -194,13 +159,9 @@ fn fingerprint(body: &str) -> String {
     )
 }
 
-/// The asset a request named, if this build wrote it.
-///
-/// A miss is a miss and not the current version of the same name: an address
-/// with a hash in it is a promise about the bytes behind it, and answering a
-/// hash nobody wrote with different bytes would be the one way this scheme can
-/// lie. It is also unreachable in practice — every page carries the addresses
-/// this build wrote, and a page is never cached.
+/// A miss is a miss, never the current version of the same name: a hashed
+/// address is a promise about the bytes behind it, and answering one nobody
+/// wrote is the single way this scheme can lie.
 pub fn find(file: &str) -> Option<&'static Held> {
     held().iter().find(|held| held.file == file)
 }
@@ -209,10 +170,8 @@ pub fn find(file: &str) -> Option<&'static Held> {
 mod tests {
     use super::*;
 
-    /// The link on the page and the address the route answers are the same
-    /// string, and nothing else keeps them that way — a page pointing at a hash
-    /// this build does not serve is a page with no stylesheet, which every
-    /// layout test would go on passing through.
+    /// Nothing else keeps the link and the route in step, and a page pointing at
+    /// an unserved hash has no stylesheet — which every layout test would pass.
     #[test]
     fn what_a_page_links_is_what_the_route_answers() {
         for asset in Asset::ALL {
@@ -224,9 +183,8 @@ mod tests {
         }
     }
 
-    /// The name is the content. Two assets that differ have to differ in the
-    /// address, or one of them is served under the other's cache entry — for a
-    /// year, which is what `immutable` asks for.
+    /// Two assets that differ must differ in the address, or one is served under
+    /// the other's cache entry for the year `immutable` asks for.
     #[test]
     fn a_changed_asset_would_be_a_changed_address() {
         let sheet = fingerprint(&Asset::Style.body());
@@ -235,8 +193,7 @@ mod tests {
         assert_eq!(sheet.len(), 12);
     }
 
-    /// Every address is distinct, which the hash alone does not promise: two
-    /// scripts that happened to hold the same bytes would collide on it.
+    /// The hash alone does not promise this: equal bytes would collide.
     #[test]
     fn no_two_assets_answer_at_one_address() {
         let mut seen = std::collections::BTreeSet::new();
@@ -249,8 +206,7 @@ mod tests {
         }
     }
 
-    /// A hash nobody wrote is nothing, rather than the current bytes under an
-    /// address that promised different ones.
+    /// A hash nobody wrote is nothing, not the current bytes under it.
     #[test]
     fn an_address_this_build_did_not_write_is_not_answered() {
         assert!(find("style.000000000000.css").is_none());

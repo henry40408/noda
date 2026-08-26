@@ -1,28 +1,20 @@
 //! What the server says about itself while it runs.
 //!
-//! **Every other noda command answers and exits, so its output is its answer.**
-//! `noda web` outlives the question: the only way to find out afterwards what it
-//! refused, what it failed at and what was slow is for it to have said so at the
-//! time. Until this existed it said two lines at startup and then nothing, so a
-//! 500 was a sentence on somebody's phone and a rebinding attempt was silence.
+//! **Every other command answers and exits, so its output is its answer.**
+//! `noda web` outlives the question, so the only way to find out afterwards what
+//! it refused or failed at is for it to have said so at the time.
 //!
-//! **The log goes to stderr, and that is not a detail.** `noda web`'s stdout
-//! carries the address to type into a phone — the command's answer, the same
-//! contract every other command here keeps, and the line the test harnesses read
-//! the port out of. `tracing_subscriber::fmt` writes to stdout by default;
-//! leaving it there would have put a timestamp and a level in front of that
-//! answer and mixed two streams that are read by different things. Both
-//! reference servers write to stdout because neither has anything else to say
-//! there.
+//! **The log goes to stderr**, because stdout carries the address to type into a
+//! phone — the command's answer, and the line the test harnesses read the port
+//! out of. `tracing_subscriber::fmt` defaults to stdout, which would put a
+//! timestamp in front of that answer.
 //!
-//! **What is on the row of a log line is `RUST_LOG`'s business.** The default is
-//! `error,noda=info`, which is quiet: a healthy server logs nothing per request.
-//! `RUST_LOG=noda=debug` turns the request stream on, and
-//! `RUST_LOG=noda::web::log=debug` turns on only this module's half of it.
+//! **What is on a log line is `RUST_LOG`'s business.** The default
+//! `error,noda=info` is quiet: a healthy server logs nothing per request, and
+//! `RUST_LOG=noda=debug` turns the stream on.
 //!
-//! The startup lines are deliberately **not** events. They are the command's
-//! answer, they are already on stdout, and a server that announced its address
-//! twice in two formats would be a server nobody could grep.
+//! The startup lines are deliberately **not** events: they are the answer,
+//! already on stdout, and announcing an address twice is not greppable.
 
 use std::time::{Duration, Instant};
 
@@ -35,12 +27,9 @@ use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 
-/// How the log is rendered.
-///
-/// Two and not four. `tracing-subscriber` offers `full`, `compact` and `pretty`
-/// as well, and one of the two servers this was modelled on exposes all of them
-/// — but those are the subscriber's vocabulary rather than noda's, and the
-/// question a reader actually has is whether a person or a program is reading.
+/// Two and not four: `full`, `compact` and `pretty` are the subscriber's
+/// vocabulary, and the question a reader has is whether a person or a program is
+/// reading.
 #[derive(Clone, Copy, Debug, Default, clap::ValueEnum)]
 pub enum Format {
     /// For a person, at a terminal.
@@ -50,21 +39,16 @@ pub enum Format {
     Json,
 }
 
-/// What is logged when `RUST_LOG` says nothing.
-///
-/// Other crates at `error`, noda's own at `info`. A server that logged every
-/// request by default would be one whose log has to be turned *down* before it
-/// is useful, and the request stream is a `RUST_LOG` away.
+/// Other crates at `error`, noda's at `info`. A server logging every request by
+/// default has a log to be turned *down* before it is useful.
 const DEFAULT_FILTER: &str = "error,noda=info";
 
-/// A request taking at least this long is a `http.slow_request` at WARN rather
-/// than a `http.request` at DEBUG.
+/// A request this slow is a WARN rather than a DEBUG.
 ///
-/// One second. Nothing noda does per request should come near it: the most
-/// expensive page walks every note in the notebook, which is tens of
-/// milliseconds for a notebook of two thousand. So this is not a threshold that
-/// trims a busy log — it is the number above which something is wrong, and it
-/// is worth a line in a log that is otherwise silent about requests.
+/// Nothing noda does per request should come near a second — the most expensive
+/// page is tens of milliseconds at two thousand notes — so this is not a
+/// threshold that trims a busy log but the number above which something is
+/// wrong.
 pub const SLOW_REQUEST: Duration = Duration::from_secs(1);
 
 /// The `route` of a request that matched nothing. Deliberately not the path it
@@ -73,36 +57,26 @@ pub const UNMATCHED: &str = "<unmatched>";
 
 /// Installs the subscriber. Called once, by `serve`.
 ///
-/// **`Targets` and not `EnvFilter`, which is the one place this departs from
-/// the two servers it was modelled on.** They read the same variable with
-/// `EnvFilter`, and `EnvFilter` matches its directives with a regex engine:
-/// measured, it is 355 KB of a binary whose cold start is a feature and whose
-/// tree holds no other regex — 69% of everything logging cost. `Targets` reads
-/// the same `noda=debug` and `noda::web::log=debug` out of the same variable.
-/// What it will not do is filter on spans and fields, and nothing here writes
-/// either.
+/// **`Targets` and not `EnvFilter`**, whose regex engine measured 355 KB — 69%
+/// of everything logging cost — in a binary whose cold start is a feature and
+/// whose tree holds no other regex. `Targets` reads the same directives; what it
+/// will not do is filter on spans and fields, and nothing here writes either.
 ///
-/// **`RUST_LOG` is layered onto the default rather than replacing it, and that
-/// is not tidiness — it is the one sharp edge `Targets` has.** It reads a bare
-/// word as a *target name* at `TRACE`, not as a level, so `RUST_LOG=noda=info `
-/// with a stray character, or any typo at all, parses happily into a filter
-/// naming a target nothing writes to and carrying no default level — which
-/// silences everything, warnings included. Starting from the default means the
-/// worst a mistyped variable can do is fail to have the effect that was wanted.
-/// (`EnvFilter` refuses to parse the same string, which is how it avoids this.)
+/// **`RUST_LOG` is layered onto the default rather than replacing it**, which is
+/// `Targets`' one sharp edge: it reads a bare word as a *target name* at
+/// `TRACE`, so any typo parses happily into a filter naming a target nothing
+/// writes to and silences everything, warnings included. Starting from the
+/// default means the worst a typo does is fail to have its effect.
 ///
-/// A level given on its own is the exception, and replaces the default outright:
-/// somebody who writes `RUST_LOG=off` means all of it, and somebody who writes
-/// `RUST_LOG=debug` means all of that too.
+/// A level on its own is the exception and replaces the default outright:
+/// `RUST_LOG=off` means all of it.
 pub fn start(format: Format) {
     let filter = wanted(std::env::var("RUST_LOG").ok().as_deref());
-    // The same two questions `anstream` asks for the rest of noda's output, and
-    // asked here by hand because a subscriber cannot read its mind: is colour
-    // wanted, and is anything at the other end that could show it.
+    // `anstream`'s two questions, asked by hand because a subscriber cannot read
+    // its mind: is colour wanted, and can anything show it.
     let colour = std::env::var_os("NO_COLOR").is_none()
         && std::io::IsTerminal::is_terminal(&std::io::stderr());
-    // A layer under a registry rather than `fmt()`'s own builder: that builder's
-    // filter is `EnvFilter`'s, and this one is attached to the layer itself.
+    // `fmt()`'s builder takes an `EnvFilter`; this one is on the layer.
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_ansi(colour);
@@ -113,10 +87,8 @@ pub fn start(format: Format) {
     tracing_subscriber::registry().with(layer).init();
 }
 
-/// The filter `RUST_LOG` asks for, on top of the one noda would have used.
-///
-/// Split out of `start` because the interesting half is what it does with a
-/// line somebody typed wrong, and that is worth being able to ask directly.
+/// Split out of `start` because the interesting half is what it does with a line
+/// somebody typed wrong.
 fn wanted(rust_log: Option<&str>) -> Targets {
     let asked = rust_log.and_then(|directives| directives.parse::<Targets>().ok());
     let base = match asked.as_ref().and_then(Targets::default_level) {
@@ -135,15 +107,11 @@ fn wanted(rust_log: Option<&str>) -> Targets {
     }
 }
 
-/// Times a request and says one thing about it once the response is ready.
-///
 /// Layered outermost, so it also sees the requests the guard refuses without
 /// ever reaching a handler.
 pub async fn timed(request: Request, next: Next) -> Response {
     let method = request.method().clone();
-    // Both are taken before `next` consumes the request. Neither is expensive:
-    // a `Method` is an inline enum for the ordinary verbs, and a route template
-    // is a short static string.
+    // Before `next` consumes the request, and neither is expensive.
     let route = route_of(request.extensions()).to_owned();
 
     let started = Instant::now();
@@ -167,25 +135,17 @@ fn route_of(extensions: &Extensions) -> &str {
 
 /// Says that a request finished.
 ///
-/// **The route is the template the router matched, never the path that was
-/// asked for, and in noda that is a stronger rule than it is in most servers.**
-/// A note's address is `/nb/work/n/k3f9m2p1`, and a file's is
-/// `/nb/work/f/scan-of-the-lease.pdf` — an id is the name of somebody's note
-/// and a filename is often the whole of what it is about. A search is a query
-/// string, which is the reader's own words. None of that belongs in a file that
-/// outlives the request and is routinely shipped somewhere else, and none of it
-/// is what anybody wants to aggregate on either: `/nb/{book}/n/{key}` is one
-/// series, and a per-note path is two thousand. A request that matched no route
-/// has no template and its path is whatever a scanner put in the URL, so it is
-/// labelled rather than repeated.
+/// **The route is the template the router matched, never the path asked for**,
+/// and here that is a stronger rule than in most servers: an id is the name of
+/// somebody's note, a filename is often the whole of what it is about, and a
+/// query string is the reader's own words. None of it belongs in a file that
+/// outlives the request — nor is it what anybody aggregates on, `/nb/{book}/n/
+/// {key}` being one series against two thousand. An unmatched path is whatever a
+/// scanner put in the URL, so it is labelled rather than repeated.
 ///
-/// Split out so both branches can be tested against an exact duration. Reaching
-/// the WARN branch through the middleware would need a test that genuinely
-/// blocks for a second.
-///
-/// The duration is attached twice on purpose: `elapsed` is the human-readable
-/// debug (`1.96ms`) that reads well at a terminal, `elapsed_ms` the bare number
-/// to filter and total under `--log-format json`.
+/// Split out so both branches can be tested against an exact duration. The
+/// duration is attached twice: `elapsed` reads well at a terminal, `elapsed_ms`
+/// is the bare number to total under `--log-format json`.
 fn log_finished(method: &Method, route: &str, status: u16, elapsed: Duration) {
     let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
     if elapsed >= SLOW_REQUEST {
@@ -212,19 +172,13 @@ fn log_finished(method: &Method, route: &str, status: u16, elapsed: Duration) {
     }
 }
 
-/// Says that the guard turned a request away.
-///
 /// **WARN, and the one event here worth an alert.** Everything the guard refuses
-/// is either a misconfiguration a person will hit once — a reverse proxy whose
-/// name has not been allowed — or somebody attempting the DNS rebinding attack
-/// the guard exists for. Both are worth knowing about, and neither is visible
-/// anywhere else: the reader gets a page saying no, and the process used to say
-/// nothing at all.
+/// is either a misconfiguration hit once or the rebinding attack the guard exists
+/// for, and neither is visible anywhere else.
 ///
-/// The `Host` and `Origin` are logged because they are the whole of what was
-/// decided on, and because a refusal nobody can read the reason for is a refusal
-/// nobody can fix. They are attacker-controlled, so they arrive as fields rather
-/// than inside the message, where a renderer quotes and escapes them.
+/// `Host` and `Origin` are logged because they are the whole of what was decided
+/// on. Being attacker-controlled, they arrive as fields rather than inside the
+/// message, where a renderer quotes and escapes them.
 pub fn refused(host: Option<&str>, origin: Option<&str>, why: &str) {
     tracing::warn!(
         event = "http.refused",
@@ -235,11 +189,8 @@ pub fn refused(host: Option<&str>, origin: Option<&str>, why: &str) {
     );
 }
 
-/// Says that a handler failed, which the reader only ever saw as a page.
-///
-/// The error is the one thing a 500 page shows and nothing records. It is
-/// noda's own text — a git error, a path that would not read — and not the
-/// request's, which is why it can go in the message.
+/// The one thing a 500 page shows and nothing records. noda's own text and not
+/// the request's, which is why it can go in the message.
 pub fn failed(error: &str) {
     tracing::error!(
         event = "http.failed",
@@ -248,9 +199,8 @@ pub fn failed(error: &str) {
     );
 }
 
-/// Says that the blocking pool lost a task: a panic in a handler, or a shutdown
-/// under way. The reader is told the request did not finish; this is the half
-/// that says so where somebody can act on it.
+/// A panic in a handler, or a shutdown under way. The reader is told the request
+/// did not finish; this says so where somebody can act on it.
 pub fn lost() {
     tracing::error!(
         event = "http.lost",
@@ -298,10 +248,8 @@ mod tests {
         }
     }
 
-    /// A DEBUG subscriber for this thread only. The guard has to outlive the
-    /// events, and `start` cannot be used because it installs a global one —
-    /// which is right for a process that serves and wrong for a test binary
-    /// that runs hundreds of them.
+    /// This thread only: the guard has to outlive the events, and `start`
+    /// installs a global one — right for a server, wrong for a test binary.
     fn capture() -> (Written, tracing::subscriber::DefaultGuard) {
         let written = Written::default();
         let subscriber = tracing_subscriber::fmt()
@@ -326,8 +274,8 @@ mod tests {
         assert!(log.contains("elapsed_ms=12"), "{log}");
     }
 
-    /// The rule the whole module is built around: a note's id is the name of
-    /// somebody's note, so the row carries the template it matched.
+    /// A note's id is the name of somebody's note, so the row carries the
+    /// template it matched.
     #[test]
     fn a_note_is_logged_as_its_route_and_never_as_its_address() {
         let (log, _guard) = capture();
@@ -364,8 +312,8 @@ mod tests {
         assert!(!log.contains("slow_request"), "{log}");
     }
 
-    /// A refusal is the one thing here worth waking somebody for, so it says
-    /// what it was given as well as what it decided.
+    /// The one thing worth waking somebody for, so it says what it was given as
+    /// well as what it decided.
     #[test]
     fn a_refusal_says_what_it_was_given() {
         let (log, _guard) = capture();
@@ -377,11 +325,9 @@ mod tests {
         assert!(log.contains("origin=\"<none>\""), "{log}");
     }
 
-    /// The sharp edge, pinned. `Targets` reads a bare word as a target name at
-    /// `TRACE` rather than as a level, so a mistyped `RUST_LOG` parses into a
-    /// filter that says nothing at all — and a server whose log went silent
-    /// because of a typo in a unit file is the failure nobody would think to
-    /// look for.
+    /// The sharp edge, pinned: `Targets` reads a bare word as a target name at
+    /// `TRACE`, so a mistyped `RUST_LOG` parses into a filter that says nothing —
+    /// a log gone silent from a typo in a unit file.
     #[test]
     fn a_mistyped_rust_log_cannot_silence_the_server() {
         let typo = wanted(Some("nonsense"));

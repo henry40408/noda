@@ -1,30 +1,21 @@
 //! What a browsing session holds, and how one keystroke changes it.
 //!
-//! Nothing here opens a file, a repository or a terminal. A key goes in, the
-//! state moves, and everything that needs the world outside — leaving, reading
-//! the notebook again, and every change to a note — comes back out as an
-//! [`Action`] for the runtime to carry out. That is what lets the whole of the
-//! interaction be tested with no terminal attached, which matters more here than
-//! anywhere else in noda: every other command is a function returning a string,
-//! and this one is a loop.
+//! Nothing here opens a file, a repository or a terminal: a key goes in, the
+//! state moves, and anything needing the world outside comes back as an
+//! [`Action`]. That is what lets the whole interaction be tested with no
+//! terminal — which matters more here than anywhere else, every other command
+//! being a function returning a string and this one a loop.
 //!
-//! The keys that change a note ask a command to do it. `e` is `noda edit`, `#`
-//! is `noda tag`, and the answer that comes back is the line that command would
-//! have printed — so what a change means is written down once, in `cmd`, and
-//! this is a second way of asking for it rather than a second version of it.
+//! The keys that change a note ask a command to do it, and the answer is the
+//! line that command would have printed. What a change means is written once, in
+//! `cmd`; this is a second way of asking rather than a second version.
 //!
-//! A session is a **stack of screens**. The notebook's notes are the one at the
-//! bottom and it is never popped; `Enter` opens what the cursor is on as a
-//! screen of its own and `Esc` closes it again. Each screen keeps its own
-//! cursor, its own query and its own scroll, which is what makes going back
-//! land where you left rather than at the top — and what lets a screen be about
-//! something other than a list of notes without the one underneath it having to
-//! give anything up.
+//! A session is a **stack of screens**, the notes at the bottom and never
+//! popped. Each keeps its own cursor, query and scroll, which is what makes
+//! going back land where you left.
 //!
-//! The notes are held in memory for the length of the session. `noda search`
-//! already reads every body on every invocation, so this is that cost paid once
-//! instead of once per query — which is the whole point of typing into a filter
-//! rather than into a shell.
+//! The notes are held in memory for the session: `noda search` reads every body
+//! on every invocation, and this is that cost paid once rather than per query.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -44,32 +35,25 @@ use crate::todo;
 /// Something the runtime has to do that the state cannot do for itself.
 ///
 /// The five that change a notebook name a command and its arguments, never an
-/// edit: what a change *means* — the title validated, the tags cleaned,
-/// `updated` stamped, the result committed — lives in `cmd`, and a second
-/// account of it is the one thing that must not exist. So nothing here describes
-/// a file to write; each is a call to make, and the answer comes back as the
-/// line that command would have printed.
+/// edit: what a change *means* lives in `cmd`, and a second account of it must
+/// not exist.
 ///
-/// A note is named by its id rather than by the row it was on. The command opens
-/// the notebook again for itself, and by then the listing is only a picture of
-/// what was there.
+/// A note is named by id rather than by row — the command reopens the notebook,
+/// and by then the listing is a picture of what was there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Quit,
-    /// Read the notebook again: another process may have written a note, and
-    /// this is the browser's answer to that rather than a file watcher.
+    /// The browser's answer to another process writing a note, rather than a
+    /// file watcher.
     Reload,
-    /// `noda edit` — the one action that needs the terminal handed back for the
-    /// length of it, because `$EDITOR` is a full-screen program too.
+    /// The one action needing the terminal handed back, `$EDITOR` being
+    /// full-screen too.
     Edit {
         key: String,
         touch: Touch,
     },
-    /// `noda add`, with the title as typed. `None` is a title left to the body,
-    /// which is what `add` does when it is given none.
-    ///
-    /// No `touch`: `add` has none either. A note that has never been changed has
-    /// been changed as recently as it was made.
+    /// `None` leaves the title to the body, as `add` does. No `touch`, because
+    /// `add` has none: a note never changed was changed when it was made.
     Add(Option<String>),
     /// `noda mv`: a new title, and the slug follows it.
     Retitle {
@@ -85,14 +69,12 @@ pub enum Action {
     },
     /// `noda rm`, once the confirmation has been given. Nothing is left to stamp.
     Remove(String),
-    /// The queue, sent: every change in it, over the notes each was aimed at, in
-    /// one commit. `cmd::bulk` is what carries it out — the same code writing the
-    /// same files as the keys above, with the commit boundary moved out one
-    /// level so that a queue arrives in the history as the one thing it was.
+    /// Every change in the queue, in one commit. `cmd::bulk` is the same code
+    /// writing the same files as the keys above, with the commit boundary out one
+    /// level so a queue arrives in history as the one thing it was.
     Send(Vec<Step>),
-    /// `noda restore`: a note put back the way it was at a revision, as a new
-    /// commit. Nothing is rewritten, which is why it is not asked about — and
-    /// why it takes two arguments, both typed on purpose.
+    /// A new commit, so nothing is rewritten and nothing is asked — and two
+    /// arguments, both typed on purpose.
     Restore {
         key: String,
         rev: String,
@@ -100,36 +82,27 @@ pub enum Action {
     },
     /// Open a note the prompt named, on a screen of its own.
     ///
-    /// The key is not resolved here, deliberately. What an id prefix or a slug
-    /// names — and what it means for one to name two notes — is `Notebook::
-    /// resolve`, and a browser holding the notes in memory could answer it a
-    /// second way without noticing it had. So the runtime asks the notebook, and
-    /// an ambiguous key comes back as the same refusal the prompt would print.
+    /// The key is not resolved here: what a prefix or slug names is
+    /// `Notebook::resolve`, and a browser holding the notes could answer it a
+    /// second way without noticing.
     Open(String),
-    /// Open a screen *about* a note the prompt named by key — its history, who
-    /// wrote it, what points at it.
-    ///
-    /// A second variant rather than a flag on `Open`, and resolved by the
-    /// runtime for the same reason `Open` is: the key is not an id until the
-    /// notebook has said so.
+    /// A screen *about* a note named by key. A second variant rather than a flag
+    /// on `Open`, and resolved by the runtime for its reason: a key is not an id
+    /// until the notebook says so.
     Show {
         key: String,
         look: Look,
     },
-    /// `noda use`: the whole session moved to another notebook. Not a `Run`,
-    /// because what comes back is a different notebook — the runtime builds a
-    /// new session rather than reloading this one.
+    /// Not a `Run`: what comes back is a different notebook, so the runtime
+    /// builds a new session rather than reloading this one.
     Use(String),
     /// A command that reads or changes the notebook and answers with a line.
     Run(Run),
 }
 
-/// How many tags get a digit of their own.
-///
-/// Nine, because there are nine digits that are not `0` and `0` is the way back
-/// out. A notebook's tags are a long tail with a short head — the handful it
-/// actually runs on are worth a keystroke apiece, and the hundred one-offs are
-/// what `/` is for.
+/// Nine, there being nine digits that are not `0` and `0` being the way out. A
+/// notebook's tags are a long tail with a short head; the one-offs are what `/`
+/// is for.
 pub const SCOPE_KEYS: usize = 9;
 
 /// A screen about one note, named before the note is known.
@@ -140,25 +113,20 @@ pub enum Look {
     Backlinks,
 }
 
-/// The commands the prompt can ask for that are not about one note.
-///
-/// One variant apiece rather than a closure, so that what the browser is able to
-/// ask for is a list somebody can read — and so the runtime, which is the only
-/// part allowed to open a repository, stays the only part that knows how the
-/// call is made.
+/// One variant apiece rather than a closure, so what the browser can ask for is
+/// a list somebody can read — and the runtime stays the only part that knows how
+/// a call is made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Run {
     Status,
-    /// Reporting only. `doctor` will adopt files and write to the notebook when
-    /// asked to at the prompt; from here it says what it found and stops, because
-    /// a browser is not where you find out that a keystroke rewrote a directory.
+    /// Reporting only: a browser is not where you find out that a keystroke
+    /// rewrote a directory.
     Doctor {
         links: bool,
         times: bool,
     },
     Readme,
-    /// A name marks the notebook as it stands; no name lists what has been
-    /// marked, which is what `noda snapshot` alone already does.
+    /// A name marks the notebook; no name lists what has been marked.
     Snapshot(Option<String>),
     Sync,
     Push,
@@ -166,11 +134,9 @@ pub enum Run {
 }
 
 impl Action {
-    /// What to say while this runs, for the ones that go to the network.
-    ///
-    /// The loop draws, waits for a key, then acts — so a command that takes
-    /// seconds leaves the last frame on the screen with no sign that anything is
-    /// happening. These get a frame of their own first.
+    /// The loop draws, waits for a key, then acts — so a command taking seconds
+    /// leaves the last frame up with no sign of anything happening. These get a
+    /// frame of their own first.
     pub fn working(&self) -> Option<&'static str> {
         match self {
             Action::Run(Run::Sync) => Some("syncing…"),
@@ -181,14 +147,12 @@ impl Action {
     }
 }
 
-/// What a command said when it was asked to change something.
-///
-/// Its own words. A browser that summarised them would be deciding what a
+/// Its own words: a browser that summarised them would be deciding what a
 /// command meant, which is the same mistake as writing the change twice.
 pub struct Message {
     pub text: String,
-    /// Failures get a card and successes get the status line: an acknowledgement
-    /// is read in passing, a reason has to be read.
+    /// A card for failures, the status line for successes: an acknowledgement is
+    /// read in passing and a reason has to be read.
     pub failed: bool,
 }
 
@@ -199,11 +163,8 @@ impl Message {
     }
 }
 
-/// What a `backlinks` screen is about.
-///
-/// Both kinds, because the question is one question: "which notes use this
-/// diagram" and "which notes link to this note" are answered by the same walk,
-/// which is why `noda backlinks` takes either.
+/// Both kinds, because it is one question answered by one walk — which is why
+/// `noda backlinks` takes either.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Note(String),
@@ -219,22 +180,15 @@ impl Subject {
     }
 }
 
-/// What a screen is a screen of.
-///
-/// The name is what the crumb trail shows, so it is the notebook's own word for
-/// the thing rather than a heading invented for the browser: a note is named by
-/// its id here for the same reason it is named by its id everywhere else, and
-/// every other screen is named by the subcommand that prints the same thing at
-/// the prompt.
+/// The name is what the crumb trail shows, so it is the notebook's own word
+/// rather than a heading invented for the browser: a note by its id, and every
+/// other screen by the subcommand that prints the same thing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum View {
-    /// Every note the notebook holds, narrowed by this screen's own query. The
-    /// bottom of the stack, always, and never popped: it is what a session is
-    /// open on.
+    /// The bottom of the stack, never popped: what a session is open on.
     Notes,
-    /// One note, read whole and on its own. Held by id rather than by row, so a
-    /// screen survives the listing underneath it being filtered, re-sorted or
-    /// read again.
+    /// Held by id rather than by row, so the screen survives the listing under
+    /// it being filtered, re-sorted or read again.
     Note(String),
     /// Every unticked box in the notebook, soonest due first.
     Todo,
@@ -286,38 +240,33 @@ impl View {
 /// would be a cache, and a cache of a notebook that another window is writing to
 /// is a cache that goes wrong quietly.
 ///
-/// Some of these the session can work out for itself — every note is in memory
-/// already — and some need a repository, which only the runtime may open. Which
-/// is which is [`App::derive`] and [`App::wanted`]; the difference does not show
-/// on screen.
+/// Some the session works out for itself and some need a repository, which only
+/// the runtime may open — [`App::derive`] and [`App::wanted`]. The difference
+/// does not show on screen.
 pub enum Content {
-    /// A note's file as it is on disk, read rather than rendered back from the
-    /// parse — the reason `noda show` reads it too.
+    /// As it is on disk, not rendered back from the parse — `noda show`'s
+    /// reason.
     Note(String),
     Todo(Vec<Task>),
     Tags(Vec<Tally>),
     /// Indices into the session's notes: the ones that link to the subject.
     Backlinks(Vec<usize>),
-    /// The history, and which of those commits the remote has not seen.
+    /// The history, and which commits the remote has not seen.
     ///
-    /// The set travels beside the entries rather than as a flag on each of them,
-    /// because it is read off the refs in one walk and an `Entry` is what a
-    /// commit is — not what this notebook's remote happens to know about it.
-    /// Empty when there is nothing to compare against, which is the same answer
-    /// `noda log` gives: see [`crate::notebook::Notebook::unpushed`].
+    /// Beside the entries rather than a flag on each: it is read off the refs in
+    /// one walk, and an `Entry` is what a commit *is*, not what a remote knows
+    /// about it. Empty with nothing to compare against, as `noda log` answers.
     Log(Vec<Entry>, std::collections::HashSet<git2::Oid>),
     Blame(Vec<BlameLine>),
     Deleted(Vec<Deleted>),
-    /// The patch, with no colour on it. Colour is put back on by the drawing,
-    /// which is where every other listing's colour is decided.
+    /// Uncoloured: the drawing puts it back, as for every other listing.
     Diff(String),
 }
 
 /// One unticked box, and the note carrying it.
 pub struct Task {
-    /// Which note, as an index into the session's notes. An index rather than an
-    /// id because the list is rebuilt whenever the notes are, and never outlives
-    /// them.
+    /// An index rather than an id, the list being rebuilt whenever the notes
+    /// are and never outliving them.
     pub note: usize,
     pub item: todo::Item,
 }
@@ -328,13 +277,10 @@ pub struct Tally {
     pub notes: usize,
 }
 
-/// What is to be done to one tag.
-///
 /// Three states rather than a tick, because a change aimed at forty notes has
-/// three answers and not two: some of them carry a tag and some do not, and
-/// leaving that alone is a different instruction from either giving it to all of
-/// them or taking it from all of them. They are `cmd::tag`'s own three — a `+`,
-/// a `-`, and not being mentioned — so nothing is translated on the way out.
+/// three answers: leaving a mixed set alone is a different instruction from
+/// giving the tag to all or taking it from all. `cmd::tag`'s own three, so
+/// nothing is translated on the way out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
     /// Nothing. Whatever each note says about this tag, it goes on saying.
@@ -343,27 +289,22 @@ pub enum Mark {
     Remove,
 }
 
-/// One row of the tag picker: a tag, how it stands with the notes the picker is
-/// aimed at, and what is to be done about that.
+/// A tag, how it stands with the notes aimed at, and what is to be done.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
     pub tag: String,
     /// How many of those notes already carry it.
     pub held: usize,
-    /// How many notes in the whole notebook do — the number the tags screen
-    /// shows, which is what says whether a tag is one the notebook runs on or
-    /// one somebody typed once.
+    /// The tags screen's number, which says whether a tag is one the notebook
+    /// runs on or one somebody typed once.
     pub notes: usize,
     pub mark: Mark,
 }
 
 impl Choice {
-    /// The states this tag can be put in that would change something.
-    ///
-    /// A tag every one of the notes already carries can only be taken away; one
-    /// that none of them carries can only be given. So the key that walks these
-    /// walks two states on one note and three on a mixed set, and neither is a
-    /// rule of its own: a state that would change nothing is never offered.
+    /// The states that would change something. A tag every note carries can only
+    /// be taken away and one none carries can only be given, so the key walks two
+    /// states on one note and three on a mixed set — one rule, not two.
     fn states(&self, total: usize) -> Vec<Mark> {
         let mut out = vec![Mark::Leave];
         if self.held < total {
@@ -382,15 +323,12 @@ impl Choice {
         states[at.map_or(0, |at| (at + 1) % states.len())]
     }
 
-    /// The box in front of the tag.
-    ///
     /// A tick says what is *true* and the other three say what is being *done*.
-    /// They can be one box because a tick only ever appears where nothing is
-    /// being done — including over a set of notes that all carry the tag, where
-    /// "all of them have it" is exactly what a tick has to say.
+    /// One box holds both, because a tick only appears where nothing is being
+    /// done.
     ///
     /// Written out rather than drawn: `☑` is ambiguous-width, and a terminal
-    /// that gives it two columns takes the one back off the end of the row.
+    /// giving it two columns takes the one back off the end of the row.
     pub fn tick(&self, total: usize) -> &'static str {
         match self.mark {
             Mark::Add => "[+]",
@@ -401,18 +339,15 @@ impl Choice {
     }
 }
 
-/// The row at the end of the picker, for what has been typed when that is not
-/// one of the tags the notebook has.
+/// The row for what has been typed when it is not a tag the notebook has.
 ///
-/// A tag that does not exist yet is the one thing in the picker that still has
-/// to be spelled, so it is the one thing that can still be a typo. It costs a
-/// keystroke of its own — the row is reached and chosen like any other — and it
-/// says what it would be sitting next to: `Work` under `work, 37 notes` is a
-/// question answered by looking at it.
+/// A tag that does not exist yet is the one thing here still to be spelled, and
+/// so the one thing that can be a typo. It costs a keystroke of its own and says
+/// what it would sit next to: `Work` under `work, 37 notes` answers itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Proposal {
-    /// A tag that could be made, and the nearest thing the notebook already has
-    /// to it when there is one close enough to be a slip of a finger.
+    /// A tag that could be made, and the nearest thing to it that is close
+    /// enough to be a slip of a finger.
     New {
         tag: String,
         near: Option<(String, usize)>,
@@ -422,21 +357,19 @@ pub enum Proposal {
 }
 
 /// Whether two tags are one keystroke apart: the same but for case, or for a
-/// single character added, dropped, mistyped or swapped with its neighbour.
+/// character added, dropped, mistyped or swapped with its neighbour.
 ///
-/// Not a general edit distance, and cheap on purpose. It is only ever asked
-/// about one typed word against the tags of one notebook, and what it is asked
-/// for is `Work` beside `work` and `wrok` beside it too — a transposition being
-/// two substitutions to anything that counts them one at a time, and the
-/// commonest typo there is.
+/// Not a general edit distance. What it is asked for is `Work` beside `work` and
+/// `wrok` beside it too — a transposition counts as two substitutions to
+/// anything counting one at a time, and is the commonest typo there is.
 fn one_edit_apart(left: &str, right: &str) -> bool {
     let left: Vec<char> = left.to_lowercase().chars().collect();
     let right: Vec<char> = right.to_lowercase().chars().collect();
     if left.len().abs_diff(right.len()) > 1 {
         return false;
     }
-    // What they share at each end, and so what lies between: the whole of the
-    // difference, which one edit leaves in one of four shapes.
+    // What they share at each end, and so the whole of the difference — which
+    // one edit leaves in one of four shapes.
     let head = left.iter().zip(&right).take_while(|(a, b)| a == b).count();
     let tail = left[head..]
         .iter()
@@ -445,10 +378,8 @@ fn one_edit_apart(left: &str, right: &str) -> bool {
         .take_while(|(a, b)| a == b)
         .count();
     match (left.len() - head - tail, right.len() - head - tail) {
-        // At most one character on either side, which covers three of the
-        // four: nothing between them at all is the same tag but for case, one
-        // on one side is a character added or dropped, and one on each is a
-        // character mistyped.
+        // Three of the four: nothing between is the same tag but for case, one
+        // on one side is added or dropped, one on each is mistyped.
         (0..=1, 0..=1) => true,
         // Two each, and the same two the other way round: transposed.
         (2, 2) => left[head] == right[head + 1] && left[head + 1] == right[head],
@@ -456,12 +387,9 @@ fn one_edit_apart(left: &str, right: &str) -> bool {
     }
 }
 
-/// Something a screen needs that only the runtime can get, because getting it
-/// means opening the repository.
-///
-/// Asked for rather than fetched, in the same shape the note's own file has
-/// always been asked for: the state says what it wants, the runtime brings it
-/// back, and nothing here touches a disk.
+/// Something a screen needs that only the runtime can get. Asked for rather than
+/// fetched: the state says what it wants, the runtime brings it back, and
+/// nothing here touches a disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Need {
     Note { id: String, path: PathBuf },
@@ -471,26 +399,22 @@ pub enum Need {
     Diff,
 }
 
-/// One screen on the stack: what it is of, and everything about it that a
-/// keystroke can move.
+/// What a screen is of, and everything about it a keystroke can move.
 ///
-/// The cursor, the query and the scroll are per-screen rather than per-session
-/// on purpose. Going back has to land where you left — a stack that dropped the
-/// cursor on the way down would make `Enter` a key you learn not to press — and
-/// a screen that is not a list of notes still has to be able to be scrolled
-/// without the listing underneath it losing its place.
+/// Cursor, query and scroll are per-screen: going back has to land where you
+/// left, or `Enter` becomes a key you learn not to press — and a screen that is
+/// not a listing still has to scroll without the one under it losing its
+/// place.
 pub struct Screen {
     pub view: View,
     /// The cursor and the scroll offset of a listing, which ratatui keeps for us.
     pub table: TableState,
     /// How far a screen of text has been scrolled.
     pub scroll: u16,
-    /// The query as typed, and where in it the cursor is. Split the way a shell
-    /// would split it, it is what `noda search` takes: one token per argument.
+    /// Split the way a shell would split it, this is what `noda search` takes.
     pub search: Field,
-    /// The text terms of the active query, for picking the match out of a title
-    /// and a body. A `tag:` or an `id:` matched something the prose does not
-    /// contain, so there is nothing in the note to point at.
+    /// For picking the match out of a title and a body. A `tag:` or `id:`
+    /// matched something the prose does not contain.
     pub terms: Vec<String>,
     /// Why the query as typed is not a query yet.
     pub error: Option<String>,
@@ -517,35 +441,27 @@ impl Screen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Browse,
-    /// Typing a query. The list narrows on every keystroke, so there is no
-    /// "run the search" step — `Enter` only puts the keyboard back on the list.
+    /// The list narrows on every keystroke, so there is no "run the search"
+    /// step — `Enter` only puts the keyboard back on the list.
     Search,
     Help,
     /// Typing the one thing a change needs said in words.
     Ask(Ask),
-    /// Typing a command. The same line the query and the prompt use, because
-    /// only one of the three can be open at a time and a browser with three
-    /// places to type would be one you had to look at to find out where your
-    /// keystrokes were going.
+    /// The same line the query uses: only one can be open at a time, and three
+    /// places to type is a browser you look at to find where your keys went.
     Command,
-    /// Reading what the prompt accepts, narrowed as you type. The way in for
-    /// somebody who knows what they want to do and not what it is called.
+    /// The way in for somebody who knows what they want and not what it is
+    /// called.
     Commands,
-    /// Waiting for a `y` before something that cannot be taken back. The
-    /// confirmation `noda rm` does not ask for at the prompt is asked for here,
-    /// and asked for on the screen: the terminal is in raw mode, so a command
-    /// that read a line from stdin would be reading keystrokes out from under
-    /// the browser.
+    /// Asked on the screen, because the terminal is in raw mode and a command
+    /// reading stdin would take keystrokes out from under the browser.
     Confirm(What),
     /// Reading the queue: what is waiting to be sent, and what to drop from it.
     Queue,
-    /// Choosing which tags the notes picked out should end up with. A card and
-    /// not a screen, for the reason the queue is one: it is what the keyboard is
-    /// doing rather than somewhere the session has gone, and `Esc` leaves it
-    /// where it was found.
+    /// A card and not a screen, for the queue's reason: what the keyboard is
+    /// doing rather than somewhere the session has gone.
     Tagging,
-    /// A command said why it would not do something, or said more than a line.
-    /// Dismissed like the help card, by anything at all.
+    /// A refusal, or an answer longer than a line. Dismissed by anything.
     Alert,
 }
 
@@ -554,14 +470,11 @@ pub enum Mode {
 pub enum What {
     /// Delete the note under the cursor, now.
     Delete,
-    /// Send the queue. Asked once, at the point where nothing can be taken back
-    /// — which is the send, not the queueing: a delete sitting in the queue has
-    /// not happened and can still be dropped from it.
+    /// Asked at the send and not at the queueing: a delete sitting in the queue
+    /// has not happened and can still be dropped.
     Send,
-    /// Leave with a queue still in it. The queue is the one thing a session
-    /// holds that is not written down anywhere: a query can be retyped and a
-    /// mark remade, but an afternoon's worth of queued changes goes with the
-    /// process.
+    /// The queue is the one thing a session holds that is written down nowhere:
+    /// a query can be retyped, an afternoon of queued changes cannot.
     Quit,
 }
 
@@ -583,8 +496,7 @@ impl Ask {
         }
     }
 
-    /// The part of the answer that cannot be guessed from the prompt, shown at
-    /// the other end of the line. Nothing, where the prompt says it all.
+    /// What cannot be guessed from the prompt, at the other end of the line.
     pub fn hint(self) -> &'static str {
         match self {
             Ask::Title => "Enter alone takes the title from the body",
@@ -593,144 +505,104 @@ impl Ask {
     }
 }
 
-/// One read of the notebook: everything a session holds that does not depend on
-/// which screen is on top.
+/// One read of the notebook: what a session holds regardless of which screen is
+/// on top.
 ///
-/// Gathered into one value because a reload has to replace all of it at once. A
-/// listing rebuilt from new notes while the file list still describes the old
-/// notebook is a screen that is half true, and half true is the hardest kind of
-/// wrong to notice.
+/// One value because a reload has to replace all of it at once — a listing
+/// rebuilt from new notes beside a file list describing the old notebook is half
+/// true, and half true is the hardest kind of wrong to notice.
 pub struct Session {
     pub status: Status,
     pub notes: Vec<NoteFile>,
-    /// What the notebook holds that is not a note, by name — an attachment, a
-    /// README, a file parked here on purpose.
+    /// What the notebook holds that is not a note, by name.
     pub files: Vec<String>,
     /// Every notebook there is, for the screen that moves between them.
     pub notebooks: Vec<String>,
-    /// Today where this machine is, `YYYY-MM-DD`, for deciding what is overdue.
-    /// The local date and not UTC: east of here an item would otherwise stay
-    /// unmarked until morning, which is exactly when a todo list is read.
+    /// The local date and not UTC: east of here an item would stay unmarked
+    /// until morning, which is when a todo list is read.
     pub today: String,
 }
 
 pub struct App {
     /// The active notebook's name, for the header.
     pub notebook: String,
-    /// Its directory, which is what turns a note on a screen into a file for the
-    /// runtime to read.
+    /// What turns a note on a screen into a file for the runtime to read.
     pub root: PathBuf,
-    /// Where the notebook stands, as of the last load. Nothing here touches the
-    /// network — the drift is what the last sync left behind, exactly as
-    /// `noda status` reports it.
+    /// As of the last load. Nothing touches the network: the drift is what the
+    /// last sync left, exactly as `noda status` reports it.
     pub status: Status,
-    /// Every note the notebook holds, in the order the walk produced: by slug,
-    /// which is what `noda ls` shows without `--sort`.
+    /// In the walk's order — by slug, as `noda ls` shows without `--sort`.
     notes: Vec<NoteFile>,
-    /// What it holds that is not a note, and every notebook there is. Both come
-    /// with the read that produced the notes, because both are cheap enough that
-    /// fetching them when a screen asks would be a repository opened for a list
-    /// of filenames.
+    /// Both come with the read that produced the notes: fetching them when a
+    /// screen asks would be a repository opened for a list of filenames.
     files: Vec<String>,
     notebooks: Vec<String>,
-    /// Today, for the todo screen. Taken once per read rather than per frame: a
-    /// browser left open overnight is a rarer thing than a clock asked sixty
-    /// times a second.
+    /// Once per read rather than per frame: a browser left open overnight is
+    /// rarer than a clock asked sixty times a second.
     today: String,
-    /// The screens, oldest first. Never empty: the listing at the bottom is what
-    /// the session is open on, and popping it would leave nothing to be in.
+    /// Oldest first, never empty: popping the listing leaves nothing to be in.
     stack: Vec<Screen>,
     pub mode: Mode,
-    /// What is being typed into the prompt, when there is one. A title, a new
-    /// title or a run of tag changes — one field, because only one of them can
-    /// be open at a time and [`Mode::Ask`] already says which.
+    /// One field, because only one prompt can be open at a time and
+    /// [`Mode::Ask`] already says which.
     pub input: Field,
     /// What the last command that changed something had to say.
     pub message: Option<Message>,
     /// The notes picked out to be changed together, by id.
     ///
-    /// Kept apart from the query, deliberately. `/` narrows what can be seen and
-    /// marking says what is meant to change, and neither undoes the other: a
-    /// note the query is currently hiding is still marked and still gets
-    /// changed. Otherwise "mark these, then search for the next lot" would
-    /// quietly drop the first lot, and the two would be one feature wearing two
-    /// keys.
+    /// Apart from the query on purpose: `/` narrows what can be *seen* and
+    /// marking says what is meant to *change*, so a hidden note is still marked.
+    /// Otherwise "mark these, then search for the next lot" would drop the first
+    /// lot. On the session rather than a screen for the same reason.
     ///
-    /// Kept on the session rather than on a screen, for the same reason: a
-    /// selection outlives the screen it was made on.
-    ///
-    /// Ordered, so the queue reads the same way twice and a commit message does
-    /// not depend on the order a hash happened to produce.
+    /// Ordered, so a commit message does not depend on a hash's order.
     pub marks: BTreeSet<String>,
-    /// The changes waiting to be sent, in the order they were added.
-    ///
-    /// Each is a `cmd::Step` — a change and the notes it is aimed at — because
-    /// that is what will be handed to `cmd::bulk` unaltered. A queue that held
-    /// something else would have to be translated at the end, and a translation
-    /// is where a second account of what a change means gets in.
+    /// `cmd::Step`s, because that is what `cmd::bulk` is handed unaltered — and
+    /// a translation at the end is where a second account of what a change means
+    /// gets in.
     pub queue: Vec<Step>,
     /// Where the cursor is in the queue view.
     queue_at: usize,
-    /// The tags the picker is choosing between, and what is to be done to each.
-    ///
-    /// Every tag the notebook has, in the order the tags screen puts them, with
-    /// anything typed in on the end. Built when the picker opens and thrown away
-    /// when it closes: it is a question being asked, not a thing the session
-    /// holds.
+    /// Every tag the notebook has, in the tags screen's order, with anything
+    /// typed on the end. Built when the picker opens and thrown away after: a
+    /// question being asked, not a thing the session holds.
     choices: Vec<Choice>,
-    /// Which notes it is aimed at, by id. Settled when the picker opens, because
-    /// what a cursor is on can change and what a question was asked about
-    /// cannot.
+    /// Settled when the picker opens: a cursor can move, and what a question was
+    /// asked about cannot.
     aimed_at: Vec<String>,
-    /// Where the cursor is in it. Counted over the rows on screen rather than
-    /// over the choices, so it means the same thing while the list is narrowed.
+    /// Over the rows on screen rather than the choices, so it means the same
+    /// thing while the list is narrowed.
     tags_at: usize,
-    /// Whether the changes made from here move a note's `updated`.
-    ///
-    /// A session-long setting rather than something said per keystroke. At a
-    /// prompt `--no-touch` is written on the one command it applies to; here
-    /// there is no room to qualify a single key, and the reason for wanting it —
-    /// a sitting of small corrections to notes whose dates came from somewhere
-    /// else — lasts longer than one keystroke anyway. It says so in the header
-    /// for as long as it is on, because a setting you cannot see is one you
-    /// forget you left on.
+    /// Session-long rather than per keystroke: there is no room to qualify a
+    /// single key, and the reason for wanting it lasts longer than one anyway.
+    /// Shown in the header, because a setting you cannot see is one you forget
+    /// you left on.
     pub touch: Touch,
-    /// What order the listing is in, and whether it is running the other way.
-    ///
-    /// Session settings for the same reason `touch` is one: at a prompt an order
-    /// is written on the one `ls` it applies to, and on a screen there is
-    /// nothing to write it on. They are the orders `--sort` and `-r` already
-    /// name, put in the order `cmd::sort_notes` already puts them.
+    /// Session settings for `touch`'s reason: on a screen there is nothing to
+    /// write an order on. `--sort`'s and `-r`'s orders, applied by
+    /// `cmd::sort_notes`.
     pub sort: Sort,
     pub reverse: bool,
-    /// Whether the listing shows the whole row — `ls -l`'s columns, which are
-    /// the same columns and in the same places.
+    /// `ls -l`'s columns, in the same places.
     pub long: bool,
-    /// Whether the crumb trail is drawn. A row of the terminal, given back to
-    /// the notes by anyone who would rather have the row.
+    /// A row of the terminal, given back to the notes by anyone who wants it.
     pub crumbs_shown: bool,
-    /// What the top screen shows, and which screen it was worked out for.
-    ///
-    /// Kept with its view so that a screen never draws the last screen's answer:
-    /// what is loaded is only loaded *for* something, and going somewhere else
-    /// makes it stale rather than merely old.
+    /// Kept with its view so a screen never draws the last screen's answer: what
+    /// is loaded is loaded *for* something.
     loaded: Option<(View, Content)>,
-    /// The command lines this session has run, oldest first, for the prompt to
-    /// walk back through. Kept for the session and no longer: a browser is not a
-    /// shell, and a file of everything anyone ever typed into a notebook is a
-    /// thing to have to think about rather than a convenience.
+    /// For the prompt to walk back through, and kept no longer than the session:
+    /// a file of everything anyone typed into a notebook is a thing to think
+    /// about rather than a convenience.
     history: Vec<String>,
-    /// How far back through it the prompt has been walked. `None` is the line
-    /// being typed, which is why walking forward past the end returns to it
-    /// rather than to the newest entry.
+    /// `None` is the line being typed, which is why walking forward past the end
+    /// returns to it rather than to the newest entry.
     history_at: Option<usize>,
     /// Where the cursor is in the list of commands.
     commands_at: usize,
     /// What is being waited for, while it is being waited for.
     pub working: Option<&'static str>,
-    /// How many rows the body last had room for, written back by the drawing
-    /// code. Half a screen is half of what you can see, and only the drawing
-    /// knows how much that is.
+    /// Written back by the drawing: half a screen is half of what you can see,
+    /// and only the drawing knows how much that is.
     page: u16,
 }
 
@@ -783,10 +655,8 @@ impl App {
             .expect("a session is never on no screen")
     }
 
-    /// The listing, wherever the keyboard happens to be. It is the bottom of the
-    /// stack and it is never popped, so it is the one screen that can always be
-    /// asked about — which is what a mark, a reload and a cursor kept across one
-    /// all need.
+    /// Never popped, so the one screen that can always be asked about — which a
+    /// mark, a reload and a cursor kept across one all need.
     fn listing(&self) -> &Screen {
         self.stack.first().expect("a session is never on no screen")
     }
@@ -817,8 +687,7 @@ impl App {
         self.listing().search.text()
     }
 
-    /// The part of it that is to the left of the cursor, which is what says
-    /// where along the line the terminal's cursor belongs.
+    /// What says where along the line the terminal's cursor belongs.
     pub fn search_before(&self) -> &str {
         self.listing().search.before()
     }
@@ -828,9 +697,8 @@ impl App {
         self.listing().error.as_deref()
     }
 
-    /// What to pick out of the prose on the screen in front of you. A screen
-    /// opened from a query inherits its terms, so a hit found by searching is
-    /// still marked in the note it was found in.
+    /// A screen opened from a query inherits its terms, so a hit is still marked
+    /// in the note it was found in.
     pub fn terms(&self) -> &[String] {
         &self.top().terms
     }
@@ -840,25 +708,21 @@ impl App {
         self.top().scroll
     }
 
-    /// Opens a screen on top of the one the keyboard is on.
-    ///
-    /// The terms come with it. Searching for a word and then opening the note
-    /// that matched should not lose the highlighting that said why it matched —
-    /// the query is the reason the screen was opened.
+    /// The terms come with it: opening the note that matched should not lose the
+    /// highlighting saying why.
     fn open(&mut self, view: View) {
         let terms = self.top().terms.clone();
         self.stack.push(Screen::new(view, terms));
         self.settle();
     }
 
-    /// Closes the top screen, unless it is the listing. `false` when there was
-    /// nothing to close, so `Esc` can go on to mean what it means down there.
+    /// `false` when there was nothing to close, so `Esc` can go on to mean what
+    /// it means on the listing.
     fn back(&mut self) -> bool {
         if self.stack.len() > 1 {
             self.stack.pop();
-            // What was loaded belonged to the screen that has just gone, so the
-            // one underneath has to be worked out again — with its own cursor
-            // left where it was, which is the whole reason for coming back.
+            // What was loaded belonged to the screen that has gone; the one
+            // underneath is worked out again with its own cursor left alone.
             self.settle();
             true
         } else {
@@ -866,13 +730,11 @@ impl App {
         }
     }
 
-    /// Works out what the screen on top shows, for the screens whose answer is
-    /// already in the session.
+    /// What the top screen shows, for the screens the session can answer.
     ///
-    /// Called wherever the top screen changes — pushed, popped, or left standing
-    /// while the notebook underneath it was read again. The screens that need a
-    /// repository are not answered here; they ask through [`App::wanted`] and
-    /// wait a frame.
+    /// Called wherever the top screen changes — pushed, popped, or standing while
+    /// the notebook under it was read again. The ones needing a repository ask
+    /// through [`App::wanted`] and wait a frame.
     fn settle(&mut self) {
         let view = self.top().view.clone();
         if self.content().is_none()
@@ -880,22 +742,18 @@ impl App {
         {
             self.loaded = Some((view, content));
         }
-        // Kept where it was and clamped, rather than sent back to the top: this
-        // runs on the way back to a screen as well as on the way in, and a stack
-        // that dropped the cursor on the way back would be a stack you learn not
-        // to press Escape in. A list that has since got shorter is what the
-        // clamp is for, and a list that never needed working out — the files,
-        // the notebooks — still needs a cursor put on it.
+        // Kept and clamped rather than sent to the top: this runs on the way
+        // back as well as in, and a stack that dropped the cursor is one you
+        // learn not to press Escape in. The clamp is for a list gone shorter.
         let at = self.top().table.selected().unwrap_or(0);
         self.cursor_to(at);
     }
 
     /// What a screen shows, when the session already holds the answer.
     ///
-    /// These three read every note's body, which is why they are worked out when
-    /// a screen is opened rather than as the cursor moves: parsing the notebook
-    /// per keystroke is what the in-memory copy exists to avoid, not something it
-    /// makes affordable.
+    /// These three read every body, so they are worked out when a screen opens
+    /// rather than as the cursor moves: parsing per keystroke is what the
+    /// in-memory copy exists to avoid, not what it makes affordable.
     fn derive(&self, view: &View) -> Option<Content> {
         match view {
             View::Todo => {
@@ -909,10 +767,8 @@ impl App {
                             .map(move |item| Task { note: at, item })
                     })
                     .collect();
-                // `todo::order` and not a comparison written here: `noda todo`
-                // prints this list too, and a list that came out in a different
-                // order depending on which one you asked would read as a bug in
-                // whichever you asked second.
+                // `todo::order`, not a comparison written here: `noda todo`
+                // prints this list too, and two orders read as a bug.
                 tasks.sort_by(|left, right| {
                     todo::order(
                         (self.notes[left.note].slug.as_str(), &left.item),
@@ -921,21 +777,16 @@ impl App {
                 });
                 Some(Content::Todo(tasks))
             }
-            // Counted and ordered by `notebook`, not here. Commonest first is a
-            // judgement about what a tag list is for, and the web's tag screen
-            // shows the same list — two orders for one list would read as a bug
-            // in whichever was opened second.
+            // Counted and ordered by `notebook`: the web's tag screen shows the
+            // same list, and two orders for one list read as a bug.
             View::Tags => Some(Content::Tags(
                 notebook::tag_tally(&self.notes)
                     .into_iter()
                     .map(|(tag, notes)| Tally { tag, notes })
                     .collect(),
             )),
-            // Asked of `notebook` rather than worked out here. What counts as a
-            // link — the id in the destination, not the filename, so an answer
-            // survives a retitle — is written down once, and this is the same
-            // test applied to the notes already in hand instead of to a second
-            // walk of the directory.
+            // Asked of `notebook`: what counts as a link is written down once,
+            // applied here to the notes already in hand.
             View::Backlinks(subject) => {
                 let found = self
                     .notes
@@ -961,10 +812,8 @@ impl App {
         }
     }
 
-    /// What the screen in front of you needs that only the runtime can get.
-    ///
-    /// `None` on every frame but the one after a screen is opened, which is what
-    /// keeps a repository from being opened per keystroke.
+    /// `None` on every frame but the one after a screen opens, which keeps a
+    /// repository from being opened per keystroke.
     pub fn wanted(&self) -> Option<Need> {
         if self.content().is_some() {
             return None;
@@ -991,12 +840,8 @@ impl App {
         }
     }
 
-    /// Takes what the runtime went and got.
-    ///
-    /// Dropped when the screen it was for is no longer the one in front of you:
-    /// a blame of two thousand commits takes long enough to press Escape during,
-    /// and the answer to a question nobody is asking any more must not land on
-    /// whatever screen happens to be there instead.
+    /// Dropped when the screen it was for is no longer in front of you: a blame
+    /// of two thousand commits takes long enough to press Escape during.
     pub fn supply(&mut self, view: &View, content: Content) {
         if self.top().view != *view {
             return;
@@ -1007,10 +852,8 @@ impl App {
         self.cursor_to(at);
     }
 
-    /// Closes the screen a command could not fill. Public because only the
-    /// runtime finds out that it could not: a `blame` of a note whose file has
-    /// gone is a screen with nothing to be about, and leaving it up would leave
-    /// the reason for the empty screen on a card over the top of it.
+    /// Public because only the runtime finds out a command could not fill a
+    /// screen — and leaving it up puts the reason on a card over the top of it.
     pub fn give_up(&mut self) {
         self.back();
     }
@@ -1020,14 +863,11 @@ impl App {
         self.notes.iter().find(|file| file.id == id)
     }
 
-    /// Swaps in a freshly read notebook, keeping the query and — when the note
-    /// is still there — the cursor. A reload that jumped back to the top would
-    /// be a reason not to press the key.
+    /// Keeps the query, and the cursor when the note is still there — a reload
+    /// that jumped to the top would be a reason not to press the key.
     ///
-    /// When it is not there, the row it was on is what is kept instead. That is
-    /// the case a delete makes ordinary: removing the fortieth note of two
-    /// hundred and being returned to the first would be a reason not to press
-    /// that key either.
+    /// Otherwise the row it was on is kept, which is the case a delete makes
+    /// ordinary.
     pub fn replace(&mut self, session: Session) {
         let was = self.at_cursor().map(|file| file.id.clone());
         let row = self.listing().table.selected();
@@ -1036,10 +876,9 @@ impl App {
         self.files = session.files;
         self.notebooks = session.notebooks;
         self.today = session.today;
-        // Before the query is rerun, because the query picks out indices into
-        // this list. Reapplied rather than remembered: a read brings the
-        // notebook back in the walk's own order, and an order that came off
-        // every time you pressed `r` would not be a setting.
+        // Before the query is rerun, which picks out indices into this list.
+        // Reapplied, because a read brings the walk's own order back and an
+        // order that came off on every `r` would not be a setting.
         self.arrange();
         self.refilter();
         match was.and_then(|id| {
@@ -1051,14 +890,11 @@ impl App {
             Some(at) => self.select(at),
             None => self.select(row.unwrap_or(0)),
         }
-        // Dropped rather than kept: what is on disk is what changed, and this
-        // copy of it is what the reload was pressed to get rid of.
+        // This copy is what the reload was pressed to get rid of.
         self.loaded = None;
-        // A screen about a note the notebook no longer holds is a screen with
-        // nothing behind it — which is the ordinary end of deleting the note you
-        // are reading. Taken off the stack rather than left showing the last
-        // thing that was true, and the same goes for every screen that is about
-        // one note rather than about the notebook.
+        // A screen about a note the notebook no longer holds has nothing behind
+        // it — the ordinary end of deleting the note you are reading — so it
+        // comes off rather than showing the last thing that was true.
         let mut stack = std::mem::take(&mut self.stack);
         stack.retain(|screen| match &screen.view {
             View::Note(id)
@@ -1069,15 +905,13 @@ impl App {
             _ => true,
         });
         self.stack = stack;
-        // A mark on a note that is no longer there is a change aimed at nothing.
-        // The queue keeps its own copy of the ids on purpose — an entry is a
-        // record of what was asked for, and `bulk` is what says so if one of
-        // them has since gone.
+        // A mark on a note that has gone is a change aimed at nothing. The queue
+        // keeps its own ids: an entry records what was asked for, and `bulk`
+        // says so if one has since gone.
         let ids: BTreeSet<&str> = self.notes.iter().map(|file| file.id.as_str()).collect();
         self.marks.retain(|id| ids.contains(id.as_str()));
-        // Whatever screen the reload left you on is now describing a notebook
-        // that has been read again, so it is worked out again — and the ones
-        // that need a repository ask for themselves on the next frame.
+        // The screen now describes a notebook read again, so it is worked out
+        // again; the ones needing a repository ask on the next frame.
         self.settle();
     }
 
@@ -1086,8 +920,7 @@ impl App {
         self.marks.contains(id)
     }
 
-    /// The marked notes, in listing order, for a change about to be aimed at
-    /// them. Ids, because that is what a command takes and what survives a
+    /// In listing order. Ids, being what a command takes and what survives a
     /// rename.
     fn marked_keys(&self) -> Vec<String> {
         self.marks.iter().cloned().collect()
@@ -1102,17 +935,13 @@ impl App {
 
     /// The note the screen in front of you is about.
     ///
-    /// On the listing that is the row under the cursor; on a note it is that
-    /// note. One question with one answer on every screen, which is what lets
-    /// `e`, `m`, `#` and `Ctrl-d` mean the same thing everywhere without any of
-    /// them knowing where they are.
+    /// One question with one answer on every screen, which is what lets `e`, `m`,
+    /// `#` and `Ctrl-d` mean the same thing everywhere without knowing where they
+    /// are.
     ///
-    /// A screen whose rows are notes answers with the row — the todo list and
-    /// the backlinks are listings of notes, and a key that changes a note should
-    /// change the one under the cursor there for the same reason it does on the
-    /// listing. A screen *about* one note answers with that note however far its
-    /// own rows have been scrolled. A screen about the notebook answers with
-    /// nothing, and the keys that need a note quietly do nothing.
+    /// A screen whose rows are notes answers with the row; a screen *about* one
+    /// note answers with that note however far it has scrolled; a screen about
+    /// the notebook answers with nothing, and those keys do nothing.
     pub fn selected(&self) -> Option<&NoteFile> {
         let at = || self.top().table.selected();
         match &self.top().view {
@@ -1132,9 +961,7 @@ impl App {
         }
     }
 
-    /// The unticked boxes, the tags, and the notes that link here — whichever of
-    /// them the screen in front of you is showing, and nothing when it is
-    /// showing something else.
+    /// Whichever of the three the screen in front of you is showing.
     pub fn tasks(&self) -> &[Task] {
         match self.content() {
             Some(Content::Todo(tasks)) => tasks,
@@ -1163,10 +990,8 @@ impl App {
         }
     }
 
-    /// Whether the remote has yet to see this commit.
-    ///
-    /// False on every other screen and on a notebook with no remote, which is
-    /// what leaves the margin blank rather than marking everything.
+    /// False on every other screen and with no remote, which leaves the margin
+    /// blank rather than marking everything.
     pub fn is_unpushed(&self, commit: git2::Oid) -> bool {
         match self.content() {
             Some(Content::Log(_, unpushed)) => unpushed.contains(&commit),
@@ -1188,8 +1013,7 @@ impl App {
         }
     }
 
-    /// The note's file, or the patch — the two screens that are a block of text
-    /// rather than a list of anything.
+    /// The two screens that are a block of text rather than a list.
     pub fn text(&self) -> Option<&str> {
         match self.content() {
             Some(Content::Note(text) | Content::Diff(text)) => Some(text),
@@ -1217,12 +1041,11 @@ impl App {
         &self.today
     }
 
-    /// How many rows the screen in front of you has, or `None` when it is a
-    /// block of text and the keys scroll it instead of moving a cursor.
+    /// `None` when the screen is a block of text and the keys scroll it.
     ///
-    /// The one place that says which kind a screen is. Every key that moves
-    /// asks here rather than matching on the view itself, so a screen added
-    /// later cannot be a list on one key and a page on another.
+    /// The one place that says which kind a screen is: every key that moves asks
+    /// here, so a screen added later cannot be a list on one key and a page on
+    /// another.
     fn rows_here(&self) -> Option<usize> {
         match &self.top().view {
             View::Notes => Some(self.top().visible.len()),
@@ -1263,9 +1086,8 @@ impl App {
         self.notes.len()
     }
 
-    /// The cursor and scroll of the screen being drawn, taken out so the rows
-    /// may borrow the notes while ratatui writes this frame's offset into it.
-    /// They are different fields, but the borrow checker only sees `self`.
+    /// Taken out so the rows may borrow the notes while ratatui writes this
+    /// frame's offset — different fields, but the borrow checker sees `self`.
     pub fn take_table(&mut self) -> TableState {
         std::mem::take(&mut self.top_mut().table)
     }
@@ -1281,17 +1103,14 @@ impl App {
 
     /// Applies a keystroke. `None` means the state moved and nothing else.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
-        // Windows sends a press and a release for every key; acting on both
-        // would move the cursor twice per stroke.
+        // Windows sends a press and a release; both would move twice.
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Ctrl-C leaves from wherever you are, including mid-query. It is the
-        // one key that means the same thing in every mode, because it is what
-        // the terminal itself would have meant by it — and the one that does not
-        // stop to ask about an unsent queue, for the same reason. A program that
-        // argues with Ctrl-C is a program you end up killing from another
-        // window; `q` is the key that can afford to ask.
+        // Leaves from wherever you are, because that is what the terminal itself
+        // would have meant — and without asking about an unsent queue, for the
+        // same reason. A program that argues with Ctrl-C is one you kill from
+        // another window; `q` is the key that can afford to ask.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(Action::Quit);
         }
@@ -1314,17 +1133,13 @@ impl App {
     }
 
     fn browsing(&mut self, key: KeyEvent) -> Option<Action> {
-        // Whatever the last command said has now been read, or has not been and
-        // was only an acknowledgement. Either way the next key is the reader
-        // moving on, and the line goes back to being empty.
+        // The next key is the reader moving on, so the line goes back empty.
         self.message = None;
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return self.chord(key.code);
         }
-        // The keys that mean the same thing on every screen. They are answered
-        // first so that a screen only has to describe what is different about
-        // it, and so that a key cannot come to mean two things by being added to
-        // one screen and forgotten on another.
+        // Answered first, so a screen only describes what is different about it
+        // and a key cannot mean two things by being forgotten on one.
         match key.code {
             KeyCode::Char('q') => return self.leaving(),
             KeyCode::Char('r') => return Some(Action::Reload),
@@ -1332,8 +1147,7 @@ impl App {
                 self.mode = Mode::Help;
                 return None;
             }
-            // The way to the commands a key cannot reach. There are thirty
-            // subcommands and about a dozen letters worth spending on them, so
+            // Thirty subcommands and about a dozen letters worth spending, so
             // the rest arrive by being named.
             KeyCode::Char(':') => {
                 self.mode = Mode::Command;
@@ -1349,10 +1163,8 @@ impl App {
                 };
                 return None;
             }
-            // The keys that change a note. Each asks a command for it, and the
-            // three that need something said first open the prompt instead.
-            // They aim at whatever the screen is about, so they read the same on
-            // a listing and on the note itself.
+            // Each asks a command, and the three needing something said first
+            // open the prompt. All aim at whatever the screen is about.
             KeyCode::Char('e') => {
                 return Some(Action::Edit {
                     key: self.selected()?.id.clone(),
@@ -1369,8 +1181,7 @@ impl App {
                 return None;
             }
             KeyCode::Char('#') => {
-                // Nothing to tag is nothing to ask about — the same reason `m`
-                // and a delete do nothing over an empty list.
+                // Nothing to tag is nothing to ask about.
                 let keys = if self.marks.is_empty() {
                     vec![self.selected()?.id.clone()]
                 } else {
@@ -1384,19 +1195,15 @@ impl App {
                 self.queue_at = self.queue_at.min(self.queue.len().saturating_sub(1));
                 return None;
             }
-            // The four screens worth a letter, and the rule for which four: the
-            // three that are *about the note in front of you* — where you would
-            // otherwise have to name a note you are already looking at — and the
-            // one list of the notebook that is read as often as the notes
-            // themselves. The other five arrive by being named, which is what
-            // `:` is for.
+            // The three *about the note in front of you*, where naming it would
+            // be naming what you are looking at, plus the one notebook list read
+            // as often as the notes. The other five arrive by being named.
             KeyCode::Char('t') => {
                 self.open(View::Todo);
                 return None;
             }
-            // The whole notebook's, from a screen that is about the notebook;
-            // one note's, from a screen that is about a note. `:log` reads the
-            // screen the same way, so the key and the name never disagree.
+            // The notebook's or one note's, by what the screen is about. `:log`
+            // reads the screen the same way, so the two never disagree.
             KeyCode::Char('l') => {
                 let about = self.about();
                 self.open(View::Log(about));
@@ -1412,23 +1219,19 @@ impl App {
                 self.open(View::Blame(id));
                 return None;
             }
-            // The nine commonest tags, one press apiece, and `0` for the way
-            // back out. The short version of what the tags screen's `enter`
-            // does, which is why that screen numbers its first nine rows: the
-            // number beside a tag there is the key that reaches it.
+            // The nine commonest tags, one press each, `0` the way out — the
+            // short form of the tags screen's `enter`, which is why that screen
+            // numbers its first nine rows.
             //
-            // Answered on every screen, because the answer is a screen: like
-            // `:notes` it comes back down to the listing, which is where the
-            // notes a tag narrows already are.
+            // Answered on every screen, because the answer is a screen: it comes
+            // back down to the listing, where the notes a tag narrows are.
             KeyCode::Char(digit @ '0'..='9') => {
                 self.scope_nth(digit as usize - '0' as usize);
                 return None;
             }
-            // Deliberately not a delete, and deliberately not anything else
-            // either. This key removed a note until the modifier was put in
-            // front of it, and a key that used to delete must not quietly become
-            // the key that does something else instead — it has to say where the
-            // deleting went and do nothing at all.
+            // Not a delete, and not anything else either: this key removed a
+            // note until the modifier went in front of it, so it has to say
+            // where the deleting went rather than quietly mean something new.
             KeyCode::Char('d') => {
                 self.message = Some(Message {
                     text: "delete is Ctrl-d".to_string(),
@@ -1438,9 +1241,8 @@ impl App {
             }
             _ => {}
         }
-        // Which kind of screen this is, rather than which screen: a list is
-        // walked with a cursor and a page of text is scrolled, and everything
-        // else about them is the same.
+        // Which kind of screen, not which: a list is walked and a page is
+        // scrolled, and everything else about them is the same.
         match (&self.top().view, self.has_rows()) {
             (View::Notes, _) => self.on_listing(key),
             (_, true) => self.on_rows(key),
@@ -1448,47 +1250,41 @@ impl App {
         }
     }
 
-    /// The chords, which mean the same thing on every screen: half a screen
-    /// either way, and the delete.
+    /// Half a screen either way, and the delete.
     ///
-    /// A chord and not a letter, for the delete. It is the one key here that
-    /// cannot be taken back by pressing something else, and one modifier is the
-    /// difference between a key you reach for and a key you mean.
+    /// A chord for the delete, it being the one key that cannot be taken back:
+    /// a modifier is the difference between a key you reach for and one you
+    /// mean.
     fn chord(&mut self, code: KeyCode) -> Option<Action> {
         let half = i32::from(self.page.max(2) / 2);
         match code {
             KeyCode::Char('f') => self.step(half),
             KeyCode::Char('b') => self.step(-half),
             KeyCode::Char('d') => return self.delete(),
-            // What the prompt accepts, for somebody who knows what they want to
-            // do and not what it is called. A card and not a key apiece: the
-            // list is the point at which there are too many to have keys.
+            // For somebody who knows what they want and not what it is called.
+            // A card, the list being where there are too many for keys.
             KeyCode::Char('a') => {
                 self.mode = Mode::Commands;
                 self.input.clear();
                 self.commands_at = 0;
             }
-            // `ls -l`'s columns, and only where there are rows to put them on.
-            // The other screens print what their own command prints and have no
-            // second density to offer.
+            // Only where there are rows: the other screens print what their own
+            // command prints and have no second density.
             KeyCode::Char('w') => {
                 if matches!(self.top().view, View::Notes) {
                     self.long = !self.long;
                 }
             }
-            // A row of the terminal, given back to the notes. The trail is worth
-            // a line most of the time — a stack you cannot see the depth of is
-            // one whose Escape key you have to guess at — but on a short
-            // terminal a row is a row, and the title band still says what screen
-            // you are on.
+            // A row given back to the notes. The trail is worth a line most of
+            // the time — a stack whose depth you cannot see is one whose Escape
+            // you guess at — but the title band still says where you are.
             KeyCode::Char('g') => self.crumbs_shown = !self.crumbs_shown,
             _ => {}
         }
         None
     }
 
-    /// The delete, aimed the way every change is aimed: at the marked notes when
-    /// there are any, and at the one on the screen when there are not.
+    /// Aimed as every change is: the marked notes, or the one on the screen.
     fn delete(&mut self) -> Option<Action> {
         if self.marks.is_empty() {
             self.selected()?;
@@ -1518,10 +1314,8 @@ impl App {
             KeyCode::PageUp => self.step(-page),
             KeyCode::Char('g') | KeyCode::Home => self.jump(Edge::First),
             KeyCode::Char('G') | KeyCode::End => self.jump(Edge::Last),
-            // The orders `--sort` names, one press apiece, and the reverse `-r`
-            // already spells. Shifted because they are about the listing rather
-            // than about a note, and the unshifted letters near them are not:
-            // `r` reads the notebook again and `s` is not a key at all.
+            // `--sort`'s orders and `-r`'s reverse. Shifted because they are
+            // about the listing rather than a note, and `r` is already taken.
             KeyCode::Char('S') => {
                 self.sort = self.sort.next();
                 self.reorder();
@@ -1530,16 +1324,14 @@ impl App {
                 self.reverse = !self.reverse;
                 self.reorder();
             }
-            // Down the stack. The note gets a screen of its own rather than half
-            // of this one, which is what lets it be read at the width it was
-            // written at.
+            // A screen of its own rather than half of this one, so it is read at
+            // the width it was written at.
             KeyCode::Enter => {
                 let id = self.selected()?.id.clone();
                 self.open(View::Note(id));
             }
-            // Marking. `Space` is the one under the cursor; `*` is everything
-            // the query is showing, which is what makes a search and a selection
-            // compose: narrow to what you mean, take the lot, search again.
+            // `Space` marks the one under the cursor, `*` everything shown —
+            // which is what composes a search with a selection.
             KeyCode::Char(' ') => {
                 let id = self.selected()?.id.clone();
                 if !self.marks.remove(&id) {
@@ -1547,14 +1339,12 @@ impl App {
                 }
             }
             KeyCode::Char('*') => self.mark_shown(),
-            // The way back out of whatever narrowing is in force, one layer at a
-            // time: the query first, and once there is no query, the marks. Two
-            // things that both make the notebook smaller than it is, undone by
-            // the key that already meant "never mind" — and in that order,
-            // because a query is cheap to retype and a selection is not.
+            // Out of whatever narrowing is in force, one layer at a time: the
+            // query first, then the marks — in that order, a query being cheap
+            // to retype and a selection not.
             //
-            // The queue is not in this chain. Dropping work by pressing Escape
-            // once too often is the sort of thing a queue exists to prevent.
+            // The queue is not in this chain: losing work to one Escape too many
+            // is what a queue exists to prevent.
             KeyCode::Esc => {
                 if self.top().search.is_empty() {
                     self.marks.clear();
@@ -1568,8 +1358,7 @@ impl App {
         None
     }
 
-    /// A page of text — a note, a patch, a note with its history down the left:
-    /// scrolling it, and closing it again.
+    /// A note, a patch, a blame: scrolling it and closing it again.
     fn on_reading(&mut self, key: KeyEvent) -> Option<Action> {
         let page = i32::from(self.page);
         match key.code {
@@ -1587,8 +1376,7 @@ impl App {
         None
     }
 
-    /// Any of the other lists: walking it, closing it, and doing whatever the
-    /// row under the cursor is for.
+    /// The other lists: walking, closing, and what the row is for.
     fn on_rows(&mut self, key: KeyEvent) -> Option<Action> {
         let page = i32::from(self.page);
         match key.code {
@@ -1607,15 +1395,10 @@ impl App {
         None
     }
 
-    /// What the row under the cursor is for.
-    ///
-    /// Every one of these is the obvious next question about the thing on the
-    /// row, and they divide into three kinds. A row that names a note opens it.
-    /// A row that names something to look at from another angle opens that
-    /// angle. And a row that names something *irreversible* puts the command on
-    /// the prompt instead of running it — the same bargain `Ctrl-a` makes, and
-    /// for a stronger reason here: landing on a row is not agreeing to overwrite
-    /// the note it names.
+    /// The obvious next question about the thing on the row, in three kinds: a
+    /// note opens, another angle opens that angle, and something *irreversible*
+    /// goes onto the prompt rather than running — landing on a row is not
+    /// agreeing to overwrite the note it names.
     fn chose(&mut self) -> Option<Action> {
         let at = self.top().table.selected()?;
         match self.top().view.clone() {
@@ -1623,15 +1406,13 @@ impl App {
                 let id = self.selected()?.id.clone();
                 self.open(View::Note(id));
             }
-            // Not a screen of its own: a tag is a way of narrowing the listing,
-            // and the listing is where the notes it narrows already live. This
-            // is the key `0`–`9` will be short for.
+            // A tag narrows the listing, which is where its notes already are.
+            // The key `0`–`9` is short for.
             View::Tags => {
                 let tag = self.tallies().get(at)?.tag.clone();
                 self.scope(&tag);
             }
-            // The one question worth asking about an attachment, and the reason
-            // `backlinks` takes a file as readily as a note.
+            // The one question worth asking about an attachment.
             View::Files => {
                 let name = self.files.get(at)?.clone();
                 self.open(View::Backlinks(Subject::File(name)));
@@ -1645,9 +1426,8 @@ impl App {
                 let line = format!("restore {} {}", gone.id, gone.restore_from_short());
                 self.compose(line);
             }
-            // A commit in one note's history is a version of that note, so the
-            // row is the revision `restore` wants. The notebook's own log names
-            // no note, so there is nothing to put the commit against.
+            // A commit in one note's history is a version of it, so the row is
+            // the revision `restore` wants. The notebook's log names no note.
             View::Log(Some(id)) => {
                 let rev = self.entries().get(at)?.short_id();
                 self.compose(format!("restore {id} {rev}"));
@@ -1664,13 +1444,9 @@ impl App {
         self.history_at = None;
     }
 
-    /// Puts the notes in the order the session has asked for.
-    ///
-    /// `cmd::sort_notes` and not a comparison written here: `noda ls --sort`
-    /// offers the same four orders, and an order that came out differently
-    /// depending on which one you asked would be two features wearing one name.
-    /// The reverse is applied after, here as it is there, so every order gets
-    /// one for free.
+    /// `cmd::sort_notes` and not a comparison written here: `--sort` offers the
+    /// same four, and two spellings would be one feature wearing two names. The
+    /// reverse applies after, so every order gets one free.
     fn arrange(&mut self) {
         cmd::sort_notes(&mut self.notes, self.sort);
         if self.reverse {
@@ -1678,11 +1454,8 @@ impl App {
         }
     }
 
-    /// Reorders the listing under the cursor, and leaves the cursor on the note
-    /// it was on.
-    ///
-    /// The note and not the row: re-sorting is asking where a particular note
-    /// falls in a new order, and being thrown to the top to find out would be a
+    /// Keeps the cursor on the *note* and not the row: re-sorting asks where a
+    /// note falls in a new order, and being thrown to the top to find out is a
     /// reason not to press the key.
     fn reorder(&mut self) {
         let was = self.at_cursor().map(|file| file.id.clone());
@@ -1691,15 +1464,13 @@ impl App {
         if let Some(id) = was {
             self.select_id(&id);
         }
-        // Every derived screen holds indices into the notes, and the notes have
-        // just moved underneath them.
+        // Derived screens hold indices, and the notes have just moved.
         self.loaded = None;
         self.settle();
     }
 
-    /// The tag a digit stands for: one of the commonest, in the order the tags
-    /// screen lists them, so the number beside a tag there is the key that
-    /// reaches it. `0` is the way back out.
+    /// In the tags screen's order, so the number beside a tag there is the key
+    /// that reaches it. `0` is the way out.
     fn scope_nth(&mut self, nth: usize) {
         if nth == 0 {
             while self.back() {}
@@ -1717,25 +1488,18 @@ impl App {
         self.scope(&tag);
     }
 
-    /// Back to the listing, narrowed to one tag.
-    ///
-    /// `query::scoped` writes the query, quotes and all: the listing's field
-    /// splits the way a shell would, and the web's tag screen has to narrow the
-    /// same listing the same way.
+    /// `query::scoped` writes the query, quotes and all: the field splits the
+    /// way a shell would, and the web's tag screen narrows the same way.
     fn scope(&mut self, tag: &str) {
         while self.back() {}
         self.top_mut().search.set(query::scoped(tag));
         self.refilter();
     }
 
-    /// Moves the whole session to another notebook, or says why not.
-    ///
-    /// The queue is what stands in the way, and it has to: an entry names notes
-    /// by id, and ids belong to the notebook they were minted in. Sent against
-    /// another one it would find nothing, or — with two notebooks imported from
-    /// the same place — find the wrong thing. Refused rather than dropped,
-    /// because the queue is the one piece of a session that is written down
-    /// nowhere else.
+    /// The queue stands in the way and has to: an entry names notes by id, and
+    /// ids belong to the notebook they were minted in — against another it finds
+    /// nothing, or the wrong thing. Refused rather than dropped, the queue being
+    /// written down nowhere else.
     fn switch(&mut self, name: String) -> Option<Action> {
         if name == self.notebook {
             self.refuse(format!("`{name}` is the notebook you are in"));
@@ -1752,12 +1516,9 @@ impl App {
         Some(Action::Use(name))
     }
 
-    /// Marks everything the query is showing, or takes the marks off it when it
-    /// is all marked already — one key for both, because the answer to "what
-    /// does this do now" is on the screen in front of you.
-    ///
-    /// What it does not touch: a marked note the query is hiding. `*` says
-    /// something about what is shown, and nothing about what is not.
+    /// Marks everything shown, or unmarks it when it is all marked — one key,
+    /// because what it does now is on the screen. It does not touch a marked
+    /// note the query is hiding.
     fn mark_shown(&mut self) {
         let shown: Vec<String> = self.rows().map(|file| file.id.clone()).collect();
         if shown.iter().all(|id| self.marks.contains(id)) {
@@ -1769,11 +1530,8 @@ impl App {
         }
     }
 
-    /// Puts a change in the queue, or says why it cannot be one.
-    ///
-    /// Checked here rather than at the send, so a tag that cannot be written
-    /// down is refused where it was typed — at the end of a sitting is too late
-    /// to remember what was meant by it.
+    /// Checked here rather than at the send, so a bad tag is refused where it
+    /// was typed: the end of a sitting is too late to remember what was meant.
     fn enqueue(&mut self, step: Step) {
         if let Err(e) = cmd::check(&step.change) {
             self.report(Err(e));
@@ -1788,11 +1546,8 @@ impl App {
                 self.queue_at = (self.queue_at + 1).min(self.queue.len().saturating_sub(1));
             }
             KeyCode::Char('k') | KeyCode::Up => self.queue_at = self.queue_at.saturating_sub(1),
-            // Dropping an entry is the queue's whole point: what is waiting can
-            // be reconsidered, which is what makes queueing safe to do quickly.
-            // A plain `d` here, unlike out on a screen, because nothing in this
-            // card can delete a note — dropping a queued change is the opposite
-            // of one.
+            // Dropping an entry is the queue's point. A plain `d` here, unlike
+            // on a screen, because nothing in this card can delete a note.
             KeyCode::Char('d' | 'x') | KeyCode::Backspace => {
                 if self.queue_at < self.queue.len() {
                     self.queue.remove(self.queue_at);
@@ -1812,10 +1567,9 @@ impl App {
             self.mode = Mode::Browse;
             return None;
         }
-        // A tag can be put back; a note that has been removed comes back only
-        // through git. So the question is asked when there is a deletion in the
-        // queue, and not otherwise — a confirmation that appears every time is
-        // one nobody reads.
+        // A tag can be put back and a removed note only through git, so the
+        // question is asked for a deletion and not otherwise: a confirmation
+        // that appears every time is one nobody reads.
         if self.queue.iter().any(|step| step.change == Change::Remove) {
             self.mode = Mode::Confirm(What::Send);
             return None;
@@ -1848,9 +1602,7 @@ impl App {
         self.queue_at
     }
 
-    /// Everything the send changed is now somebody else's business: the queue
-    /// has been carried out and the notes it was aimed at are no longer picked
-    /// out for anything.
+    /// The queue has been carried out, and its notes are no longer picked out.
     pub fn sent(&mut self) {
         self.queue.clear();
         self.queue_at = 0;
@@ -1859,22 +1611,16 @@ impl App {
 
     /// Opens the tag picker over whatever the screen is about.
     ///
-    /// The question it asks is *which tags these notes should end up with*, and
-    /// not which `+`s and `-`s to apply — the same question the browser's tag
-    /// form asks, for the same reason it asks it that way: `+work -q3` is a
-    /// notation for somebody with a keyboard, and a notation is a thing to
-    /// misspell. Every tag the notebook has is already a row here, so the
-    /// commonest mistake the notation allowed — a `-` aimed at a tag spelled
-    /// wrong, which removes nothing and says nothing — has nowhere left to
-    /// happen.
+    /// It asks *which tags these notes should end up with*, not which `+`s and
+    /// `-`s to apply — the browser's tag form's question, for its reason. Every
+    /// tag is already a row, so the commonest mistake the notation allowed — a
+    /// `-` aimed at a misspelling, which removes nothing and says nothing — has
+    /// nowhere left to happen.
     ///
-    /// `Tab` chooses, and not the `Space` that picks a note out on the listing.
-    /// The line being typed here is the name of a tag that may not exist yet,
-    /// and a tag is allowed a space — so this is a field, and a field in this
-    /// browser takes every character there is. Making it the one field where the
-    /// space bar did something else would have put the tags an import leaves
-    /// behind, `24.04 Dark patterns` among them, out of reach of the card that
-    /// exists to spare you spelling them.
+    /// `Tab` chooses, not `Space`: the line being typed is a tag that may not
+    /// exist yet, and a tag is allowed a space. Making this the one field where
+    /// the space bar did something else would put `24.04 Dark patterns` out of
+    /// reach of the card that exists to spare you spelling it.
     fn pick(&mut self, keys: Vec<String>) {
         let tallies = match self.derive(&View::Tags) {
             Some(Content::Tags(tallies)) => tallies,
@@ -1906,9 +1652,8 @@ impl App {
     fn picking(&mut self, key: KeyEvent) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            // Answered before the field is offered the key, which is the whole
-            // of why it is `Tab`: it is not a character, so the filter goes on
-            // taking every character there is.
+            // Before the field is offered the key, which is why it is `Tab`:
+            // not a character, so the filter still takes every character.
             KeyCode::Tab => {
                 self.choose();
                 return None;
@@ -1918,9 +1663,8 @@ impl App {
                 self.shut();
                 return None;
             }
-            // Both spellings of the two that move, for the same hands the rest
-            // of this is for. `j` and `k` are not among them: they are letters,
-            // and every letter here goes into the filter.
+            // `j` and `k` are not among them: every letter goes into the
+            // filter.
             KeyCode::Down => {
                 self.tags_at = (self.tags_at + 1).min(self.picker_rows().saturating_sub(1));
                 return None;
@@ -1939,11 +1683,9 @@ impl App {
             }
             _ => {}
         }
-        // Typing, and the keys that shorten what has been typed. Erasing only,
-        // for the reason the list of commands takes only those: what is being
-        // typed is shown on the card and there is no cursor on the screen for a
-        // motion key to move. The cursor goes back to the top, because the list
-        // under it is a different list now.
+        // Erasing only, as the command list takes only those: what is typed is
+        // shown on the card and there is no cursor for a motion key to move. The
+        // cursor goes to the top, the list under it being a different list.
         if self.input.erasing(key).is_some() {
             self.tags_at = 0;
         }
@@ -1959,8 +1701,8 @@ impl App {
         self.tags_at = 0;
     }
 
-    /// What `Tab` does: walks the tag under the cursor through the states that
-    /// would change something, or makes the one that is not there.
+    /// Walks the tag under the cursor through the states that would change
+    /// something, or makes the one that is not there.
     fn choose(&mut self) {
         if let Some(&at) = self.shown_tags().get(self.tags_at) {
             let total = self.aimed_at.len();
@@ -1968,9 +1710,8 @@ impl App {
             choice.mark = choice.next(total);
             return;
         }
-        // Past the last tag is the row that is not a tag yet. It joins the list
-        // where the filter can still see it, so the cursor stays on the row it
-        // was on and the box it just grew is the whole of what changed.
+        // The row that is not a tag yet joins where the filter can see it, so
+        // the cursor stays put and the box it grew is all that changed.
         let Some(Proposal::New { tag, .. }) = self.proposal() else {
             return;
         };
@@ -1982,12 +1723,9 @@ impl App {
         });
     }
 
-    /// Turns what the picker holds into the change it stands for.
-    ///
     /// The `+`s and `-`s are written here and nowhere else. Nothing was typed in
-    /// that notation and nothing has to be split back out of it, which is what
-    /// carries a tag with a space in it through untouched: it is one string from
-    /// the note's own frontmatter to `cmd::tag`'s argument list.
+    /// that notation and nothing is split back out of it, which is what carries
+    /// a tag with a space in it through as one string.
     fn tagged(&mut self) -> Option<Action> {
         let changes: Vec<String> = self
             .choices
@@ -2000,16 +1738,13 @@ impl App {
             .collect();
         let keys = std::mem::take(&mut self.aimed_at);
         self.shut();
-        // Nothing chosen is a way out rather than a command, for the reason an
-        // emptied prompt is one: somebody who has chosen nothing has changed
-        // their mind, and a refusal would be answering a question they stopped
-        // asking.
+        // Nothing chosen is a way out rather than a command: a refusal would be
+        // answering a question they stopped asking.
         if changes.is_empty() {
             return None;
         }
-        // Aimed the way the key was aimed when it opened this: at the marked set
-        // when there is one, where it joins the queue, and otherwise at the note
-        // the screen is about, where it runs.
+        // As the key was aimed: the marked set, where it queues, or the note the
+        // screen is about, where it runs.
         if self.marks.is_empty() {
             return Some(Action::Tag {
                 key: keys.into_iter().next()?,
@@ -2027,8 +1762,8 @@ impl App {
         None
     }
 
-    /// Which of the choices the filter admits, in the order they are held —
-    /// commonest first, and anything typed in on the end of that.
+    /// In the order they are held: commonest first, with anything typed on the
+    /// end.
     pub fn shown_tags(&self) -> Vec<usize> {
         let filter = self.input.text().trim().to_lowercase();
         self.choices
@@ -2045,9 +1780,8 @@ impl App {
         if typed.is_empty() || self.choices.iter().any(|choice| choice.tag == typed) {
             return None;
         }
-        // Refused where it is typed rather than where it is sent. `cmd` decides
-        // what a tag may be and this is that decision read out, not a second
-        // one — the same call the command itself would fail on.
+        // Refused where typed rather than where sent, by the same call the
+        // command itself would fail on.
         if let Err(e) = note::validate_tag(typed) {
             return Some(Proposal::Refused(e.to_string()));
         }
@@ -2057,11 +1791,9 @@ impl App {
         })
     }
 
-    /// The tag this one is likeliest to be a misspelling of: the commonest of
-    /// the ones a keystroke away, because the commonest is the one meant.
-    ///
-    /// Only tags the notebook already has — a tag made a moment ago in this same
-    /// picker has nothing to say about whether the next one is a slip.
+    /// The commonest of the tags a keystroke away, because the commonest is the
+    /// one meant. Only tags the notebook already has: one made a moment ago in
+    /// this picker says nothing about whether the next is a slip.
     fn nearest(&self, tag: &str) -> Option<(String, usize)> {
         self.choices
             .iter()
@@ -2083,8 +1815,7 @@ impl App {
         self.tags_at
     }
 
-    /// How many notes the picker is aimed at, which is what a row's `12/40`
-    /// is out of.
+    /// What a row's `12/40` is out of.
     pub fn picking_notes(&self) -> usize {
         self.aimed_at.len()
     }
@@ -2098,15 +1829,13 @@ impl App {
     }
 
     fn searching(&mut self, key: KeyEvent) -> Option<Action> {
-        // Typing, and every key readline puts around a line, are the field's
-        // business — including the rule the field was built around: a chord is
-        // not a character. `KeyCode::Char('d')` is what arrives for Ctrl-D as
-        // much as for `d`, and a query field that took it at face value would
-        // quietly read `budgetd`.
+        // The field's business, including the rule it was built around: a chord
+        // is not a character. `KeyCode::Char('d')` arrives for Ctrl-D as much as
+        // for `d`, and a field taking that at face value reads `budgetd`.
         //
-        // Only the query's own keys are left here, and they are the ones the
-        // field deliberately does not bind. Re-running the query is this end's
-        // job because only this end knows there is a notebook behind the line.
+        // What is left are the keys the field deliberately does not bind.
+        // Re-running the query is this end's job, only this end knowing there is
+        // a notebook behind the line.
         match self.top_mut().search.key(key) {
             Some(Edit::Typed) => {
                 self.refilter();
@@ -2117,11 +1846,10 @@ impl App {
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            // The list is already narrowed, so there is nothing left to run:
-            // this only hands the keyboard back to the list.
+            // Already narrowed, so this only hands the keyboard back.
             KeyCode::Enter => self.mode = Mode::Browse,
-            // Leaving the query behind means leaving what it selected behind
-            // too, which is what makes it an escape rather than a commit.
+            // Leaving the query leaves what it selected, which is what makes
+            // this an escape rather than a commit.
             KeyCode::Esc => {
                 self.top_mut().search.clear();
                 self.refilter();
@@ -2146,19 +1874,16 @@ impl App {
         None
     }
 
-    /// Opens the prompt, with whatever it should start out holding — the current
-    /// title, for a retitle, so the common edit is a few keystrokes rather than
-    /// typing it all again.
+    /// With whatever it should start out holding: the current title for a
+    /// retitle, so the common edit is a few keystrokes.
     fn ask(&mut self, what: Ask, start: String) {
         self.mode = Mode::Ask(what);
         self.input.set(start);
     }
 
     fn asking(&mut self, what: Ask, key: KeyEvent) -> Option<Action> {
-        // The same field the query is typed into, so the same keys work in it —
-        // which matters most here, where the line often arrives already written:
-        // a retitle is somebody editing a title rather than typing one, and
-        // editing is what a cursor is for.
+        // The query's field, so the same keys work — which matters most here,
+        // where a retitle is editing a title rather than typing one.
         if self.input.key(key).is_some() {
             return None;
         }
@@ -2173,13 +1898,9 @@ impl App {
         None
     }
 
-    /// Turns a filled-in prompt into the command it stands for.
-    ///
-    /// An empty answer is a way out rather than an error: somebody who has
-    /// cleared the field has changed their mind, and reporting "a note needs a
-    /// title" at them would be answering a question they stopped asking. The one
-    /// exception is a new note, where nothing typed is what `noda add` already
-    /// means by no title — the body will say what the note is called.
+    /// An empty answer is a way out rather than an error: a refusal would be
+    /// answering a question they stopped asking. The exception is a new note,
+    /// where nothing typed is what `noda add` means by no title.
     fn answered(&mut self, what: Ask) -> Option<Action> {
         let answer = self.input.text().trim().to_string();
         self.mode = Mode::Browse;
@@ -2195,8 +1916,8 @@ impl App {
         }
     }
 
-    /// Leaving, or asking about the queue first. The one piece of state a
-    /// session holds that is written down nowhere.
+    /// Leaving, or asking about the queue first — the one piece of state
+    /// written down nowhere.
     fn leaving(&mut self) -> Option<Action> {
         if self.queue.is_empty() {
             return Some(Action::Quit);
@@ -2205,12 +1926,9 @@ impl App {
         None
     }
 
-    /// Typing a command.
-    ///
-    /// The same field the query and the prompt use, and so the same keys: this
-    /// is the one of the three that is most like a shell prompt, and the one
-    /// where a hand that has typed at shell prompts for twenty years is most
-    /// likely to reach for `Ctrl-A` without deciding to.
+    /// The same field the query and the prompt use, and so the same keys — this
+    /// is the one most like a shell prompt, where a hand reaches for `Ctrl-A`
+    /// without deciding to.
     fn commanding(&mut self, key: KeyEvent) -> Option<Action> {
         if self.input.key(key).is_some() {
             return None;
@@ -2228,9 +1946,8 @@ impl App {
                 self.input.clear();
                 self.history_at = None;
             }
-            // What a shell does with the same keys, and for the same reason: the
-            // command you want next is usually one you have already typed. Both
-            // spellings of them, because readline has two.
+            // What a shell does, for its reason: the command you want next is
+            // usually one you have typed. Both spellings, as readline has two.
             KeyCode::Up => self.recall(true),
             KeyCode::Down => self.recall(false),
             KeyCode::Char('p') if ctrl => self.recall(true),
@@ -2240,10 +1957,9 @@ impl App {
         None
     }
 
-    /// Walks the history. Forward past the newest entry gives back an empty
-    /// line rather than sticking on it — walking away from what you were typing
-    /// is what discarded it, and stopping dead at the end would leave no way to
-    /// type something new without clearing the field by hand.
+    /// Forward past the newest entry gives an empty line rather than sticking:
+    /// stopping dead would leave no way to type something new without clearing
+    /// the field by hand.
     fn recall(&mut self, back: bool) {
         if self.history.is_empty() {
             return;
@@ -2262,12 +1978,9 @@ impl App {
         });
     }
 
-    /// Turns a typed line into the command it names.
-    ///
-    /// The rest of the line is kept as it was typed rather than rebuilt from its
-    /// tokens: a query and a title both survive quoting only if nothing puts
-    /// them back together, and `tag:"12.34 foo bar"` is exactly the case that
-    /// has already been got wrong twice elsewhere.
+    /// The rest of the line is kept as typed rather than rebuilt from its
+    /// tokens: `tag:"12.34 foo bar"` is the case already got wrong twice
+    /// elsewhere.
     fn run(&mut self, line: &str) -> Option<Action> {
         let line = line.trim();
         if line.is_empty() {
@@ -2288,8 +2001,7 @@ impl App {
             "quit" => return self.leaving(),
             "reload" => return Some(Action::Reload),
             "keys" => self.mode = Mode::Help,
-            // Back to the listing from wherever you are, and narrowed on the way
-            // if a query came with it.
+            // Back to the listing, narrowed on the way if a query came too.
             "notes" => {
                 while self.back() {}
                 self.top_mut().search.set(rest.to_string());
@@ -2311,9 +2023,8 @@ impl App {
             "add" => {
                 return Some(Action::Add((!rest.is_empty()).then(|| rest.to_string())));
             }
-            // No note may be named: a title is free text, so the first word of
-            // one cannot be told from a key. The note on screen is the one that
-            // gets retitled, and `open` is how you put another one there.
+            // A title is free text, so its first word cannot be told from a
+            // key. The note on screen is the one retitled.
             "mv" => {
                 if rest.is_empty() {
                     return self.wants(spec);
@@ -2326,9 +2037,8 @@ impl App {
                 });
             }
             "tag" => {
-                // A key cannot begin with `+` or `-`, so a first argument that
-                // does is a change rather than a note. That is the whole of the
-                // ambiguity, and the notation settles it.
+                // A key cannot begin with `+` or `-`, so one that does is a
+                // change rather than a note.
                 let (key, changes) = match args.split_first() {
                     Some((first, rest)) if !first.starts_with(['+', '-']) => {
                         (self.aimed(Some(first))?, rest.to_vec())
@@ -2344,9 +2054,7 @@ impl App {
                     touch: self.touch,
                 });
             }
-            // The same question the key asks, and aimed the same way — at the
-            // marked set when there is one, and at the note on screen when there
-            // is not.
+            // The key's question, aimed the same way.
             "rm" => return self.delete(),
             "restore" => {
                 let (Some(key), Some(rev)) = (args.first(), args.get(1)) else {
@@ -2364,18 +2072,17 @@ impl App {
                 };
                 return self.switch(name.clone());
             }
-            // The screens. Each is the subcommand's own name, showing what that
-            // subcommand prints — so `:` is one vocabulary and not two.
+            // Each is the subcommand's own name showing what it prints, so `:`
+            // is one vocabulary.
             "todo" => self.open(View::Todo),
             "tags" => self.open(View::Tags),
             "files" => self.open(View::Files),
             "notebooks" => self.open(View::Notebooks),
             "deleted" => self.open(View::Deleted),
             "diff" => self.open(View::Diff),
-            // The three that can be about a note somewhere else in the notebook.
-            // A key is not an id until the notebook has said so, so a named one
-            // goes back out to the runtime to be resolved — the same route
-            // `open` takes, and for the same reason.
+            // The three that can be about a note elsewhere. A key is not an id
+            // until the notebook says so, so a named one takes `open`'s route
+            // back out to the runtime.
             "log" => {
                 if let Some(key) = args.first() {
                     return Some(Action::Show {
@@ -2396,11 +2103,9 @@ impl App {
                 let id = self.aimed(None)?;
                 self.open(View::Blame(id));
             }
-            // A file's backlinks are reached from the files screen rather than
-            // by name. `noda backlinks` has to tell a note from a file because
-            // it is handed a bare word; here the screen has already said which,
-            // and a browser guessing between them would be inventing an
-            // ambiguity it does not have.
+            // From the files screen rather than by name: `noda backlinks` has
+            // to tell a note from a file because it gets a bare word, and here
+            // the screen has already said which.
             "backlinks" => {
                 if let Some(key) = args.first() {
                     return Some(Action::Show {
@@ -2447,13 +2152,9 @@ impl App {
         Some(file.id.clone())
     }
 
-    /// What the screen in front of you is about, for the one command that is
-    /// happy with either answer.
-    ///
-    /// `log` is the only thing here that reads a note and the notebook alike, so
-    /// it is the only thing that can follow the screen this way: on a note it is
-    /// that note's history, and on any screen about the notebook as a whole it
-    /// is the notebook's. Everything else needs a note and says so.
+    /// For the one command happy with either answer: `log` reads a note and the
+    /// notebook alike, so it is the only one that can follow the screen this
+    /// way. Everything else needs a note and says so.
     fn about(&self) -> Option<String> {
         match &self.top().view {
             View::Note(id)
@@ -2464,8 +2165,8 @@ impl App {
         }
     }
 
-    /// What `backlinks` is about here: the file under the cursor when the files
-    /// are what is on screen, and otherwise the note every other key aims at.
+    /// The file under the cursor on the files screen, otherwise the note every
+    /// other key aims at.
     fn linkable(&mut self) -> Option<Subject> {
         if matches!(self.top().view, View::Files)
             && let Some(at) = self.top().table.selected()
@@ -2482,11 +2183,8 @@ impl App {
         None
     }
 
-    /// Why a line was not a command, on the line it was typed on.
-    ///
-    /// Not a card. A card is for what a command said when it ran; this is a
-    /// sentence that never became one, which is the same class of thing as a
-    /// query that is not a query yet — and that already lives here.
+    /// Not a card: a card is for what a command said when it *ran*, and this
+    /// never became one — the same class of thing as half a query.
     fn refuse(&mut self, text: String) {
         self.message = Some(Message { text, failed: true });
     }
@@ -2500,11 +2198,9 @@ impl App {
 
     /// Reading what the prompt accepts, narrowed as you type.
     fn listing_commands(&mut self, key: KeyEvent) -> Option<Action> {
-        // Erasing only, and typing. What is being typed here is shown along the
-        // top of the card and nowhere else, so there is no cursor on the screen
-        // for the motion keys to move — see `Field::erasing`. The keys that
-        // shorten the line from the end still work, because those are the ones
-        // this list is actually narrowed with.
+        // Erasing and typing only: what is typed shows along the top of the
+        // card and nowhere else, so there is no cursor for a motion key to move
+        // — see `Field::erasing`.
         if self.input.erasing(key).is_some() {
             self.commands_at = 0;
             return None;
@@ -2520,18 +2216,15 @@ impl App {
                 self.commands_at = (self.commands_at + 1).min(shown.saturating_sub(1));
             }
             KeyCode::Up => self.commands_at = self.commands_at.saturating_sub(1),
-            // The other spelling of the same two, for the same hands the rest of
-            // this is for.
+            // The other spelling of the same two.
             KeyCode::Char('n') if ctrl => {
                 self.commands_at = (self.commands_at + 1).min(shown.saturating_sub(1));
             }
             KeyCode::Char('p') if ctrl => {
                 self.commands_at = self.commands_at.saturating_sub(1);
             }
-            // Onto the prompt rather than run outright. Most of them take
-            // something, and a list that ran them blind would be no use for the
-            // half that do — and `push` is not a thing to set off by landing on
-            // it and pressing Enter.
+            // Onto the prompt rather than run: most take something, and `push`
+            // is not a thing to set off by landing on it.
             KeyCode::Enter => {
                 let Some(spec) = command::matching(self.input.text()).nth(self.commands_at) else {
                     self.mode = Mode::Browse;
@@ -2556,10 +2249,8 @@ impl App {
         self.commands_at
     }
 
-    /// Opens a note the runtime has resolved, on a screen of its own.
-    ///
-    /// The id comes from `Notebook::resolve` rather than from anything here, so
-    /// that what a key names is answered in one place.
+    /// The id comes from `Notebook::resolve`, so what a key names is answered
+    /// in one place.
     pub fn open_note(&mut self, id: String) {
         self.open(View::Note(id));
     }
@@ -2573,8 +2264,8 @@ impl App {
         }
     }
 
-    /// `y` agrees; anything else is a way out. Not `n` alone — the key that
-    /// cancels a destructive question should be every key but one.
+    /// `y` agrees and anything else is a way out: the key that cancels a
+    /// destructive question should be every key but one.
     fn confirming(&mut self, what: What, key: KeyEvent) -> Option<Action> {
         self.mode = Mode::Browse;
         if !matches!(key.code, KeyCode::Char('y' | 'Y')) {
@@ -2587,18 +2278,14 @@ impl App {
         }
     }
 
-    /// Takes down what a command said, in its own words.
-    ///
-    /// Public because the runtime is what ran the command: the state asked for
-    /// it and has no way of finding out how it went.
+    /// Public because the runtime ran the command: the state asked for it and
+    /// has no way of finding out how it went.
     pub fn report(&mut self, outcome: Result<String>) {
         self.message = Some(match outcome {
             Ok(text) => {
                 let text = plain(&text).trim_end().to_string();
-                // A line is an acknowledgement and lives on the status bar. More
-                // than a line has to be read, so it gets the card: `bulk` puts
-                // what it could not do underneath what it did, and that second
-                // part is the whole reason it is worth printing.
+                // A line is an acknowledgement and lives on the status bar; more
+                // than a line has to be read, so it gets the card.
                 if text.lines().count() > 1 {
                     self.mode = Mode::Alert;
                 }
@@ -2608,10 +2295,9 @@ impl App {
                 }
             }
             Err(e) => {
-                // A card, and the whole of it: an editor that saved a broken
-                // frontmatter block is told where the file was left, and losing
-                // that to the width of one line would be losing the part that
-                // says what to do next.
+                // The whole of it: an editor that saved a broken block is told
+                // where the file was left, which is the part that says what to
+                // do next.
                 self.mode = Mode::Alert;
                 Message {
                     text: plain(&e.to_string()),
@@ -2621,16 +2307,13 @@ impl App {
         });
     }
 
-    /// The ids the notebook held when it was last read, for the runtime to tell
-    /// a note that has just been made from the ones that were already there.
+    /// For the runtime to tell a note just made from the ones already there.
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.notes.iter().map(|file| file.id.as_str())
     }
 
-    /// Puts the cursor on a note by id, if the query has left it on screen.
-    ///
-    /// What `a` needs: a note made and then left somewhere in a list of two
-    /// hundred is a note you have to go and find.
+    /// What `a` needs: a note made and then left in a list of two hundred is a
+    /// note you have to go and find.
     pub fn select_id(&mut self, id: &str) {
         if let Some(at) = self
             .listing()
@@ -2677,12 +2360,11 @@ impl App {
         }
     }
 
-    /// How far the page may be scrolled: its last line, so its end can be
-    /// brought to the top of the screen and no further.
+    /// Its last line, so the end can reach the top of the screen and no further.
     ///
-    /// Counted before wrapping, so a note of long lines can be scrolled less far
-    /// than it is tall. Under-shooting leaves text reachable; over-shooting
-    /// would scroll into blank space, which reads like a bug.
+    /// Counted before wrapping, so a note of long lines scrolls less far than it
+    /// is tall: under-shooting leaves text reachable, over-shooting scrolls into
+    /// blank space and reads like a bug.
     fn reading_height(&self) -> u16 {
         let lines = match self.content() {
             Some(Content::Note(text) | Content::Diff(text)) => text.lines().count(),
@@ -2692,9 +2374,8 @@ impl App {
         lines.saturating_sub(1) as u16
     }
 
-    /// Puts the cursor on a row of the screen in front of you, clamped to what
-    /// it has. A list with nothing in it has no cursor at all, which is what the
-    /// drawing needs to know not to highlight a row that is not there.
+    /// Clamped to what the screen has. An empty list has no cursor at all, which
+    /// is how the drawing knows not to highlight a row that is not there.
     fn cursor_to(&mut self, at: usize) {
         let rows = self.rows_here().unwrap_or(0);
         let screen = self.top_mut();
@@ -2718,17 +2399,14 @@ impl App {
     /// Reruns the query over every note.
     ///
     /// Whole rather than incremental: a keystroke can widen a query as easily as
-    /// narrow it (a backspace, or an `OR` completed), so there is no subset to
-    /// refine. At `noda ls` speeds the notebook is walked in memory in well
-    /// under a frame.
+    /// narrow it, so there is no subset to refine, and the walk is well under a
+    /// frame in memory.
     ///
-    /// Split the way the shell would split it, quotes and all. `Query::parse`
-    /// takes one token per argument precisely so that the shell's quoting is the
-    /// only quoting there is — and there is no shell in front of this field, so
-    /// it does that part itself. Without it `tag:"12.34 foo bar"` has no
-    /// spelling here at all: a value with a space in it becomes three terms
-    /// and-ed together, and a tag you can read in the listing is one you cannot
-    /// filter by on the screen it is on. Same reasoning as the tags prompt.
+    /// Split the way a shell would, quotes and all: `Query::parse` takes one
+    /// token per argument so the shell's quoting is the only quoting, and there
+    /// is no shell in front of this field. Without it `tag:"12.34 foo bar"` is
+    /// three and-ed terms, and a tag you can read in the listing is one you
+    /// cannot filter by.
     fn refilter(&mut self) {
         let tokens = query::split(self.listing().search.text());
 
@@ -2758,11 +2436,9 @@ impl App {
                 listing.visible = visible;
                 self.select(0);
             }
-            // Half a query is the ordinary state of one being typed: `tag:`
-            // before its value, `budget OR` before its alternative. Say so, and
-            // leave the last good result under the cursor — emptying the list at
-            // every other keystroke would make the query harder to type, which
-            // is the opposite of what filtering as you go is for.
+            // Half a query is the ordinary state of one being typed. Say so and
+            // leave the last good result up: emptying the list at every other
+            // keystroke is the opposite of what filtering as you go is for.
             Err(e) => self.listing_mut().error = Some(e.to_string()),
         }
     }
@@ -2775,15 +2451,12 @@ enum Edge {
 
 /// A command's answer with its colour taken out.
 ///
-/// `style` paints unconditionally and leaves it to `anstream` to strip the
-/// escapes when what is on the other end of the pipe is not a terminal. Here the
-/// other end *is* a terminal — but not a stream: the answer is put on a card a
-/// character at a time, so an escape arrives as the text `[2m` and is drawn as
-/// one. Stripping here is that same decision made at the other consumer, and it
-/// is done where every answer passes rather than where each one is shown.
+/// `style` paints unconditionally and leaves `anstream` to strip it off a
+/// stream. Here the other end is a terminal but not a stream — the answer goes
+/// onto a card a character at a time, so an escape arrives as the text `[2m`.
+/// Done where every answer passes rather than where each is shown.
 ///
-/// It also matters for the size of the card: it is measured from its longest
-/// line, and escapes that draw nothing would have been counted.
+/// It also matters for the card's size, measured from its longest line.
 fn plain(text: &str) -> String {
     anstream::adapter::strip_str(text).to_string()
 }
@@ -2817,8 +2490,7 @@ mod tests {
         }
     }
 
-    /// Opens the note under the cursor and gives it something to show, which is
-    /// what the runtime does between the keystroke and the frame.
+    /// What the runtime does between the keystroke and the frame.
     fn read_it(app: &mut App, text: &str) {
         app.on_key(key(KeyCode::Enter));
         let view = app.view().clone();
@@ -2829,16 +2501,14 @@ mod tests {
         app.supply(&view, Content::Note(text.to_string()));
     }
 
-    /// What the runtime brings back for a screen that needs a repository, put
-    /// straight into the state the way `refresh` puts it.
+    /// Put into the state the way `refresh` puts it.
     fn supplied(app: &mut App, content: Content) {
         let view = app.view().clone();
         assert!(app.wanted().is_some(), "{view:?} asked for nothing");
         app.supply(&view, content);
     }
 
-    /// A read of a notebook holding nothing but these notes: no attachments, one
-    /// notebook, and a fixed date so "overdue" means the same thing every run.
+    /// Nothing but these notes, and a fixed date so "overdue" holds still.
     fn a_session(status: Status, notes: Vec<NoteFile>) -> Session {
         Session {
             status,
@@ -2876,8 +2546,8 @@ mod tests {
         }
     }
 
-    // Fixed ids, never minted: a test that draws its ids from the notebook is a
-    // test that changes what it asserts every time it runs.
+    // Fixed ids, never minted: one drawn from the notebook changes what it
+    // asserts every run.
     fn an_app() -> App {
         App::new(
             "personal".to_string(),
@@ -2949,8 +2619,7 @@ mod tests {
         assert_eq!(app.mode, Mode::Search);
 
         typing(&mut app, "budget");
-        // The title of one, the body of another: `text:` is what a bare word
-        // searches, and that is the same rule `noda search` follows.
+        // The title of one and the body of another: a bare word is `text:`.
         assert_eq!(app.shown(), 2);
 
         typing(&mut app, " tag:work");
@@ -2965,9 +2634,8 @@ mod tests {
         typing(&mut app, "tag:work");
         assert_eq!(app.shown(), 2);
 
-        // Every keystroke up to this one still spells a query — a partial word
-        // is a `text:` term and matches whatever it matches. The count only has
-        // to hold still across the keystroke that breaks the grammar.
+        // Every keystroke up to this one still spells a query; the count only
+        // has to hold still across the one that breaks the grammar.
         typing(&mut app, " O");
         let last_good = app.shown();
         assert!(app.error().is_none());
@@ -3201,10 +2869,9 @@ mod tests {
         app.on_key(key(KeyCode::Char('/')));
         typing(&mut app, "budget");
 
-        // Ctrl-R arrives as `Char('r')` with a modifier, and a query field that
-        // took it at face value would quietly become `budgetr` — and this one
-        // reloads the notebook when it is not in a field. A chord the field does
-        // not bind does nothing at all rather than either.
+        // Ctrl-R arrives as `Char('r')` with a modifier: taken at face value the
+        // field reads `budgetr`, and outside one the key reloads. An unbound
+        // chord does neither.
         app.on_key(ctrl('r'));
         app.on_key(ctrl('o'));
         assert_eq!(app.search(), "budget");
@@ -3222,10 +2889,9 @@ mod tests {
         typing(&mut app, "tag:work budget");
         assert_eq!(app.shown(), 1, "one note has both");
 
-        // The keys are the field's and are tested there; what is checked here is
-        // that the notebook is walked again afterwards. A query that had been
-        // edited but not re-run would leave the listing describing a line
-        // nobody can see any more.
+        // The keys are the field's and tested there; what is checked here is
+        // that the notebook is walked again — an edited query that was not re-run
+        // leaves the listing describing a line nobody can see.
         app.on_key(ctrl('w'));
         assert_eq!(app.search(), "tag:work ");
         assert_eq!(app.shown(), 2, "and the listing is what the query now says");
@@ -3437,9 +3103,8 @@ mod tests {
         app.on_key(key(KeyCode::Char('#')));
         assert_eq!(app.mode, Mode::Tagging);
 
-        // The tags screen's list and the tags screen's order, because it is the
-        // tags screen's list: commonest first, and both of them on the card
-        // whether or not this note has them.
+        // The tags screen's list and order, both on the card whether or not this
+        // note has them.
         let names: Vec<&str> = app.choices().iter().map(|c| c.tag.as_str()).collect();
         assert_eq!(names, vec!["work", "q3"]);
         assert_eq!(app.picking_notes(), 1);
@@ -3457,8 +3122,7 @@ mod tests {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('#')));
 
-        // Over one note there are two of them. Giving a note a tag it already
-        // carries is not a state worth a keystroke, so it is not offered.
+        // Two over one note: a tag it already carries cannot be given again.
         app.on_key(key(KeyCode::Tab));
         assert_eq!(app.choices()[0].mark, Mark::Remove);
         app.on_key(key(KeyCode::Tab));
@@ -3651,9 +3315,8 @@ mod tests {
         typing(&mut app, "q");
         assert_eq!(app.shown_tags(), vec![1], "only `q3` answers to that");
         assert_eq!(app.tags_at(), 0, "and the cursor is on the list it can see");
-        // A choice already made is not a row on the screen: narrowing is a way
-        // of looking, and a picker that forgot what had been chosen the moment
-        // it scrolled out of sight would be one you could not use twice.
+        // Narrowing is a way of looking: a picker forgetting a choice the moment
+        // it scrolls out of sight is one you cannot use twice.
         assert_eq!(app.choices()[0].mark, Mark::Remove);
 
         app.on_key(key(KeyCode::Tab));
@@ -3672,9 +3335,8 @@ mod tests {
     fn a_tag_with_a_space_in_it_can_be_named_here_like_any_other() {
         let mut app = an_app();
         app.on_key(key(KeyCode::Char('#')));
-        // The shape an import leaves behind. The filter is a field like every
-        // other field in the browser, so the space bar puts a space in it —
-        // which is the whole reason the key that chooses is not the space bar.
+        // What an import leaves behind. The filter is a field like any other, so
+        // the space bar types a space — which is why `Tab` chooses.
         typing(&mut app, "24.04 Dark patterns");
         assert_eq!(app.input.text(), "24.04 Dark patterns");
         assert_eq!(
@@ -3982,9 +3644,8 @@ mod tests {
     #[test]
     fn a_command_that_colours_its_answer_is_quoted_without_the_colour() {
         let mut app = an_app();
-        // What `noda status` actually returns: the palette paints
-        // unconditionally, because at a prompt `anstream` is what decides
-        // whether the escapes survive. Nothing on a card goes through it.
+        // What `noda status` returns: the palette paints unconditionally and
+        // `anstream` decides at a prompt. Nothing on a card goes through it.
         app.report(Ok(format!(
             "notebook  personal  {}\nnotes     3",
             crate::style::paint(crate::style::MUTED, "(main)")
@@ -4051,10 +3712,8 @@ mod tests {
         );
     }
 
-    /// Puts one tag on whatever the `#` key is aimed at, through the picker:
-    /// name it, choose it, apply. Every tag named this way is one the notebook
-    /// does not have, so it arrives as the row at the end of the list and one
-    /// press of `Tab` is a `+`.
+    /// Name it, choose it, apply. Every tag named this way is one the notebook
+    /// lacks, so it is the row at the end and one `Tab` is a `+`.
     fn tag_with(app: &mut App, tag: &str) {
         app.on_key(key(KeyCode::Char('#')));
         typing(app, tag);
@@ -4249,8 +3908,7 @@ mod tests {
         let mut app = an_app();
         mark(&mut app, &["aaaa1111"]);
         app.on_key(key(KeyCode::Char('#')));
-        // Refused on the row it was typed on rather than at the end of a
-        // sitting: `Tab` has nothing to choose, so there is nothing to send and
+        // Refused where it was typed: `Tab` has nothing to choose, so there is
         // nothing for `cmd::check` to catch on the way into the queue.
         typing(&mut app, "q3,urgent");
         let Some(Proposal::Refused(why)) = app.proposal() else {
@@ -4402,9 +4060,8 @@ mod tests {
                 ],
             ),
         );
-        // The rest of the line is kept as it was typed rather than rebuilt from
-        // its tokens, which is the only way a value with a space in it arrives
-        // whole.
+        // Kept as typed rather than rebuilt from its tokens, which is the only
+        // way a value with a space arrives whole.
         assert_eq!(command(&mut app, "notes tag:\"12.34 foo bar\""), None);
         assert_eq!(app.shown(), 1);
         assert_eq!(app.search(), "tag:\"12.34 foo bar\"");
@@ -4451,10 +4108,8 @@ mod tests {
     #[test]
     fn opening_by_name_is_left_to_the_notebook_to_answer() {
         let mut app = an_app();
-        // Not resolved here. What an id prefix or a slug names — and what it
-        // means for one to name two notes — has one implementation, and a
-        // browser holding the notes in memory could answer it a second way
-        // without noticing it had.
+        // Not resolved here: what a prefix or slug names has one implementation,
+        // and a browser holding the notes could answer it a second way.
         assert_eq!(
             command(&mut app, "open meeting-notes"),
             Some(Action::Open("meeting-notes".to_string()))
