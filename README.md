@@ -3,9 +3,6 @@
 > A git-native notebook for your terminal. Your notes are plain Markdown in an ordinary
 > git repository — versioned, syncable, and yours.
 
-> **Written spec-first** — the v1 contract before there was any code, corrected rather than
-> quietly left behind wherever it turned out to be wrong.
-
 ---
 
 **Start here** — [Why noda](#why-noda) · [Install](#install) · [Quickstart](#quickstart) · [Concepts](#concepts)
@@ -14,7 +11,7 @@
 
 **The two other ways in** — [In the terminal](#browsing) · [In a browser](#in-a-browser)
 
-**In full** — [Browsing in the terminal](docs/tui.md) · [In a browser](docs/web.md) · [History and sync](docs/history.md) · [Importing](docs/importing.md) · [Architecture](docs/ARCHITECTURE.md) · [Why it looks like this](docs/PRFAQ.md)
+**In full** — [Browsing in the terminal](docs/tui.md) · [In a browser](docs/web.md) · [History and sync](docs/history.md) · [Importing](docs/importing.md) · [Architecture](docs/ARCHITECTURE.md)
 
 This page is meant to be read to the end: it says what each command does, and the reasoning
 behind a decision sits behind a ▸ or in one of the documents above, so *why* is something you
