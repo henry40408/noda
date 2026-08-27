@@ -1,19 +1,17 @@
 //! Reading a `TiddlyWiki` 5 export.
 //!
-//! Two shapes arrive: the JSON array a browser's "export all" produces, and a
-//! saved single-file wiki, which carries that same array inside a `<script>`
-//! element. Both end as [`Incoming`], and nothing here converts anything — the
-//! body goes through exactly as the wiki held it, because the import commits it
-//! that way first.
+//! Two shapes arrive: the JSON array "export all" produces, and a saved
+//! single-file wiki carrying that same array in a `<script>`. Nothing here
+//! converts anything — the body goes through as the wiki held it, because the
+//! import commits it that way first.
 //!
-//! What the fields mean is settled by `TiddlyWiki`, not by noda:
+//! What the fields mean is `TiddlyWiki`'s to settle:
 //!
 //! - `created` / `modified` are `YYYYMMDDhhmmssXXX` in **UTC**, milliseconds
-//!   included. They become RFC 3339, and noda never restates them again.
-//! - `tags` is a space-separated title list, with `[[double brackets]]` around
-//!   any tag containing a space.
-//! - every other field is the wiki's own, and is carried into the frontmatter
-//!   untouched.
+//!   included, and become RFC 3339.
+//! - `tags` is a space-separated title list, `[[double brackets]]` around any
+//!   tag containing a space.
+//! - every other field is the wiki's own and is carried through untouched.
 
 use std::collections::BTreeSet;
 
@@ -31,8 +29,7 @@ const BOOKKEEPING: [&str; 2] = ["revision", "bag"];
 /// What a read of an export found.
 pub struct Export {
     pub notes: Vec<Incoming>,
-    /// Tiddlers deliberately not imported, and why — a system tiddler, a
-    /// picture, an empty one. Reported rather than dropped in silence.
+    /// Deliberately not imported, and why. Reported rather than dropped.
     pub skipped: Vec<(String, String)>,
 }
 
@@ -67,12 +64,9 @@ pub fn read(text: &str) -> Result<Export> {
     Ok(Export { notes, skipped })
 }
 
-/// The tiddler store inside a saved single-file wiki.
-///
-/// Script content is raw text, so it is not HTML-escaped and must not be
-/// unescaped: doing so rewrites any `&amp;` a tiddler legitimately contains and
-/// breaks the JSON around it. A saved wiki holds more than one store — the
-/// biggest is the wiki, the others are its scaffolding.
+/// Script content is raw text and must not be unescaped: doing so rewrites an
+/// `&amp;` a tiddler legitimately contains and breaks the JSON around it. A
+/// saved wiki holds more than one store, and the biggest is the wiki.
 fn store(text: &str) -> Result<&str> {
     const OPEN: &str = r#"<script class="tiddlywiki-tiddler-store" type="application/json">"#;
     let mut best = "";
@@ -101,8 +95,7 @@ fn incoming(tiddler: &Value, title: &str) -> std::result::Result<Incoming, Strin
     if title.is_empty() {
         return Err("no title".to_string());
     }
-    // `$:/` is `TiddlyWiki`'s own namespace: configuration, plugins, state. None
-    // of it is a note, and importing it would bury the notebook.
+    // `TiddlyWiki`'s own namespace: none of it is a note.
     if title.starts_with("$:/") {
         return Err("system tiddler".to_string());
     }
@@ -130,8 +123,8 @@ fn incoming(tiddler: &Value, title: &str) -> std::result::Result<Incoming, Strin
             let Value::String(value) = value else {
                 continue;
             };
-            // A field whose value would not survive the trip is not carried
-            // silently: frontmatter is one line per field.
+            // Frontmatter is one line per field, so this cannot be carried
+            // silently.
             if value.contains(['\n', '\r']) {
                 continue;
             }
@@ -157,11 +150,8 @@ fn string(tiddler: &Value, field: &str) -> Option<String> {
     }
 }
 
-/// A title list: space-separated, with `[[double brackets]]` around anything
-/// containing a space.
-///
-/// Deduplicated on the way out — a tiddler may carry the same tag twice, and
-/// noda's frontmatter would then say it twice.
+/// Space-separated, `[[double brackets]]` around anything with a space in it.
+/// Deduplicated, because a tiddler may carry the same tag twice.
 pub fn tags(field: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut seen = BTreeSet::new();
@@ -170,9 +160,8 @@ pub fn tags(field: &str) -> Vec<String> {
         let (tag, next) = match rest.strip_prefix("[[") {
             Some(after) => match after.split_once("]]") {
                 Some((tag, next)) => (tag, next),
-                // An unterminated `[[` is the rest of the field: the alternative
-                // is dropping it, and a tag nobody can see is worse than an odd
-                // one somebody can.
+                // The rest of the field: a tag nobody can see is worse than an
+                // odd one somebody can.
                 None => (after, ""),
             },
             None => match rest.split_once(' ') {
@@ -189,10 +178,8 @@ pub fn tags(field: &str) -> Vec<String> {
     found
 }
 
-/// `YYYYMMDDhhmmssXXX` in UTC, as `TiddlyWiki` writes it, to RFC 3339.
-///
-/// The milliseconds are kept. noda takes what it is given and never restates
-/// it, so throwing away three digits here would be throwing them away for good.
+/// `YYYYMMDDhhmmssXXX` in UTC to RFC 3339. The milliseconds are kept: noda never
+/// restates a stamp, so three digits dropped here are dropped for good.
 pub fn stamp(value: &str) -> Option<String> {
     let digits = value.trim();
     if digits.len() < 14 || !digits.bytes().all(|b| b.is_ascii_digit()) {

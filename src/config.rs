@@ -1,8 +1,7 @@
 //! `config.toml`: the four settings noda keeps, and where each value comes from.
 //!
-//! The file is edited by hand at least as often as by `noda config`, so it is
-//! parsed by a real TOML parser and written back through the same document —
-//! comments and layout survive a `noda config editor nvim`.
+//! Edited by hand at least as often as by `noda config`, so it is written back
+//! through the same TOML document — comments and layout survive.
 
 use std::path::PathBuf;
 
@@ -11,15 +10,13 @@ use toml_edit::{DocumentMut, value};
 use crate::paths::Paths;
 use crate::{Error, Result};
 
-/// Everything that may be set. A typo silently doing nothing is worse than an
-/// error, so anything else is refused by name.
+/// Anything else is refused by name: a typo silently doing nothing is worse.
 pub const KEYS: [&str; 4] = ["editor", "author", "notebook", "sign"];
 
-/// The notebook `noda init` creates when config says nothing.
 pub const DEFAULT_NOTEBOOK: &str = "default";
 
-/// Written by `noda init` when there is no config yet. Everything is commented
-/// out, so the defaults still apply — it exists to show what can be set.
+/// Entirely commented out, so the defaults still apply — it exists to show what
+/// can be set.
 const TEMPLATE: &str = "\
 # noda configuration. Every setting is optional; the defaults are shown.
 
@@ -46,8 +43,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Reads the config, or an empty one when the file is not there — an absent
-    /// config is a valid config, not an error.
+    /// An absent config is a valid config, not an error.
     pub fn load(paths: &Paths) -> Result<Self> {
         let path = paths.config_dir().join("config.toml");
         let document = match std::fs::read_to_string(&path) {
@@ -63,14 +59,12 @@ impl Config {
         Ok(Config { path, document })
     }
 
-    /// A configured value, or `None` when it is unset or not a string.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.document.get(key).and_then(|item| item.as_str())
     }
 
-    /// `sign`, or `None` when it is unset — in which case git's `commit.gpgsign`
-    /// decides. Written as a TOML boolean, but a hand-edited `sign = "true"` is
-    /// read too: the quotes are a slip, not a different answer.
+    /// `None` leaves it to git's `commit.gpgsign`. A hand-edited `sign = "true"`
+    /// is read too — the quotes are a slip, not a different answer.
     pub fn sign(&self) -> Option<bool> {
         let item = self.document.get("sign")?;
         item.as_bool().or_else(|| parse_bool(item.as_str()?))
@@ -101,10 +95,9 @@ impl Config {
         self.save()
     }
 
-    /// A file of nothing but comments — the starter config — holds all of its
-    /// text as the document's trailer, and a new key is written before that.
-    /// The result reads back to front, so the first time a key is added the
-    /// header is moved to sit in front of it instead.
+    /// The starter config holds all its text as the document's trailer, and a
+    /// new key is written before that — so the first added key has to take the
+    /// header with it or the file reads back to front.
     fn keep_the_header_on_top(&mut self, key: &str) {
         let existing_keys = self
             .document
@@ -122,7 +115,7 @@ impl Config {
         }
         self.document.set_trailing("");
         if let Some(mut key) = self.document.key_mut(key) {
-            // A blank line, so the first setting is not glued to the comments.
+            // So the first setting is not glued to the comments.
             key.leaf_decor_mut()
                 .set_prefix(format!("{}\n", header.trim_end_matches('\n')));
         }
@@ -137,7 +130,7 @@ impl Config {
         Ok(removed)
     }
 
-    /// Writes a starter config when there is none. Returns whether it wrote one.
+    /// Returns whether it wrote one.
     pub fn write_template(paths: &Paths) -> Result<bool> {
         let path = paths.config_dir().join("config.toml");
         if path.exists() {
@@ -187,11 +180,8 @@ impl Source {
     }
 }
 
-/// The editor to run, and where the choice came from.
-///
-/// Config wins over the environment, as git's `core.editor` does: `$EDITOR` is a
-/// blanket default for every program you use, while the config file is a
-/// decision made about this one.
+/// Config wins over the environment, as git's `core.editor` does: `$EDITOR` is
+/// a blanket default, the config file a decision about this program.
 pub fn editor(
     configured: Option<&str>,
     visual: Option<String>,
@@ -211,9 +201,8 @@ pub fn editor(
     ("vi".to_string(), Source::Default)
 }
 
-/// `true` and `false`, and nothing else. `yes`/`on`/`1` are git's spellings, not
-/// TOML's, and accepting them here would make `config.toml` a file that two
-/// parsers read differently.
+/// `yes`/`on`/`1` are git's spellings, not TOML's; accepting them would make
+/// `config.toml` a file two parsers read differently.
 fn parse_bool(text: &str) -> Option<bool> {
     match text.trim() {
         "true" => Some(true),
@@ -222,8 +211,8 @@ fn parse_bool(text: &str) -> Option<bool> {
     }
 }
 
-/// Splits `Name <email>`. Both halves must be there and non-empty; anything else
-/// is refused rather than quietly committed under half an identity.
+/// Both halves must be non-empty, rather than quietly committing under half an
+/// identity.
 pub fn author_parts(text: &str) -> Option<(String, String)> {
     let (name, rest) = text.trim().split_once('<')?;
     let email = rest.strip_suffix('>')?.trim();

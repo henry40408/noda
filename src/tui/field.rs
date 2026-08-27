@@ -1,35 +1,24 @@
 //! One line being typed into, and what readline means by the keys around it.
 //!
-//! There are four places in the browser where a person types — the query, the
-//! prompt, the command line and the filter over the list of commands — and until
-//! this existed all four were a `String` with characters pushed onto the end of
-//! it. That is fine right up until the typo is three words back: the only way to
-//! reach it was to delete everything after it, because there was no cursor to
-//! move and every chord anyone reached for out of habit was swallowed on the way
-//! in.
+//! The browser has four places to type, and all four were a `String` with
+//! characters pushed onto the end — fine until the typo is three words back,
+//! with no cursor to move and every habitual chord swallowed on the way in.
 //!
-//! Swallowed was the right first answer — `Ctrl-D` arrives as `Char('d')`, and a
-//! field that took it at face value would have put a `d` in the middle of
-//! somebody's title. But a field where `Ctrl-A` does nothing is one where the
-//! keys a shell taught you are keys you have to unlearn, and the rest of the
-//! browser is built out of what the reader already knows. So the chords are
-//! answered here rather than ignored, and answered the way readline answers
-//! them, because readline is where the habit comes from: the same bindings
-//! `bash`, `zsh`, `psql` and everything else linked against it have.
+//! Swallowed was the right first answer: `Ctrl-D` arrives as `Char('d')`, and
+//! taking that at face value puts a `d` in the middle of a title. But a field
+//! where `Ctrl-A` does nothing makes the keys a shell taught you keys to
+//! unlearn, so the chords are answered the way readline answers them — that
+//! being where the habit comes from.
 //!
-//! What is deliberately not here: the kill ring is one entry deep rather than a
-//! ring, and consecutive kills replace each other rather than accumulating.
-//! `Ctrl-Y` is what makes `Ctrl-W` safe to press — it is the undo for a field
-//! that has no undo — and one entry is enough for that. A ring would be a second
-//! thing to learn for a line that is rarely longer than a title.
+//! Deliberately not here: the kill ring is one entry deep, and consecutive kills
+//! replace rather than accumulate. `Ctrl-Y` is what makes `Ctrl-W` safe to press
+//! and one entry is enough for that; a ring is a second thing to learn for a
+//! line rarely longer than a title.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// What a key did to the field, for the caller that has to react to it.
-///
-/// Told apart because a query is run against the notebook again every time its
-/// text changes, and moving a cursor through a query is not a reason to walk
-/// every note in it.
+/// Told apart because a query is rerun whenever its text changes, and moving a
+/// cursor through one is not a reason to walk every note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edit {
     /// The text is not what it was.
@@ -38,14 +27,10 @@ pub enum Edit {
     Moved,
 }
 
-/// What counts as a word, which readline answers twice.
-///
-/// Its word keys — `Alt-B`, `Alt-F`, `Alt-D`, `Alt-Backspace` — step over runs
-/// of letters and digits, so they stop at the punctuation in `tag:work`.
-/// `Ctrl-W` is older than they are and stops only at whitespace, which is what
-/// makes it the key that takes a whole `tag:"12.34 foo"` off the end of a query.
-/// Both are kept, on the keys readline keeps them on: a habit is about the key,
-/// not about the definition behind it.
+/// What counts as a word, which readline answers twice: the `Alt` keys step over
+/// letters and digits and stop at the punctuation in `tag:work`, while the older
+/// `Ctrl-W` stops only at whitespace and so takes a whole `tag:"12.34 foo"`.
+/// Both are kept on the keys readline keeps them on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Word {
     /// Letters and digits: what the word keys step over.
@@ -67,19 +52,12 @@ impl Word {
 #[derive(Debug, Default, Clone)]
 pub struct Field {
     text: String,
-    /// Where the cursor is, as a byte offset into `text`.
-    ///
-    /// Bytes and not characters, because every use of it is a slice of the text
-    /// — what to draw to the left of the cursor, where to insert, what a kill
-    /// takes out. It is only ever moved by walking characters, so it is always
-    /// on a character boundary, which is what makes those slices safe. A
-    /// notebook whose titles are Chinese is the ordinary case here and not the
-    /// exotic one.
+    /// A byte offset, because every use of it slices the text. It is only ever
+    /// moved by walking characters, so it is always on a boundary — and a
+    /// notebook whose titles are Chinese is the ordinary case.
     at: usize,
-    /// What the last kill took out, for `Ctrl-Y` to put back.
-    ///
     /// Kept across `set` and `clear`: a field refilled for a retitle is not the
-    /// reader having changed their mind about what they cut.
+    /// reader changing their mind about what they cut.
     cut: String,
 }
 
@@ -93,16 +71,13 @@ impl Field {
         self.text.is_empty()
     }
 
-    /// What is to the left of the cursor, which is what says how far along the
-    /// line the terminal's own cursor belongs.
+    /// What says how far along the line the terminal's cursor belongs.
     pub fn before(&self) -> &str {
         &self.text[..self.at]
     }
 
-    /// Fills the field, with the cursor after what was put in it. Somebody
-    /// handed a title to edit is being handed a starting point, and a starting
-    /// point you have to walk to the end of before you can add to it is a worse
-    /// one.
+    /// The cursor lands after what was put in: a starting point you have to
+    /// walk to the end of is a worse one.
     pub fn set(&mut self, text: String) {
         self.at = text.len();
         self.text = text;
@@ -120,31 +95,22 @@ impl Field {
         std::mem::take(&mut self.text)
     }
 
-    /// Answers a key, or says it was not one of ours.
-    ///
-    /// `None` means the caller still has to deal with it: `Enter`, `Esc` and the
-    /// keys a particular field gives its own meaning to are not editing keys,
-    /// and neither is a chord this does not bind — an unbound chord does nothing
-    /// rather than typing its own letter, which is the trap this module exists
-    /// for.
+    /// `None` leaves it to the caller: `Enter`, `Esc` and a field's own keys are
+    /// not editing keys, and neither is an unbound chord — which does nothing
+    /// rather than typing its own letter, the trap this module exists for.
     pub fn key(&mut self, key: KeyEvent) -> Option<Edit> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
-            // Shift is not one of these: `Q` arrives as `Char('Q')` with the
-            // shift bit set, and a field with no capital letters in it would be
-            // a strange thing to ship.
+            // Shift is not one of these, or the field would take no capitals.
             KeyCode::Char(c) if ctrl => self.chord(c),
             KeyCode::Char(c) if alt => self.meta(c),
             KeyCode::Char(c) => Some(self.insert(c)),
-            // `Alt-Backspace` is the word-sized one; `Ctrl-H` is the terminal's
-            // own name for the plain one and is answered with the chords.
+            // The word-sized one; `Ctrl-H` is the plain one, with the chords.
             KeyCode::Backspace if alt => self.kill(self.word_back(Word::Alnum), self.at),
             KeyCode::Backspace => self.kill(self.back(), self.at),
             KeyCode::Delete => self.kill(self.at, self.forward()),
-            // The arrows carry the same modifiers the word keys do, because a
-            // terminal that sends `Ctrl-Left` is one whose user meant the word
-            // and not the character.
+            // A terminal sending `Ctrl-Left` has a user who meant the word.
             KeyCode::Left if ctrl || alt => Some(self.to(self.word_back(Word::Alnum))),
             KeyCode::Right if ctrl || alt => Some(self.to(self.word_forward(Word::Alnum))),
             KeyCode::Left => Some(self.to(self.back())),
@@ -155,21 +121,15 @@ impl Field {
         }
     }
 
-    /// The subset for a field whose cursor is not drawn.
-    ///
-    /// The filter over the list of commands is shown in that card's title and
-    /// nowhere else, so there is no cursor on the screen to move. Everything
-    /// here leaves the cursor at the end of the line, which is where the reader
-    /// can see it — a `Ctrl-A` that silently moved the insertion point behind
-    /// text with no cursor drawn in it would be worse than one that does
-    /// nothing.
+    /// For a field whose cursor is not drawn: everything here leaves it at the
+    /// end of the line, because a `Ctrl-A` that silently moved the insertion
+    /// point behind undrawn text is worse than one that does nothing.
     pub fn erasing(&mut self, key: KeyEvent) -> Option<Edit> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             KeyCode::Char('w') if ctrl => self.kill(self.word_back(Word::Blank), self.at),
-            // The two that clear the line are the same key here: with the cursor
-            // at the end, everything is behind it.
+            // One key here: with the cursor at the end, everything is behind.
             KeyCode::Char('u' | 'k') if ctrl => self.kill(0, self.at),
             KeyCode::Char('h') if ctrl => self.kill(self.back(), self.at),
             KeyCode::Char(_) if ctrl || alt => None,
@@ -188,11 +148,9 @@ impl Field {
             'b' => Some(self.to(self.back())),
             'f' => Some(self.to(self.forward())),
             'h' => self.kill(self.back(), self.at),
-            // Not readline's end-of-file, deliberately. That is what `Ctrl-D`
-            // means to a shell on an empty line, and outside a field it is what
-            // deletes the note under the cursor — a key that did either
-            // depending on how much had been typed is one nobody should have to
-            // think about while typing.
+            // Not readline's end-of-file: outside a field `Ctrl-D` deletes the
+            // note under the cursor, and a key that did either depending on how
+            // much had been typed is one to think about while typing.
             'd' => self.kill(self.at, self.forward()),
             'w' => self.kill(self.word_back(Word::Blank), self.at),
             'u' => self.kill(0, self.at),
@@ -219,12 +177,11 @@ impl Field {
     }
 
     /// Takes out `from..to`, keeps it for `Ctrl-Y`, and leaves the cursor where
-    /// what was removed used to start.
+    /// it started.
     ///
-    /// Nothing removed is nothing done, rather than an empty kill: `Ctrl-K` at
-    /// the end of a line has taken nothing out, and letting it clear what
-    /// `Ctrl-W` was holding would turn the key that puts text back into one that
-    /// sometimes silently does not.
+    /// Nothing removed is nothing done rather than an empty kill: `Ctrl-K` at
+    /// the end of a line clearing what `Ctrl-W` held would make the key that
+    /// puts text back one that sometimes silently does not.
     fn kill(&mut self, from: usize, to: usize) -> Option<Edit> {
         if from >= to {
             return None;
@@ -235,8 +192,7 @@ impl Field {
         Some(Edit::Typed)
     }
 
-    /// Puts back what the last kill took, and keeps holding it: a yank is a
-    /// paste and not a hand-over, so the same text can go in twice.
+    /// Keeps holding it: a yank is a paste and not a hand-over.
     fn yank(&mut self) -> Option<Edit> {
         if self.cut.is_empty() {
             return None;
@@ -268,10 +224,8 @@ impl Field {
             .map_or(self.at, |c| self.at + c.len_utf8())
     }
 
-    /// Where the word before the cursor starts: back over whatever separates the
-    /// words first, then over the word itself. That order is what makes the key
-    /// work both from just after a word and from the run of spaces after one,
-    /// which is where a cursor usually is when somebody reaches for it.
+    /// Back over the separators first, then over the word. That order is what
+    /// makes the key work from just after a word and from the spaces after one.
     fn word_back(&self, word: Word) -> usize {
         let mut at = self.at;
         let mut into = false;
@@ -349,8 +303,7 @@ mod tests {
 
     #[test]
     fn a_cursor_never_lands_inside_a_character() {
-        // The reason `at` is in bytes: everything that reads it slices the text,
-        // and a notebook whose titles are Chinese is the ordinary case.
+        // Why `at` is in bytes: everything that reads it slices the text.
         let mut field = typed("預算");
         field.key(key(KeyCode::Left));
         assert_eq!(field.before(), "預");

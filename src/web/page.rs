@@ -1,24 +1,18 @@
 //! The HTML, and nothing else.
 //!
-//! Every function here takes what a page is about and returns a string. Nothing
-//! opens a repository, binds a socket or knows what a request is — which is the
-//! same rule `tui/app.rs` follows for the same reason: the interesting part of
-//! an interface is what it puts on the screen, and that is worth being able to
-//! test without one.
+//! Every function takes what a page is about and returns a string. Nothing opens
+//! a repository, binds a socket or knows what a request is — `tui/app.rs`'s rule,
+//! for its reason: what an interface puts on the screen is worth testing without
+//! one.
 //!
-//! **The type system is the palette's argument, said in type instead of colour.**
-//! `style.rs` opens with two rules: colour marks what a line *is*, never what it
-//! means; and noda never colours a note's own text, because that is the user's
-//! file. Here the machinery — ids, filenames, tags, stamps, the search field —
-//! is set in the monospace a terminal would have used, and the parts that are
-//! the reader's own — titles, note bodies — are set to be read. The line falls
-//! in exactly the same place. A terminal cannot draw that distinction because it
-//! has one face; a browser can, so it does.
+//! **The type system is the palette's argument, said in type instead of
+//! colour.** The machinery — ids, filenames, tags, stamps — is set in the
+//! monospace a terminal would have used, and what is the reader's own is set to
+//! be read. `style.rs` draws the line in exactly the same place; a terminal has
+//! one face and cannot show it.
 //!
-//! No JavaScript, and not as an achievement to announce: the search field is a
-//! form, every row is a link, and there is nothing on any of these pages that
-//! needs a script to work. What arrives later (filtering as you type) is an
-//! enhancement over this, never a replacement for it.
+//! No JavaScript: the search field is a form and every row is a link. Filtering
+//! as you type is an enhancement over that, never a replacement for it.
 
 use std::fmt::Write;
 
@@ -27,83 +21,61 @@ use crate::notebook::NoteFile;
 use crate::web::asset::Asset;
 use crate::web::encoded;
 
-/// A notebook, as the front page lists it: `noda status` compressed to a row,
-/// the way a listing's row is `ls -l` compressed to one.
+/// `noda status` compressed to a row, the way a row is `ls -l` compressed.
 ///
-/// Every field but `last` is already in `Status`, and `last` is one commit read.
-/// That is the whole of the page's data: what it lists costs what listing it
-/// cost before, which is the only reason a page that already walks every
-/// notebook can afford to say more about each.
+/// Every field but `last` is already in `Status`, and `last` is one commit read
+/// — which is the only reason a page that already walks every notebook can
+/// afford to say more about each.
 pub struct Book {
     pub name: String,
     pub notes: usize,
-    /// Files the notebook holds that are not notes. Shown only when there are
-    /// any, the way `noda status` prints the line only when there are any.
+    /// Shown only when there are any, as `noda status` prints the line.
     pub files: usize,
-    /// Files differing from `HEAD`. The one fact on the row that is about
-    /// something to do rather than something held.
+    /// The one fact on the row about something to do rather than something
+    /// held.
     pub uncommitted: usize,
-    /// Where it stands against its remote, already in words — a count is not
-    /// what anybody wants to be told about a remote they have not set up.
-    ///
-    /// `None` is a notebook with nowhere to sync to, and it is the case the row
-    /// draws differently: everything else is a link to the network screen, and
-    /// this one is not.
+    /// Already in words: a count is not what anybody wants to be told about a
+    /// remote they have not set up. `None` means no remote — the one field whose
+    /// cell is not a link.
     pub drift: Option<String>,
-    /// Whether this is the notebook a terminal is pointed at — the one
-    /// `noda notebook ls` puts a `*` beside.
+    /// The one `noda notebook ls` puts a `*` beside.
     pub active: bool,
     /// The day of its last commit, already rendered by `cmd::format_time`.
     pub last: String,
 }
 
-/// A note, as a listing names it: the row `ls -l` prints, minus the slug and
-/// the created stamp.
+/// `ls -l`'s row minus the slug and the created stamp, both of which are one
+/// press away on the note's own page. What is left is id, title, day and tags,
+/// **in that order**, because that is `ls -l`'s order.
 ///
-/// Both of those are on the note's own page, and a browser is one press from
-/// it — which is the rule the rest of the row follows too. What is left is the
-/// id, the title, the day it was last touched and the tags, **in that order**,
-/// because that is `ls -l`'s order and this is meant to be the same row.
-///
-/// The id in particular was left out until a screen turned up with room for
-/// it. The argument for leaving it out is real on a phone — `ls` prints an id
-/// because the next thing you do is type it, and here the next thing you do is
-/// press it — but it is an argument about space, not about the id, and a
-/// monitor has the space. What it buys back is the notebook's own vocabulary:
-/// an id on the screen is the one you say to `noda show`, and the filename you
-/// find in the repository. So it is written on every row and shown where it
-/// fits, which is the whole of the layout's habit in one element.
+/// The id was left out until a screen turned up with room: on a phone the next
+/// thing you do is press the row rather than type the id, but that is an
+/// argument about space and a monitor has it. What it buys back is the
+/// notebook's own vocabulary — the id on screen is the one you say to
+/// `noda show`. So it is written on every row and shown where it fits, which is
+/// the layout's habit in one element.
 pub struct Row {
     pub id: String,
     pub title: String,
     pub tags: Vec<String>,
-    /// The one stamp the row has room for, and **which one it is follows the
-    /// order the listing is in**.
+    /// The one stamp the row has room for, and **which one follows the order the
+    /// listing is in**.
     ///
-    /// A row prints `updated`, because a listing is about what changed. But a
-    /// listing put in `created` order and still printing `updated` is a column
-    /// of days in no discernible order beside a list that claims to be sorted,
-    /// and the reader has no way to tell a working sort from a broken one —
-    /// both look like an answer. So the stamp shown is the stamp sorted by, and
-    /// the two orders that are not about time (`slug`, `title`) keep `updated`,
-    /// which is what a listing has always shown.
+    /// A `created` listing still printing `updated` is a column of days in no
+    /// discernible order beside a list claiming to be sorted, and a reader
+    /// cannot tell that from a broken sort. So the stamp shown is the stamp
+    /// sorted by; `slug` and `title` keep `updated`.
     ///
-    /// Not called `updated` for that reason: it was the right name while there
-    /// was only one, and it should not be possible to read this as "the note's
-    /// updated stamp" now that it is sometimes the other one.
+    /// Not called `updated` for that reason: it should not be possible to read
+    /// this as the note's `updated` now that it is sometimes the other one.
     pub stamp: Option<String>,
-    /// Whether the query lets this row through.
-    ///
     /// **Every row of the notebook is on the listing whatever is typed** — the
-    /// excluded ones arrive with `hidden` on them rather than being left out.
-    /// A page that omitted them would be a page the enhancement layer could
-    /// only ever narrow further, because a script cannot put back a row the
-    /// server never sent; and then filtering-as-you-type would need a second
-    /// copy of the list to filter *from*, which is the copy that goes stale.
+    /// excluded ones arrive `hidden` rather than left out, because a script
+    /// cannot put back a row the server never sent, and a second copy to filter
+    /// *from* is the copy that goes stale.
     ///
-    /// `hidden` is not a class. It is the attribute every browser's own
-    /// stylesheet already hides, so the scriptless page gets the same answer
-    /// from the same markup with nothing of noda's involved.
+    /// `hidden` is not a class but the attribute every browser's own stylesheet
+    /// already hides, so the scriptless page needs nothing of noda's.
     pub shown: bool,
 }
 
@@ -111,8 +83,8 @@ pub struct Row {
 pub struct Held {
     pub name: String,
     pub size: u64,
-    /// What the server will say it is — the same answer the download itself
-    /// carries, so the page cannot promise one thing and the file be another.
+    /// The same answer the download carries, so the page cannot promise one
+    /// thing and the file be another.
     pub kind: String,
     /// How many notes link to it. Zero is what `doctor --links` calls an orphan.
     pub used: usize,
@@ -124,19 +96,15 @@ pub struct Tally {
     pub notes: usize,
 }
 
-/// One unticked box, and the note that holds it.
-///
-/// The note is named by title rather than by filename: this is a list of things
-/// to do, and which file a task is written in is the answer to a second
-/// question. The id is still the address the row links to.
+/// Named by title rather than filename: this is a list of things to do, and
+/// which file a task is in is a second question. The id is still the address.
 pub struct Task {
     pub id: String,
     pub title: String,
     /// The item's own words, with the `due:` term already lifted out of them.
     pub text: String,
     pub due: Option<String>,
-    /// Whether that date has gone past — worked out against the reader's own
-    /// day, which is a thing only the server knows.
+    /// Against the reader's own day, which only the server knows.
     pub overdue: bool,
 }
 
@@ -146,8 +114,7 @@ pub struct Subject {
     pub what: String,
     /// Where it is, for the way back.
     pub at: String,
-    /// Whether the name is the machine's rather than the reader's. A filename is
-    /// set in monospace wherever it appears, and a title never is.
+    /// A filename is monospace wherever it appears, and a title never is.
     pub mono: bool,
 }
 
@@ -157,28 +124,20 @@ pub struct Reading {
     pub slug: String,
     pub title: String,
     pub tags: Vec<String>,
-    /// When the note came into existence, which until now no screen showed.
-    /// `ls -l` has never printed it either — a listing is about what changed —
-    /// but a note's own page is the one place with room for the question "how
-    /// long has this been here", and the frontmatter has been answering it
-    /// since the first commit.
+    /// `ls -l` has never printed it — a listing is about what changed — but a
+    /// note's own page has room for "how long has this been here".
     pub created: Option<String>,
     pub updated: Option<String>,
-    /// The body, **already HTML** — `web::render::body` made it, and it is the
-    /// one string on any of these pages that is written out as it stands. The
-    /// field is not called `body` for that reason: `escape(&reading.body)` was
-    /// the right line while a note was shown as text, and it should not be
-    /// possible to leave it there by accident now that it is not.
+    /// **Already HTML**, from `web::render::body` — the one string on these
+    /// pages written out as it stands. Not called `body` for that reason:
+    /// `escape(&reading.body)` was right while a note was shown as text.
     pub rendered: String,
 }
 
 impl Row {
-    /// The row a note makes, in a listing that is in `by` order.
-    ///
-    /// `by` decides one thing and it is [`Row::stamp`] — which of the note's two
-    /// times the row has room to print. A page that is not a listing passes
-    /// `Sort::default()` and gets `updated`, which is both the old behaviour and
-    /// the true one: a backlinks answer comes back in slug order.
+    /// `by` decides one thing, [`Row::stamp`]. A page that is not a listing
+    /// passes `Sort::default()` and gets `updated`, which is also the truth: a
+    /// backlinks answer comes back in slug order.
     pub fn of(file: &NoteFile, by: Sort) -> Row {
         Row {
             id: file.id.clone(),
@@ -193,11 +152,8 @@ impl Row {
     }
 }
 
-/// The five characters that would otherwise be markup.
-///
-/// Hand-written rather than pulled in: it is five characters, and a note's body
-/// is arbitrary text that reaches this on every page, so the one place it
-/// happens should be readable in one screen.
+/// Hand-written: five characters, reached by arbitrary text on every page, so
+/// the one place it happens should be readable in one screen.
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -215,22 +171,15 @@ pub fn escape(text: &str) -> String {
 
 /// The day a stamp names: `2026-08-15`.
 ///
-/// **The day and not the minute, and the reason is that the minute cannot be
-/// shown without lying.** noda writes its own stamps in UTC — `...T09:54:23Z` —
-/// and the rule is that a rendering uses the offset that was recorded, never
-/// this server's. Obeyed literally, a note written at six in the evening is
-/// shown as ten in the morning; obeyed with the `Z` cut off to save room, it is
-/// shown as ten in the morning *and looks like local time*, which is worse than
-/// either. Converting instead would put the server's zone into a fact about the
-/// note, and the server is not where the note was written.
+/// **The day and not the minute, because the minute cannot be shown without
+/// lying.** noda writes UTC and a rendering uses the recorded offset, so a note
+/// written at six in the evening shows as ten in the morning — and with the `Z`
+/// cut off to save room it shows as ten in the morning *and looks local*.
+/// Converting would put the server's zone into a fact about the note.
 ///
-/// A day has none of that in it. It is also the granularity a listing wants: a
-/// row answers "when did I last touch this", not "at which minute".
-///
-/// The minute is still there for anyone who wants it — the note's own page
-/// prints the stamp exactly as the file holds it, `Z` and all, the way `ls -l`
-/// does. Anything that is not a date is returned untouched: a stamp noda did not
-/// write is still the only copy of what it says.
+/// A day has none of that, and is what a listing wants: a row answers "when did
+/// I last touch this". The minute is on the note's own page, `Z` and all.
+/// Anything that is not a date comes back untouched.
 fn day(value: &str) -> String {
     let bytes = value.as_bytes();
     let dated = bytes.len() >= 10 && bytes[4] == b'-' && bytes[7] == b'-';
@@ -241,12 +190,11 @@ fn day(value: &str) -> String {
     }
 }
 
-/// `text`, escaped, with every run matching one of `terms` wrapped in `<mark>`.
+/// `text`, escaped, with every run matching one of `terms` in `<mark>`.
 ///
-/// The matching is done before the escaping and the pieces are escaped as they
-/// are cut, which is the order that matters: escaping first would have this
-/// searching `&amp;` for `&`, and marking first without escaping would put a
-/// note's own angle brackets into the markup.
+/// Matched before escaping and escaped as the pieces are cut: escaping first
+/// would search `&amp;` for `&`, and marking without escaping would put a note's
+/// own angle brackets into the markup.
 fn highlight(text: &str, terms: &[String]) -> String {
     if terms.is_empty() {
         return escape(text);
@@ -305,40 +253,30 @@ fn shell(title: &str, app: &str, body: &str) -> String {
     dressed(title, app, None, &[], body)
 }
 
-/// The shell, plus the scripts that make this page quicker and nothing else.
+/// A page links the scripts it uses and no others — the inline version's rule,
+/// kept now that they are addresses.
 ///
-/// A page links the ones it uses and no others — the rule the inline version
-/// followed, kept now that they are addresses: a note page has never been sent
-/// the listing's filter and is not sent it now.
-///
-/// `defer`, which is what an address buys that an inline script could not have:
-/// they read the rows, so they must run after the document is parsed, and a
-/// deferred script starts downloading while it still is. Nothing optional
-/// delays the page being drawn.
+/// `defer` is what an address buys that inline could not: they read the rows, so
+/// they must run after parsing, and a deferred script downloads while parsing is
+/// still going.
 fn scripted(title: &str, app: &str, scripts: &[Asset], body: &str) -> String {
     dressed(title, app, None, scripts, body)
 }
 
 /// The shell, plus the one thing a page may ask the browser to do on its own.
 ///
-/// `<meta http-equiv="refresh">` is how a page with no JavaScript comes back for
-/// news, and the network screen is the only page here that has any. It is a
-/// full reload of a page that is a few hundred bytes, which is the cost of not
-/// requiring a script to find out whether a push finished — and the same reload
-/// the reader would perform by hand, so nothing new can go wrong in it.
+/// `<meta http-equiv="refresh">` is how a scriptless page comes back for news,
+/// and the network screen is the only page with any. A few hundred bytes
+/// reloaded, and the same reload a reader would do by hand.
 ///
-/// The `referrer` meta is the second of the three places noda says one thing —
-/// that an address here is somebody's note id and does not travel. `web::html`
-/// says it as a header, which costs nothing and which a reverse proxy is free
-/// to strip; this says it inside the page, where nothing between here and the
-/// browser can. It is also the copy that reaches an image: a picture a note
-/// embeds from somebody else's site is fetched without the reader choosing
-/// anything, and no attribute on a link would ever have covered it. The third
-/// is `rel="noopener noreferrer"` on the links themselves, in `web::render`.
+/// The `referrer` meta is the second of three places noda says that an address
+/// here is somebody's note id and does not travel: `web::html` says it as a
+/// header a proxy may strip, this says it where nothing can, and `web::render`
+/// says it on the links. This is also the copy that reaches an image a note
+/// embeds from elsewhere, which no attribute on a link would cover.
 ///
-/// `same-origin` rather than `no-referrer`, for the reason `web::html` sets out
-/// at length: the stricter of the two also nulls the `Origin` on a form post,
-/// and `web::guard` is built on that header.
+/// `same-origin` rather than `no-referrer`, for the reason `web::html` gives:
+/// the stricter one nulls a form post's `Origin`, which `web::guard` needs.
 fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], body: &str) -> String {
     let refresh = refresh(again_in);
     let enhancement = scripts.iter().map(|asset| asset.tag()).collect::<String>();
@@ -360,20 +298,18 @@ fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], bod
     )
 }
 
-/// The tab's name, and the one instruction a page may give the browser about
-/// itself — both written here rather than inline in [`dressed`], because a
-/// fragment sends them too.
+/// Written here rather than inline in [`dressed`], because a fragment sends them
+/// too.
 ///
 /// **A fragment is a page with the parts the reader already has left out**, and
 /// what is left is never only the body: a swap renames the tab, and the polling
-/// screen steers by the refresh the scriptless page steers by. Those two live in
-/// the `<head>`, so a fragment leads with them — and because an HTML parser puts
-/// a leading `<title>` or `<meta>` in the head of whatever it is parsing, the
-/// script finds each exactly where it looks for it on a whole page. Nothing in
-/// the enhancement layer had to learn a second shape.
+/// screen steers by the same refresh. Both live in the `<head>`, so a fragment
+/// leads with them — and because an HTML parser puts a leading `<title>` in the
+/// head of whatever it parses, the script finds each where it looks on a whole
+/// page.
 ///
 /// One function each, called from both sides, so the shorter answer cannot come
-/// to differ from the longer one by a character.
+/// to differ by a character.
 fn titled(title: &str) -> String {
     format!("<title>{}</title>", escape(title))
 }
@@ -384,12 +320,9 @@ fn refresh(again_in: Option<u32>) -> String {
     })
 }
 
-/// A note being written, as the form holds it.
-///
-/// Kept as the strings that were typed rather than as anything parsed, because
-/// its other job is to be handed back when the write is refused: a reader who
-/// has been told a tag is not allowed should find their words where they left
-/// them, not an empty form.
+/// Kept as the strings that were typed, because its other job is to be handed
+/// back when the write is refused: a reader told a tag is not allowed should
+/// find their words where they left them.
 #[derive(Default)]
 pub struct Draft {
     pub title: String,
@@ -418,12 +351,9 @@ impl About {
     }
 }
 
-/// What an item on a bar is, beyond somewhere to go.
-///
-/// Three states rather than two flags: an item is at most one of these, and a
-/// pair of booleans would have made room for the combination that means
-/// nothing — the screen you are standing on, in the colour of the thing that
-/// removes it.
+/// Three states rather than two flags: a pair of booleans makes room for the
+/// combination that means nothing — the screen you are standing on, in the
+/// colour of the thing that removes it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mark {
     /// Somewhere to go, and nothing further to say about it.
@@ -435,21 +365,15 @@ enum Mark {
 }
 
 impl Mark {
-    /// `Here` when the bar is on the screen this item names, `Plain` when it is
-    /// not — which is the shape every caller had before there was a third state
-    /// to tell apart.
+    /// The shape every caller had before there was a third state.
     fn at(here: bool) -> Mark {
         if here { Mark::Here } else { Mark::Plain }
     }
 }
 
-/// The bar along the bottom, and the reason it exists at all.
-///
-/// PR 1 shipped without one, because there was nothing to put in it and two
-/// greyed-out buttons are not a design. It arrives now with something in every
-/// slot it has. Adding it changed nothing above it — a fixed strip at the foot
-/// of a page is an extension, not a rearrangement, which is the rule this
-/// project applies to a listing's row and applies here to its chrome.
+/// Shipped only once there was something in every slot: two greyed-out buttons
+/// are not a design. A fixed strip at the foot of a page is an extension and not
+/// a rearrangement, which is the rule this project applies to a listing's row.
 fn action_bar(items: &[(&str, &str, String, Mark)]) -> String {
     let mut out = String::from("<nav class=\"actionbar\">");
     for (icon, label, href, mark) in items {
@@ -458,16 +382,12 @@ fn action_bar(items: &[(&str, &str, String, Mark)]) -> String {
             "<a href=\"{}\"{}><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
              <span>{label}</span></a>",
             escape(href),
-            // `aria-current` and not a class, because it is what the attribute
-            // is for: a screen reader says "current page" and the stylesheet
-            // hangs the brighter colour off the same fact. One statement, read
-            // two ways.
+            // `aria-current` and not a class: a screen reader says "current
+            // page" and the stylesheet hangs the colour off the same fact.
             //
-            // Danger goes the other way round and is a class, because there is
-            // nothing here for assistive software to announce that the item
-            // does not already say: the word is Delete. The colour is the
-            // stylesheet saying it a second time, to a reader who is aiming
-            // rather than reading.
+            // Danger is a class, because there is nothing to announce that the
+            // item does not already say — the word is Delete, and the colour is
+            // for a reader aiming rather than reading.
             match mark {
                 Mark::Plain => "",
                 Mark::Here => " aria-current=\"page\"",
@@ -480,68 +400,48 @@ fn action_bar(items: &[(&str, &str, String, Mark)]) -> String {
 }
 
 const NEW: &str = "<path d=\"M12 4.5v15M4.5 12h15\"/>";
-/// A page with a folded corner and two lines of writing on it: what the
-/// notebook is mostly made of. Not a book — a notebook is a directory of files,
-/// and the thing you press this to reach is a list of them.
+/// A page with a folded corner. Not a book: a notebook is a directory of files,
+/// and this reaches a list of them.
 const NOTES: &str = "<path d=\"M5.5 4.5h9L19 9v10.5h-13.5z\"/><path d=\"M14.5 4.5V9H19\"/>\
 <path d=\"M9 13h6\"/><path d=\"M9 16.5h4\"/>";
 const EDIT: &str = "<path d=\"M4 20h4L19 9l-4-4L4 16z\"/>";
 const TAGS: &str = "<path d=\"M4 4h7l9 9-7 7-9-9z\"/><circle cx=\"8\" cy=\"8\" r=\"1.4\"/>";
 const RENAME: &str = "<path d=\"M4 7V5h16v2\"/><path d=\"M12 5v14\"/><path d=\"M9 19h6\"/>";
-/// A box with a tick in it, which is what a todo *is* here — the GFM checkbox
-/// every other Markdown reader draws.
+/// The GFM checkbox every other Markdown reader draws.
 const TODO: &str = "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"3.5\"/><path d=\"M8.5 12.2l2.6 2.6 4.6-5.4\"/>";
-/// A paperclip: what the notebook holds that is not a note, in the shape
-/// everything on a phone uses for exactly that.
+/// A paperclip: the shape everything on a phone uses for an attachment.
 const FILES: &str = "<path d=\"M18.5 10.5 11 18a4 4 0 0 1-5.7-5.7l7.8-7.8a2.6 2.6 0 0 1 3.7 3.7\
  l-7.7 7.7a1.2 1.2 0 0 1-1.7-1.7l7.1-7.1\"/>";
-/// An arrow arriving at a line, because backlinks are the inbound half. The
-/// line is the note being pointed at, and the arrow is everything pointing.
+/// An arrow arriving at a line: the line is the note, the arrow is what points
+/// at it.
 const LINKS: &str = "<path d=\"M19 5v14\"/><path d=\"M4 12h11\"/><path d=\"M11 8l4 4-4 4\"/>";
-/// A bin with a lid: the shape everything uses for the action that removes
-/// something, drawn in the same stroke as the rest. It is the odd one out by
-/// colour, and being the odd one out by weight as well would read as a mistake
-/// rather than as a warning.
+/// Drawn in the same stroke as the rest: the odd one out by colour, and being
+/// odd by weight too would read as a mistake rather than a warning.
 const TRASH: &str = "<path d=\"M5 7h14\"/><path d=\"M9.5 7V4.5h5V7\"/>\
 <path d=\"M6.5 7l1 12.5h9L17.5 7\"/><path d=\"M10 10.5v6\"/><path d=\"M14 10.5v6\"/>";
-/// Two arrows passing, one up and one down: what a notebook and its remote do to
-/// each other. Not a cloud — a notebook syncs with a repository somebody else's
-/// machine is holding, and half the time that machine is their own.
+/// Two arrows passing. Not a cloud: a notebook syncs with a repository on
+/// somebody's machine, and half the time that machine is their own.
 const SYNC: &str = "<path d=\"M7 9l5-5 5 5\"/><path d=\"M12 4v10\"/>\
 <path d=\"M17 15l-5 5-5-5\"/><path d=\"M12 20V10\"/>";
 
-/// What the order row is, in the space a word would not fit in.
-///
-/// Three lines getting shorter: the shape a sorted list has, and the one glyph
-/// every interface with a sort in it has settled on. The word `order` reads
-/// better and costs 55px, which is the difference between four chips fitting in
-/// a split view's index column and three of them fitting with the fourth on a
-/// line of its own.
+/// Three lines getting shorter — the glyph every interface with a sort has
+/// settled on. The word `order` reads better and costs 55px, which is four chips
+/// fitting the index column against three and a wrap.
 const ORDER: &str = "<path d=\"M4 7h13\"/><path d=\"M4 12h9\"/><path d=\"M4 17h5\"/>";
 
-/// Which way the order runs, on the chip that is in force.
-///
-/// Down is the order as `--sort` gives it, up is the same order under `-r`. Not
-/// "ascending" and "descending", which are the wrong words twice over: `updated`
-/// runs newest-first and `title` runs A-to-Z, so the same arrow would have to
-/// mean opposite things, and neither word survives being the only label on a
-/// 12px glyph.
+/// Down is `--sort`'s order, up is the same under `-r`. Not "ascending" and
+/// "descending": `updated` runs newest-first and `title` A-to-Z, so one arrow
+/// would have to mean opposite things.
 const DOWNWARDS: &str = "<path d=\"M12 5v14\"/><path d=\"M6 13l6 6 6-6\"/>";
 const UPWARDS: &str = "<path d=\"M12 19V5\"/><path d=\"M6 11l6-6 6 6\"/>";
 
-/// Where the notebook stands, in the corner of the screen you are already on.
+/// The way to the network screen, and also the answer that screen exists to
+/// give: "is there anything to sync" is worth knowing without pressing anything.
 ///
-/// It is the way to the network screen and it is also the answer that screen
-/// exists to give — "is there anything to sync" is worth knowing without
-/// pressing anything, and a notebook that is up to date should be able to say so
-/// without being asked twice.
-/// The pill inside is what is drawn; the link around it is what is pressed.
-/// Nothing on a phone may be smaller than 48px, and a 48px pill in a 56px bar
-/// would be a bar with a button wedged into it — so the target is the size the
-/// rule asks for and the ink is the size the design wants.
-///
-/// The label repeats the words because a narrow screen may have to shorten them:
-/// the text can end in an ellipsis and the label never does.
+/// The pill is what is drawn and the link around it is what is pressed — nothing
+/// on a phone may be under 48px, and a 48px pill in a 56px bar would be wedged
+/// in. The label repeats the words because a narrow screen may end the text in
+/// an ellipsis and a label never does.
 fn drift_chip(book: &str, drift: &str) -> String {
     format!(
         "<a class=\"drift\" href=\"/nb/{}/status\" aria-label=\"Status: {}\">\
@@ -553,63 +453,43 @@ fn drift_chip(book: &str, drift: &str) -> String {
     )
 }
 
-/// The back chevron, and the only icon PR 1 has.
-///
-/// Inline SVG rather than a character like `‹`: a glyph is whatever the reader's
-/// font decides it is — weight, size and where it sits on the line all out of
-/// our hands — and this one has to look the same on every phone that reaches the
-/// notebook. It is also why it can be given a stroke width at all.
+/// Inline SVG rather than a character like `‹`, whose weight, size and position
+/// on the line are whatever the reader's font decides. It is also why this can
+/// be given a stroke width.
 const BACK: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M15 4.5 7.5 12 15 19.5\"/></svg>";
 
 /// Which of the notebook's screens is being drawn, so the bar can say so.
 ///
-/// All four are on the bar. An earlier design left `Notes` off it and made the
-/// chevron the only way back to the listing, on the argument that the bar held
-/// the places you go *from* the listing. Two things undid that. A rail is read
-/// as a list of where you can be, and one that omitted the place you spend most
-/// of your time read as an omission rather than as an argument; and on a screen
-/// wide enough to hold both panes the listing is no longer somewhere you leave,
-/// so "from the listing" had stopped describing anything.
+/// All four are on it. An earlier design left `Notes` off, on the argument that
+/// the bar held the places you go *from* the listing — but a rail reads as a
+/// list of where you can be, and on a wide screen the listing is not somewhere
+/// you leave.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum At {
     Notes,
     Tags,
     Todo,
     Files,
-    /// The network screen, which is the one notebook screen not on the bar —
-    /// it is reached from the chip in the corner, because it is about the
-    /// notebook as a whole rather than about something inside it. It is a
-    /// variant rather than an absence so that the bar is told where the reader
-    /// is on every screen that carries it, and marks nothing only when nothing
-    /// on it is where they are.
+    /// The one notebook screen not on the bar, reached from the chip because it
+    /// is about the notebook as a whole. A variant rather than an absence, so
+    /// the bar is told where the reader is on every screen that carries it.
     Status,
 }
 
-/// The bar every notebook-level screen carries, and the one button that is not
-/// on it.
-///
 /// **Four places and one action, told apart by not being in the same row.**
 /// Notes, Tags, Todo and Files are somewhere to go; New is something to do, and
-/// a row that mixes the two is a row you have to read rather than aim at. The
-/// button is lifted off it and set where a thumb already rests.
+/// a row mixing the two is a row you read rather than aim at.
 ///
-/// The bar is the same four on every screen, because a bar whose contents
-/// changed from screen to screen would be worse than no bar. It is also how the
-/// files page stopped being reachable only by typing its address, which is what
-/// it was until this existed.
+/// The same four on every screen, because a bar whose contents changed would be
+/// worse than no bar.
 fn notebook_bar(book: &str, here: At) -> String {
     let at = escape(book);
-    // The only distinction this bar has ever drawn: one of the four is the
-    // screen being looked at and the rest are somewhere to go. Named so that a
-    // row stays one line — the third state a `Mark` can hold is a note's, not a
-    // notebook's, and none of these four is ever it.
+    // One of the four is where you are and the rest are somewhere to go. The
+    // third state a `Mark` holds is a note's, and none of these is ever it.
     let mark = |screen: At| Mark::at(here == screen);
-    // Wrapped together, and the wrapper is what sticks to the bottom rather
-    // than the bar inside it. The button has to travel with the bar: on a
-    // screen with little on it the bar has not stuck to anything yet and sits
-    // under the last row, and a button pinned to the window would be floating on
-    // its own in the space below.
+    // The wrapper sticks, not the bar inside it: on a short page the bar sits
+    // under the last row, and a button pinned to the window would float below.
     format!(
         "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
          <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
@@ -630,16 +510,12 @@ fn back(href: &str, label: &str) -> String {
     )
 }
 
-/// The front page: which notebooks there are, and where each of them stands.
-///
-/// **The one screen that is not inside a notebook**, which is why it carries
-/// neither the rail nor the bar: both hold places inside a notebook, and there
-/// is nowhere further up than this. `root` is what says so to the stylesheet,
-/// and what stops the layout reserving a column for a rail that is not coming.
+/// **The one screen not inside a notebook**, which is why it carries neither the
+/// rail nor the bar — both hold places inside one. `root` says so to the
+/// stylesheet, and stops the layout reserving a column for a rail.
 pub fn notebooks(books: &[Book]) -> String {
     let rows = if books.is_empty() {
-        // An empty screen is an invitation to act, and the act is not on this
-        // machine's web server — a notebook is made at a terminal.
+        // An invitation to act, and the act is at a terminal.
         "<div class=\"empty\"><b>No notebooks yet</b>Run <code>noda init</code> in a terminal to make the first one.</div>".to_string()
     } else {
         books.iter().map(book_row).collect()
@@ -657,14 +533,9 @@ pub fn notebooks(books: &[Book]) -> String {
     )
 }
 
-/// What the corner says: how many notebooks, and — where there is room for it —
-/// how much they hold between them.
-///
-/// The second clause rides in a `.more` span the stylesheet drops on a phone,
-/// which is the same answer the listing's row gives when it writes the day twice
-/// and lets the stylesheet pick one: the server does not know how wide the
-/// screen is, and asking it is worse than sending a dozen bytes that are not
-/// shown.
+/// The second clause rides in a `.more` span the stylesheet drops on a phone —
+/// the listing's row does the same with its day. The server does not know how
+/// wide the screen is, and asking is worse than a dozen unshown bytes.
 fn tally(books: &[Book]) -> String {
     let notes = books.iter().map(|book| book.notes).sum();
     format!(
@@ -674,26 +545,20 @@ fn tally(books: &[Book]) -> String {
     )
 }
 
-/// One notebook, as a row: `noda status` said in the width of a line.
-///
-/// **Two destinations, side by side rather than nested**, the shape the files
-/// page already uses: the row is the notebook and goes to its listing; the chip
-/// is where it stands with its remote and goes to the network screen. A
-/// notebook with no remote keeps the words and loses the link, for the reason
-/// that page gives when it leaves `nothing links to it` as text — a press whose
-/// answer is what you have already read is not worth having.
+/// **Two destinations, side by side rather than nested**, as the files page
+/// does it: the row goes to the listing, the chip to the network screen. A
+/// notebook with no remote keeps the words and loses the link, a press whose
+/// answer is what you already read not being worth having.
 fn book_row(book: &Book) -> String {
     let at = escape(&book.name);
-    // `*` in `noda notebook ls`, a dot in the same margin here. The screen
-    // reader is told in words, because a dot is not one.
+    // `*` in `noda notebook ls`, a dot here — and words for a screen reader.
     let mark = if book.active {
         "<span class=\"mark\" aria-hidden=\"true\"></span><span class=\"sr\">Active — </span>"
     } else {
         ""
     };
 
-    // `.holds` and not `.when`: on every other page that class is a timestamp,
-    // and a test helper reads the page's stamps out by it.
+    // `.when` is a timestamp everywhere else, and a test helper reads by it.
     let mut facts = vec![format!(
         "<span class=\"holds\">{}</span>",
         plural(book.notes, "note")
@@ -775,13 +640,10 @@ impl Asked<'_> {
     }
 }
 
-/// What order the listing is in — `--sort` and `-r`, arrived at over HTTP.
-///
 /// Two fields rather than one enum of eight, because that is what they are at
-/// the prompt: an order, and a reversal applied after it. Folding them together
-/// would make `-r` a property of each order rather than one thing that happens
-/// to whichever was asked for, and the eight-way match that follows is the
-/// shape of a decision nobody made.
+/// the prompt: an order, and a reversal applied after it. Folding them makes
+/// `-r` a property of each order, and the eight-way match is a decision nobody
+/// made.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Order {
     pub sort: Sort,
@@ -789,14 +651,11 @@ pub struct Order {
 }
 
 impl Order {
-    /// The query string this order is asked for by, `?` and all, with `q`
-    /// carried through it.
+    /// The query string this order is asked for by, `q` carried through it.
     ///
-    /// **The default order writes nothing.** `slug` is what a listing has always
-    /// been in, so `/nb/work` keeps meaning what it meant and no address in
-    /// anybody's history grew a parameter. It also means there is exactly one
-    /// address for the listing as it stands by default, rather than one plain
-    /// and one spelled out.
+    /// **The default order writes nothing**, so `/nb/work` keeps meaning what it
+    /// meant and there is one address for the default listing rather than one
+    /// plain and one spelled out.
     fn asked(self, typed: &str) -> String {
         let mut parts = Vec::new();
         if !typed.is_empty() {
@@ -818,14 +677,11 @@ impl Order {
 
 /// A notebook's notes, narrowed by whatever was typed.
 ///
-/// `total` is how many the notebook holds, which is only interesting when it
-/// differs from how many are shown — a reader who has filtered to nothing needs
-/// to be told there is something to go back to.
+/// `total` matters only when it differs from how many are shown: a reader who
+/// filtered to nothing needs telling there is something to go back to.
 ///
-/// `drift` is where the notebook stands against its remote, already in words. It
-/// rides in the corner of the bar as a link to the network screen — the one
-/// screen that is not on the bar along the bottom, because the bar holds places
-/// inside the notebook and this is about the notebook as a whole.
+/// `drift` rides in the corner of the bar as a link to the network screen, which
+/// is not on the bottom bar because that holds places *inside* the notebook.
 pub fn listing(
     book: &str,
     rows: &[Row],
@@ -834,15 +690,13 @@ pub fn listing(
     drift: &str,
     front: Option<&str>,
 ) -> String {
-    // `indexed`, because the rows are right here in the markup. It is the same
-    // class the script sets on a note route, and it means the same thing in
-    // both places: this pane has a listing in it.
+    // `indexed`: the rows are here in the markup. The same class the script
+    // sets on a note route, meaning the same thing.
     scripted(
         &listing_title(book),
         "split at-list indexed",
-        // `BESIDE` is here for the note this listing turns into. Picking a row
-        // replaces the reading pane with a note's, aside and all, and nothing
-        // else on the page would ever ask what points at it.
+        // `BESIDE` is for the note this listing turns into: picking a row
+        // replaces the reading pane with a note's, aside and all.
         &[Asset::Listing, Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}",
@@ -852,20 +706,15 @@ pub fn listing(
     )
 }
 
-/// Both of the listing's panes, for a screen that is going back to it.
+/// Both of the listing's panes, for a screen going back to it.
 ///
-/// The part [`listing_pane`] cannot answer on its own. Pressing back out of a
-/// note has to put two things right — the rows the listing had, and the pane
-/// the note was standing in, which on this screen holds the notebook's own
-/// README — and they are two panes of one answer. Asking for them separately
-/// would be two round trips to draw one screen, and a moment on the way with
-/// half of each on it.
+/// What [`listing_pane`] cannot answer alone: backing out of a note has to put
+/// the rows *and* the pane the note stood in right, and asking separately is two
+/// round trips with a moment on the way showing half of each.
 ///
-/// The listing route answers this and [`listing_pane`] both, which is the first
-/// route to send two different parts. Which one is asked for is the difference
-/// between narrowing a search and returning to the screen: a search leaves the
-/// note pane where it is, and back does not — and only back renames the tab,
-/// which is why this one carries a `<title>` and the column does not.
+/// The first route to send two different parts. Which is asked for is the
+/// difference between narrowing a search — which leaves the note pane alone —
+/// and going back, which is also the only one that renames the tab.
 pub fn listing_screen(
     book: &str,
     rows: &[Row],
@@ -900,12 +749,9 @@ fn listing_panes(
     )
 }
 
-/// The listing's own column, for a page that already has the rest.
-///
-/// The other half of the trade [`note`] makes. A note page is sent with this
-/// pane empty because a phone will never draw it; `script::PANES` asks for it
-/// on a screen that will, and what it takes out of the answer is this — the
-/// rows, and the count over them. The page around them it already has.
+/// The other half of [`note`]'s trade: a note page is sent with this pane empty
+/// because a phone never draws it, and `script::PANES` asks for it on a screen
+/// that will.
 pub fn listing_pane(
     book: &str,
     rows: &[Row],
@@ -918,10 +764,8 @@ pub fn listing_pane(
 
     let mut body = String::new();
     for row in rows {
-        // `ls -l`'s order, and tags last for `ls -l`'s reason: they are the one
-        // column a note may not have, and anything after them would shift from
-        // row to row. Here that would be a day sitting under a different part
-        // of the line depending on whether the note above it was tagged.
+        // `ls -l`'s order, tags last for its reason: they are the one column a
+        // note may not have, so anything after them shifts from row to row.
         let under = [when(row.stamp.as_deref()), tag_line(&row.tags)]
             .into_iter()
             .filter(|piece| !piece.is_empty())
@@ -937,24 +781,18 @@ pub fn listing_pane(
             escape(book),
             escape(&row.id),
             escape(&row.id),
-            // The day, said a second time and shown in only one place at a
-            // time. A wide row prints it at the right, where `-l` prints it; a
-            // column too narrow for three has nowhere to the right to print it,
-            // so it rides beside the id instead and the one under the title is
-            // the copy that goes. Writing both and letting the stylesheet
-            // choose keeps the choice at the width that knows it — the server
-            // is not told how wide the screen is, and asking would be a worse
-            // page than sending eleven bytes twice.
+            // Said twice and shown once: a wide row prints it at the right
+            // where `-l` does, a narrow column beside the id. The stylesheet
+            // chooses, because the server is not told how wide the screen is and
+            // asking is a worse page than eleven bytes sent twice.
             row.stamp
                 .as_deref()
                 .map_or_else(String::new, |value| format!(
                     "<span class=\"day\">{}</span>",
                     escape(&day(value))
                 )),
-            // Marked only on the rows that are being shown for a reason. A
-            // hidden row carries its title unmarked, which is the state the
-            // script would put it in anyway when it lets the row back through
-            // for a different query.
+            // A hidden row carries its title unmarked, which is where the
+            // script would leave it when a different query lets it back.
             if row.shown {
                 highlight(&row.title, asked.terms)
             } else {
@@ -963,9 +801,8 @@ pub fn listing_pane(
         );
     }
 
-    // An empty notebook and an empty result are different sentences, and only
-    // the second one is ever hidden: the first is the whole state of the
-    // notebook, and no amount of typing changes it.
+    // Different sentences, and only the second is ever hidden: no amount of
+    // typing changes an empty notebook.
     if total == 0 {
         body.push_str(
             "<div class=\"empty\"><b>No notes yet</b>Run <code>noda add \"First note\"</code> \
@@ -992,17 +829,13 @@ pub fn listing_pane(
     index_pane(book, asked, Some(order), &counted, drift, &body)
 }
 
-/// The index pane's frame, and what is under it.
+/// The frame is the same on both routes: which notebook, where it stands, and a
+/// search field that is a `GET` form on its own — so a scriptless reader can
+/// narrow the listing from a note page by submitting it.
 ///
-/// The frame is the same on both routes that draw it: which notebook, where it
-/// stands, and a search field that is a `GET` form on its own — so a reader
-/// with no script can still narrow the listing from a note page, by submitting
-/// it and landing on the listing.
-///
-/// `rows` is the part that differs. The listing route puts its notes here; a
-/// note route leaves it empty and `script::PANES` fills it in, because a phone
-/// that will never show this column should not be sent a copy of it. `counted`
-/// is empty for the same reason: a count of rows nobody has is not a fact yet.
+/// `rows` differs. A note route leaves it empty for `script::PANES` to fill,
+/// because a phone that never shows this column should not be sent it, and
+/// `counted` is empty for the same reason.
 fn index_pane(
     book: &str,
     asked: &Asked<'_>,
@@ -1026,13 +859,10 @@ fn index_pane(
         drift_chip(book, drift),
         escape(book),
         escape(asked.typed),
-        // **The order, in the form, because the form is what would drop it.**
-        // A search field on its own submits `?q=…` and nothing else, so a reader
-        // who put the listing in `updated` order and then searched it would get
-        // their notes back in `slug` order without being told why. These carry
-        // it across the press. Written only when there is something to carry,
-        // for the reason `Order::asked` gives: the default order is the address
-        // with nothing on it.
+        // **The order, in the form, because the form is what would drop it.** A
+        // search field submits `?q=…` and nothing else, so an `updated` listing
+        // searched would come back in `slug` order with nothing said. Written
+        // only when there is something to carry — see `Order::asked`.
         held(
             "sort",
             order
@@ -1040,30 +870,22 @@ fn index_pane(
                 .map(|order| order.sort.name()),
         ),
         held("r", order.filter(|order| order.reversed).map(|_| "1")),
-        // Written by the server and hidden by the server, so that the only
-        // thing the script does with it is decide when it applies. A sentence
-        // that exists only inside a script is a sentence nothing else can test
-        // the wording of.
+        // Written and hidden by the server, so the script only decides when it
+        // applies: a sentence living inside a script is one nothing can test.
         hint(),
         grouping(asked.grouping),
         asked.problem.map_or_else(String::new, |why| format!(
             "<p class=\"problem\">{}</p>",
             escape(why)
         )),
-        // Last, under the field and under what the field has to say about
-        // itself. The three above are all the server answering the query, and
-        // they come and go with it; putting the order between the question and
-        // the answer to it would separate two halves of one thing to keep a
-        // fourth from moving.
+        // Last. The three above are the server answering the query and come and
+        // go with it; the order between question and answer would split them.
         order.map_or_else(String::new, |order| sortbar(book, asked, order)),
     )
 }
 
-/// One of the form's own fields, when there is something in it.
-///
 /// A hidden input carrying a default is a parameter that appears in the address
-/// as soon as anybody searches, and then never leaves — the point of not writing
-/// the default is lost the first time ⏎ is pressed.
+/// the first time anybody searches, and never leaves.
 fn held(name: &str, value: Option<&str>) -> String {
     value.map_or_else(String::new, |value| {
         format!(
@@ -1074,25 +896,19 @@ fn held(name: &str, value: Option<&str>) -> String {
     })
 }
 
-/// The four orders `--sort` names, one chip apiece, and the one in force marked.
+/// The four orders `--sort` names, one chip apiece, the one in force marked.
 ///
-/// **Four links, and that is the whole of it.** There is no menu to open and
-/// nothing to press twice: the four names are on the screen, and each is the
-/// address of the listing in that order. Which means this works with the script
-/// off, the way the field beside it does — and that the vocabulary is on the
-/// screen rather than behind a press, so a reader who has never run `noda ls`
-/// meets the same four words they would meet at the prompt.
+/// **Four links, and that is the whole of it** — no menu, nothing to press
+/// twice, so it works with the script off and puts the vocabulary on the screen
+/// rather than behind a press.
 ///
-/// **Pressing the order already in force turns it round**, which is what `-r`
-/// does and where every table with a sortable heading has taught people to look
-/// for it. The arrow on that chip is the only place direction is written, so it
-/// is on the chip whose press changes it.
+/// **Pressing the order already in force turns it round**, which is `-r` and
+/// where every sortable heading has taught people to look. The arrow is the only
+/// place direction is written, so it sits on the chip whose press changes it.
 ///
-/// Choosing a *different* order drops the reversal. `-r` is orthogonal at the
-/// prompt and could have been kept, but each order has a direction it means
-/// first — `updated` newest-first, `title` A-to-Z — and arriving somewhere other
-/// than what `--sort updated` gives you is not what pressing `updated` looks
-/// like it will do.
+/// Choosing a *different* order drops the reversal: each order has a direction
+/// it means first, and arriving somewhere other than `--sort updated` is not
+/// what pressing `updated` looks like it will do.
 fn sortbar(book: &str, asked: &Asked<'_>, order: Order) -> String {
     let mut out = format!(
         "<nav class=\"sortbar\" aria-label=\"Order\">\
@@ -1110,10 +926,9 @@ fn sortbar(book: &str, asked: &Asked<'_>, order: Order) -> String {
             escape(book),
             escape(&next.asked(asked.typed)),
             if here { " aria-current=\"true\"" } else { "" },
-            // The arrow is `aria-hidden` like every other icon here, so the
-            // direction has to be said in words somewhere, and this is the one
-            // place with room. It also says what the press does, which on the
-            // chip in force is not what the other three do.
+            // The arrow is `aria-hidden`, so the direction is said in words
+            // here — along with what the press does, which differs on the chip
+            // in force.
             escape(&if here {
                 format!(
                     "Ordered by {}{}. Press to {}.",
@@ -1142,31 +957,20 @@ fn sortbar(book: &str, asked: &Asked<'_>, order: Order) -> String {
 /// What was typed, as noda grouped it.
 ///
 /// **`a OR b c` is `(a OR b) AND c`, and that is the one thing about this
-/// grammar people get wrong.** `OR` binding tighter than a space is backwards
-/// from every search box that has an `OR` at all, and the two readings are not
-/// close: one asks for notes in either of two tags that also mention a word,
-/// the other asks for anything in the first tag at all. A reader who has the
-/// second and wanted the first has no way to tell from a list of notes, because
-/// both answers look like an answer.
+/// grammar people get wrong** — `OR` binding tighter than a space is backwards
+/// from every search box that has one, and the two readings are not close.
+/// Neither answer looks wrong from a list of notes.
 ///
-/// The manual says so, and the manual is not on the screen. This is, sitting
-/// under the field it is about, and it says it in the only terms that cannot be
-/// misread: the grouping itself, drawn. Each pill is a group — its terms joined
-/// by `or` — and the pills are joined by `and`.
+/// The manual says so and is not on the screen; this is, in the only terms that
+/// cannot be misread — the grouping drawn. Each pill is a group joined by `or`,
+/// and the pills are joined by `and`.
 ///
-/// Never the words the parser would have used. Every token is the reader's own,
-/// which is what makes this a mirror rather than a second opinion: shown
-/// `tag:work OR tag:q3 budget`, it draws `(tag:work or tag:q3) and (budget)`
-/// and every character in it was theirs.
+/// Never the parser's words: every token is the reader's own, which makes this a
+/// mirror rather than a second opinion.
 ///
-/// Empty for an empty field and for a line that is not a query yet — in the
-/// second case the field already carries a red line about what is wrong, and
-/// grouping the words of a query that does not parse would be inventing an
-/// answer to go with it.
-///
-/// The box is written either way and hidden when there is nothing in it, for
-/// the reason [`hint`] gives: what the script does with it is decide when it
-/// applies, never what it says.
+/// Empty for an empty field and for a line that is not a query yet — the field
+/// already carries the red line, and grouping what does not parse would invent
+/// an answer. Written either way and hidden when empty, for [`hint`]'s reason.
 fn grouping(groups: &[Vec<String>]) -> String {
     if groups.is_empty() {
         return "<div class=\"parse\" hidden></div>".to_string();
@@ -1181,10 +985,9 @@ fn grouping(groups: &[Vec<String>]) -> String {
             if at > 0 {
                 out.push_str("<i>or</i>");
             }
-            // A `tag:` term wears the tag's own colour, the way it does
-            // everywhere else noda prints one. Nothing else here is coloured:
-            // the point is the shape, and a pill per field would be a legend to
-            // learn before the shape could be read.
+            // A `tag:` term wears the tag's colour, as everywhere else. Nothing
+            // else is coloured: the point is the shape, and a pill per field
+            // would be a legend to learn first.
             let _ = write!(
                 out,
                 "<b{}>{}</b>",
@@ -1202,13 +1005,11 @@ fn grouping(groups: &[Vec<String>]) -> String {
     out
 }
 
-/// The reading pane with no note picked, which only a screen wide enough to
-/// show two panes ever sees.
+/// The reading pane with no note picked, which only a two-pane screen sees.
 ///
-/// A notebook that has a `README.md` has already written the page that is about
-/// the whole of it — it is what `noda readme` writes and what a git host shows
-/// above the file list — so that is what stands here rather than an invitation
-/// to press something. Without one, the invitation.
+/// A notebook with a `README.md` has already written the page about the whole of
+/// itself, so that stands here rather than an invitation to press something.
+/// Without one, the invitation.
 fn front_pane(book: &str, front: Option<&str>) -> String {
     match front {
         Some(rendered) => format!(
@@ -1227,33 +1028,24 @@ fn front_pane(book: &str, front: Option<&str>) -> String {
     }
 }
 
-/// What the listing says while the script is answering instead of the server.
-///
-/// Shown only when the two answers can differ — a bare word or `text:` reads
-/// the body, and the body is not on the page. It names both halves: what has
-/// been narrowed, and the key that finishes the job. Hidden the rest of the
-/// time, including on every scriptless page, where it is never true.
+/// Shown only when the script's answer and the server's can differ — a bare word
+/// or `text:` reads the body, and the body is not on the page. Hidden the rest
+/// of the time, including on every scriptless page.
 fn hint() -> String {
     "<p class=\"hint\" hidden>Filtered by title and tag — press ⏎ to search the text.</p>"
         .to_string()
 }
 
-/// Everything the notebook holds that is not a note.
-///
-/// One row per file, saying the three things that are true of it: how big it
-/// is, what it will arrive as, and how many notes point at it. The last is the
-/// one worth the walk — a file nothing points at is what `doctor --links` calls
-/// an orphan, and this is the same question answered in the same way rather
-/// than a second opinion about it.
+/// One row per file: how big it is, what it will arrive as, and how many notes
+/// point at it. The last is the one worth the walk — a file nothing points at is
+/// `doctor --links`' orphan, answered here the same way rather than a second
+/// opinion.
 pub fn files(book: &str, held: &[Held]) -> String {
-    // The class goes with the branch that decides it, because the two are one
-    // decision. `.rows.cols` is a multi-column box: what is inside it is poured
-    // across `column-width` tracks with a `column-rule` hairline drawn between
-    // them, which is what a screenful of short rows wants and the exact
-    // opposite of what an invitation wants. One sentence poured into four
-    // columns arrives as four fragments with a rule through the middle of it.
-    // Neither of the two screens that ask for columns gains a row after the
-    // paint, so the server is the one that knows which of the two this is.
+    // The class goes with the branch that decides it, being one decision.
+    // `.rows.cols` pours its contents across `column-width` tracks with a rule
+    // between — right for a screenful of short rows, and one sentence poured
+    // into four columns arrives as four fragments with a rule through it.
+    // Neither screen gains a row after the paint, so the server knows which.
     let (laid, body) = if held.is_empty() {
         (
             "rows",
@@ -1265,17 +1057,12 @@ pub fn files(book: &str, held: &[Held]) -> String {
         let mut out = String::new();
         for file in held {
             let under = [size(file.size), escape(&file.kind)].join("<span class=\"sep\">·</span>");
-            // Two targets in one row, side by side rather than nested — a link
-            // inside a link is not a thing HTML has. The row is the file and
-            // goes to the file; the count is a question about it and goes to
-            // the answer. It is the only way a notebook's own files can be asked
-            // what points at them, since a file has no page of its own.
+            // Side by side rather than nested — a link inside a link is not a
+            // thing HTML has. The row goes to the file, the count to what points
+            // at it, which is the only way to ask a file that has no page.
             //
-            // **Zero is not a link.** What `doctor --links` calls an orphan is
-            // said in the same words it has always been said in, and it stays
-            // text: a link whose destination is a page saying "nothing links
-            // here" is a press that cannot tell you anything you had not already
-            // read.
+            // **Zero is not a link**: a press whose answer is a page saying
+            // "nothing links here" tells you what you already read.
             let asks = match file.used {
                 0 => "<span class=\"aside\">nothing links to it</span>".to_string(),
                 used => format!(
@@ -1313,11 +1100,8 @@ pub fn files(book: &str, held: &[Held]) -> String {
     )
 }
 
-/// A file's size, in the units a person would say it in.
-///
-/// Powers of two and one decimal place, which is what every file manager shows;
-/// a notebook's attachments are pictures and PDFs, and knowing one is 4.2 MB
-/// rather than 4,404,019 bytes is the whole of what this line is for.
+/// Powers of two and one decimal place, as every file manager shows: 4.2 MB is
+/// what this line is for, not 4,404,019 bytes.
 fn size(bytes: u64) -> String {
     #[expect(
         clippy::cast_precision_loss,
@@ -1332,16 +1116,13 @@ fn size(bytes: u64) -> String {
     }
 }
 
-/// Every tag in the notebook, commonest first.
+/// Commonest first: by name alone, the four tags a notebook runs on are buried
+/// under every one-off ever typed. Alphabetical within a count, so it does not
+/// reshuffle between visits.
 ///
-/// The browser's order, for the browser's reason: sorted by name alone, the four
-/// tags a notebook actually runs on are buried under every one-off ever typed.
-/// Alphabetical within a count, so the list does not reshuffle between visits.
-///
-/// A row is a link into the listing, narrowed to that tag — which is what makes
-/// this a way of getting somewhere rather than a report. `query::scoped` writes
-/// the query, because the field it lands in splits the way a shell does and a
-/// tag with a space in it has to arrive quoted.
+/// A row links into the listing narrowed to that tag, which makes this a way of
+/// getting somewhere rather than a report. `query::scoped` writes the query,
+/// because a tag with a space has to arrive quoted.
 pub fn tags(book: &str, tallies: &[Tally]) -> String {
     // Columns only where there are rows to put in them — `page::files` says why
     // at length.
@@ -1466,13 +1247,9 @@ pub fn backlinks(book: &str, subject: &Subject, rows: &[Row]) -> String {
     )
 }
 
-/// The answer, without the page it is a page of.
-///
-/// This route is asked twice for two different reasons: by a reader pressing
-/// Links, who gets the page, and by `script::BESIDE` filling the margin beside
-/// a note, which reads the rows out of the answer and rebuilds them 236px wide.
-/// The second one is a fetch per note read on a monitor, so it is the one that
-/// pays for saying which part it wants.
+/// Asked twice for two reasons: a reader pressing Links gets the page, and
+/// `script::BESIDE` reads the rows out to rebuild them 236px wide. The second is
+/// a fetch per note read on a monitor, so it pays for saying which part.
 pub fn backlinks_rows(book: &str, subject: &Subject, rows: &[Row]) -> String {
     let body = if rows.is_empty() {
         format!(
@@ -1505,31 +1282,24 @@ pub fn backlinks_rows(book: &str, subject: &Subject, rows: &[Row]) -> String {
     )
 }
 
-/// One note, and — on a screen wide enough — the listing it came from.
+/// One note, and — on a wide enough screen — the listing it came from.
 ///
-/// `drift` is for the index pane's own bar, which is the notebook's bar rather
-/// than the note's. It costs two refs compared, which is what the listing route
-/// already pays on every visit.
+/// `drift` is for the index pane's bar, which is the notebook's rather than the
+/// note's: two refs compared, what the listing route already pays.
 pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
-    // No `indexed`, and the pane it names is sent empty. The listing is worth
-    // about 290 bytes a note — 57KB at two hundred, half a megabyte at two
-    // thousand — and below 1024px not one of those bytes is ever drawn. So the
-    // frame goes out and `script::PANES` asks for the rest, but only where the
-    // column is on screen. With no script the grid is the tablet's two columns:
-    // the note, whole, and the chevron back to the listing, which is what a
-    // note page has always been.
+    // No `indexed`, and that pane is sent empty: a listing is about 290 bytes a
+    // note — half a megabyte at two thousand — and below 1024px none of it is
+    // drawn. The frame goes out and `script::PANES` asks for the rest where the
+    // column is on screen. Scriptless, the page is the note and the chevron.
     scripted(
         &note_title(reading),
         "split at-note",
         &[Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}{}",
-            // `None`, and it is the same argument the empty `rows` beside it
-            // makes: this pane is a frame for a column that is not here yet. An
-            // order over no rows orders nothing, and on a phone — where the
-            // column is never drawn at all — it would be 450 bytes of a control
-            // nobody can see. `script::PANES` brings the column and the order
-            // together, out of the listing route that decides both.
+            // The empty `rows`' argument: an order over no rows orders nothing,
+            // and on a phone it is 450 bytes of a control nobody sees.
+            // `script::PANES` brings the column and the order together.
             index_pane(book, &Asked::nothing(), None, "", drift, ""),
             read_pane(book, reading),
             notebook_bar(book, At::Notes),
@@ -1539,17 +1309,13 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
 
 /// The same note, for a reader who already has the page around it.
 ///
-/// **This is the whole of what a swap uses.** `script::PANES` fetches a note,
-/// takes `.pane.read` out of the answer and renames the tab; everything else it
-/// receives — the stylesheet, both scripts, the rail, the index pane's frame —
-/// is already on the screen it is putting the note into, and was measured at 48
-/// of the 52 KB a note page weighs. So a request that says it wants only this
-/// part gets only this part, out of the same function the whole page is built
-/// from.
+/// **The whole of what a swap uses.** Everything else a note page carries is
+/// already on the screen it is going into — 48 of the 52 KB, measured — so a
+/// request saying it wants this part gets this part, out of the same function
+/// the whole page is built from.
 ///
-/// It takes no `drift`: the chip that fact draws sits in the index pane's bar,
-/// which a swap does not replace. Not sending it means not working it out, so a
-/// note asked for this way costs one file read and no refs compared.
+/// No `drift`: that chip sits in the index pane's bar, which a swap does not
+/// replace, so a note asked for this way costs one file read and no refs.
 pub fn note_pane(book: &str, reading: &Reading) -> String {
     format!(
         "{}{}",
@@ -1562,9 +1328,8 @@ fn note_title(reading: &Reading) -> String {
     format!("{} — noda", reading.title)
 }
 
-/// The note itself, written once and sent by both answers above — which is what
-/// makes the shorter one a part of the longer one rather than a second opinion
-/// about the same note.
+/// Written once and sent by both answers above, which is what makes the shorter
+/// one a part of the longer rather than a second opinion.
 fn read_pane(book: &str, reading: &Reading) -> String {
     let at = format!("/nb/{}/n/{}", escape(book), escape(&reading.id));
     let meta = [
@@ -1577,31 +1342,23 @@ fn read_pane(book: &str, reading: &Reading) -> String {
     .collect::<Vec<_>>()
     .join("<span class=\"sep\">·</span>");
 
-    // The box, and not the answer in it. What points at a note is a walk of
-    // every note in the notebook — about 8% on top of what `ls` already costs,
-    // measured, but all of it spent on a column no screen under 1440px draws.
-    // So the server writes the empty box and `script::BESIDE` fills it, on the
-    // widths where it shows. Sent `hidden`, and it stays that way until there is
-    // something in it: a reader with no script gets the note and the Links
-    // button, which is the page this has always been.
+    // The box, not the answer in it: what points at a note is a walk of every
+    // note — +8% on `ls`, measured — spent on a column no screen under 1440px
+    // draws. `script::BESIDE` fills it where it shows; sent `hidden`, so a
+    // scriptless reader gets the note and the Links button.
     let beside = "<aside class=\"beside\" hidden><div class=\"pane-head\">Backlinks</div>\
                   <div class=\"answer\"></div></aside>";
-    // Nothing marked as current: a note's bar is five things to do *to* the note
-    // you are already on, and there is no "here" among them to be at.
+    // Nothing marked as current: five things to do *to* the note you are on,
+    // with no "here" among them.
     //
-    // **Delete is on it, and it used to be a line past the end of the prose.**
-    // The argument for putting it there was that the one action that cannot be
-    // undone by doing it again should cost a scroll of the whole note to reach.
-    // What that missed is that the friction was already built and is somewhere
-    // else: `/delete` is a confirmation page, so a thumb that lands here spends
-    // a page and never a note. Hiding the way in bought no safety the
-    // confirmation was not already providing, and it cost a reader who does not
-    // already know the notebook the knowledge that a note can be deleted at all.
+    // **Delete is on it, and used to be a line past the end of the prose.** The
+    // friction that was meant to buy is already built elsewhere: `/delete` is a
+    // confirmation page, so a thumb landing here spends a page and never a note.
+    // Hiding the way in only cost a new reader the knowledge that a note can be
+    // deleted at all.
     //
-    // It goes last, so the four that were here keep the positions a hand has
-    // learned — the rule this project applies to a listing's row applies to its
-    // chrome — and it is the only item on any bar in this interface that carries
-    // a colour.
+    // Last, so the four that were here keep the positions a hand has learned,
+    // and the only item on any bar that carries a colour.
     let bar = action_bar(&[
         (EDIT, "Edit", format!("{at}/edit"), Mark::Plain),
         (TAGS, "Tags", format!("{at}/tags"), Mark::Plain),
@@ -1622,10 +1379,8 @@ fn read_pane(book: &str, reading: &Reading) -> String {
          <div class=\"body\">{}</div>\
          {beside}</main>{bar}</section>",
         back(&home, book),
-        // The note, not the notebook. On a phone this bar is the whole
-        // chrome and either would do; beside an index pane already headed
-        // with the notebook's name, repeating it says nothing and the one
-        // thing the bar could have said goes unsaid.
+        // The note, not the notebook: beside an index pane already headed with
+        // the notebook's name, repeating it says nothing.
         escape(&reading.title),
         escape(&reading.title),
         escape(&reading.id),
@@ -1634,14 +1389,12 @@ fn read_pane(book: &str, reading: &Reading) -> String {
     )
 }
 
-/// What every form page is wrapped in: a bar with a way back, an optional line
-/// saying what went wrong, and the form itself.
+/// A bar with a way back, an optional line saying what went wrong, and the form.
 ///
-/// **`<main>` around both, and it is not decoration.** The wide layout puts one
-/// column down the middle of the screen by capping `main`, so anything outside
-/// it runs the whole width of a monitor — which is what every form page did
-/// until now: a topbar neatly in its column with a textarea stretching past it
-/// on both sides. The element was missing, not the rule.
+/// **`<main>` around both, and it is not decoration**: the wide layout caps
+/// `main` to make its column, so anything outside runs the whole width of a
+/// monitor — which is what every form page did, a topbar neatly in its column
+/// with a textarea stretching past it.
 fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
     shell(
         &format!("{title} — noda"),
@@ -1690,10 +1443,8 @@ pub fn composing(book: &str, draft: &Draft, problem: Option<&str>) -> String {
     )
 }
 
-/// A note's body, in a box.
-///
 /// `was` is the fingerprint the file had when this page was drawn, carried
-/// through the form so the write can tell whether anything happened in between.
+/// through the form so the write can tell whether anything happened since.
 pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option<&str>) -> String {
     form_page(
         book,
@@ -1720,10 +1471,9 @@ pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option
 /// The note changed under the reader, and neither version has been lost.
 ///
 /// What is on disk is shown first and cannot be typed into; what they wrote is
-/// underneath and still can be. That arrangement is the whole answer: it needs
-/// no "keep mine" button, because saving *is* keeping theirs and cancelling is
-/// discarding it, and it leaves room for the only thing a person can do that a
-/// program cannot — decide what the two versions together should say.
+/// underneath and still can be. That needs no "keep mine" button — saving *is*
+/// keeping theirs — and leaves room for the one thing a program cannot do:
+/// decide what the two versions together should say.
 pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -> String {
     form_page(
         book,
@@ -1772,18 +1522,14 @@ pub fn renaming(book: &str, about: &About, title: &str, problem: Option<&str>) -
     )
 }
 
-/// Which tags the note should end up with.
-///
 /// A ticked box per tag it has, and a field for ones it does not. The form says
-/// what should survive; working out the `+`s and `-`s from that is the server's
-/// job, because `+work -q3` is a notation for somebody with a keyboard.
+/// what survives; the `+`s and `-`s are the server's job, `+work -q3` being a
+/// notation for somebody with a keyboard.
 ///
-/// **The field takes as many tags as you can type into it**, because it is cut
-/// by `query::split` — the same splitter the search box and the `:` prompt use,
-/// so a space separates and a quote holds one together. It says so, and shows a
-/// quoted tag in the placeholder rather than describing one: the field read as
-/// a one-tag field for as long as its label was singular, which made a thing
-/// the server had always done impossible to find.
+/// **The field takes as many tags as you can type**, being cut by `query::split`
+/// — a space separates, a quote holds one together. The placeholder shows a
+/// quoted tag rather than describing one: while the label was singular the field
+/// read as a one-tag field, which hid something the server always did.
 pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>) -> String {
     let mut boxes = String::new();
     for (n, tag) in tags.iter().enumerate() {
@@ -1822,24 +1568,17 @@ pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>
     )
 }
 
-/// The last chance to not.
-///
-/// It says what git makes true — the note can be brought back — because that is
-/// the difference between this and every other notes application, and a warning
-/// that overstates the danger teaches people to click through warnings.
+/// It says what git makes true — the note can be brought back — because a
+/// warning that overstates the danger teaches people to click through warnings.
 pub fn deleting(book: &str, about: &About) -> String {
     form_page(
         book,
         "Delete",
         &about.at(book),
-        // In the slot every other form page says its piece from, and this one
-        // had it inside the form. `.said` is a strip across the top of a pane —
-        // its own padding, and a rule under it that reaches both edges — so a
-        // copy nested inside a padded form was inset twice: the words sat 16px
-        // to the right of the button they were about (32px on anything wider
-        // than a phone), under a rule that stopped short at either end. Moving
-        // it is the fix rather than unpicking the padding, because the strip
-        // was never a thing to put inside a form.
+        // The slot every other form page speaks from; this one had it inside
+        // the form. `.said` is a strip with its own padding and a rule reaching
+        // both edges, so nesting it inset the words twice and stopped the rule
+        // short. The strip was never a thing to put inside a form.
         &format!(
             "<p class=\"said\"><b>Delete {}?</b> The file goes and the commit that \
              removed it stays, so <code>noda restore</code> brings it back with its id.</p>",
@@ -1855,12 +1594,8 @@ pub fn deleting(book: &str, about: &About) -> String {
     )
 }
 
-/// Where a notebook stands, and what its remote knows about it.
-///
-/// The same facts `noda status` prints, already in words: which branch, how much
-/// is uncommitted, whether there is a remote and how far the two have drifted.
-/// Worked out by the caller rather than here, on the rule the rest of this file
-/// keeps — the page arranges what it is given and decides nothing.
+/// `noda status`'s facts, already in words. Worked out by the caller, on this
+/// file's rule: the page arranges what it is given and decides nothing.
 pub struct Standing {
     pub branch: String,
     pub notes: usize,
@@ -1878,9 +1613,8 @@ pub struct Standing {
 pub struct Errand<'a> {
     /// `Syncing` / `Pulling` / `Pushing`, for while it is happening.
     pub doing: &'a str,
-    /// `Synced`, or `Sync failed`, for once it has. Chosen by the caller rather
-    /// than worked out here, because it is the same choice the failure colour
-    /// below is made from and one fact should be read once.
+    /// Chosen by the caller, being the same choice the failure colour is made
+    /// from — one fact read once.
     pub done: &'a str,
     /// What it printed, or what went wrong. `None` while it is still going.
     pub said: Option<&'a str>,
@@ -1888,15 +1622,13 @@ pub struct Errand<'a> {
     pub seconds: u64,
 }
 
-/// The network screen: where the notebook stands, and the three ways to move it.
+/// Where the notebook stands, and the three ways to move it.
 ///
 /// **The buttons are `POST`s and the page is a `GET`, and that is the whole
-/// design.** A sync is a fetch over somebody's tailnet — it takes as long as it
-/// takes, and a request held open for it would leave a phone showing nothing.
-/// So the press starts the errand and the answer is a redirect back here, which
-/// means a reload asks how it is going rather than doing it again. While one is
-/// running the page brings itself back for news; when it stops, the refresh
-/// stops with it.
+/// design.** A sync takes as long as the network takes, and a request held open
+/// would leave a phone showing nothing — so the press starts the errand and
+/// redirects back, and a reload asks how it is going rather than doing it again.
+/// While one runs the page comes back for news; when it stops, so does that.
 pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
     let at = escape(book);
     dressed(
@@ -1915,20 +1647,14 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     )
 }
 
-/// The news, without the screen it is news on.
-///
-/// The only fetch here that repeats: while an errand runs, `script::STANDING`
-/// asks again every two seconds, and until now each of those answers carried
-/// the whole stylesheet to move one line of text. What the script takes is the
-/// `<main>` and one fact from the head — whether the scriptless page would have
-/// come back for more — so both go out and nothing else does.
+/// The only fetch here that repeats: while an errand runs `script::STANDING`
+/// asks every two seconds, and a whole answer carried the stylesheet to move one
+/// line of text. What it takes is the `<main>` and one fact from the head.
 ///
 /// **Whether to poll again is still the server's decision, said the way the
-/// scriptless page hears it.** `<meta http-equiv="refresh">` is what a page with
-/// no script steers by; the script reads that meta rather than deciding for
-/// itself, so a fragment that dropped it would be the script inventing a stop
-/// condition. It is the same `refresh` the whole page writes, from the same
-/// number.
+/// scriptless page hears it**: the script reads the same `refresh` meta rather
+/// than deciding, so dropping it would be the script inventing a stop
+/// condition.
 pub fn standing_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
     format!(
         "{}{}",
@@ -1937,12 +1663,10 @@ pub fn standing_main(book: &str, standing: &Standing, errand: Option<&Errand>) -
     )
 }
 
-/// How long the network screen waits before asking again, in seconds. One
-/// number, read by the meta the browser obeys and by the poll that replaces it.
+/// One number, read by the meta the browser obeys and the poll replacing it.
 const AGAIN_IN: u32 = 2;
 
-/// Whether an errand is still running — which is the whole of what "come back
-/// for more" means here.
+/// The whole of what "come back for more" means here.
 fn working(errand: Option<&Errand>) -> bool {
     errand.is_some_and(|errand| errand.said.is_none())
 }
@@ -1988,8 +1712,8 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
             row("Remote", url, true);
             row("Drift", &standing.drift, false);
         }
-        // The remedy, not just the fact: a notebook with no remote cannot sync,
-        // and the command that gives it one is not on any screen here.
+        // The remedy, not just the fact: the command that sets a remote is not
+        // on any screen here.
         None => row(
             "Remote",
             "none — set one with `noda remote set <url>`",
@@ -2003,18 +1727,15 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     let said = match errand {
         None => String::new(),
         Some(errand) => match errand.said {
-            // Still going, and how long it has been going. A count of seconds
-            // rather than a bar: nothing here knows how long a fetch will take,
-            // and a bar that guessed would be the only thing on these pages that
-            // is not true.
+            // Seconds rather than a bar: nothing knows how long a fetch takes,
+            // and a bar that guessed would be the one untrue thing here.
             None => format!(
                 "<p class=\"said working\"><b>{}…</b> {}</p>",
                 escape(errand.doing),
                 plural(errand.seconds as usize, "second")
             ),
-            // What the command printed, whole. Not summarised into a tick: the
-            // three lines `sync` prints are the difference between "it worked"
-            // and "it worked, and here is what it did".
+            // Whole, not summarised into a tick: the three lines `sync` prints
+            // are the difference between "it worked" and what it did.
             Some(said) => format!(
                 "<p class=\"said{}\"><b>{}</b><span class=\"outcome\">{}</span></p>",
                 if errand.failed { " bad" } else { "" },
@@ -2024,10 +1745,8 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
         },
     };
 
-    // Disabled while one is running, and the reason is honesty rather than
-    // safety: a second press is already refused by the server, so what the
-    // greying out prevents is not a second sync but the belief that the first
-    // one did not land.
+    // Honesty rather than safety: the server already refuses a second press, so
+    // the greying prevents the belief that the first did not land.
     let busy = working(errand);
     let at = escape(book);
     let mut buttons = String::new();
@@ -2036,10 +1755,8 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
             buttons,
             "<form method=\"post\" action=\"/nb/{at}/status/{errand}\">\
              <button class=\"{}\" type=\"submit\"{}>{label}</button></form>",
-            // The accent is on the one that is nearly always right, and the
-            // other two are ordinary buttons. Said in colour rather than in
-            // layout, so all three stay one row on a phone and three sensible
-            // widths on a monitor.
+            // The accent on the one nearly always right, said in colour rather
+            // than layout so all three stay one row on a phone.
             if errand == "sync" { "go" } else { "" },
             if busy { " disabled" } else { "" }
         );
@@ -2051,11 +1768,9 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     )
 }
 
-/// Something went wrong, said in the interface's voice.
-///
-/// No apology and no blame. What was asked for, why it could not be answered,
-/// and the way back — which on a page with no navigation of its own is the only
-/// thing that makes it not a dead end.
+/// No apology and no blame: what was asked for, why it could not be answered,
+/// and the way back — which on a page with no navigation of its own is what
+/// makes it not a dead end.
 pub fn failure(heading: &str, detail: &str) -> String {
     shell(
         &format!("{heading} — noda"),
@@ -2082,16 +1797,13 @@ fn when(updated: Option<&str>) -> String {
     })
 }
 
-/// One of a note's own stamps, exactly as the file holds it.
+/// The `Z` or `+08:00` comes with it, which is the point: the one place with
+/// room for the whole thing, and the whole thing is the only version that cannot
+/// be misread. It is also what a scriptless reader keeps.
 ///
-/// The `Z` or the `+08:00` comes with it, which is the point: this is the one
-/// place with room for the whole thing, and the whole thing is the only version
-/// that cannot be misread. It is also what a reader with no script keeps.
-///
-/// `data-clock` is the note page saying that this stamp has room for a time of
-/// day and a listing's has not. It rides on this one rather than on the
-/// listing's because the listing is where bytes are counted: a note page sends
-/// one of these twice and a listing sends its own once per note.
+/// `data-clock` says this stamp has room for a time of day and a listing's has
+/// not. It rides here because a note page sends two and a listing sends one per
+/// note.
 fn stamp(what: &str, value: Option<&str>) -> String {
     value.map_or_else(String::new, |value| {
         let value = escape(value);
@@ -2108,21 +1820,15 @@ fn plural(count: usize, thing: &str) -> String {
     }
 }
 
-/// The layout, for `asset.rs` to serve and for the tests that have to read it.
-///
 /// `script.rs` writes the split breakpoint a second time, and the two numbers
-/// have to agree. Exposing the sheet is how that is checked rather than
-/// asserted twice in prose.
+/// have to agree. Exposing the sheet is how that is checked.
 pub(crate) fn stylesheet() -> &'static str {
     CSS
 }
 
-/// The whole of the layout.
-///
 /// Mobile first, because that is what this exists for. Two numbers run through
 /// it: `--tap`, which no control may be smaller than, and the 16px on the search
-/// field — below that, iOS Safari zooms the page when the field takes focus and
-/// leaves the reader pinching their way back out.
+/// field — below that, iOS Safari zooms on focus.
 const CSS: &str = "\
 *{box-sizing:border-box}\
 /* The browser's own `[hidden]{display:none}` loses to any author rule that \
@@ -2759,17 +2465,12 @@ align-self:stretch}}\
 mod tests {
     use super::*;
 
-    /// The two screens that lay their rows out in columns must stop doing it
-    /// when there are no rows.
+    /// `.rows.cols` flows whatever it holds, including an empty state that is
+    /// one sentence of prose — which came out as "No tags yet" alone in the
+    /// first column and the invitation broken across the next three.
     ///
-    /// `.rows.cols` is a multi-column box, and it flows whatever it holds —
-    /// including the empty state, which is one sentence of prose. On a monitor
-    /// that came out as "No tags yet" alone in the first column and the
-    /// invitation broken across the next three, with a `column-rule` hairline
-    /// drawn through the middle of the sentence. Asserted on the class rather
-    /// than on the layout because the class is the whole of the decision: no
-    /// script adds or removes it, so the markup the server sends is the markup
-    /// the browser lays out.
+    /// Asserted on the class, which is the whole of the decision: no script adds
+    /// or removes it.
     #[test]
     fn an_empty_screen_is_not_poured_into_columns() {
         let no_tags = tags("work", &[]);
@@ -2780,8 +2481,7 @@ mod tests {
         assert!(no_files.contains("No files yet"), "{no_files}");
         assert!(no_files.contains("<main class=\"rows\">"), "{no_files}");
 
-        // And the columns are still there the moment there is something to put
-        // in them, which is what they were written for.
+        // And still there the moment there is something to put in them.
         let some_tags = tags(
             "work",
             &[Tally {
@@ -2820,10 +2520,9 @@ mod tests {
         );
     }
 
-    /// The body arrives already rendered and is written out as it stands — this
-    /// page escapes everything else and must not escape this. What keeps a
-    /// note's own raw HTML from becoming markup is a floor down, in `render`,
-    /// which is where the tests for it are.
+    /// Already rendered and written out as it stands: this page escapes
+    /// everything else and must not escape this. What keeps a note's raw HTML
+    /// from becoming markup is `render`, which is where those tests are.
     #[test]
     fn the_rendered_body_is_written_out_as_it_stands() {
         let page = note(
@@ -2842,9 +2541,8 @@ mod tests {
         assert!(page.contains("<p>a <em>rendered</em> note</p>"), "{page}");
     }
 
-    /// A listing shows the day. Showing the minute would mean either printing a
-    /// UTC clock that reads as a local one, or converting into this server's
-    /// zone — and a note was not written where the server is.
+    /// The minute would be either a UTC clock reading as a local one, or a
+    /// conversion into a zone the note was not written in.
     #[test]
     fn a_listing_shows_the_day_and_never_a_clock() {
         assert_eq!(day("2019-03-14T16:21:00+08:00"), "2019-03-14");
@@ -2854,17 +2552,14 @@ mod tests {
         assert_eq!(day(""), "");
     }
 
-    /// The note's own page prints both stamps whole, `Z` and all, the way `ls
-    /// -l` does — this is where the minute lives, and where it can be read
-    /// correctly because the zone came with it.
+    /// Both stamps whole, `Z` and all, as `ls -l` prints them: the minute can be
+    /// read correctly here because the zone came with it.
     ///
-    /// **What is asserted is the page a reader with no script gets**, which is
-    /// the only rendering this file is responsible for. Saying the same instant
-    /// in the reader's own zone is `script::STAMPS`'s job and cannot be done
-    /// from here at all: nothing in a request says where the reader is. What
-    /// this page owes that script is a machine-readable stamp to convert from,
-    /// which is what the `datetime` is, and a `data-clock` to say that this one
-    /// has room for a time of day where a listing's has not.
+    /// **What is asserted is the page a reader with no script gets.** The
+    /// reader's own zone is `script::STAMPS`'s job and cannot be done from here
+    /// — nothing in a request says where the reader is. What this page owes that
+    /// script is the `datetime` to convert from and the `data-clock` saying this
+    /// stamp has room for a time of day.
     #[test]
     fn the_note_page_prints_both_stamps_as_the_file_holds_them() {
         let page = note(
@@ -2891,8 +2586,7 @@ mod tests {
                 "{page}"
             );
         }
-        // The label is outside the element, so what the script overwrites is
-        // the stamp and never the word in front of it.
+        // The label is outside, so the script overwrites only the stamp.
         assert!(!page.contains(">created 20"), "{page}");
     }
 
@@ -2904,8 +2598,8 @@ mod tests {
         assert_eq!(highlight("a & b", &[]), "a &amp; b");
     }
 
-    /// Two terms that overlap mark one run. Nested `<mark>` would draw the
-    /// overlap twice as dark, which reads as a third kind of match.
+    /// Nested `<mark>` would draw the overlap twice as dark, reading as a
+    /// third kind of match.
     #[test]
     fn overlapping_terms_mark_one_run() {
         let out = highlight(
@@ -2926,12 +2620,9 @@ mod tests {
         }
     }
 
-    /// **The listing's address does not change until somebody asks it to.**
-    ///
-    /// `slug` is the order a listing has always been in, so it is the one the
-    /// bare address means, and every link anybody has ever bookmarked still
-    /// names the page it named. It also keeps there being one address for the
-    /// default listing rather than a plain one and a spelled-out one.
+    /// **The listing's address does not change until somebody asks it to**, so
+    /// every bookmark still names the page it named — and there is one address
+    /// for the default listing rather than a plain and a spelled-out one.
     #[test]
     fn the_default_order_writes_no_parameter_and_the_rest_write_one() {
         let page = listing(
@@ -2943,27 +2634,23 @@ mod tests {
             None,
         );
         assert!(page.contains("<nav class=\"sortbar\""), "{page}");
-        // The one in force is the bare address, because it is the one in force
-        // and the default: pressing it turns it round, and that is the only
-        // thing on this row that writes `r=1`.
+        // The one in force is the bare address, and pressing it turns it round
+        // — the only thing on this row that writes `r=1`.
         assert!(page.contains("href=\"/nb/work?r=1\""), "{page}");
         assert!(page.contains("href=\"/nb/work?sort=created\""), "{page}");
         assert!(page.contains("href=\"/nb/work?sort=updated\""), "{page}");
         assert!(page.contains("href=\"/nb/work?sort=title\""), "{page}");
-        // And nothing in the form is carrying an order nobody asked for. A
-        // hidden field holding the default is a parameter that appears in the
-        // address the first time ⏎ is pressed and never leaves again.
+        // A hidden field holding the default appears in the address the first
+        // time ⏎ is pressed and never leaves.
         assert!(!page.contains("name=\"sort\""), "{page}");
         assert!(!page.contains("name=\"r\""), "{page}");
     }
 
-    /// Every order `--sort` accepts is on the screen, under the name it is
-    /// accepted by.
+    /// Every order `--sort` accepts, under the name it is accepted by.
     ///
-    /// The list is `Sort::ALL` rather than four literals, so an order added to
-    /// the command cannot quietly fail to reach the browser — which is the
-    /// direction this would go wrong in, the CLI being where an order gets
-    /// added.
+    /// `Sort::ALL` rather than four literals, so an order added to the command
+    /// cannot quietly fail to reach the browser — the direction this goes wrong
+    /// in, the CLI being where an order gets added.
     #[test]
     fn every_order_the_command_names_is_on_the_screen() {
         let page = listing(
@@ -2986,11 +2673,9 @@ mod tests {
     /// **Pressing the order in force turns it round; pressing another starts it
     /// the way that order means first.**
     ///
-    /// The second half is the one worth a test. `-r` is orthogonal at the
-    /// prompt and could have been carried across, but `updated` means
-    /// newest-first and `title` means A-to-Z, and a press that landed on the
-    /// opposite of what `--sort updated` gives is not what the chip looks like
-    /// it will do.
+    /// The second half is the one worth a test: `updated` means newest-first and
+    /// `title` A-to-Z, and landing on the opposite of `--sort updated` is not
+    /// what the chip looks like it will do.
     #[test]
     fn the_order_in_force_reverses_and_the_others_start_the_right_way_up() {
         let order = Order {
@@ -3007,8 +2692,7 @@ mod tests {
         assert!(page.contains("href=\"/nb/work?sort=title\""), "{page}");
         assert!(page.contains("href=\"/nb/work\""), "{page}");
 
-        // And once round the other way: the press that reversed it undoes it,
-        // which is the same chip going back to the address it came from.
+        // The press that reversed it undoes it, back to the same address.
         let back = listing(
             "work",
             &[],
@@ -3027,13 +2711,12 @@ mod tests {
         assert!(!back.contains(DOWNWARDS), "{back}");
     }
 
-    /// **A search and an order survive each other**, which takes both halves:
-    /// the chips carry what was typed, and the form carries the order.
+    /// **A search and an order survive each other**: the chips carry what was
+    /// typed and the form carries the order.
     ///
-    /// The second half is the one with no other way to work. A `GET` form sends
-    /// its own fields and nothing else, so without those two hidden inputs a
-    /// reader who ordered the listing and then searched it would get their notes
-    /// back in `slug` order with nothing on the screen to say why.
+    /// The second half has no other way to work — a `GET` form sends its own
+    /// fields and nothing else, so an ordered listing searched would come back
+    /// in `slug` order with nothing on screen to say why.
     #[test]
     fn an_order_and_a_search_survive_each_other() {
         let order = Order {
@@ -3051,14 +2734,12 @@ mod tests {
             "in sync",
             None,
         );
-        // What was typed, on every chip, encoded as an address and not as
-        // markup: a query holds spaces and may hold an `&`.
+        // Encoded as an address, not as markup: a query may hold an `&`.
         assert!(
             page.contains("href=\"/nb/work?q=tag%3Aq3%20budget&amp;sort=title\""),
             "{page}"
         );
-        // And the order, in the form, for the press that would otherwise drop
-        // it.
+        // And in the form, for the press that would otherwise drop it.
         assert!(
             page.contains("<input type=\"hidden\" name=\"sort\" value=\"created\">"),
             "{page}"
@@ -3071,10 +2752,8 @@ mod tests {
 
     /// **The stamp a row prints is the stamp the listing is ordered by.**
     ///
-    /// A row has room for one, and it is `updated` because a listing is about
-    /// what changed. But `created` order printing `updated` is a column of days
-    /// in no order beside a list claiming to be sorted, and there is no way to
-    /// tell that from a sort that is broken — both look like an answer.
+    /// `created` order printing `updated` is a column of days in no order beside
+    /// a list claiming to be sorted, which cannot be told from a broken sort.
     #[test]
     fn a_listing_ordered_by_created_prints_created() {
         let file = NoteFile {
@@ -3093,8 +2772,7 @@ mod tests {
             Row::of(&file, Sort::Created).stamp.as_deref(),
             Some("2019-03-14T16:21:00+08:00")
         );
-        // The two orders that are not about a time keep what a listing has
-        // always shown.
+        // The two orders that are not about a time keep `updated`.
         for sort in [Sort::Slug, Sort::Updated, Sort::Title] {
             assert_eq!(
                 Row::of(&file, sort).stamp.as_deref(),
@@ -3107,11 +2785,9 @@ mod tests {
 
     /// **A note page's index pane is a frame, and a frame has no order in it.**
     ///
-    /// The column it stands over is sent empty on purpose — a row is about 290
-    /// bytes and below 1024px not one of them is ever drawn — and the same
-    /// argument covers the order: it orders no rows, and on a phone it is a
-    /// control that is never on the screen. `script::PANES` fetches the column
-    /// and the order together, from the route that decides both.
+    /// The column is sent empty — about 290 bytes a row, none of it drawn below
+    /// 1024px — and the order follows: it orders no rows. `script::PANES`
+    /// fetches both from the route that decides them.
     #[test]
     fn a_note_page_is_sent_without_an_order_over_its_empty_column() {
         let reading = Reading {
@@ -3124,8 +2800,7 @@ mod tests {
             rendered: "<p>late</p>".into(),
         };
         let page = note("work", &reading, "in sync");
-        // The frame is there — the field a reader searches from is on a note
-        // page at every width, and it is the way back to the listing.
+        // The field is on a note page at every width, and is the way back.
         assert!(page.contains("<form class=\"searchbar\""), "{page}");
         assert!(!page.contains("class=\"sortbar\""), "{page}");
         assert!(!page.contains("name=\"sort\""), "{page}");
@@ -3170,10 +2845,8 @@ mod tests {
     }
 
     /// **The rows the query excluded are still on the page.** A listing the
-    /// script could only ever narrow further would make filtering-as-you-type
-    /// need a second copy of the notes to filter from, and that copy is the one
-    /// that goes stale. `hidden` is the browser's own attribute, so the
-    /// scriptless page hides them with nothing of noda's involved.
+    /// script could only narrow would need a second copy to filter from, and
+    /// that copy goes stale. `hidden` is the browser's own attribute.
     #[test]
     fn an_excluded_row_rides_along_hidden_and_unmarked() {
         let rows = [
@@ -3201,12 +2874,11 @@ mod tests {
             page.contains("<a class=\"row\" hidden href=\"/nb/work/n/em0x\""),
             "{page}"
         );
-        // The one that is shown says why it is; the one that is not carries its
-        // title as it stands, which is the state the script would put it in
-        // anyway when a different query lets it back through.
+        // The shown one says why; the hidden one carries its title as it
+        // stands, where the script would leave it anyway.
         assert!(page.contains("<mark>Budget</mark>"), "{page}");
         assert!(page.contains(">Reading list</div>"), "{page}");
-        // And the count is of what is on the screen, out of what is on the page.
+        // The count is of what is on screen, out of what is on the page.
         assert!(page.contains(">1 of 2<"), "{page}");
     }
 
@@ -3222,15 +2894,13 @@ mod tests {
         );
         assert!(page.contains("No notes yet"), "{page}");
         assert!(page.contains("noda add"), "{page}");
-        // Not the other empty. A notebook with nothing in it is not a query
-        // that found nothing, and no amount of typing turns one into the other.
+        // A notebook with nothing in it is not a query that found nothing.
         assert!(!page.contains("No notes match"), "{page}");
     }
 
-    /// The listing carries the sentence and the sentence is switched off. What
-    /// the script decides is *when* it applies — never what it says, because a
-    /// sentence living inside a script is one nothing else can test the wording
-    /// of.
+    /// The page carries the sentence, switched off. The script decides *when*
+    /// it applies — never what it says, a sentence living inside a script being
+    /// one nothing can test.
     #[test]
     fn the_hint_is_written_by_the_page_and_hidden_by_it() {
         let page = listing(
@@ -3267,9 +2937,8 @@ mod tests {
         assert!(page.contains(">.md</span>"), "{page}");
     }
 
-    /// A row with no tags must not print an empty separator where they would
-    /// have been. Tags are the one thing a note may not have, which is why they
-    /// go last everywhere else too.
+    /// Tags are the one thing a note may not have, which is also why they go
+    /// last everywhere else.
     #[test]
     fn a_row_without_tags_prints_no_separator() {
         let rows = [Row {
@@ -3289,15 +2958,13 @@ mod tests {
         );
         assert!(!page.contains("·"), "{page}");
         assert!(page.contains("2026-08-12"), "{page}");
-        // **The clock is not shown in a listing, and now it is in one.** The
-        // stamp had to arrive whole — an instant cannot be moved into somebody
-        // else's zone without the time of day in it — so what the rule was
-        // always about has to be said precisely: not that the characters are
-        // absent from the bytes, but that no reader is ever shown them. A UTC
-        // clock with its `Z` cut off to fit a row reads as a local one, wrong
-        // by whatever the reader's offset is and wrong in a way nothing on the
-        // page admits to. In an attribute it is machine-readable, carries its
-        // `Z`, and is read by the one thing that knows where the reader is.
+        // **The clock is not shown in a listing, and now it is in one.** An
+        // instant cannot be moved into another zone without the time of day, so
+        // the rule is that no reader is *shown* it, not that the bytes lack it.
+        // A UTC clock with its `Z` cut off reads as a local one, wrong by the
+        // reader's offset and in a way nothing on the page admits to. In an
+        // attribute it keeps its `Z` and is read by the one thing that knows
+        // where the reader is.
         for shown in page
             .split('>')
             .skip(1)
@@ -3307,9 +2974,9 @@ mod tests {
         }
     }
 
-    /// The signature, on the listing's side: a row is `ls -l`'s row, in `ls
-    /// -l`'s order. The id leads, tags come last, and the day is written twice
-    /// because only one of the two places it can go is on screen at a time.
+    /// A row is `ls -l`'s row in its order: the id leads, tags come last, and
+    /// the day is written twice because only one of its places is ever on
+    /// screen.
     #[test]
     fn a_row_prints_the_columns_ls_dash_l_prints_in_that_order() {
         let page = listing(
@@ -3328,9 +2995,7 @@ mod tests {
             ),
             "{page}"
         );
-        // Tags last, which is the order `-l` prints and the one thing about it
-        // that is a decision rather than a habit: they are the column a note
-        // may not have.
+        // Tags last: the column a note may not have.
         let under = page.split("<div class=\"under\">").nth(1).unwrap();
         assert!(
             under.starts_with(
@@ -3341,8 +3006,8 @@ mod tests {
         );
     }
 
-    /// The other signature: `a OR b c` is `(a OR b) AND c`, drawn rather than
-    /// explained. Every word in it is the reader's own.
+    /// `a OR b c` is `(a OR b) AND c`, drawn rather than explained, in the
+    /// reader's own words.
     #[test]
     fn the_field_draws_the_grouping_it_arrived_at() {
         let grouping = [
@@ -3372,9 +3037,8 @@ mod tests {
         );
     }
 
-    /// Half a query has no grouping, and the box that would hold one is written
-    /// anyway — the same arrangement as the hint, for the same reason: what the
-    /// script decides is when it applies, never what it says.
+    /// The box is written anyway, as the hint is: the script decides when it
+    /// applies, never what it says.
     #[test]
     fn a_line_that_is_not_a_query_yet_is_grouped_into_nothing() {
         let page = listing(
@@ -3399,9 +3063,8 @@ mod tests {
         );
     }
 
-    /// A note route sends the pane's frame with the field in it and nothing
-    /// asked. The box is there for the script to fill; the count is not, because
-    /// a count of rows nobody has is not a fact yet.
+    /// The frame with the field in it and nothing asked: the box is there for
+    /// the script, the count is not, a count of rows nobody has being no fact.
     #[test]
     fn a_note_page_sends_the_search_field_with_nothing_asked_of_it() {
         let page = note(
@@ -3424,9 +3087,8 @@ mod tests {
         assert!(page.contains("<span class=\"count\"></span>"), "{page}");
     }
 
-    /// A term written to be matched against a note's text, put on the screen as
-    /// the reader's own words. Everything in the grouping came off the query
-    /// line, so it is the query line that must not be able to write markup.
+    /// Everything in the grouping came off the query line, so it is the query
+    /// line that must not be able to write markup.
     #[test]
     fn a_grouping_cannot_write_markup_into_the_page() {
         let grouping = [vec!["<script>x</script>".to_string()]];
@@ -3446,10 +3108,9 @@ mod tests {
         assert!(!page.contains("<script>x"), "{page}");
     }
 
-    /// The viewport is the page's own — it is about this document and cannot be
-    /// linked — and the two themes are in the sheet it links. Both are checked
-    /// here because the pair is the claim: a page says how wide it is to be
-    /// read at, and where to get the rest.
+    /// The viewport is the page's own and the themes are in the sheet it links.
+    /// The pair is the claim: a page says how wide it is read at, and where to
+    /// get the rest.
     #[test]
     fn every_page_names_the_viewport_and_links_the_sheet_that_holds_both_themes() {
         let page = listing(
@@ -3482,15 +3143,12 @@ mod tests {
         }
     }
 
-    /// **The whole of the fragment contract, said as four assertions.** A
-    /// request that names a part gets that part and the page is what it was cut
-    /// out of — so the answers cannot come to disagree, whatever either of them
-    /// grows into. A rendering that only the shorter answer went through would
-    /// be a second interface with nothing checking it against the first.
+    /// **The whole of the fragment contract, said as four assertions.** A part
+    /// is what the page was cut out of, so the two cannot come to disagree
+    /// whatever either grows into.
     ///
-    /// Containment is the check because containment is the claim. Nothing here
-    /// compares two renderings for looking alike; the page and the fragment are
-    /// the same bytes, from one function, or this fails.
+    /// Containment is the check because containment is the claim: nothing here
+    /// compares two renderings for looking alike.
     #[test]
     fn a_fragment_is_a_piece_of_the_page_it_came_from() {
         let (title, pane) = note_pane("work", &reading())
@@ -3542,8 +3200,7 @@ mod tests {
         let news = standing_main("work", &still(), None);
         assert!(standing("work", &still(), None).contains(&news), "{news}");
 
-        // Two parts off one route, and the wider of them carries the tab's name
-        // the way a note's does — so it is checked in halves, like that one.
+        // Two parts off one route, the wider carrying the tab's name.
         let both = listing_screen(
             "work",
             &rows,
@@ -3566,21 +3223,18 @@ mod tests {
         );
         assert!(page.contains(&title), "{page}");
         assert!(page.contains(&panes), "{page}");
-        // And it is both panes: the one that goes back is the one that has to
-        // put the reading side right as well.
+        // Both panes: going back has to put the reading side right too.
         assert!(panes.contains("class=\"pane index\""), "{panes}");
         assert!(panes.contains("class=\"pane read\""), "{panes}");
         assert!(panes.contains("Read me"), "{panes}");
     }
 
-    /// And what it leaves out is the reason for it: none of this is on the
-    /// screen the fragment is going into, because it is already there.
+    /// What it leaves out is the reason for it: none of that is on the screen
+    /// the fragment goes into.
     ///
-    /// It used to be able to say how much — 48 of a note page's 52 KB — and it
-    /// cannot any more, because `asset.rs` took the same 46 KB off the page as
-    /// well. What is left to check is the shape: the fragment is the pane and
-    /// nothing around it, and the page around it is four addresses rather than
-    /// the bytes behind them.
+    /// It used to say how much — 48 of a note page's 52 KB — and cannot now that
+    /// `asset.rs` took the same 46 KB off the page. What is left is the shape:
+    /// the pane and nothing around it, against four addresses.
     #[test]
     fn a_fragment_carries_none_of_the_page_around_it() {
         let fragment = note_pane("work", &reading());
@@ -3597,9 +3251,8 @@ mod tests {
 
         let page = note("work", &reading(), "in sync");
         assert!(fragment.len() < page.len(), "{fragment}");
-        // And the page itself no longer carries what it links. The needle is a
-        // declaration only the stylesheet holds, so finding it on a page would
-        // mean the sheet had been written back into one.
+        // The needle is a declaration only the stylesheet holds, so finding it
+        // on a page means the sheet was written back into one.
         assert!(
             !page.contains("--tap:48px"),
             "the stylesheet is back inside the page"
@@ -3610,11 +3263,9 @@ mod tests {
         );
     }
 
-    /// The one fact the network screen's fragment carries out of the head, and
-    /// the one that would be a decision if the script made it: whether to come
-    /// back. It is the server's own `<meta>`, written by the same function the
-    /// whole page writes it with — the script reads it there rather than
-    /// working out for itself whether an errand is still running.
+    /// The one fact carried out of the head, and the one that would be a
+    /// decision if the script made it. The server's own `<meta>`, from the same
+    /// function the whole page uses.
     #[test]
     fn the_news_says_whether_to_come_back_the_way_the_page_does() {
         let running = Errand {
@@ -3631,7 +3282,7 @@ mod tests {
             "the whole page stopped asking to come back"
         );
 
-        // And when there is nothing to wait for, neither of them says to.
+        // Nothing to wait for, and neither says to.
         let quiet = standing_main("work", &still(), None);
         assert!(!quiet.contains("http-equiv"), "{quiet}");
         assert!(quiet.starts_with("<main>"), "{quiet}");
@@ -3649,9 +3300,9 @@ mod tests {
         }
     }
 
-    /// The box, sent empty and closed. What goes in it is a walk of every note
-    /// in the notebook, and a note page reads one file — so the walk happens
-    /// where the column is drawn or it does not happen at all.
+    /// Sent empty and closed: what goes in it is a walk of every note, and a
+    /// note page reads one file — so the walk happens where the column is drawn
+    /// or not at all.
     #[test]
     fn the_note_page_sends_the_margin_note_empty_and_hidden() {
         let page = note("work", &reading(), "in sync");
@@ -3660,10 +3311,9 @@ mod tests {
         assert!(page.contains(">Backlinks</div>"), "{page}");
     }
 
-    /// Hidden is hidden at every width. `display:block` on a class chain
-    /// out-ranks the `hidden` attribute, so the rule that draws the column has
-    /// to say it does not apply to a closed one — otherwise a reader with no
-    /// script gets a heading over an empty column, forever.
+    /// `display:block` on a class chain out-ranks the `hidden` attribute, so the
+    /// rule drawing the column has to exempt a closed one — or a scriptless
+    /// reader gets a heading over an empty column forever.
     #[test]
     fn the_margin_note_is_drawn_only_when_it_holds_something() {
         let sheet = stylesheet();
@@ -3674,11 +3324,9 @@ mod tests {
         );
     }
 
-    /// Deleting is on the bar now, and the assertions are about the two things
-    /// that were argued over rather than about the markup: that it is *there*,
-    /// and that it is the only item wearing the colour. The count matters — a
-    /// second `danger` on this page would mean the mark had stopped saying
-    /// "this one is not like the rest of the row".
+    /// The two things argued over rather than the markup: that Delete is
+    /// *there*, and that it is the only item wearing the colour — a second
+    /// `danger` would mean the mark had stopped saying anything.
     #[test]
     fn the_note_bar_carries_delete_and_marks_only_that() {
         let page = note("work", &reading(), "in sync");
@@ -3688,16 +3336,14 @@ mod tests {
         );
         assert_eq!(page.matches("class=\"danger\"").count(), 1, "{page}");
         assert!(page.contains("<span>Delete</span>"), "{page}");
-        // The line past the end of the prose is gone rather than doubled up
-        // with the bar: one action reached two ways is a page you have to read.
+        // Gone rather than doubled up with the bar: one action reached two
+        // ways is a page you have to read.
         assert!(!page.contains("perilous"), "{page}");
     }
 
-    /// The strip a form page says its piece from sits above the form, where its
-    /// own padding is the pane's and the rule under it reaches both edges. The
-    /// delete page had a copy of it *inside* the form, inset a second time by
-    /// the form's own padding — the words 16px to the right of the button they
-    /// were about. This is the assertion that keeps it out.
+    /// The strip sits above the form, where its padding is the pane's and its
+    /// rule reaches both edges. The delete page had one *inside* the form, inset
+    /// twice and 16px right of the button it was about.
     #[test]
     fn the_delete_page_says_its_piece_from_outside_the_form() {
         let about = About::of("em0xvn4e", "budget-review", "Budget review");
@@ -3707,10 +3353,9 @@ mod tests {
         assert!(said < form, "the paragraph is back inside the form: {page}");
     }
 
-    /// The reading pane on the listing route is a README in the same
-    /// `main.note`, and it has no aside. The wide grid reserves a column for
-    /// one, so it has to ask whether a note is being read — `at-note` — or the
-    /// README ends up shoved off centre by 236px of nothing.
+    /// The README stands in the same `main.note` and has no aside, but the wide
+    /// grid reserves a column for one — so it asks `at-note`, or the README is
+    /// shoved off centre by 236px of nothing.
     #[test]
     fn the_wide_grid_asks_for_a_note_before_it_reserves_a_margin() {
         let sheet = stylesheet();
@@ -3725,12 +3370,9 @@ mod tests {
         }
     }
 
-    /// Two writers, one column. The listing route links the script because
-    /// picking a row turns that page into a note page without a reload.
-    ///
-    /// The address rather than the source, now that the source is not on the
-    /// page: what a page has to get right is which scripts it names, and
-    /// `asset.rs` is what keeps a name pointing at the right bytes.
+    /// The listing route links the script because picking a row turns that page
+    /// into a note page without a reload. The address rather than the source:
+    /// what a page must get right is which scripts it names.
     #[test]
     fn both_routes_that_can_show_a_note_link_the_script_that_fills_its_margin() {
         let hook = Asset::Beside.href();
@@ -3749,10 +3391,9 @@ mod tests {
         );
     }
 
-    /// The two screens that show an instant link the script that says it again
-    /// where the reader is standing. The tags screen does not, and that is the
-    /// decision rather than an omission: what it draws in the same class is a
-    /// count of notes, which is not a time and would be nonsense as one.
+    /// The two screens showing an instant link the script that restates it where
+    /// the reader is. The tags screen does not, deliberately: what it draws in
+    /// the same class is a count of notes.
     #[test]
     fn the_screens_that_show_an_instant_link_the_script_that_converts_it() {
         let hook = Asset::Stamps.href();
@@ -3772,11 +3413,9 @@ mod tests {
         assert!(!tags("work", &[]).contains(hook), "tags");
     }
 
-    /// A todo's `due:` is a calendar day somebody typed, not an instant, and
-    /// `noda todo` already decides whether it has passed against git's own
-    /// offset. Converting it here would move an item due today into tomorrow
-    /// for a reader in another zone — so it must not carry a `datetime`, which
-    /// is the only thing the script converts.
+    /// A `due:` is a calendar day somebody typed, not an instant. Converting it
+    /// would move an item due today into tomorrow for a reader in another zone,
+    /// so it must not carry the `datetime` the script converts.
     #[test]
     fn a_due_date_is_not_an_instant_and_is_not_marked_as_one() {
         let page = todo(
@@ -3806,9 +3445,8 @@ mod tests {
         }
     }
 
-    /// The signature, on the front page's side: a row is `noda status` said in
-    /// a line, and the two things it can take you to are two links rather than
-    /// one — the notebook, and where that notebook stands.
+    /// A row is `noda status` in a line, and its two destinations are two links:
+    /// the notebook, and where it stands.
     #[test]
     fn a_notebook_row_says_what_status_says_and_leads_two_ways() {
         let page = notebooks(&[book("work")]);
@@ -3825,8 +3463,7 @@ mod tests {
         }
     }
 
-    /// Zero is not worth a column. `noda status` prints the files line only when
-    /// there are files, and the row keeps that.
+    /// `noda status` prints the files line only when there are files.
     #[test]
     fn a_notebook_row_leaves_out_what_it_holds_none_of() {
         let page = notebooks(&[Book {
@@ -3839,8 +3476,7 @@ mod tests {
         assert!(!page.contains("uncommitted"), "{page}");
     }
 
-    /// The one case that is not a link, for the reason the files page gives when
-    /// it leaves `nothing links to it` as text.
+    /// The one case that is not a link, for the files page's reason.
     #[test]
     fn a_notebook_with_no_remote_keeps_the_words_and_loses_the_link() {
         let page = notebooks(&[Book {
@@ -3851,9 +3487,8 @@ mod tests {
         assert!(!page.contains("/status"), "{page}");
     }
 
-    /// `noda notebook ls` marks the active notebook with a `*`. The browser
-    /// marks it in the same margin, and says so in words as well, because a dot
-    /// is not one.
+    /// `noda notebook ls`'s `*`, in the same margin — and in words, a dot not
+    /// being one.
     #[test]
     fn the_active_notebook_is_marked_and_the_others_are_not() {
         let page = notebooks(&[
@@ -3867,19 +3502,18 @@ mod tests {
         assert!(page.contains("<span class=\"sr\">Active"), "{page}");
     }
 
-    /// The screen above every notebook: no rail, no bar, and the class that
-    /// stops the layout keeping a column for one.
+    /// No rail, no bar, and the class that stops the layout keeping a column.
     #[test]
     fn the_front_page_is_the_one_screen_with_neither_rail_nor_bar() {
         let page = notebooks(&[book("work")]);
         assert!(page.contains("class=\"app root\""), "{page}");
-        // Not the bare word: `actionbar` is in the stylesheet every page carries.
+        // Not the bare word: `actionbar` is in the stylesheet.
         assert!(!page.contains("<nav class=\"actionbar\""), "{page}");
         assert!(!page.contains("class=\"fab\""), "{page}");
     }
 
-    /// The corner counts the notebooks always and what they hold when there is
-    /// room — the same bargain the listing's row strikes with the day.
+    /// Always the count, and what they hold when there is room — the listing
+    /// row's bargain with the day.
     #[test]
     fn the_corner_counts_the_notebooks_and_leaves_the_rest_to_the_stylesheet() {
         let page = notebooks(&[book("journal"), book("work")]);

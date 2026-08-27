@@ -468,14 +468,12 @@ enum RemoteCommand {
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
-        // `noda log | head` closes the pipe on us. That is the pipeline working,
-        // not a failure: leave quietly rather than shouting at a reader that has
-        // already gone.
+        // `noda log | head` closing the pipe is the pipeline working, so leave
+        // quietly rather than shout at a reader who has already gone.
         Err(e) if e.is_broken_pipe() => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            // Through `anstream`, like every other stream noda writes: an error
-            // may quote a command's own output, and a piped `noda sync` must not
-            // spit escape sequences at whatever is reading it.
+            // Through `anstream` like every other stream: an error may quote a
+            // command's output, and a pipe must not receive escape sequences.
             anstream::eprintln!("noda: {e}");
             std::process::ExitCode::FAILURE
         }

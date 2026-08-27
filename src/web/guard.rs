@@ -1,33 +1,22 @@
 //! Who is allowed to be talking to this server.
 //!
-//! noda's web server has no accounts and no login, deliberately: the way it is
-//! meant to be reached is over a tailnet or behind something that already does
-//! authentication, and both of those do the job better than a notebook could.
-//! What that does *not* excuse is the pair of attacks that need no account at
-//! all, because they borrow the browser you already have open.
+//! There are no accounts, deliberately — this is meant to sit on a tailnet or
+//! behind something that already authenticates. That does not cover the two
+//! attacks needing no account, because they borrow a browser you already have
+//! open, and these checks are the whole defence against them.
 //!
-//! **Cross-site requests.** Every write here is a git commit. A page on any
-//! other site can make your browser send one — a form that posts to
-//! `http://localhost:8080/…` submits with your browser's own reach, not the
-//! attacker's. There is no cookie to be missing, because there is no session, so
-//! nothing stops it except noticing where the request says it came from. Hence
-//! the `Origin` check, and hence it is here in the first pull request rather
-//! than in the one that adds the writes: a guard added after the thing it guards
-//! is a guard that was missing for a release.
+//! **Cross-site requests.** Every write is a git commit, and a form on any other
+//! site posts to `localhost:8080` with your browser's reach. No session means no
+//! cookie to be missing, so only `Origin` stops it.
 //!
-//! **DNS rebinding.** The other half, and the reason an `Origin` check alone is
-//! not enough. An attacker points `evil.example` at `127.0.0.1`, gets your
-//! browser to load it, and every request it then makes is same-origin by every
-//! test the browser applies — `Origin` and `Host` agree, because both say
-//! `evil.example`. What gives it away is that the name is a *name*: a rebinding
-//! attack needs one, because the whole trick is controlling what it resolves to.
-//! So a `Host` that is a bare address is always fine, and a `Host` that is a
-//! name has to be one that was asked for.
+//! **DNS rebinding**, which `Origin` alone does not stop: point `evil.example`
+//! at `127.0.0.1` and both headers agree. What gives it away is that the trick
+//! needs a *name* to control the resolution of — so a bare address always
+//! passes, and a name must be one that was asked for.
 //!
-//! That last rule is what makes `--allow-host` necessary rather than an extra:
-//! behind a reverse proxy or on a tailnet, the name in the URL bar *is* a name,
-//! and refusing it silently would break the two deployments the documentation
-//! recommends. It fails closed and says exactly what to add.
+//! Hence `--allow-host`: behind a proxy or on a tailnet the name in the URL bar
+//! is a name, and refusing it silently would break both recommended
+//! deployments. It fails closed and says what to add.
 
 use std::net::IpAddr;
 
@@ -40,30 +29,25 @@ pub struct Guard {
 }
 
 impl Guard {
-    /// `extra` is what `--allow-host` was given: the names that are not
-    /// addresses and are wanted anyway.
+    /// `extra` is `--allow-host`: names that are not addresses and are wanted.
     pub fn new(extra: &[String]) -> Self {
         Guard {
             allowed: extra.iter().map(|name| name.to_lowercase()).collect(),
         }
     }
 
-    /// Whether this request may be answered.
-    ///
-    /// Both headers as the client sent them: `Host` is required by HTTP/1.1 and
-    /// its absence is a refusal rather than a pass, and `Origin` is absent on
-    /// every ordinary navigation — typing an address, following a link — which
-    /// is why its absence cannot be a refusal either.
+    /// Both headers as the client sent them. A missing `Host` is a refusal —
+    /// HTTP/1.1 requires it — but a missing `Origin` cannot be, because every
+    /// ordinary navigation omits it.
     pub fn admits(&self, host: Option<&str>, origin: Option<&str>) -> Result<(), Refusal> {
         let Some(host) = host else {
             return Err(Refusal("the request carried no Host header".into()));
         };
         self.admits_host(host)?;
 
-        // `null` is what a sandboxed frame and a `file://` page send. It matches
-        // no host, so the comparison below would refuse it anyway; it is named
-        // here because "the Origin was null" is a different thing to be told
-        // than "the Origin was some other site".
+        // A sandboxed frame and a `file://` page send `null`, which the
+        // comparison below would refuse anyway. Named separately because it is a
+        // different thing to be told than "some other site".
         match origin {
             None => Ok(()),
             Some("null") => Err(Refusal(
@@ -85,10 +69,9 @@ impl Guard {
 
     fn admits_host(&self, host: &str) -> Result<(), Refusal> {
         let name = hostname(host);
-        // An address cannot be rebound; that is the whole of the reason this is
-        // allowed without being asked for. `localhost` joins it because every
-        // resolver on every platform pins it, and refusing the one name people
-        // actually type would be a guard nobody gets past.
+        // An address cannot be rebound. `localhost` joins it because every
+        // resolver pins it, and refusing the one name people actually type would
+        // be a guard nobody gets past.
         if name.parse::<IpAddr>().is_ok() || name.eq_ignore_ascii_case("localhost") {
             return Ok(());
         }
@@ -106,10 +89,8 @@ impl Guard {
     }
 }
 
-/// The `host:port` out of an origin, which is written as a whole URL.
-///
-/// Only the scheme is dropped. The port is kept, because `:8080` and `:8081` are
-/// different origins to a browser and have to be different here too.
+/// The `host:port` out of an origin. Only the scheme is dropped: `:8080` and
+/// `:8081` are different origins to a browser, so they must differ here too.
 fn authority(origin: &str) -> &str {
     origin
         .split_once("://")
@@ -117,10 +98,8 @@ fn authority(origin: &str) -> &str {
         .trim_end_matches('/')
 }
 
-/// The name out of a `host:port`, with an IPv6 literal's brackets taken off.
-///
-/// `[::1]:8080` is one colon-separated string too many for the obvious split, so
-/// the bracketed form is handled before it rather than after.
+/// The name out of a `host:port`. `[::1]:8080` is one colon too many for the
+/// obvious split, so the bracketed form is handled first.
 fn hostname(host: &str) -> &str {
     if let Some(rest) = host.strip_prefix('[') {
         return rest.split_once(']').map_or(rest, |(inside, _)| inside);
@@ -152,9 +131,8 @@ mod tests {
         }
     }
 
-    /// The rebinding case: the name resolves to this machine and the browser
-    /// believes every request to it is same-origin. Nothing in the request says
-    /// otherwise — which is why the name itself is what has to be checked.
+    /// The rebinding case: nothing in the request says otherwise, which is why
+    /// the name itself has to be checked.
     #[test]
     fn a_name_nobody_asked_for_is_refused_even_when_the_origin_agrees() {
         let refusal = plain()
@@ -188,8 +166,7 @@ mod tests {
         assert!(refusal.0.contains("elsewhere.example"), "{}", refusal.0);
     }
 
-    /// A different port is a different origin to a browser, so it has to be one
-    /// here: two servers on one machine are two sites.
+    /// Two servers on one machine are two sites.
     #[test]
     fn a_different_port_is_a_different_site() {
         assert!(
@@ -199,8 +176,7 @@ mod tests {
         );
     }
 
-    /// Typing an address into the bar sends no `Origin` at all. If that were a
-    /// refusal the server would answer nothing to anybody.
+    /// If a missing `Origin` were a refusal, the server would answer nobody.
     #[test]
     fn an_ordinary_navigation_carries_no_origin_and_is_fine() {
         assert!(plain().admits(Some("127.0.0.1:8080"), None).is_ok());

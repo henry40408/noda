@@ -1,20 +1,14 @@
 //! A note: the Markdown file that carries it, and the identity its filename
 //! spells out.
 //!
-//! The id lives in the filename, not in the frontmatter. git forbids two entries
-//! sharing a path in one tree, so a notebook cannot hold two notes under one
-//! filename — uniqueness is structural rather than something noda has to police.
-//! Two machines that each add a note produce two different filenames and merge
-//! without a conflict, and nothing derived has to be kept in step with anything.
+//! The id lives in the filename. git forbids two entries sharing a path in one
+//! tree, so uniqueness is structural rather than policed — two machines each
+//! adding a note write two filenames that merge without a conflict.
 //!
-//! The frontmatter carries what a person wrote: the title, because a slug is
-//! lossy and cannot be turned back into one, and the tags. Its *presence* is
-//! what marks a file as a note at all — see `notebook::Scan`.
-//!
-//! noda interprets those two fields and no others, but it does not own the
-//! block. Any other field is carried through a write-back untouched, which is
-//! the same promise `file_mv` already makes when it rewrites links without
-//! reformatting the frontmatter around them.
+//! The frontmatter carries the title (a slug is lossy) and the tags, and its
+//! *presence* is what marks a file as a note at all — see `notebook::Scan`.
+//! noda interprets those fields and no others, but does not own the block: any
+//! other field survives a write-back untouched.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -24,9 +18,8 @@ use crate::{Error, Result};
 /// Crockford base32 — `i`, `l`, `o` and `u` are absent, so an id can't be misread.
 const CROCKFORD: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
-/// Ids are 8 characters: 40 bits, minted against what the notebook already
-/// holds. Long enough that a collision takes deliberate effort, short enough to
-/// stay in a filename you can read.
+/// 40 bits, minted against what the notebook holds — long enough that a
+/// collision takes deliberate effort, short enough to read in a filename.
 pub const ID_LEN: usize = 8;
 
 /// How many base32 characters one draw of randomness can supply.
@@ -35,40 +28,31 @@ const CHARS_PER_DRAW: usize = 12;
 /// Fallback slug for a title that contains nothing sluggable.
 const FALLBACK_SLUG: &str = "note";
 
-/// What a note file holds: the frontmatter a person edits, and the body.
 /// The id is not here — it is the filename.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
     pub title: String,
     pub tags: Vec<String>,
-    /// When the note came into existence, and when it was last changed —
-    /// RFC 3339, as they were found in the file.
-    ///
-    /// Both are `Option` because a note may predate the fields or arrive without
-    /// them, and neither is ever rewritten into a different spelling: a note
-    /// imported with `2019-03-14T16:21:00+08:00` keeps that offset. noda writes
-    /// UTC when it writes them itself; it does not normalise what it reads,
-    /// because that would make `noda show` stop matching the file.
+    /// RFC 3339, exactly as found in the file. `Option` because a note may
+    /// predate the fields, and never respelled: an imported
+    /// `2019-03-14T16:21:00+08:00` keeps its offset, or `noda show` would stop
+    /// matching the file.
     pub created: Option<String>,
     pub updated: Option<String>,
-    /// Frontmatter lines noda does not interpret, kept in the order they were
-    /// read so that a write-back does not discard them. A note that arrived from
-    /// somewhere else carries fields noda has never heard of, and losing them on
-    /// the first `tag add` would be losing the only copy.
+    /// Frontmatter lines noda does not interpret, in the order they were read.
+    /// A note from elsewhere carries fields noda has never heard of, and losing
+    /// them on the first `tag add` loses the only copy.
     ///
-    /// These come from inside a frontmatter block, so none of them can be `---`:
-    /// such a line would have closed the block instead of landing here. That is
-    /// what keeps `render` from writing a file `parse` can no longer read.
+    /// None can be `---`: such a line would have closed the block instead of
+    /// landing here, which is what keeps `render` from writing what `parse`
+    /// cannot read.
     pub extra: Vec<String>,
     pub body: String,
 }
 
 impl Note {
-    /// The full file contents: frontmatter, a blank line, then the body.
-    ///
-    /// The block is always written, even with nothing to put in it: an empty one
-    /// still says "this file is a note", which is the distinction a bare `.md`
-    /// dropped into the notebook cannot make.
+    /// The block is always written, even empty: it still says "this file is a
+    /// note", which a bare `.md` dropped into the notebook cannot.
     pub fn render(&self) -> String {
         let mut out = String::from("---\n");
         let _ = writeln!(out, "title: {}", self.title);
@@ -81,10 +65,8 @@ impl Note {
         if let Some(updated) = &self.updated {
             let _ = writeln!(out, "updated: {updated}");
         }
-        // After the fields noda owns, never interleaved with them: their order
-        // relative to each other is preserved, their position relative to
-        // `title` is not. Somebody's own fields keep their sequence; noda's
-        // stay where a reader expects to find them.
+        // After noda's own fields, never interleaved: their order among
+        // themselves is preserved, their position relative to `title` is not.
         for line in &self.extra {
             let _ = writeln!(out, "{line}");
         }
@@ -115,10 +97,9 @@ impl Note {
             match key.trim() {
                 "title" => title = Some(value.to_string()),
                 "tags" => tags = parse_tags(value),
-                // Kept as written. An unreadable value is still the value, and
-                // `doctor --times` is where it gets reported rather than here:
-                // refusing to read the note would put a typo between somebody
-                // and their own prose.
+                // Kept as written: refusing to read the note would put a typo
+                // between somebody and their own prose. `doctor --times`
+                // reports it instead.
                 "created" => created = Some(value.to_string()),
                 "updated" => updated = Some(value.to_string()),
                 // Every other field belongs to whoever wrote it.
@@ -150,27 +131,21 @@ pub(crate) fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
     None
 }
 
-/// The moment a write is happening, spelled the way noda records it: RFC 3339,
-/// UTC, whole seconds.
-///
-/// UTC because a notebook is read on more than one machine and one note must not
-/// claim two different times depending on where it is opened. Whole seconds
-/// because nothing consumes anything finer. Both together make the string
-/// fixed-width, so it sorts as text and `ls --sort` never has to parse it.
+/// RFC 3339, UTC, whole seconds. UTC because one note must not claim two times
+/// depending on which machine opened it; whole seconds because nothing consumes
+/// finer. Together they make it fixed-width, so it sorts as text.
 pub fn now() -> String {
     jiff::Timestamp::now()
         .strftime("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
 }
 
-/// Sets one frontmatter field, leaving every other byte of the file alone.
-/// `None` when there is no frontmatter to set it in.
+/// Sets one frontmatter field, leaving every other byte alone.
 ///
-/// `render` would also set it, but it rebuilds the block from a parsed note and
-/// so moves fields noda does not interpret below the ones it does. That is
-/// acceptable in `tag` and `mv`, which are rewriting the frontmatter anyway. It
-/// is not acceptable in `edit`, where it would reorder a block somebody has just
-/// arranged by hand, in front of them, as the price of recording that they did.
+/// `render` would also set it, but it rebuilds the block and so moves
+/// uninterpreted fields below noda's own — fine in `tag` and `mv`, which rewrite
+/// the frontmatter anyway, and not in `edit`, where it would reorder a block
+/// somebody just arranged by hand as the price of recording that they did.
 pub fn set_field(text: &str, key: &str, value: &str) -> Option<String> {
     let (frontmatter, body) = split_frontmatter(text)?;
 
@@ -178,8 +153,7 @@ pub fn set_field(text: &str, key: &str, value: &str) -> Option<String> {
     let mut written = false;
     for line in frontmatter.lines() {
         if line.split_once(':').is_some_and(|(k, _)| k.trim() == key) {
-            // The first occurrence keeps the field's position; a duplicate does
-            // not get a second value, because `parse` only ever reads one.
+            // `parse` reads one value, so a duplicate gets no second one.
             if !written {
                 let _ = writeln!(out, "{key}: {value}");
                 written = true;
@@ -196,27 +170,21 @@ pub fn set_field(text: &str, key: &str, value: &str) -> Option<String> {
     Some(out)
 }
 
-/// The note with its body replaced and its frontmatter block left exactly as it
-/// was found.
+/// The body replaced, the frontmatter block left exactly as found.
 ///
-/// [`set_field`]'s sibling, and for the same reason. Rebuilding the file from a
-/// parsed [`Note`] would put noda's own fields back in noda's own order — which
-/// is right when noda is writing a note it made, and wrong when it is changing
-/// one somebody else's program wrote. A note that arrived from elsewhere carries
-/// fields and an arrangement that are the only copy of themselves.
+/// [`set_field`]'s sibling, for its reason: rebuilding from a parsed [`Note`] is
+/// right for a note noda made and wrong for one another program wrote, whose
+/// arrangement is the only copy of itself.
 ///
-/// Line endings are normalised, because the one caller that has a body to hand
-/// rather than a file is a browser, and a `<textarea>` submits `CRLF` — that is
-/// what the HTML specification says a form does, not a quirk. Writing those
-/// through would put a carriage return at the end of every line of every note
+/// Line endings are normalised because the one caller holding a body rather than
+/// a file is a browser, and the HTML specification says a form submits `CRLF` —
+/// writing those through would put a carriage return on every line of every note
 /// edited from a phone, invisibly, for ever.
 pub fn set_body(text: &str, body: &str) -> Option<String> {
     let (frontmatter, _) = split_frontmatter(text)?;
     let mut out = String::from("---\n");
     out.push_str(frontmatter);
-    // The same shape `render` writes: the closing delimiter, one blank line,
-    // then the body. A reader should not be able to tell which of the two wrote
-    // the file.
+    // `render`'s shape, so a reader cannot tell which of the two wrote it.
     out.push_str("---\n\n");
     out.push_str(body.replace("\r\n", "\n").trim_start_matches('\n'));
     if !out.ends_with('\n') {
@@ -241,13 +209,9 @@ pub fn file_name(id: &str, slug: &str) -> String {
     format!("{id}-{slug}.md")
 }
 
-/// Splits a note filename's stem into its id and its slug.
-///
-/// The id alphabet has no `-`, so the first one is always the boundary and the
-/// rule does not change when ids grow longer. The length floor is what stops an
-/// ordinary slug being read as one: without it `c-vs-rust` parses as the id `c`
-/// carrying the slug `vs-rust`, and every hand-written note would claim an
-/// identity it never had.
+/// The id alphabet has no `-`, so the first one is the boundary however long
+/// ids grow. The length floor stops an ordinary slug being read as one: without
+/// it `c-vs-rust` is the id `c` and every hand-written note claims an identity.
 pub fn split_stem(stem: &str) -> Option<(&str, &str)> {
     let (id, slug) = stem.split_once('-')?;
     if slug.is_empty() || !is_id_shaped(id) {
@@ -256,14 +220,10 @@ pub fn split_stem(stem: &str) -> Option<(&str, &str)> {
     Some((id, slug))
 }
 
-/// Whether a filename is one a note lives under.
-///
-/// The `.md` suffix alone does not decide it. A notebook is one flat directory
-/// and holds Markdown that is not a note — `README.md` above all, which `noda
-/// readme` writes for a git host to show — and only a stem that splits into an
-/// id and a slug names a note. This is the test `Notebook::inventory` applies
-/// when it sorts the directory into notes and files, so anything that has only
-/// a name and needs the same answer must ask it here rather than re-deciding.
+/// `.md` alone does not decide it: a notebook is one flat directory holding
+/// Markdown that is not a note, `README.md` above all. This is the test
+/// `Notebook::inventory` applies, so anything needing the same answer from a
+/// name alone asks here rather than re-deciding.
 pub fn names_a_note(name: &str) -> bool {
     name.strip_suffix(".md").and_then(split_stem).is_some()
 }
@@ -277,10 +237,9 @@ pub fn is_id_shaped(text: &str) -> bool {
             .all(|b| CROCKFORD.contains(&b.to_ascii_lowercase()))
 }
 
-/// A title is written into the frontmatter verbatim, so a second line in it
-/// becomes a field of its own. Refusing it at the door keeps `render` and
-/// `parse` inverse without inventing an escaping syntax that every hand-edited
-/// note would then have to speak.
+/// A title goes into the frontmatter verbatim, so a second line in it becomes a
+/// field. Refusing it keeps `render` and `parse` inverse without an escaping
+/// syntax every hand-edited note would have to speak.
 pub fn validate_title(title: &str) -> Result<()> {
     if title.contains(['\n', '\r']) {
         return Err(Error::msg("a title has to fit on one line"));
@@ -288,9 +247,8 @@ pub fn validate_title(title: &str) -> Result<()> {
     Ok(())
 }
 
-/// Tags share the frontmatter's own punctuation: `,` separates them and `[]`
-/// bounds the list, so a tag carrying either comes back as something else — and
-/// an empty one does not come back at all. Same reasoning as `validate_title`.
+/// Tags share the frontmatter's punctuation, so a tag carrying `,` or `[]`
+/// reads back as something else. `validate_title`'s reasoning.
 pub fn validate_tag(tag: &str) -> Result<()> {
     if tag.is_empty() {
         return Err(Error::msg("a tag needs a name"));
@@ -386,9 +344,8 @@ fn random_bits() -> u64 {
 mod tests {
     use super::*;
 
-    /// The frontmatter comes back byte for byte, arrangement and unknown fields
-    /// included. Anything less and a note that arrived from another program is
-    /// quietly rewritten the first time it is edited from a browser.
+    /// Byte for byte, or a note from another program is quietly rewritten the
+    /// first time a browser edits it.
     #[test]
     fn set_body_keeps_the_frontmatter_exactly() {
         let text = "---\nweird: yes\ntitle: Kept\nsomebody-elses: field\n---\n\nold body\n";
@@ -399,8 +356,7 @@ mod tests {
         );
     }
 
-    /// What a `<textarea>` actually submits. The HTML specification says a form
-    /// normalises line breaks to `CRLF`, so this is every browser, not one.
+    /// The HTML specification says a form submits `CRLF` — every browser.
     #[test]
     fn set_body_takes_the_carriage_returns_out() {
         let text = "---\ntitle: T\n---\n\nold\n";
@@ -414,8 +370,7 @@ mod tests {
         assert!(set_body("just a markdown file\n", "x").is_none());
     }
 
-    /// A body emptied on purpose is a body: the note goes on existing, and the
-    /// file still parses.
+    /// A body emptied on purpose is a body.
     #[test]
     fn set_body_accepts_nothing_at_all() {
         let out = set_body("---\ntitle: T\n---\n\nsomething\n", "").unwrap();
@@ -453,8 +408,8 @@ mod tests {
         assert_ne!(mint_id(&taken), id);
     }
 
-    /// One draw of randomness runs out after twelve characters; a longer id used
-    /// to be padded with the zeros the shift kept supplying.
+    /// One draw runs out after twelve characters, and a longer id used to be
+    /// padded with the zeros the shift kept supplying.
     #[test]
     fn a_widened_id_stays_random_past_the_first_draw() {
         let long = random_id(24);
@@ -494,8 +449,7 @@ mod tests {
         assert_eq!(split_stem("untitled-thing"), None);
     }
 
-    /// The example that prompted the rule: a filename can look exactly like a
-    /// note's without being one, so its shape alone must never settle the matter.
+    /// A filename can look exactly like a note's without being one.
     #[test]
     fn a_plausible_looking_filename_is_still_id_shaped() {
         assert!(is_id_shaped("abcdefgh"));
@@ -528,9 +482,8 @@ mod tests {
         assert_eq!(note.body, "hi\n");
     }
 
-    /// An `id:` left over from a hand-edited file is just another field now, and
-    /// has no authority over the note's identity. Ignoring it is not the same as
-    /// deleting it: it survives the round trip, it just never gets obeyed.
+    /// A leftover `id:` is another field with no authority over identity — it
+    /// survives the round trip, it just never gets obeyed.
     #[test]
     fn a_stray_id_field_is_ignored_rather_than_obeyed() {
         let note = Note::parse("---\nid: zzzz\ntitle: Alpha\n---\n\nbody\n").unwrap();
@@ -539,9 +492,8 @@ mod tests {
         assert!(note.render().contains("id: zzzz"));
     }
 
-    /// The reason `extra` exists: a note that arrived from somewhere else brings
-    /// fields noda has never heard of, and `tag`/`mv`/`add` all write back
-    /// through `render`. Dropping them there would destroy the only copy.
+    /// Why `extra` exists: `tag`/`mv`/`add` all write back through `render`,
+    /// and dropping an unknown field there destroys the only copy.
     #[test]
     fn fields_noda_does_not_know_survive_a_write_back() {
         let text =
@@ -557,9 +509,8 @@ mod tests {
         assert_eq!(Note::parse(&rewritten).unwrap(), note);
     }
 
-    /// Their order relative to each other is kept. Their position relative to
-    /// `title` is not — noda's own fields come first once it has written the
-    /// file, which is a one-off reordering rather than a loss.
+    /// Order among themselves is kept; position relative to `title` is not,
+    /// which is a one-off reordering rather than a loss.
     #[test]
     fn unknown_fields_keep_their_sequence_but_move_below_the_known_ones() {
         let note = Note::parse("---\nzebra: 1\ntitle: Alpha\nalpha: 2\n---\n\nbody\n").unwrap();
@@ -570,9 +521,8 @@ mod tests {
         );
     }
 
-    /// A note written elsewhere brings the offset its own system used. noda
-    /// records UTC when it writes a time itself, but it does not restate what it
-    /// reads — `noda show` has to keep matching the file byte for byte.
+    /// noda writes UTC but never restates what it reads — `noda show` has to
+    /// keep matching the file byte for byte.
     #[test]
     fn a_time_written_somewhere_else_is_not_restated() {
         let text = "---\ntitle: Imported\ncreated: 2019-03-14T16:21:00+08:00\n---\n\nbody\n";
@@ -581,8 +531,7 @@ mod tests {
         assert!(note.render().contains("created: 2019-03-14T16:21:00+08:00"));
     }
 
-    /// What noda writes: fixed width, so it sorts as text and nothing has to
-    /// parse it to put two notes in order.
+    /// Fixed width, so it sorts as text without being parsed.
     #[test]
     fn the_time_noda_writes_is_fixed_width_utc() {
         let now = now();
@@ -591,8 +540,7 @@ mod tests {
         assert!(now.parse::<jiff::Timestamp>().is_ok(), "{now}");
     }
 
-    /// `set_field` exists so `edit` can record a change without rearranging the
-    /// block somebody just arranged. Every other line stays where it was.
+    /// `edit` records a change without rearranging what somebody just arranged.
     #[test]
     fn setting_a_field_moves_nothing_else() {
         let text = "---\nzebra: 1\nupdated: old\ntitle: Alpha\n---\n\nbody\n";
@@ -617,8 +565,7 @@ mod tests {
         assert_eq!(set_field("no frontmatter\n", "updated", "new"), None);
     }
 
-    /// `parse` reads one value for a field, so `set_field` must not leave a
-    /// second one behind for it to pick instead.
+    /// `parse` reads one value, so no second one may be left behind.
     #[test]
     fn setting_a_duplicated_field_collapses_it() {
         let text = "---\nupdated: a\ntitle: Alpha\nupdated: b\n---\n\nbody\n";
@@ -628,8 +575,7 @@ mod tests {
         );
     }
 
-    /// A line noda cannot even split into a field is still somebody's, so it is
-    /// carried too rather than quietly dropped.
+    /// A line noda cannot split into a field is still somebody's.
     #[test]
     fn a_frontmatter_line_without_a_colon_is_carried_as_well() {
         let note = Note::parse("---\ntitle: Alpha\n# a comment\n---\n\nbody\n").unwrap();
@@ -653,8 +599,7 @@ mod tests {
         }
     }
 
-    /// The frontmatter block is the declaration "this file is a note". A file
-    /// without one is something else, whatever its name looks like.
+    /// The block is the declaration "this file is a note".
     #[test]
     fn parse_rejects_files_without_frontmatter() {
         assert!(Note::parse("just markdown\n").is_err());

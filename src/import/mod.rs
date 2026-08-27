@@ -1,9 +1,8 @@
 //! Bringing a notebook in from somewhere else.
 //!
-//! One format-specific parser per source, and one shared back end. The parser's
-//! whole job is to produce [`Incoming`]; everything after that — minting ids,
-//! writing files, resolving links, committing — is the same work whatever the
-//! notes came from, so adding a second source is a parser and nothing else.
+//! One parser per source, one shared back end. A parser's whole job is to
+//! produce [`Incoming`]; everything after is the same work whatever the notes
+//! came from, so a second source is a parser and nothing else.
 
 pub mod tiddlywiki;
 pub mod wikitext;
@@ -18,15 +17,12 @@ use crate::paths::Paths;
 use crate::style;
 use crate::{Error, Result};
 
-/// The frontmatter field naming what an importer would not translate.
-///
-/// One field for every source rather than one per format: `doctor` needs a
-/// single check, and a note is either finished or it is not.
+/// The frontmatter field naming what an importer would not translate. One field
+/// for every source, so `doctor` needs a single check.
 pub const UNCONVERTED: &str = "unconverted";
 
-/// The frontmatter field holding what the source called this note. It is what
-/// makes a second import able to say "already here" instead of making a
-/// duplicate, and what lets somebody trace a note back to the export.
+/// What the source called this note, so a second import says "already here"
+/// rather than making a duplicate.
 pub const SOURCE_KEY: &str = "source_key";
 
 /// How a source's own bodies become Markdown, given a way to resolve the names
@@ -36,19 +32,16 @@ pub type Converter<'a> = dyn Fn(&str, &wikitext::Resolve) -> wikitext::Converted
 /// One note as a source hands it over, before noda has given it an identity.
 pub struct Incoming {
     pub title: String,
-    /// The body exactly as the source held it. Nothing is converted here: the
-    /// import writes this first and commits it, so that whatever a converter
-    /// does next is a second commit with the original still behind it.
+    /// Exactly as the source held it — written and committed before any
+    /// conversion, so the original stays behind it in history.
     pub body: String,
     pub tags: Vec<String>,
     /// RFC 3339, when the source had one to give.
     pub created: Option<String>,
     pub updated: Option<String>,
-    /// Frontmatter lines to carry through untouched — the fields the source had
-    /// that noda has no opinion about.
+    /// Source fields noda has no opinion about, carried through untouched.
     pub extra: Vec<String>,
-    /// What the source calls this note, for resolving the links other notes make
-    /// to it. A tiddler's is its title.
+    /// For resolving the links other notes make to it. A tiddler's is its title.
     pub key: String,
 }
 
@@ -65,17 +58,14 @@ struct Report {
 
 /// Writes an import into the active notebook, as two commits.
 ///
-/// **Two, deliberately.** The first holds every note exactly as the source
-/// wrote it; the second holds the conversion. Nothing an importer does can
-/// therefore be lost: `noda diff` shows the whole conversion before it is
-/// pushed anywhere, and `noda restore <note> <the first commit>` brings any
-/// note back to the text the export actually contained. That is why the body
-/// is not converted on the way in and why the original is not copied into the
-/// frontmatter — git already keeps it, and keeps it better.
+/// **Two, deliberately**: the source's own text, then the conversion. Nothing an
+/// importer does can be lost — `noda diff` shows the conversion before it goes
+/// anywhere and `restore` reaches the original. That is why the body is not
+/// converted on the way in and not copied into the frontmatter; git keeps it
+/// better.
 ///
-/// `convert` is what turns a body, given a way to resolve the source's own
-/// names. A source whose notes are already Markdown passes `None` and gets the
-/// first commit and nothing else.
+/// A source whose notes are already Markdown passes `convert: None` and gets
+/// the first commit and nothing else.
 pub fn write(
     paths: &Paths,
     source: &str,
@@ -89,15 +79,13 @@ pub fn write(
         ..Report::default()
     };
 
-    // Everything the notebook already holds, by the key its source gave it. A
-    // second run of the same import is a no-op rather than a second copy.
+    // A second run of the same import is a no-op, not a second copy.
     let held = already_here(&notebook)?;
     let mut taken = notebook.taken_ids()?;
 
-    // Where every name the sources use will end up, so that a link between two
-    // notes can be rewritten. It starts from what the notebook already holds:
-    // a wiki imported in pieces has links running between the pieces, and the
-    // ones written today point at notes that arrived last week.
+    // Where every source name will end up, so links can be rewritten. Starts
+    // from what is already held: a wiki imported in pieces has links from
+    // today's notes to ones that arrived last week.
     let mut by_key = held.clone();
 
     let mut named: Vec<(String, String, Incoming)> = Vec::new();
@@ -108,8 +96,7 @@ pub fn write(
                 .push((note.title, format!("already imported as {file}")));
             continue;
         }
-        // Two files given at once may hold the same note — exports overlap when
-        // they are taken in pieces. The first copy is the one that lands.
+        // Exports taken in pieces overlap; the first copy lands.
         if by_key.contains_key(&note.key) {
             report
                 .skipped
@@ -145,8 +132,8 @@ pub fn write(
         &format!("import: {} notes from {source}", report.written),
     )?;
 
-    // Pass two: the conversion, with every name now resolvable — which is the
-    // whole reason it cannot happen before the files exist.
+    // Pass two: the conversion, which needs every name resolvable and so cannot
+    // happen before the files exist.
     let Some(convert) = convert else {
         return Ok(summary(&report, source, None));
     };
@@ -180,8 +167,7 @@ pub fn write(
     Ok(summary(&report, source, Some(&notebook)))
 }
 
-/// The note as it goes to disk: the source's own fields carried through, plus
-/// the two noda adds.
+/// The source's own fields carried through, plus the two noda adds.
 fn render(note: &Incoming, body: &str, left: &[&str]) -> String {
     let mut extra = note.extra.clone();
     extra.push(format!("{SOURCE_KEY}: {}", note.key));
@@ -219,16 +205,15 @@ fn already_here(notebook: &Notebook) -> Result<HashMap<String, String>> {
         .collect())
 }
 
-/// Whether noda can hold this note at all. A source may carry a title or a tag
-/// noda's own files cannot spell — and the answer is to say which and leave it
-/// out, never to write a note that reads back as something else.
+/// A source may carry a title or tag noda's files cannot spell. Say which and
+/// leave it out, never write a note that reads back as something else.
 fn check(note: &Incoming) -> Result<()> {
     note::validate_title(&note.title)?;
     for tag in &note.tags {
         note::validate_tag(tag)?;
     }
-    // Two notes may share a slug — the id keeps their filenames apart — but a
-    // title with nothing alphanumeric in it has no slug at all.
+    // The id keeps two same-slug filenames apart, but a title with nothing
+    // alphanumeric in it has no slug at all.
     if note::slugify(&note.title).is_empty() {
         return Err(Error::msg("the title makes no filename"));
     }
@@ -247,8 +232,7 @@ fn commit(notebook: &Notebook, files: &[PathBuf], message: &str) -> Result<()> {
     notebook.commit(&paths, message)
 }
 
-/// The one screen an import prints: what landed, what did not, and what is left
-/// to do by hand.
+/// What landed, what did not, and what is left to do by hand.
 fn summary(report: &Report, source: &str, notebook: Option<&Notebook>) -> String {
     let mut out = String::new();
     let noun = |n: usize| if n == 1 { "note" } else { "notes" };
