@@ -1,8 +1,8 @@
 //! noda — a git-native notebook for your terminal.
 //!
-//! `README.md` is the user-facing contract and `docs/PRFAQ.md` the reasoning
-//! behind it. Everything is a library so the CLI stays a thin shell and commands
-//! are tested without spawning a process.
+//! `README.md` is the user-facing contract and `docs/` the reasoning behind it.
+//! Everything is a library so the CLI stays a thin shell and commands are tested
+//! without spawning a process.
 
 pub mod cmd;
 pub mod config;
