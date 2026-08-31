@@ -178,6 +178,23 @@ not merely a marker to compare but the address of the version you began from, so
 fetch it back. A note you wrote by hand and never committed has no blob to fetch, and that is
 the one case that still comes back as two panes to reconcile yourself.
 
+**And an open editor is told while you are still typing.** With JavaScript on, the edit form
+holds a connection open and says so the moment the note under it moves — a line above the box,
+which does not ask you to hurry or to reload, because your work is in the box and saving
+merges. With JavaScript off nothing appears and Save behaves exactly the same; this is the
+same fact arriving earlier, never a different one.
+
+**It watches the file rather than what the server wrote**, so a `noda edit` at a terminal, an
+editor opened in the repository by hand, and a `sync` bringing somebody's afternoon down from a
+remote all count. Telling you only about writes that came through the browser would be silent
+in precisely the case a git-native notebook exists for. What that costs is a hash of one small
+file every couple of seconds for as long as the editor is open, and up to that long before you
+hear about a change.
+
+A connection is closed when you leave the page, and every one of them is ended when the server
+is asked to stop — the wait for in-flight requests would otherwise be a wait on the one kind of
+request that never finishes.
+
 **A note is rendered, and its links go where they went on disk.** A relative link to another
 note — `[the plan](k3f9m2p1-the-plan.md)`, the spelling that works on a git host and in any
 editor — becomes a link to that note's page, coloured the way an id is coloured everywhere

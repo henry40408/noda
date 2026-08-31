@@ -573,7 +573,9 @@ An edit onto a note that changed underneath is merged against the version you st
 so two people writing in different parts of one note both land and neither hears about it.
 Where you both changed the same lines, the merge comes back with git's `<<<<<<<` markers in
 one box to settle. The tags form is the same idea in miniature: it removes what you unticked
-and never a tag added while you had the page open.
+and never a tag added while you had the page open. With JavaScript on, an open editor says so
+as it happens rather than when you press Save — it watches the file, so a `noda edit` at a
+terminal counts too.
 
 What a stop waits for is not connections but an errand — a push interrupted halfway leaves
 git's own lock file behind, and the next write from anywhere meets it.

@@ -1081,6 +1081,7 @@ dependencies = [
  "anstyle",
  "axum",
  "clap",
+ "futures-core",
  "git2",
  "jiff",
  "portable-pty",

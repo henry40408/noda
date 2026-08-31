@@ -164,10 +164,20 @@ on a plain `std::thread` — the blocking pool is for work a request is waiting 
 precisely the work no request waits on — and the outcome outlives the errand, because a page that
 says nothing after a sync looks exactly like a page that ignored the button.
 
+**`web/watch.rs` is the second plain thread, and it is one whatever is open.** An editor with
+JavaScript holds an SSE connection so it can be told the note under it moved; a thread per
+connection would be a thread outliving the tab it was opened for, a sleeping thread having no way
+to notice a browser go away. So there is one, walking a registry that connections add themselves
+to — and every tick prunes the senders whose readers have gone, rather than discovering it at the
+next send, because a note nobody edits again is never sent to.
+
 **And that is the only reason stopping is more than closing the listener.** A signal — `SIGINT` or
 the `SIGTERM` a supervisor sends — makes `axum::serve` stop accepting and finish what is in flight,
 which by itself covers every kind of work here *except* an errand, because an errand is by
-definition the one that outlives its request. So `serve` ends with `work::Errands::settle`, a
+definition the one that outlives its request. A watch is the mirror of that problem and is dealt
+with in the other direction: "finish what is in flight" would wait forever on a stream designed
+never to finish, so `watch::Watch::stop` drops every sender as the shutdown begins, which ends the
+streams and lets that wait be a wait. So `serve` ends with `work::Errands::settle`, a
 condvar the errand thread wakes on its way out. The wait has no deadline: an errand is a commit and
 a push under `index.lock`, and a process killed halfway through leaves that lock file for whoever
 writes next. A second signal ends the waiting — not the errand, which nothing here can stop — and

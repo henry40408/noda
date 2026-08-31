@@ -178,12 +178,28 @@ tower-http = { version = "0.7.0", default-features = false, features = [
 #     with `signal` + `macros` 7,690,848   (+33,168, +0.43%)
 #
 # Which is half of what gzip was accepted at one dependency up.
+#
+# `sync` is the channel between the thread watching a note's file and the
+# stream telling a browser about it — `web::watch`. Still no timers: that tick
+# is a `Condvar` on a plain thread, deliberately, so the runtime stays built
+# with I/O alone. `sync = []` in tokio's own manifest, so it is features
+# compiled in rather than a crate arriving.
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt-multi-thread",
     "net",
     "signal",
     "macros",
+    "sync",
 ] }
+# One trait, for one `impl`: `Stream`, which `web::watch`'s SSE response is.
+# axum takes it and does not re-export it, so naming it means depending on it.
+#
+# **Nothing arrives.** It is already compiled — `axum-core` needs it, and so
+# does `tower-http`'s gzip — and this only makes a transitive dependency a
+# stated one. The alternative was `tokio-stream` for its `Receiver` wrapper,
+# which *is* a new crate, and `mpsc::Receiver::poll_recv` is already the shape
+# `poll_next` wants.
+futures-core = { version = "0.3.34", default-features = false }
 # What `noda web` says about itself while it runs. Every other command answers
 # and exits, so its output is its answer; a server outlives the question, and
 # the only way to find out afterwards what it refused, what it failed at, or
