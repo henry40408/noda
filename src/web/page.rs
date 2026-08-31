@@ -1468,7 +1468,12 @@ pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option
     )
 }
 
-/// The note changed under the reader, and neither version has been lost.
+/// The note changed under the reader and there was no version to merge from, so
+/// both are handed back whole.
+///
+/// Reached only when the version the edit began from is not in the object
+/// database — a note written by hand and never committed. Where it is,
+/// `conflicted` shows the merge instead and this shows nothing.
 ///
 /// What is on disk is shown first and cannot be typed into; what they wrote is
 /// underneath and still can be. That needs no "keep mine" button — saving *is*
@@ -1493,6 +1498,36 @@ pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -
             escape(now),
             escape(theirs),
             escape(mine),
+            about.at(book)
+        ),
+    )
+}
+
+/// The two edits changed the same lines, and the merge comes back to be
+/// settled.
+///
+/// One field where `clashed` has two, because a merge has already done the part
+/// a program can do: everything outside the markers is both edits, combined.
+/// What is left is the question no program can answer, and it is answered by
+/// editing the text rather than by copying between two panes.
+pub fn conflicted(book: &str, about: &About, merged: &str, now: &str) -> String {
+    form_page(
+        book,
+        &about.title,
+        &about.at(book),
+        "<p class=\"said bad\"><b>Someone else saved while you were writing.</b> \
+         Both versions are here and nothing has been overwritten. Where the two \
+         changed the same lines, they are wrapped in <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> \
+         markers — keep what the note should say and delete the rest.</p>",
+        &format!(
+            "<form class=\"write\" method=\"post\" action=\"{}/edit\">\
+             <input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
+             <div><textarea name=\"body\" autofocus>{}</textarea></div>\
+             <div class=\"buttons\"><button class=\"go\" type=\"submit\">Save</button>\
+             <a class=\"button\" href=\"{}\">Cancel</a></div></form>",
+            about.at(book),
+            escape(now),
+            escape(merged),
             about.at(book)
         ),
     )
@@ -1530,14 +1565,23 @@ pub fn renaming(book: &str, about: &About, title: &str, problem: Option<&str>) -
 /// — a space separates, a quote holds one together. The placeholder shows a
 /// quoted tag rather than describing one: while the label was singular the field
 /// read as a one-tag field, which hid something the server always did.
+///
+/// **Every tag is sent twice: once as `saw`, and again as `keep` if its box is
+/// still ticked.** An unticked box sends nothing, so without `saw` the only
+/// record of what the page offered is what came back ticked, and the server has
+/// to read the difference against the file — where a tag added since would look
+/// unticked and be removed. `saw` is that record, and it is one hidden field per
+/// tag rather than a list in one, so a tag with a space in it needs no quoting.
 pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>) -> String {
     let mut boxes = String::new();
     for (n, tag) in tags.iter().enumerate() {
         let _ = write!(
             boxes,
-            "<label class=\"tick\" for=\"t{n}\">\
+            "<input type=\"hidden\" name=\"saw\" value=\"{}\">\
+             <label class=\"tick\" for=\"t{n}\">\
              <input id=\"t{n}\" type=\"checkbox\" name=\"keep\" value=\"{}\" checked>\
              <span>{}</span></label>",
+            escape(tag),
             escape(tag),
             escape(tag)
         );
@@ -2107,6 +2151,7 @@ form.write label.tick:last-child{border-bottom:0}\
 .tick input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--tag)}\
 .said{padding:12px 16px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:13px}\
 .said b{color:var(--text);font-weight:600}\
+.said code{font-family:var(--mono)}\
 .said.bad{color:var(--alert)}\
 .said.bad b{color:var(--alert)}\
 /* Where the notebook stands against its remote, on the way to the screen that \

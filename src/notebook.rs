@@ -1579,6 +1579,24 @@ impl Notebook {
         Ok(Some((slug, text)))
     }
 
+    /// The text of a blob already in the object database.
+    ///
+    /// The web layer's optimistic lock carries a blob id, so the version an
+    /// edit began from is not merely a marker to compare — it is an address,
+    /// and this is what reads it back.
+    ///
+    /// **`None` is an ordinary answer, not a failure.** A note written by hand
+    /// and not yet committed has no blob, so a caller has to have an answer for
+    /// a version it cannot fetch. Bytes that are not UTF-8 come back `None` for
+    /// the same reason: unusable as a base, whatever the cause.
+    pub fn blob_text(&self, oid: git2::Oid) -> Result<Option<String>> {
+        match self.repo.find_blob(oid) {
+            Ok(blob) => Ok(String::from_utf8(blob.content().to_vec()).ok()),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// By slug or id prefix, so a deleted note can still be named.
     pub fn id_at(&self, commit: &git2::Commit<'_>, key: &str) -> Result<Option<String>> {
         let wanted = note::normalize_id(key);

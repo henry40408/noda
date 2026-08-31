@@ -154,16 +154,29 @@ The tags form ticks off what should go and takes the new ones in one field, sepa
 spaces — `ops docs "24.04 Dark patterns"` adds three, quoted the way the `:` prompt and the
 search box quote, and the whole change is one commit.
 
-**An edit carries the note's fingerprint, and a stale one is refused.** The form remembers
-what the file hashed to when the page was drawn; if it hashes to something else by the time
-you save, nothing is written and the page comes back with both versions on it — what is saved
-now, above what you typed, still in a box you can edit. That is the whole reason for the check:
-an edit begun on a phone at breakfast must not flatten one made at a terminal at lunch, and a
-refusal that threw away what you had just written would only be a politer way of losing it.
+**The tags form removes what you unticked, and nothing else.** It carries the tags it offered
+you, so the change is the difference against the page you were looking at rather than against
+the file. They part company when a tag is added while you have the page open: it is on the
+file, it was never on your screen, and measured against the file it would read as a box you
+unticked. A tag you were never shown is not yours to remove.
+
+**An edit carries the note's fingerprint, and a note that moved underneath is merged rather
+than overwritten.** The form remembers what the file hashed to when the page was drawn; if it
+hashes to something else by the time you save, what you wrote is merged against the version
+you started from. Two people writing in one note are usually writing in different parts of it,
+so most of the time both edits land and neither of you hears about it.
+
+Where you both changed the same lines there is nothing to merge, so the page comes back with
+the merge in it — both versions, wrapped in the `<<<<<<<` markers git uses — in one box you
+can edit. Keep what the note should say, delete the rest, and save. Nothing is written until
+you do, and every version it was made from is in git either way.
 
 The fingerprint is the file's git blob id and not its `updated` stamp, because `--no-touch`
 exists — a note's content can change without its stamp moving, which is exactly the case that
-version marker would be wrong in.
+version marker would be wrong in. Being a blob id is also what makes the merge possible: it is
+not merely a marker to compare but the address of the version you began from, so noda can
+fetch it back. A note you wrote by hand and never committed has no blob to fetch, and that is
+the one case that still comes back as two panes to reconcile yourself.
 
 **A note is rendered, and its links go where they went on disk.** A relative link to another
 note — `[the plan](k3f9m2p1-the-plan.md)`, the spelling that works on a git host and in any

@@ -100,6 +100,65 @@ fn fingerprint(path: &std::path::Path) -> Result<String> {
     Ok(git2::Oid::hash_file(git2::ObjectType::Blob, path)?.to_string())
 }
 
+/// What a three-way merge came to.
+enum Merged {
+    /// The two sets of changes touched different parts of the note, and this is
+    /// both of them.
+    Clean(String),
+    /// They touched the same part. The text carries git's conflict markers,
+    /// which is the point at which only a person can say what was meant.
+    Conflicted(String),
+}
+
+/// Merges what the reader wrote with what was saved since, against the version
+/// the edit began from.
+///
+/// **Bodies, not whole files.** Merging the frontmatter would turn somebody
+/// else's tag change into a conflict over a line the reader never saw, and
+/// `cmd::rewrite_in` puts the body back under whatever frontmatter is on disk
+/// by then, so the other change survives without ever being merged.
+///
+/// The labels are read by a person inside the markers rather than by git, so
+/// they name the two versions the way the page does.
+///
+/// What it costs, release profile, against the commit this branched from:
+///
+///     main              7,690,896 bytes
+///     with the merge   +    16,608   (+0.22%)
+///
+/// No new dependency — libgit2 is already vendored — but `git_merge_file` was
+/// not reached before, so the xdiff merge it sits on comes in with it. A
+/// quarter of what gzip was accepted at.
+fn merge(base: &str, mine: &str, theirs: &str) -> Result<Merged> {
+    // git2 initialises libgit2 from its own entry points, and `merge_file` is
+    // not one of them: reached first in a process, it traps inside C rather
+    // than returning an error. Every caller here has opened a notebook long
+    // since, so this buys nothing at run time — it is here so that a function
+    // taking three strings and returning a fourth does not depend on what ran
+    // before it.
+    git2::Oid::hash_object(git2::ObjectType::Blob, &[])?;
+
+    let mut ancestor = git2::MergeFileInput::new();
+    ancestor.content(base.as_bytes());
+    let mut ours = git2::MergeFileInput::new();
+    ours.content(mine.as_bytes());
+    let mut yours = git2::MergeFileInput::new();
+    yours.content(theirs.as_bytes());
+
+    let mut options = git2::MergeFileOptions::new();
+    options
+        .our_label("what you wrote")
+        .their_label("saved since");
+
+    let merged = git2::merge_file(&ancestor, &ours, &yours, Some(&mut options))?;
+    let text = String::from_utf8_lossy(merged.content()).into_owned();
+    Ok(if merged.is_automergeable() {
+        Merged::Clean(text)
+    } else {
+        Merged::Conflicted(text)
+    })
+}
+
 type Shared = Arc<Server>;
 
 /// Serves until it is asked to stop.
@@ -1266,7 +1325,7 @@ async fn edit_note(
             Aimed::At(notebook, id, slug) => (notebook, id, slug),
             Aimed::Missing(answer) => return Ok(answer),
         };
-        let body = parameter(Some(&form), "body");
+        let mut body = parameter(Some(&form), "body");
         let was = parameter(Some(&form), "fingerprint");
 
         let writing = server.writing.of(&book);
@@ -1274,18 +1333,44 @@ async fn edit_note(
         let path = notebook.note_path(&id, &slug);
         let now = fingerprint(&path)?;
         if now != was {
-            // Nothing written. What the reader typed is handed back on top of
-            // what is on disk: worse than overwriting somebody's work is losing
-            // the work of the person standing in front of you to avoid it.
             let theirs = Note::parse(&std::fs::read_to_string(&path)?)
                 .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
-            return Ok(Answer::Page(page::clashed(
-                &book,
-                &page::About::of(&id, &slug, &theirs.title),
-                &theirs.body,
-                &body,
-                &now,
-            )));
+            let about = page::About::of(&id, &slug, &theirs.title);
+            // The fingerprint is a blob id, so the version this edit began from
+            // is an address and not only a marker. Two people writing in one
+            // note are usually writing in different parts of it, which git can
+            // settle without troubling either of them.
+            let base = git2::Oid::from_str(&was)
+                .ok()
+                .and_then(|oid| notebook.blob_text(oid).transpose())
+                .transpose()?
+                .and_then(|text| Note::parse(&text).ok())
+                .map(|note| note.body);
+            match base {
+                // Saved rather than shown for confirmation: the reader pressed
+                // Save, and a merge that changed nothing they wrote is not a
+                // question to put to them. The note they land on is the merge,
+                // and git holds both versions it was made from.
+                Some(base) => match merge(&base, &body, &theirs.body)? {
+                    Merged::Clean(text) => body = text,
+                    Merged::Conflicted(text) => {
+                        return Ok(Answer::Page(page::conflicted(&book, &about, &text, &now)));
+                    }
+                },
+                // No base to merge against — a note written by hand and never
+                // committed. Nothing written: worse than overwriting somebody's
+                // work is losing the work of the person standing in front of
+                // you to avoid it.
+                None => {
+                    return Ok(Answer::Page(page::clashed(
+                        &book,
+                        &about,
+                        &theirs.body,
+                        &body,
+                        &now,
+                    )));
+                }
+            }
         }
         match cmd::rewrite_in(&notebook, &id, &body, cmd::Touch::Stamp) {
             Ok(_) => Ok(back_to_note(&book, &id)),
@@ -1387,9 +1472,16 @@ async fn tag_note(
         // An unticked box is not sent, so the form says which tags survived and
         // the change is the difference. Worked out here rather than asked for:
         // `+work -q3` is for somebody with a keyboard.
+        //
+        // **The difference is against what the page offered, not against the
+        // file.** They part company when a tag is added while somebody has this
+        // page open: it is on the file, it was never on the page, so measured
+        // against the file it reads as a box they unticked and is removed —
+        // silently, from a screen that never showed it. A tag missing from
+        // `saw` was never theirs to remove. Removing one that has already gone
+        // is a no-op, so nothing has to be checked against the file at all.
         let kept = parameters(&form, "keep");
-        let mut changes: Vec<String> = note
-            .tags
+        let mut changes: Vec<String> = parameters(&form, "saw")
             .iter()
             .filter(|tag| !kept.contains(tag))
             .map(|tag| format!("-{tag}"))
@@ -1603,5 +1695,45 @@ mod tests {
     fn a_stray_percent_is_left_as_typed() {
         assert_eq!(parameter(Some("q=100%+of+it"), "q"), "100% of it");
         assert_eq!(parameter(Some("q=%zz"), "q"), "%zz");
+    }
+
+    const BASE: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+
+    #[test]
+    fn changes_in_different_parts_come_back_as_one_note() {
+        let mine = BASE.replace("one\n", "ONE\n");
+        let theirs = BASE.replace("ten\n", "TEN\n");
+        let Merged::Clean(text) = merge(BASE, &mine, &theirs).expect("merge") else {
+            panic!("two ends of a note are not a conflict");
+        };
+        assert!(text.contains("ONE"), "{text}");
+        assert!(text.contains("TEN"), "{text}");
+        assert!(!text.contains("<<<"), "{text}");
+    }
+
+    /// Nobody is asked about a change they did not make: one side editing while
+    /// the other leaves the note alone is the other side's edit, unmarked.
+    #[test]
+    fn a_change_against_an_untouched_note_is_that_change() {
+        let mine = BASE.replace("five\n", "FIVE\n");
+        let Merged::Clean(text) = merge(BASE, &mine, BASE).expect("merge") else {
+            panic!("only one side changed anything");
+        };
+        assert_eq!(text, mine);
+    }
+
+    /// The labels are read by a person, so they are checked like anything else
+    /// the page says.
+    #[test]
+    fn changes_to_one_line_are_marked_and_named() {
+        let mine = BASE.replace("five\n", "mine\n");
+        let theirs = BASE.replace("five\n", "theirs\n");
+        let Merged::Conflicted(text) = merge(BASE, &mine, &theirs).expect("merge") else {
+            panic!("one line written twice is a conflict");
+        };
+        assert!(text.contains("<<<<<<< what you wrote"), "{text}");
+        assert!(text.contains(">>>>>>> saved since"), "{text}");
+        assert!(text.contains("mine"), "{text}");
+        assert!(text.contains("theirs"), "{text}");
     }
 }
