@@ -1689,10 +1689,11 @@ fn a_note_can_be_written_from_the_browser() {
     assert!(!written.contains('\r'), "{written:?}");
 }
 
-/// The optimistic lock, and the whole reason it is a content hash: a stale form
-/// is refused, and nothing on disk moves.
+/// The optimistic lock, and the whole reason it is a content hash: an edit onto
+/// a note that moved underneath is never written blind. These two rewrote the
+/// same line, so there is nothing to merge and the answer is a page.
 #[test]
-fn an_edit_against_a_stale_note_is_refused_and_loses_nothing() {
+fn an_edit_that_overlaps_one_saved_since_comes_back_to_be_settled() {
     let (server, paths) = serving();
     let id = id_of(&paths, "budget-review");
     let stale = server.fingerprint_on(&format!("/nb/default/n/{id}/edit"));
@@ -1712,18 +1713,170 @@ fn an_edit_against_a_stale_note_is_refused_and_loses_nothing() {
     );
     assert_eq!(refused.status, 200, "a refusal is a page, not a redirect");
     assert!(
-        refused.says("changed while you were writing"),
+        refused.says("Someone else saved while you were writing"),
         "{}",
         refused.body
     );
-    // Both versions are on that page: what is saved, and what they typed — the
-    // second still in a box they can edit.
+    // Both versions are on that page, inside the markers, in one box they can
+    // edit — the merge got as far as a merge can and stopped.
+    assert!(
+        refused.says("&lt;&lt;&lt;&lt;&lt;&lt;&lt; what you wrote"),
+        "no conflict markers:\n{}",
+        refused.body
+    );
     assert!(refused.says("what the terminal wrote"), "{}", refused.body);
     assert!(refused.says("what the phone wrote"), "{}", refused.body);
 
     let on_disk = server.get(&format!("/nb/default/n/{id}"));
     assert!(on_disk.says("what the terminal wrote"), "{}", on_disk.body);
     assert!(!on_disk.says("what the phone wrote"), "{}", on_disk.body);
+}
+
+/// The reason the fingerprint is a blob id and not just a marker: it is an
+/// address, so the version the edit began from can be fetched and the two
+/// changes merged. Two people writing in one note are usually writing in
+/// different parts of it, and neither of them hears about this one.
+#[test]
+fn two_edits_in_different_parts_of_a_note_are_merged_and_both_survive() {
+    let (server, paths) = serving();
+    cmd::add(
+        &paths,
+        Some("Release checklist"),
+        Some("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"),
+        &[],
+    )
+    .expect("add");
+    let id = id_of(&paths, "release-checklist");
+    let base = server.fingerprint_on(&format!("/nb/default/n/{id}/edit"));
+
+    let landed = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[
+            ("fingerprint", &base),
+            (
+                "body",
+                "TERMINAL\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten",
+            ),
+        ],
+    );
+    assert_eq!(landed.status, 303);
+
+    // The phone still holds the form from before that, and writes at the other
+    // end of the note.
+    let saved = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[
+            ("fingerprint", &base),
+            (
+                "body",
+                "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nPHONE",
+            ),
+        ],
+    );
+    assert_eq!(
+        saved.status, 303,
+        "a merge that holds is a save, not a page:\n{}",
+        saved.body
+    );
+
+    let on_disk = server.get(&format!("/nb/default/n/{id}"));
+    assert!(
+        on_disk.says("TERMINAL"),
+        "the terminal's line is gone:\n{}",
+        on_disk.body
+    );
+    assert!(
+        on_disk.says("PHONE"),
+        "the phone's line is gone:\n{}",
+        on_disk.body
+    );
+}
+
+/// The fallback, and the one case the merge cannot reach: a note edited by hand
+/// and never committed has no blob, so there is no version to merge from and
+/// both are handed back whole.
+#[test]
+fn a_clash_with_no_committed_version_to_merge_from_hands_back_both() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "reading-list");
+    let path = paths
+        .notebooks_dir()
+        .join("default")
+        .join(format!("{id}-reading-list.md"));
+    let held = std::fs::read_to_string(&path).expect("the note on disk");
+    // A notebook is an ordinary git repository, so this is somebody with an
+    // editor open in it rather than an invented situation.
+    std::fs::write(&path, held.replace("a book", "a book, uncommitted")).expect("write it back");
+
+    let stale = server.fingerprint_on(&format!("/nb/default/n/{id}/edit"));
+    let landed = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[("fingerprint", &stale), ("body", "what the terminal wrote")],
+    );
+    assert_eq!(landed.status, 303);
+
+    let refused = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[("fingerprint", &stale), ("body", "what the phone wrote")],
+    );
+    assert_eq!(refused.status, 200);
+    assert!(
+        refused.says("This note changed while you were writing"),
+        "the two-pane fallback is what an unfetchable base gets:\n{}",
+        refused.body
+    );
+    assert!(refused.says("what the terminal wrote"), "{}", refused.body);
+    assert!(refused.says("what the phone wrote"), "{}", refused.body);
+}
+
+/// A tag added while somebody had this page open was never on their screen, and
+/// is not theirs to remove. The change is measured against what the form
+/// offered, which is why the form carries it.
+#[test]
+fn saving_tags_from_a_stale_page_does_not_remove_a_tag_added_since() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let form = server.get(&format!("/nb/default/n/{id}/tags"));
+    assert!(
+        form.says("name=\"saw\" value=\"work\""),
+        "the form does not say what it offered:\n{}",
+        form.body
+    );
+
+    // A terminal adds one in the meantime.
+    cmd::tag(&paths, &id, &["+q3".to_string()], cmd::Touch::Stamp).expect("tag");
+
+    // They keep `work` ticked and save the page they were given.
+    let saved = server.post(
+        &format!("/nb/default/n/{id}/tags"),
+        &[("saw", "work"), ("keep", "work")],
+    );
+    assert_eq!(saved.status, 303);
+
+    let note = server.get(&format!("/nb/default/n/{id}"));
+    assert!(
+        note.says("<span class=\"tags\">work, q3</span>"),
+        "the tag added since was removed by a page that never showed it:\n{}",
+        note.body
+    );
+}
+
+/// The other half of the same rule: a box they did untick is still removed.
+#[test]
+fn unticking_a_tag_on_the_page_that_offered_it_removes_it() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let saved = server.post(&format!("/nb/default/n/{id}/tags"), &[("saw", "work")]);
+    assert_eq!(saved.status, 303);
+
+    let note = server.get(&format!("/nb/default/n/{id}"));
+    assert!(
+        !note.says("<span class=\"tags\">work</span>"),
+        "the unticked tag survived:\n{}",
+        note.body
+    );
 }
 
 /// The tags form says which tags survived; the `+`s and `-`s are the server's

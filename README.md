@@ -552,7 +552,8 @@ what is in flight, then waits for a `sync` that is still running. A second signa
 waiting.
 
 <details>
-<summary>What the bar does, which links open where, whose day a date is, and why a stop waits</summary>
+<summary>What the bar does, which links open where, whose day a date is, what two people editing at
+once get, and why a stop waits</summary>
 
 Under the search field are the four orders `--sort` accepts, one chip apiece, and pressing the
 one already in force turns it round, which is `-r`. The order rides in the address
@@ -567,6 +568,12 @@ A note says when it was made and when it last changed, and the browser says both
 zone you are standing in, a listing's day too. The page itself carries what the file carries,
 offset and all, so with JavaScript off you get the frontmatter's own spelling rather than a
 guess: an instant is not a day until somebody says where they are, and a request does not say.
+
+An edit onto a note that changed underneath is merged against the version you started from,
+so two people writing in different parts of one note both land and neither hears about it.
+Where you both changed the same lines, the merge comes back with git's `<<<<<<<` markers in
+one box to settle. The tags form is the same idea in miniature: it removes what you unticked
+and never a tag added while you had the page open.
 
 What a stop waits for is not connections but an errand — a push interrupted halfway leaves
 git's own lock file behind, and the next write from anywhere meets it.

@@ -154,7 +154,9 @@ where the collision is.
 It is a `std::sync::Mutex`, not tokio's, because it is only ever taken off the async threads. And
 it does not lock the notebook against the world — a terminal in another window is writing to the
 same repository and always could be. That is what the per-note fingerprint (the optimistic lock on
-every edit form) is for.
+every edit form) is for. Being a git blob id, it is an address and not only a marker: when it no
+longer matches, `web::merge` fetches the version the edit began from and merges the two with
+`git2::merge_file`, so a refusal is what an overlap gets rather than what a clash gets.
 
 **Network errands do not run in a request at all.** `sync`, `pull` and `push` take as long as
 somebody's tailnet does. A `POST` starts one and answers `303` immediately; `web/work.rs` runs it
