@@ -160,6 +160,47 @@ fn note_file(paths: &Paths, slug: &str) -> PathBuf {
         .join(format!("{}-{slug}.md", id_of(paths, slug)))
 }
 
+/// An event stream, still open.
+///
+/// Everything asked of it is a `contains` against the wire as it arrived,
+/// chunked framing and all — which is what lets this hold a connection open
+/// without a parser for a body that has no length.
+struct Watch {
+    socket: TcpStream,
+    heard: String,
+}
+
+impl Watch {
+    /// Reads until `what` shows up, saying what did arrive if it does not.
+    fn hears(&mut self, what: &str) -> &str {
+        let mut buffer = [0u8; 4096];
+        while !self.heard.contains(what) {
+            match self.socket.read(&mut buffer) {
+                Ok(0) => panic!("the stream ended before {what:?}:\n{}", self.heard),
+                Ok(read) => self
+                    .heard
+                    .push_str(&String::from_utf8_lossy(&buffer[..read])),
+                Err(e) => panic!("waiting for {what:?}: {e}\nheard so far:\n{}", self.heard),
+            }
+        }
+        &self.heard
+    }
+
+    /// That it ended, which is the only thing a stop looks like from out here.
+    fn ends(&mut self) {
+        let mut buffer = [0u8; 4096];
+        loop {
+            match self.socket.read(&mut buffer) {
+                Ok(0) => return,
+                Ok(read) => self
+                    .heard
+                    .push_str(&String::from_utf8_lossy(&buffer[..read])),
+                Err(e) => panic!("the stream never ended: {e}\nheard:\n{}", self.heard),
+            }
+        }
+    }
+}
+
 /// What came back.
 struct Answer {
     status: u16,
@@ -383,6 +424,33 @@ impl Serving {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         panic!("the errand on {path} never finished");
+    }
+
+    /// A watch, held open.
+    ///
+    /// Not `send`, which reads to the end of the answer — an event stream has no
+    /// end to read to, and the whole of what is being tested is what arrives
+    /// while it is still open.
+    fn watch(&self, path: &str, encoding: Option<&str>) -> Watch {
+        let mut socket =
+            TcpStream::connect(("127.0.0.1", self.port)).expect("connect to the server");
+        let mut wire = format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: text/event-stream\r\n",
+            self.port
+        );
+        if let Some(encoding) = encoding {
+            let _ = write!(wire, "Accept-Encoding: {encoding}\r\n");
+        }
+        // No `Connection: close`: this one stays.
+        wire.push_str("\r\n");
+        socket.write_all(wire.as_bytes()).expect("write a request");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+            .expect("a read timeout");
+        Watch {
+            socket,
+            heard: String::new(),
+        }
     }
 
     /// The fingerprint a form was handed, so a test can send it back — or send
@@ -1827,6 +1895,104 @@ fn a_clash_with_no_committed_version_to_merge_from_hands_back_both() {
     );
     assert!(refused.says("what the terminal wrote"), "{}", refused.body);
     assert!(refused.says("what the phone wrote"), "{}", refused.body);
+}
+
+/// The whole of what the watch is for: the reader hears about it while they are
+/// still typing, rather than in the answer to a Save they have already pressed.
+#[test]
+fn an_open_editor_is_told_the_note_moved_under_it() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let was = server.fingerprint_on(&format!("/nb/default/n/{id}/edit"));
+
+    let mut watch = server.watch(&format!("/nb/default/n/{id}/watch"), None);
+    // The headers are written when the handler returns, so this is also what
+    // says the subscription is in place before anything is changed under it.
+    let head = watch.hears("text/event-stream").to_string();
+    assert!(head.contains("200 OK"), "{head}");
+
+    // A terminal in another window, which is the case the file is watched for.
+    let saved = server.post(
+        &format!("/nb/default/n/{id}/edit"),
+        &[("fingerprint", &was), ("body", "written somewhere else")],
+    );
+    assert_eq!(saved.status, 303);
+
+    let heard = watch.hears("data: ");
+    // What arrives is the fingerprint the file is at now, which is the one
+    // thing an open form can compare itself against.
+    assert!(
+        !heard.contains(&format!("data: {was}")),
+        "it said the note is at the fingerprint the form already holds:\n{heard}"
+    );
+}
+
+/// A deflater holds bytes back until it has enough to be worth sending, which
+/// for a stream that ends when the server does means holding them for hours.
+///
+/// `tower_http`'s `DefaultPredicate` declines an event stream already, so this
+/// passed the day it was written. It is here because nothing in `router` says
+/// so — the two exclusions written out beside it are about wasted work, and a
+/// later hand tightening that list has no way to know this one is load-bearing.
+#[test]
+fn a_watch_is_never_compressed() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+
+    let mut watch = server.watch(&format!("/nb/default/n/{id}/watch"), Some("gzip"));
+    let head = watch.hears("text/event-stream").to_string();
+    assert!(
+        !head.to_lowercase().contains("content-encoding"),
+        "asked with gzip, an event stream must still arrive as it is written:\n{head}"
+    );
+}
+
+/// **The one an SSE route can break by existing.** A stop finishes what is in
+/// flight, and a watch is in flight until the server ends it — so a stop that
+/// did not would wait on the one request that never finishes.
+#[test]
+#[cfg(unix)]
+fn a_stop_does_not_wait_for_a_watch_that_never_ends() {
+    let (root, paths) = a_notebook();
+    let mut server = Serving::start(root, &[]);
+    let id = id_of(&paths, "budget-review");
+
+    let mut watch = server.watch(&format!("/nb/default/n/{id}/watch"), None);
+    watch.hears("text/event-stream");
+
+    let stopped = server.signalled("TERM");
+    assert!(
+        stopped.status.success(),
+        "a watch held it open: {:?}\n{}",
+        stopped.status,
+        stopped.said
+    );
+    // And the reader is let go rather than left holding a socket nothing is on.
+    watch.ends();
+}
+
+/// The editor listens; the forms that change one field and are gone do not.
+#[test]
+fn only_the_forms_that_carry_a_fingerprint_listen() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let hook = noda::web::asset::Asset::Watching.href();
+
+    let editor = server.get(&format!("/nb/default/n/{id}/edit"));
+    assert!(
+        editor.says(hook),
+        "the editor does not listen:\n{}",
+        editor.body
+    );
+
+    for path in ["rename", "tags", "delete"] {
+        let page = server.get(&format!("/nb/default/n/{id}/{path}"));
+        assert!(
+            !page.says(hook),
+            "/{path} listens and need not:\n{}",
+            page.body
+        );
+    }
 }
 
 /// A tag added while somebody had this page open was never on their screen, and

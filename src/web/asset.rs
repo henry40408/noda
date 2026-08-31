@@ -38,17 +38,20 @@ pub enum Asset {
     Beside,
     /// Every stamp, in the reader's own zone.
     Stamps,
+    /// The editor's ear on the note under it.
+    Watching,
 }
 
 impl Asset {
     /// What the addresses are built from, and what a request is answered out of.
-    const ALL: [Asset; 6] = [
+    const ALL: [Asset; 7] = [
         Asset::Style,
         Asset::Listing,
         Asset::Standing,
         Asset::Panes,
         Asset::Beside,
         Asset::Stamps,
+        Asset::Watching,
     ];
 
     /// The stem of its address — the half a person reads.
@@ -60,6 +63,7 @@ impl Asset {
             Asset::Panes => "panes",
             Asset::Beside => "beside",
             Asset::Stamps => "stamps",
+            Asset::Watching => "watching",
         }
     }
 
@@ -86,6 +90,7 @@ impl Asset {
             Asset::Panes => script::PANES.to_string(),
             Asset::Beside => script::BESIDE.to_string(),
             Asset::Stamps => script::STAMPS.to_string(),
+            Asset::Watching => script::WATCHING.to_string(),
         }
     }
 

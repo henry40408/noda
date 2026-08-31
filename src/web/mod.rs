@@ -26,6 +26,7 @@ pub mod page;
 pub mod render;
 pub mod script;
 pub mod theme;
+pub mod watch;
 pub mod work;
 
 use std::fmt::Write;
@@ -64,6 +65,10 @@ struct Server {
     writing: Locks,
     /// The one piece of state outliving a request, because the errand does.
     errands: work::Errands,
+    /// Which notes have an editor open on them, and the thread watching those
+    /// files. The other piece of state outliving a request — an SSE stream
+    /// outlives every request there is.
+    watching: watch::Watch,
 }
 
 /// One write lock per notebook.
@@ -180,6 +185,7 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
         guard: guard::Guard::new(allow),
         writing: Locks::default(),
         errands: work::Errands::default(),
+        watching: watch::Watch::new(),
     });
 
     // By hand rather than `#[tokio::main]`, because every other clap arm is
@@ -252,6 +258,10 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
 /// about itself rather than an event about a request.
 async fn asked_to_stop(mut stop: Stop, server: Shared) {
     println!("{} — finishing what is in flight", stop.next().await);
+    // Before the wait and not after it. A watch is a request that by design
+    // never finishes, so "finish what is in flight" would be a wait on the one
+    // thing that never does. Ending them is part of stopping accepting.
+    server.watching.stop();
     tokio::spawn(async move {
         println!("{} again — not waiting", stop.next().await);
         server.errands.abandon();
@@ -338,6 +348,7 @@ fn router(server: Shared) -> Router {
         // address of the thing. A `GET` that changed something would be a link a
         // prefetcher could press.
         .route("/nb/{book}/n/{key}/edit", get(edit_form).post(edit_note))
+        .route("/nb/{book}/n/{key}/watch", get(watching))
         .route(
             "/nb/{book}/n/{key}/rename",
             get(rename_form).post(rename_note),
@@ -367,6 +378,12 @@ fn router(server: Shared) -> Router {
         // The risk runs the cheap way round: a `.json` attachment also lands on
         // `octet-stream` and costs one bigger download, where guessing the other
         // way costs a phone re-deflating a video that was already deflated.
+        //
+        // **`text/event-stream` is not named here, and it matters that it is
+        // excluded anyway**: `DefaultPredicate` already declines it. A deflater
+        // holds bytes back until it has enough to be worth emitting, which for a
+        // watch — a stream that ends when the server does — means holding a
+        // message for hours. Nothing above states that, so a test does.
         .layer(
             CompressionLayer::new().compress_when(
                 DefaultPredicate::new()
@@ -1313,6 +1330,78 @@ async fn edit_form(
         )))
     })
     .await
+}
+
+/// The stream behind a watch: one message per change, each the note's new
+/// fingerprint.
+///
+/// Written out rather than taken from `tokio-stream`, whose `ReceiverStream` is
+/// this and a crate: `mpsc::Receiver::poll_recv` is already the shape
+/// `poll_next` wants, which is the whole of the wrapper.
+///
+/// The channel closing ends the stream, and that is the only way it ends —
+/// which is what `watch::Watch::stop` reaches for when the server is asked to
+/// stop.
+struct Changes(tokio::sync::mpsc::Receiver<String>);
+
+impl futures_core::Stream for Changes {
+    type Item = std::result::Result<axum::response::sse::Event, std::convert::Infallible>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.0
+            .poll_recv(cx)
+            .map(|change| change.map(|hash| Ok(axum::response::sse::Event::default().data(hash))))
+    }
+}
+
+/// Says the note's new fingerprint, each time it gets one.
+///
+/// **It says what the file is now, never what changed.** An address here
+/// carries somebody's note id and a body would carry their prose; the reader's
+/// own page decides what a new fingerprint means, by comparing it against the
+/// one its form is holding.
+///
+/// No keep-alive comments. A proxy that times an idle stream out is a proxy
+/// this has to survive, and `EventSource` reconnects by itself — the cost of
+/// that is one request, and what it re-reads is a fingerprint it then compares
+/// exactly as before.
+async fn watching(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    // Resolving the note needs a `Notebook`, which is `!Send`. Only the
+    // subscription crosses back.
+    let opened = tokio::task::spawn_blocking({
+        let server = Arc::clone(&server);
+        move || -> Result<Option<tokio::sync::mpsc::Receiver<String>>> {
+            let Aimed::At(notebook, id, slug) = aim(&server.paths, &book, &key, "/watch")? else {
+                return Ok(None);
+            };
+            let path = notebook.note_path(&id, &slug);
+            let now = fingerprint(&path)?;
+            Ok(Some(server.watching.subscribe(&book, &id, path, &now)))
+        }
+    })
+    .await;
+
+    match opened {
+        Ok(Ok(Some(hear))) => axum::response::Sse::new(Changes(hear)).into_response(),
+        // A notebook or a note that is not there. The page that opened this is
+        // looking at one, so this is a race with a delete rather than a reader
+        // to explain anything to: the stream simply is not offered.
+        Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(e)) => {
+            log::failed(&e.to_string());
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        Err(e) => {
+            log::failed(&e.to_string());
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 async fn edit_note(

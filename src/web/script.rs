@@ -836,6 +836,61 @@ pub const STAMPS: &str = r#"
 })();
 "#;
 
+/// Says, while somebody is typing, that the note under them has moved.
+///
+/// The server already merges an edit onto a note that changed underneath, so
+/// this changes nothing about what Save does — it is the same fact arriving
+/// before the press instead of after it. That is the whole of its claim on the
+/// creed: with the script absent, the note is merged just the same and the
+/// first anybody hears of it is the answer to their Save.
+///
+/// **The address is derived, not templated.** These are static files, so the
+/// note's id cannot be written into one; the editor is at `…/edit` and its
+/// watch is the same address with the last part changed. A page that is not an
+/// edit form leaves without opening anything.
+///
+/// The fingerprint the form is holding is what each message is compared
+/// against, which is what makes a reader's own save — landing here as a
+/// message about a file they already agree with — say nothing.
+pub const WATCHING: &str = r#"
+(() => {
+  const form = document.querySelector("form.write");
+  if (!form) return;
+  const held = form.querySelector('input[name="fingerprint"]');
+  if (!held) return;
+  const main = form.parentNode;
+  if (!main) return;
+
+  const at = location.pathname.replace(/\/edit$/, "/watch");
+  if (at === location.pathname) return;
+
+  let said = null;
+
+  const tell = () => {
+    if (said) return;
+    said = document.createElement("p");
+    said.className = "said bad";
+    // What it does *not* say is "reload": their work is in the box, and the
+    // server merges. A warning that implies the two are in a race would be
+    // asking them to hurry over something already handled.
+    said.innerHTML =
+      "<b>This note has changed since you opened it.</b> " +
+      "Nothing of yours is lost — saving merges what you wrote with what was saved.";
+    main.insertBefore(said, form);
+  };
+
+  const source = new EventSource(at);
+  // Every message is the note's fingerprint now, so one that matches the form
+  // is the reader's own doing, or a change already accounted for.
+  source.onmessage = (e) => {
+    if (e.data && e.data !== held.value) tell();
+  };
+  // Left to reconnect on its own: a stream that ends is a server stopping or a
+  // proxy timing out an idle connection, and what a reconnect re-reads is a
+  // fingerprint compared exactly as this one was.
+})();
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -843,8 +898,18 @@ mod tests {
     /// The whole of the injection defence, and it is one string.
     #[test]
     fn no_script_can_end_its_own_element() {
-        for source in [LISTING, STANDING, PANES, BESIDE, STAMPS] {
+        for source in [LISTING, STANDING, PANES, BESIDE, STAMPS, WATCHING] {
             assert!(!source.to_lowercase().contains("</script"), "{source}");
+        }
+    }
+
+    /// It reads the form the server writes, and derives its address from the
+    /// one the editor is at. Both are agreements with `web::page`, and neither
+    /// side can see the other break it.
+    #[test]
+    fn the_watch_looks_for_what_the_edit_form_writes() {
+        for hook in ["form.write", "input[name=\"fingerprint\"]", "/watch"] {
+            assert!(WATCHING.contains(hook), "{hook} is gone:\n{WATCHING}");
         }
     }
 

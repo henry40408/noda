@@ -1396,9 +1396,31 @@ fn read_pane(book: &str, reading: &Reading) -> String {
 /// monitor — which is what every form page did, a topbar neatly in its column
 /// with a textarea stretching past it.
 fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
-    shell(
+    laid_out(book, title, back_to, said, form, &[])
+}
+
+/// A form page that also listens for the note moving under it.
+///
+/// The three forms carrying a fingerprint — the editor, and the two answers to
+/// a note that changed while it was open — are exactly the three worth telling.
+/// Every other form here changes one field and is gone before anything could
+/// have happened to it.
+fn watching_form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
+    laid_out(book, title, back_to, said, form, &[Asset::Watching])
+}
+
+fn laid_out(
+    book: &str,
+    title: &str,
+    back_to: &str,
+    said: &str,
+    form: &str,
+    scripts: &[Asset],
+) -> String {
+    scripted(
         &format!("{title} — noda"),
         "",
+        scripts,
         &format!(
             "<section class=\"pane\">\
              <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
@@ -1446,7 +1468,7 @@ pub fn composing(book: &str, draft: &Draft, problem: Option<&str>) -> String {
 /// `was` is the fingerprint the file had when this page was drawn, carried
 /// through the form so the write can tell whether anything happened since.
 pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option<&str>) -> String {
-    form_page(
+    watching_form_page(
         book,
         &about.title,
         &about.at(book),
@@ -1480,7 +1502,7 @@ pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option
 /// keeping theirs — and leaves room for the one thing a program cannot do:
 /// decide what the two versions together should say.
 pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -> String {
-    form_page(
+    watching_form_page(
         book,
         &about.title,
         &about.at(book),
@@ -1511,7 +1533,7 @@ pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -
 /// What is left is the question no program can answer, and it is answered by
 /// editing the text rather than by copying between two panes.
 pub fn conflicted(book: &str, about: &About, merged: &str, now: &str) -> String {
-    form_page(
+    watching_form_page(
         book,
         &about.title,
         &about.at(book),
