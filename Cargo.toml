@@ -1,5 +1,9 @@
 [package]
 name = "noda"
+# A placeholder, and not the version anything reports. noda is not published to
+# crates.io, so nothing reads this field; releases are git tags cut by
+# `gh release`, and build.rs stamps the one the build came from into the binary.
+# Bumping this by hand would put a second, wrong answer next to the real one.
 version = "0.1.0"
 edition = "2024"
 license = "MIT"

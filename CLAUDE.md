@@ -114,10 +114,11 @@ path asked for, because an address here carries somebody's note id or filename.
 
 ## Testing
 
-Six layers: `#[cfg(test)]` units in `src/**` (~369), `tests/cli.rs` for the command layer,
+Seven layers: `#[cfg(test)]` units in `src/**` (~369), `tests/cli.rs` for the command layer,
 `tests/tui.rs` for screens (ratatui's test backend — no terminal), `tests/pty.rs` for *layout*
 (a real pty and `vt100`, catching what a character buffer is blind to), `tests/web.rs` for the real
-binary on a real socket, and `e2e/` for a real browser. `docs/ARCHITECTURE.md` says what each one
+binary on a real socket, `tests/version.rs` for what `build.rs` stamped into it, and `e2e/` for a
+real browser. `docs/ARCHITECTURE.md` says what each one
 exists to catch; put a new test in the cheapest layer that can actually fail on the bug.
 
 Two things that are not optional:
