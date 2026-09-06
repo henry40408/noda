@@ -325,6 +325,16 @@ async fn tags_under(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
+/// The four orders are the search's vocabulary, and they are on the screen so
+/// that reading them is how you learn it. Wrapped, the fourth sits alone under
+/// the other three and reads as a different kind of thing from the row it left.
+#[then("the order chips are on one line")]
+async fn order_on_one_line(world: &mut NodaWorld) -> Result<()> {
+    let lines = world.page()?.lines_of(".sortbar").await?;
+    anyhow::ensure!(lines == 1, "the order is on {lines} lines at this width");
+    Ok(())
+}
+
 /// The id is the note's name in the notebook's own vocabulary: what `noda show`
 /// takes and the first half of the filename in the repository. It is on every
 /// row and drawn where there is a column for it.

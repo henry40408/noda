@@ -842,6 +842,43 @@ impl Page<'_> {
         Ok((at(0), at(1), at(2)))
     }
 
+    /// How many lines a bar's children fall on.
+    ///
+    /// A wrap leaves no trace anywhere else: the markup is identical either
+    /// way, the text is all still there, and every character-level assertion
+    /// passes over it. Only the boxes say which line a child landed on.
+    ///
+    /// The question is whether a child starts below where the ones before it
+    /// end, rather than how many distinct tops there are — chips sharing a
+    /// baseline have several tops and are still one line.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the script does not run or nothing matches.
+    pub async fn lines_of(&self, selector: &str) -> Result<u64> {
+        let measured = self
+            .0
+            .measure(&format!(
+                "const el = document.querySelector('{selector}');
+                 if (!el) {{ return null; }}
+                 const kids = [...el.children]
+                     .filter(k => k.getClientRects().length)
+                     .map(k => k.getBoundingClientRect())
+                     .sort((a, b) => a.top - b.top);
+                 let lines = 0;
+                 let floor = -Infinity;
+                 for (const r of kids) {{
+                     if (r.top >= floor - 0.5) {{ lines += 1; floor = r.bottom; }}
+                     else {{ floor = Math.min(floor, r.bottom); }}
+                 }}
+                 return lines;"
+            ))
+            .await?;
+        measured
+            .as_u64()
+            .with_context(|| format!("nothing matches {selector}"))
+    }
+
     /// Whether the listing is on the screen with notes in it.
     ///
     /// Both halves, because either alone is satisfiable by an accident: a pane

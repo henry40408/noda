@@ -2068,11 +2068,13 @@ border:1px solid var(--rule);border-radius:999px;background:var(--bg-sunk)}\
 /* Four chips, and they are `.drift .pill`'s chip: a 32px pill inside a 48px \
    press, which is how this sheet has drawn every small control since the \
    first one. Nothing new is being invented for the fourth thing that is a \
-   row of pills. \
+   row of pills — the one number that differs is the padding, and it differs \
+   because this is the only place four of them stand in a row. \
    It wraps rather than scrolling. A chip that has slid out of sight is a \
-   chip a reader does not know exists, and there are only four of them — in \
-   the index column of a split screen the last one takes a line of its own, \
-   which costs 48px and hides nothing. */\
+   chip a reader does not know exists, and there are only four of them. What \
+   the wrap is for is a narrow phone, not a column: the split index is sized \
+   to hold the four in a line, and the floor that does it is written with the \
+   desktop grid. */\
 .sortbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:2px 2px 0}\
 /* The glyph, because the word `order` costs 55px and that is the difference \
    between four chips on one line in a split view's index column and three. */\
@@ -2081,8 +2083,11 @@ color:var(--punct);padding-right:2px}\
 .sortbar .lab svg{width:15px;height:15px}\
 .sortbar a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:var(--tap);\
 color:var(--muted);-webkit-tap-highlight-color:transparent}\
+/* 8px and not `.drift .pill`'s 11px: three pixels a side, times four chips, \
+   is 24 fewer pixels of index column to find. The press around it is still \
+   `--tap` tall, so nothing changes at the size a finger cares about. */\
 .sortbar a .pill{display:inline-flex;align-items:center;gap:5px;min-height:32px;\
-padding:0 11px;border:1px solid var(--rule);border-radius:999px;\
+padding:0 8px;border:1px solid var(--rule);border-radius:999px;\
 background:var(--bg-sunk);font-size:12px;white-space:nowrap}\
 .sortbar a:active .pill{background:var(--press)}\
 /* The one in force steps forward by losing its fill and taking the id's hue \
@@ -2464,8 +2469,14 @@ color:var(--text)}\
    is the tablet's two, which is what a reader with no script gets — the note, \
    whole, and the chevron back to the listing. Nothing is stuck half-loaded, \
    because nothing was promised. */\
+/* The floor is measured, not chosen: 288px of order chips, 40px of column \
+   padding, the bar's 2px, and 24px of room for a monospace wider than this \
+   machine's. It was 300px, and the fourth chip wrapped — on every screen \
+   between 1024px and 1369px, which is every tablet held sideways. The \
+   reading pane pays 56px at 1024px and nothing past 1369px, where 26vw \
+   overtakes the floor. */\
 @media (min-width:1024px){\
-.app.split.indexed{grid-template-columns:var(--rail) clamp(300px,26vw,380px) minmax(0,1fr)}\
+.app.split.indexed{grid-template-columns:var(--rail) clamp(356px,26vw,380px) minmax(0,1fr)}\
 .app.split.indexed .index{grid-column:2;border-right:1px solid var(--rule)}\
 .app.split.indexed .read{grid-column:3}\
 .app.split.indexed.at-note .index{display:block}\

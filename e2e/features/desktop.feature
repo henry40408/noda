@@ -60,6 +60,25 @@ Feature: The same pages on a wider screen
     Given I open the notebook on a desktop
     Then the row's tags sit under the title
 
+  # The one thing that does not stack anywhere. The four orders are the
+  # search's vocabulary and they are on the screen so that reading them is how
+  # you learn it; wrapped, the fourth sits alone under the other three and
+  # reads as a different kind of thing from the row it left. The width that
+  # broke it was neither of the ends — a phone has one column and the chips
+  # fit across it, a monitor has room to spare, and in between sat every
+  # tablet held sideways, where the index column was 44 pixels too narrow.
+  Scenario: The order stays on one line on a phone
+    Given I open the notebook
+    Then the order chips are on one line
+
+  Scenario: The order stays on one line on a tablet
+    Given I open the notebook on a tablet
+    Then the order chips are on one line
+
+  Scenario: The order stays on one line in the index column
+    Given I open the notebook on a desktop
+    Then the order chips are on one line
+
   # `a OR b c` is `(a OR b) AND c` — `OR` binds tighter than the space between
   # terms, which is backwards from every search box that has an `OR` at all.
   # It is the one thing about this grammar people read wrong, and the two
