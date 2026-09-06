@@ -3536,6 +3536,35 @@ fn file_add_refuses_the_names_it_could_not_then_account_for() {
     assert!(err.contains("cannot be given with several"), "{err}");
 }
 
+/// A note's slug is cut to fit a filename; an attachment's name is what links
+/// point at, so it is refused instead — and said in noda's words rather than
+/// left to surface as an errno from the copy.
+#[test]
+fn file_add_refuses_a_name_too_long_to_be_a_filename() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let source = source_file(&root, "diagram.png");
+    cmd::file_add(&paths, std::slice::from_ref(&source), None).unwrap();
+    let commits = commit_count(&notebook);
+    let too_long = format!("{}.png", "a".repeat(252));
+    assert_eq!(too_long.len(), 256);
+
+    let err = cmd::file_add(&paths, std::slice::from_ref(&source), Some(&too_long))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("has to fit in 255 bytes"), "{err}");
+    assert!(err.contains("is 256"), "it says how far over: {err}");
+
+    // The same name through the other door that writes one.
+    let err = cmd::file_mv(&paths, "diagram.png", &too_long, false)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("has to fit in 255 bytes"), "{err}");
+
+    assert!(notebook.join("diagram.png").is_file(), "left where it was");
+    assert_eq!(commit_count(&notebook), commits, "and nothing committed");
+}
+
 #[test]
 fn file_add_refuses_a_directory() {
     let (root, paths) = initialized();

@@ -1646,6 +1646,16 @@ fn validate_file_name(name: &str) -> Result<()> {
             "noda does not list dotfiles, so it will not add one: {name}"
         )));
     }
+    // Said here rather than left to the write, which reports it as an errno. A
+    // note's slug is cut to fit instead, but an attachment's name is what links
+    // point at, so cutting it would break them silently.
+    if name.len() > note::MAX_FILE_NAME_LEN {
+        return Err(Error::msg(format!(
+            "a filename has to fit in {} bytes, and this one is {}: {name}",
+            note::MAX_FILE_NAME_LEN,
+            name.len()
+        )));
+    }
     Ok(())
 }
 

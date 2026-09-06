@@ -487,6 +487,8 @@ $ noda edit meeting-notes        # write: ![the shape of it](diagram.png)
 Which note uses a file is written in that note's prose, as an ordinary Markdown link — which is
 also what makes the note render correctly in anything else that reads Markdown. Adding never
 overwrites a file the notebook already holds; `--as <name>` stores it under a different name.
+A name has to fit the 255 bytes a filename gets, and — unlike a note's slug, which is cut —
+one that does not is refused, because an attachment's name is what links point at.
 `noda file rm` refuses a note and points at `noda rm`. Renaming says which notes linked to the
 old name, and `--update-links` rewrites them on the same terms `noda mv` does.
 
