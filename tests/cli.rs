@@ -5585,6 +5585,49 @@ https://coding-horror.github.io/basic-computer-games/";
     );
 }
 
+/// A write the filesystem refuses used to end the run with `?`, leaving the
+/// notes written so far in the working tree with nothing committed — a whole
+/// export lost to one note. It is now a reason a note was not imported, the way
+/// a title `check` turned down is.
+#[test]
+fn import_reports_a_note_it_could_not_write_instead_of_ending_the_run() {
+    let (root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let file = export(&root, "wiki.json", TIDDLERS);
+    let commits = commit_count(&notebook);
+
+    // Nothing in the harness can make one write fail and not another — the
+    // filename carries a minted id, so no collision can be laid down for it —
+    // so every write fails instead: the directory takes no new entries.
+    let was = std::fs::metadata(&notebook).unwrap().permissions();
+    let mut readonly = was.clone();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&notebook, readonly).unwrap();
+    if std::fs::write(notebook.join("probe"), "x").is_ok() {
+        // root, or a filesystem that does not enforce the mode.
+        std::fs::remove_file(notebook.join("probe")).unwrap();
+        std::fs::set_permissions(&notebook, was).unwrap();
+        return;
+    }
+
+    let out = cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true);
+
+    std::fs::set_permissions(&notebook, was).unwrap();
+    let out = plain(&out.expect("a refused write is reported, not returned as an error"));
+    assert!(out.contains("imported  0 notes from tiddlywiki"), "{out}");
+    assert!(out.contains("not imported:"), "{out}");
+    assert!(
+        out.contains("2 Permission denied"),
+        "the OS's own words for why: {out}"
+    );
+    assert_eq!(commit_count(&notebook), commits, "nothing committed");
+    let left = std::fs::read_dir(&notebook)
+        .unwrap()
+        .filter(|entry| note::names_a_note(&entry.as_ref().unwrap().file_name().to_string_lossy()))
+        .count();
+    assert_eq!(left, 0, "and nothing left in the working tree");
+}
+
 /// The link is to a tiddler by title, and the file it becomes is not named
 /// until the id is minted — so the rewrite cannot happen until every note
 /// exists, which is what the second pass is for.
