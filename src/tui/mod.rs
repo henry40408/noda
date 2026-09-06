@@ -208,6 +208,7 @@ fn perform(
             changes,
             touch,
         } => cmd::tag(paths, &key, &changes, touch),
+        Action::Pin { key, pinned, touch } => cmd::pin(paths, &key, pinned, touch),
         Action::Remove(key) => cmd::rm(paths, &key),
         Action::Restore { key, rev, touch } => cmd::restore(paths, &key, &rev, touch),
         // The whole queue in one commit: `bulk` runs the same code the keys

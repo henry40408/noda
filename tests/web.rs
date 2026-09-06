@@ -2175,6 +2175,62 @@ fn asking_to_delete_only_asks() {
     assert_eq!(server.get(&format!("/nb/default/n/{id}")).status, 200);
 }
 
+/// **The only write on the bar with no page in between**, so what it does and
+/// what the bar then offers are one test: pressed once the note is pinned and
+/// the button has become Unpin, pressed again it is back where it started.
+#[test]
+fn the_bar_pins_a_note_and_then_offers_to_let_it_down() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let at = format!("/nb/default/n/{id}");
+
+    let before = server.get(&at);
+    assert!(before.says(">Pin</span>"), "{}", before.body);
+    assert!(!before.says(">Unpin</span>"), "{}", before.body);
+
+    let pinned = server.post(&format!("{at}/pin"), &[]);
+    assert_eq!(pinned.status, 303);
+
+    let note = server.get(&at);
+    assert!(note.says(">Unpin</span>"), "{}", note.body);
+    // A row saying why it is where it is, on the listing the note came from.
+    let listing = server.get("/nb/default");
+    assert!(
+        listing.says("<span class=\"pin\">pinned</span>"),
+        "{}",
+        listing.body
+    );
+
+    // Pressed twice, a POST that names the state it wants lands on it.
+    assert_eq!(server.post(&format!("{at}/pin"), &[]).status, 303);
+    assert!(server.get(&at).says(">Unpin</span>"));
+
+    assert_eq!(server.post(&format!("{at}/unpin"), &[]).status, 303);
+    let loose = server.get(&at);
+    assert!(loose.says(">Pin</span>"), "{}", loose.body);
+    assert!(!loose.says(">Unpin</span>"), "{}", loose.body);
+}
+
+/// A pin is a write, so it goes through the door every other write goes
+/// through — the one thing standing between a notebook and somebody else's page.
+#[test]
+fn another_site_cannot_pin_a_note() {
+    let (server, paths) = serving();
+    let id = id_of(&paths, "budget-review");
+    let refused = server.send(
+        "POST",
+        &format!("/nb/default/n/{id}/pin"),
+        &[("Origin", "https://elsewhere.example")],
+        Some(""),
+    );
+    assert_eq!(refused.status, 403);
+    assert!(
+        !server
+            .get(&format!("/nb/default/n/{id}"))
+            .says(">Unpin</span>")
+    );
+}
+
 /// The guard is in front of the writes too, and it always was — which is why it
 /// shipped in the pull request before them.
 #[test]

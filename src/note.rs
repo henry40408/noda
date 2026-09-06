@@ -5,7 +5,8 @@
 //! tree, so uniqueness is structural rather than policed — two machines each
 //! adding a note write two filenames that merge without a conflict.
 //!
-//! The frontmatter carries the title (a slug is lossy) and the tags, and its
+//! The frontmatter carries the title (a slug is lossy), the tags and whether the
+//! note is pinned, and its
 //! *presence* is what marks a file as a note at all — see `notebook::Scan`.
 //! noda interprets those fields and no others, but does not own the block: any
 //! other field survives a write-back untouched.
@@ -39,6 +40,13 @@ pub struct Note {
     /// matching the file.
     pub created: Option<String>,
     pub updated: Option<String>,
+    /// `true` floats the note to the top of every listing. Kept as written, for
+    /// `created`'s reason — a value noda cannot read is still somebody's, and
+    /// [`Note::is_pinned`] is the only thing that judges it.
+    ///
+    /// Absent rather than `false` when a note is not pinned, so a note that has
+    /// been pinned and unpinned is byte-for-byte the file it started as.
+    pub pinned: Option<String>,
     /// Frontmatter lines noda does not interpret, in the order they were read.
     /// A note from elsewhere carries fields noda has never heard of, and losing
     /// them on the first `tag add` loses the only copy.
@@ -65,6 +73,9 @@ impl Note {
         if let Some(updated) = &self.updated {
             let _ = writeln!(out, "updated: {updated}");
         }
+        if let Some(pinned) = &self.pinned {
+            let _ = writeln!(out, "pinned: {pinned}");
+        }
         // After noda's own fields, never interleaved: their order among
         // themselves is preserved, their position relative to `title` is not.
         for line in &self.extra {
@@ -86,6 +97,7 @@ impl Note {
         let mut tags = Vec::new();
         let mut created = None;
         let mut updated = None;
+        let mut pinned = None;
         let mut extra = Vec::new();
         for line in frontmatter.lines() {
             // A line noda cannot even split into a field is still somebody's.
@@ -102,6 +114,7 @@ impl Note {
                 // reports it instead.
                 "created" => created = Some(value.to_string()),
                 "updated" => updated = Some(value.to_string()),
+                "pinned" => pinned = Some(value.to_string()),
                 // Every other field belongs to whoever wrote it.
                 _ => extra.push(line.to_string()),
             }
@@ -112,11 +125,24 @@ impl Note {
             tags,
             created,
             updated,
+            pinned,
             extra,
             body: body.trim_start_matches('\n').to_string(),
         })
     }
+
+    /// Whether this note is pinned. `true` and nothing else, case-folded because
+    /// a hand-written `True` means what it says; anything noda cannot read is
+    /// not a pin, and is left in the file for whoever wrote it.
+    pub fn is_pinned(&self) -> bool {
+        self.pinned
+            .as_ref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    }
 }
+
+/// What `pin` writes. `unpin` writes no line at all.
+pub const PINNED: &str = "true";
 
 /// Splits `text` into the frontmatter body and everything after the closing `---`.
 pub(crate) fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
@@ -463,6 +489,7 @@ mod tests {
             tags: vec!["work".into(), "q3".into()],
             created: Some("2019-03-14T08:21:00Z".into()),
             updated: Some("2024-11-02T16:40:12Z".into()),
+            pinned: None,
             extra: Vec::new(),
             body: "Body line one.\nBody line two.\n".into(),
         };
@@ -472,6 +499,66 @@ mod tests {
         ));
         assert!(!text.contains("id:"), "the id is the filename: {text}");
         assert_eq!(Note::parse(&text).unwrap(), note);
+    }
+
+    /// The field is written where `render` puts it and read back as itself.
+    #[test]
+    fn a_pin_round_trips_after_the_stamps() {
+        let note = Note {
+            title: "Meeting notes".into(),
+            tags: Vec::new(),
+            created: None,
+            updated: Some("2024-11-02T16:40:12Z".into()),
+            pinned: Some(PINNED.into()),
+            extra: vec!["source: elsewhere".into()],
+            body: "hi\n".into(),
+        };
+        let text = note.render();
+        assert!(
+            text.starts_with(
+                "---\ntitle: Meeting notes\nupdated: 2024-11-02T16:40:12Z\npinned: true\n\
+                 source: elsewhere\n---\n\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(Note::parse(&text).unwrap(), note);
+        assert!(note.is_pinned());
+    }
+
+    /// **An unpinned note's file says nothing at all**, so pinning and unpinning
+    /// leaves the bytes it started with rather than a `pinned: false` nobody
+    /// asked for.
+    #[test]
+    fn an_unpinned_note_writes_no_line() {
+        let text = "---\ntitle: Alpha\n---\n\nbody\n";
+        let mut note = Note::parse(text).unwrap();
+        assert!(!note.is_pinned());
+        assert_eq!(note.render(), text);
+
+        note.pinned = Some(PINNED.into());
+        assert!(note.render().contains("pinned: true"));
+        note.pinned = None;
+        assert_eq!(note.render(), text);
+    }
+
+    /// A value noda cannot read is not a pin and is not thrown away either —
+    /// `created`'s bargain, for the field that came after it.
+    #[test]
+    fn a_pin_is_true_and_nothing_else_but_survives_being_something_else() {
+        for (value, pinned) in [
+            ("true", true),
+            ("True", true),
+            ("TRUE", true),
+            ("false", false),
+            ("yes", false),
+            ("1", false),
+            ("", false),
+        ] {
+            let text = format!("---\ntitle: Alpha\npinned: {value}\n---\n\nbody\n");
+            let note = Note::parse(&text).unwrap();
+            assert_eq!(note.is_pinned(), pinned, "pinned: {value}");
+            assert_eq!(note.render(), text, "pinned: {value}");
+        }
     }
 
     #[test]

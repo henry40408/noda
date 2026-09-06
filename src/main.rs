@@ -122,6 +122,24 @@ enum Command {
         #[arg(long)]
         no_touch: bool,
     },
+    /// Float a note to the top of every listing. Auto-commits.
+    Pin {
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
+        note: String,
+        /// Leave `updated` as it stands instead of setting it to now.
+        #[arg(long)]
+        no_touch: bool,
+    },
+    /// Let a pinned note back down among the rest. Auto-commits.
+    Unpin {
+        /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
+        /// (`meeting-notes`).
+        note: String,
+        /// Leave `updated` as it stands instead of setting it to now.
+        #[arg(long)]
+        no_touch: bool,
+    },
     /// Delete a note. The removal is a commit, so `git revert` undoes it.
     Rm {
         /// Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug
@@ -541,6 +559,8 @@ fn run() -> noda::Result<()> {
             changes,
             no_touch,
         } => cmd::tag(&paths, note, changes, touch(*no_touch))?,
+        Command::Pin { note, no_touch } => cmd::pin(&paths, note, true, touch(*no_touch))?,
+        Command::Unpin { note, no_touch } => cmd::pin(&paths, note, false, touch(*no_touch))?,
         Command::Rm { note } => cmd::rm(&paths, note)?,
         Command::Status => cmd::status(&paths)?,
         Command::Doctor {

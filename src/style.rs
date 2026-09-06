@@ -55,6 +55,20 @@ pub const OVERDUE: Style = AnsiColor::Red.on_default();
 /// hue rather than by an effect a terminal may decline, and the bold keeps it
 /// from reading as another row of dimmed data.
 pub const COLUMN: Style = AnsiColor::BrightBlack.on_default().bold();
+/// The mark on a pinned row.
+///
+/// [`OVERDUE`]'s exception again, and it has to be argued the same way: this
+/// colours a row for what it means. It earns it by being the whole point of the
+/// field — a pin exists to be seen from across the listing.
+pub const PIN: Style = AnsiColor::Magenta.on_default();
+/// What that mark says. A word rather than a glyph: the listing is read in a
+/// terminal whose font noda does not choose, and a pin glyph is emoji — double
+/// width where it renders, one column wide where it does not, and the row after
+/// it is off by one either way.
+///
+/// Here beside [`PIN`] because `ls` and `tui` both draw this column, and a mark
+/// spelled two ways is two marks.
+pub const PIN_MARK: &str = "pinned";
 /// The bar down the left of the row the cursor is on, in `noda tui`.
 ///
 /// [`ID`]'s yellow, because the row it marks is a note. The row itself is only

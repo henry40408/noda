@@ -354,6 +354,11 @@ fn router(server: Shared) -> Router {
             get(rename_form).post(rename_note),
         )
         .route("/nb/{book}/n/{key}/tags", get(tags_form).post(tag_note))
+        // Two routes rather than one that toggles: a POST is retried by a
+        // browser that lost the answer, and a toggle retried lands where it
+        // started. Naming the state asked for makes the second press a no-op.
+        .route("/nb/{book}/n/{key}/pin", post(pin_note))
+        .route("/nb/{book}/n/{key}/unpin", post(unpin_note))
         .route(
             "/nb/{book}/n/{key}/delete",
             get(delete_form).post(delete_note),
@@ -905,6 +910,7 @@ async fn reading(
         let text = std::fs::read_to_string(notebook.note_path(&id, &slug))?;
         let note = Note::parse(&text).map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
         let around = render::Around::of(&book, &notebook.named_files()?);
+        let pinned = note.is_pinned();
         let reading = page::Reading {
             id,
             slug,
@@ -913,6 +919,7 @@ async fn reading(
             created: note.created,
             updated: note.updated,
             rendered: render::body(&note.body, &around),
+            pinned,
         };
         // A swap leaves the index pane where it is, so this request is not
         // asking about the notebook and nothing on screen will change.
@@ -1593,6 +1600,38 @@ async fn tag_note(
                 Some(&e.to_string()),
             ))),
         }
+    })
+    .await
+}
+
+async fn pin_note(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    pinning(server, book, key, true).await
+}
+
+async fn unpin_note(
+    State(server): State<Shared>,
+    Path((book, key)): Path<(String, String)>,
+) -> Response {
+    pinning(server, book, key, false).await
+}
+
+/// No form page in between, unlike every other write here: there is nothing to
+/// fill in and nothing to confirm — the answer is the note with the bar now
+/// offering the other word.
+async fn pinning(server: Shared, book: String, key: String, pinned: bool) -> Response {
+    answer(move || {
+        let tail = if pinned { "/pin" } else { "/unpin" };
+        let (notebook, id, _slug) = match aim(&server.paths, &book, &key, tail)? {
+            Aimed::At(notebook, id, slug) => (notebook, id, slug),
+            Aimed::Missing(answer) => return Ok(answer),
+        };
+        let writing = server.writing.of(&book);
+        let _writing = writing.lock();
+        cmd::pin_in(&notebook, &id, pinned, cmd::Touch::Stamp)?;
+        Ok(back_to_note(&book, &id))
     })
     .await
 }

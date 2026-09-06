@@ -128,6 +128,18 @@ pub const COMMANDS: &[Spec] = &[
         takes: "[note] +tag -tag...",
         what: "add and remove tags: +work -q3 -\"two words\"",
     },
+    Spec {
+        name: "pin",
+        aliases: &[],
+        takes: "[note]",
+        what: "float a note to the top of every listing",
+    },
+    Spec {
+        name: "unpin",
+        aliases: &[],
+        takes: "[note]",
+        what: "let a pinned note back down among the rest",
+    },
     // No note may be named: the question is only worth asking about a note you
     // can see.
     Spec {

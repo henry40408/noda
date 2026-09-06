@@ -70,7 +70,9 @@ const KEYS: &[(&str, &str)] = &[
     ("/", "filter: tag:work OR tag:q3 budget"),
     (":, ctrl-a", "run a command · the list of what it takes"),
     ("space, *, Q", "mark · mark all shown · the queue"),
-    ("e, a", "edit in $EDITOR · new note"),
+    // `p` is not on the bar along the bottom: every column of that grid is
+    // full, and it is the newest key with a second way of being found.
+    ("e, a, p", "edit in $EDITOR · new note · pin, and unpin"),
     ("m, #", "retitle · tags: a box each, tab chooses"),
     ("ctrl-d, T", "delete (after a y) · leave updated alone"),
     // One row per group: the card has to stay inside twenty-four rows, which it
@@ -294,8 +296,20 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|(_, values)| values.iter().map(|v| display_width(v)).max().unwrap_or(0))
         .collect();
+    // A column only a listing holding a pin pays for: no pins and the row is the
+    // row it has always been, down to the column the tags start in.
+    let pinned_here = app.rows().any(|file| file.note.is_pinned());
+    let pin_width = if pinned_here {
+        palette::PIN_MARK.chars().count() + COLUMN_GAP
+    } else {
+        0
+    };
     let spent = |widths: &[usize]| {
-        widths.iter().sum::<usize>() + (widths.len() + 2) * COLUMN_GAP + id_width + TITLE_FLOOR
+        widths.iter().sum::<usize>()
+            + (widths.len() + 2) * COLUMN_GAP
+            + id_width
+            + TITLE_FLOOR
+            + pin_width
     };
     while !widths.is_empty() && spent(&widths) > inner {
         widths.pop();
@@ -358,6 +372,13 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
                     .map(|(style, text)| Span::styled(text, theme::from(style)))
                     .collect::<Vec<_>>(),
             ));
+            if pinned_here {
+                cells.push(Line::from(if file.note.is_pinned() {
+                    Span::styled(palette::PIN_MARK, theme::from(palette::PIN))
+                } else {
+                    Span::raw("")
+                }));
+            }
             Row::new(cells)
         })
         .collect();
@@ -365,12 +386,18 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     let mut constraints = vec![Constraint::Length(id_width as u16), Constraint::Fill(1)];
     constraints.extend(widths.iter().map(|w| Constraint::Length(*w as u16)));
     constraints.push(Constraint::Length(tag_width as u16));
+    if pinned_here {
+        constraints.push(Constraint::Length(palette::PIN_MARK.chars().count() as u16));
+    }
 
     // In `-l`'s own order, which is why the row is here: `created` and `updated`
     // are the same twenty characters twice.
     let mut names = vec![under_mark("ID"), "TITLE".to_string()];
     names.extend(extra.iter().map(|(which, _)| which.to_uppercase()));
     names.push("TAGS".to_string());
+    if pinned_here {
+        names.push(palette::PIN_MARK.to_uppercase());
+    }
 
     let rows_shown = rows.len();
     f.render_stateful_widget(sheet(rows, constraints, &names), area, &mut state);

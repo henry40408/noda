@@ -30,6 +30,9 @@ struct Terminal {
     /// `BrightBlack`, which is grey everywhere anyone has ever set up.
     grey: &'static str,
     red: &'static str,
+    /// `style::PIN`. The one hue not already spoken for, which is what a mark
+    /// meant to be found from across a listing needs.
+    magenta: &'static str,
     /// Not a slot — a terminal never asks the program about its background.
     background: &'static str,
     /// A sunk panel. Half a step from `background`, never a second hue.
@@ -52,6 +55,7 @@ const LIGHT: Terminal = Terminal {
     cyan: "#0e6f7a",
     grey: "#8b929c",
     red: "#b3261e",
+    magenta: "#a626a4",
     background: "#ffffff",
     sunk: "#f4f5f7",
     rule: "#e3e5e9",
@@ -67,6 +71,7 @@ const DARK: Terminal = Terminal {
     cyan: "#56b6c2",
     grey: "#6b7280",
     red: "#e06c75",
+    magenta: "#c678dd",
     // Not black: under white text, pure black smears as the eye moves.
     background: "#14161a",
     sunk: "#1b1e24",
@@ -86,6 +91,7 @@ fn fill(style: anstyle::Style, terminal: &Terminal) -> &'static str {
         Some(anstyle::Color::Ansi(AnsiColor::Cyan)) => terminal.cyan,
         Some(anstyle::Color::Ansi(AnsiColor::BrightBlack)) => terminal.grey,
         Some(anstyle::Color::Ansi(AnsiColor::Red)) => terminal.red,
+        Some(anstyle::Color::Ansi(AnsiColor::Magenta)) => terminal.magenta,
         // `style::MUTED`: how a timestamp steps back without becoming a hue.
         None if dimmed => terminal.dim,
         _ => terminal.text,
@@ -114,6 +120,7 @@ fn properties(terminal: &Terminal) -> String {
         // `OVERDUE` is the one colour marking what a thing *means*, and spelling
         // it `--alert` would quietly drop that argument.
         ("--overdue", fill(style::OVERDUE, terminal)),
+        ("--pin", fill(style::PIN, terminal)),
     ] {
         let _ = write!(css, "{name}:{value};");
     }
@@ -163,6 +170,19 @@ mod tests {
     fn tag_punctuation_steps_back_by_hue() {
         assert_eq!(fill(style::TAGS_PUNCT, &DARK), DARK.grey);
         assert_ne!(fill(style::TAGS_PUNCT, &DARK), fill(style::TAGS, &DARK));
+    }
+
+    /// A colour `style.rs` reaches for and this file has not heard of falls
+    /// through to the default foreground — visible, and indistinguishable from
+    /// the title beside it, which is what a mark must never be.
+    #[test]
+    fn the_pin_has_a_hue_of_its_own_in_both_themes() {
+        for terminal in [&LIGHT, &DARK] {
+            assert_eq!(fill(style::PIN, terminal), terminal.magenta);
+            assert_ne!(fill(style::PIN, terminal), terminal.text);
+            assert_ne!(fill(style::PIN, terminal), fill(style::TAGS, terminal));
+        }
+        assert!(stylesheet().contains("--pin:"));
     }
 
     #[test]

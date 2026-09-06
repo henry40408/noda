@@ -55,7 +55,7 @@
 //!
 //! | the query holds | the script can say | why |
 //! | --- | --- | --- |
-//! | only `tag:` / `title:` / `id:` | the whole answer | the page carries every field those terms read |
+//! | only `tag:` / `title:` / `id:` / `pinned:` | the whole answer | the page carries every field those terms read — a pinned row is the one wearing the mark |
 //! | a bare word, or `text:` | part of the answer | `Field::Text` reads the body too, and a row's body is not here. Title-and-tag hits are a **subset** of text hits, so what is shown is right and possibly short — never wrong |
 //! | a *negated* bare word or `text:` | nothing | this is the case that inverts. `-budget` asks for notes without the word; the script cannot see the body, so it would *keep* a row the server would drop. Widening is the one thing the rule forbids, so the filter stands aside |
 //!
@@ -135,6 +135,9 @@ pub const LISTING: &str = r#"
         title,
         words: title.textContent,
         tags: tags ? tags.textContent.split(", ") : [],
+        // The mark the server drew is the whole fact, so `pinned:` is one of
+        // the terms this can answer exactly rather than narrowly.
+        pinned: !!row.querySelector(".pin"),
         id: row.getAttribute("href").split("/").pop(),
       };
     });
@@ -143,7 +146,7 @@ pub const LISTING: &str = r#"
   look();
   if (!total) return;
 
-  const FIELDS = ["tag", "title", "id", "text"];
+  const FIELDS = ["tag", "title", "id", "pinned", "text"];
 
   // `query::split`, said again: quotes hold a piece together, and an unclosed
   // one runs to the end because its closer is usually the next character.
@@ -179,6 +182,9 @@ pub const LISTING: &str = r#"
       field = rest.slice(0, colon);
       value = rest.slice(colon + 1);
     }
+    // `Term::parse` refuses any other value, and a query the server will refuse
+    // is one this stands aside for — the same answer it gives half a query.
+    if (field === "pinned" && value !== "true" && value !== "false") return null;
     return value ? { field, value, negated, said: token } : null;
   };
 
@@ -213,6 +219,7 @@ pub const LISTING: &str = r#"
     if (parsed.field === "tag") found = note.tags.includes(parsed.value);
     else if (parsed.field === "id") found = fold(note.id).startsWith(fold(parsed.value));
     else if (parsed.field === "title") found = inWords;
+    else if (parsed.field === "pinned") found = note.pinned === (parsed.value === "true");
     // Everything a bare word reaches *here*; the body is what is missing.
     else found = inWords || note.tags.some((tag) => tag.toLowerCase().includes(value));
     return found !== parsed.negated;

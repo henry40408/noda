@@ -67,6 +67,13 @@ pub enum Action {
         changes: Vec<String>,
         touch: Touch,
     },
+    /// `noda pin` / `noda unpin`. One variant, because the key is a toggle and
+    /// two would make the caller work out which of them it just meant.
+    Pin {
+        key: String,
+        pinned: bool,
+        touch: Touch,
+    },
     /// `noda rm`, once the confirmation has been given. Nothing is left to stamp.
     Remove(String),
     /// Every change in the queue, in one commit. `cmd::bulk` is the same code
@@ -1180,6 +1187,19 @@ impl App {
                 self.ask(Ask::Retitle, title);
                 return None;
             }
+            // A toggle rather than two keys: the row says which way it will go,
+            // so a second key would only be there to be pressed by mistake.
+            KeyCode::Char('p') => {
+                let Some(file) = self.selected() else {
+                    self.refuse("no note on screen — open one first".to_string());
+                    return None;
+                };
+                return Some(Action::Pin {
+                    key: file.id.clone(),
+                    pinned: !file.note.is_pinned(),
+                    touch: self.touch,
+                });
+            }
             KeyCode::Char('#') => {
                 // Nothing to tag is nothing to ask about.
                 let keys = if self.marks.is_empty() {
@@ -2054,6 +2074,15 @@ impl App {
                     touch: self.touch,
                 });
             }
+            // Named, so they say which way they go — the key is the toggle.
+            "pin" | "unpin" => {
+                let key = self.aimed(args.first())?;
+                return Some(Action::Pin {
+                    key,
+                    pinned: spec.name == "pin",
+                    touch: self.touch,
+                });
+            }
             // The key's question, aimed the same way.
             "rm" => return self.delete(),
             "restore" => {
@@ -2540,6 +2569,7 @@ mod tests {
                 tags: tags.iter().map(|t| (*t).to_string()).collect(),
                 created: None,
                 updated: None,
+                pinned: None,
                 extra: Vec::new(),
                 body: body.to_string(),
             },

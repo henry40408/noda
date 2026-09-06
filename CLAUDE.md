@@ -96,7 +96,8 @@ no index file, and one should not be introduced. git forbids two entries under o
 so uniqueness is structural rather than something noda polices, and two machines that each add a
 note write two different filenames that merge without a conflict.
 
-The frontmatter carries `title`, `tags`, `created` and `updated`. Its *presence* is what marks a
+The frontmatter carries `title`, `tags`, `created`, `updated` and `pinned` (absent rather than
+`false` when a note is not pinned). Its *presence* is what marks a
 file as a note (`notebook::Scan`). noda interprets those fields and no others, but does not own the
 block: any other field survives a write-back untouched.
 

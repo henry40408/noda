@@ -13,8 +13,26 @@ version = 2
 # Deny crates with a known security advisory (RUSTSEC) or that have been yanked.
 yanked = "deny"
 # Advisory IDs reviewed and consciously accepted go here, each with a note
-# saying why. Empty is the honest state: nothing has needed an exception.
-ignore = []
+# saying why. An entry is a debt, not a dismissal: it says the graph is knowingly
+# carrying something, and it is expected to be removed rather than to settle in.
+ignore = [
+    # `libssh2-sys 0.3.2` was published to carry backported patches for three
+    # libssh2 CVEs and went out with the *unpatched* submodule in the tarball;
+    # it was yanked for that on 2026-09-05 and `0.3.3` is the first release that
+    # actually contains them.
+    #
+    # **So this is not "the yank does not matter" — the graph really is carrying
+    # an unpatched libssh2.** Two of the three are reachable from here: the
+    # chacha20-poly1305 path of `_libssh2_transport_read` and the pre-auth
+    # `EXT_INFO` handler are both on the wire for any SSH remote, and libssh2 is
+    # vendored into every build. The third is SFTP, which libgit2 never calls.
+    #
+    # It is here only because `0.3.3` was published the same day it was needed,
+    # inside the seven-day cooldown this project applies to a dependency bump —
+    # a new release being the thing that cooldown exists to catch. #114 carries
+    # the date and the reasoning; this entry goes with the bump.
+    { crate = "libssh2-sys@0.3.2", reason = "yanked for a packaging fault; the fixed 0.3.3 is inside the dependency cooldown until 2026-09-12 — see #114" },
+]
 
 [licenses]
 version = 2
