@@ -46,6 +46,12 @@ COPY . .
 # add` runs after the source is in place so it resolves against the toolchain
 # rust-toolchain.toml pins, not the base image's default.
 ARG TARGETARCH
+# What `noda --version` reports. build.rs would normally read it from `git
+# describe`, which it cannot do here: `.dockerignore` excludes `.git`, and
+# un-ignoring it would put the whole history into every build context for the
+# sake of one string. The workflow runs the describe and passes the answer in;
+# an unset arg leaves build.rs on its manifest-version fallback.
+ARG NODA_VERSION
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target,sharing=locked \
     set -eux; \

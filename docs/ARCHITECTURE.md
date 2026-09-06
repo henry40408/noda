@@ -222,7 +222,7 @@ header entirely would still be answering.
 
 ## Testing
 
-Six layers, each catching what the ones above it cannot:
+Seven layers, each catching what the ones above it cannot:
 
 | | what it exists to catch |
 | --- | --- |
@@ -231,6 +231,7 @@ Six layers, each catching what the ones above it cannot:
 | `tests/tui.rs` | what is on a screen — ratatui's test backend, a character buffer |
 | `tests/pty.rs` | *layout*: a real pty and `vt100`. A padding on the wrong side, a column sliding left, a card outgrowing 24 rows — each passed every assertion in `tui.rs` |
 | `tests/web.rs` | the real binary on a real socket, requests written by hand, because the guard tests need a `Host` that lies |
+| `tests/version.rs` | what `build.rs` stamped into the binary, which is decided at compile time and so has nothing a library test can call |
 | `e2e/` | a real browser over Gherkin features. Its own workspace, so the root suite never compiles it |
 
 Two harness facts that are not optional. **`sign = false` in every test notebook**: the XDG roots
@@ -242,6 +243,8 @@ env.
 ## Where the reasoning lives
 
 - **Module `//!` headers** — why a module is the way it is. Start here.
+- **`build.rs`** — where the version `--version` prints comes from, and why `Cargo.toml`'s
+  `version` field is not it.
 - **`Cargo.toml`** — why each dependency is present, what was rejected, and the measurements
   behind it (`env-filter` was dropped for `Targets` after measuring it at 355 KB, 69% of the whole
   of the logging).

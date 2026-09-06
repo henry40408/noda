@@ -17,7 +17,9 @@ enum SortField {
 #[derive(Parser)]
 #[command(
     name = "noda",
-    version,
+    // Not clap's bare `version`, which is `Cargo.toml`'s placeholder. build.rs
+    // stamps the tag the build came from.
+    version = env!("NODA_VERSION"),
     about = "A git-native notebook for your terminal"
 )]
 struct Cli {

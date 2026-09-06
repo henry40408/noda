@@ -866,6 +866,12 @@ cargo nextest run
 scripts/bench-coldstart.sh                # times whole processes, not in-process code
 ```
 
+`noda --version` reports the tag the build came from, not `Cargo.toml`'s `version` — that field is
+a placeholder and stays at `0.1.0`. `build.rs` runs `git describe` at compile time, so a build of a
+release says `0.2.0` and one three commits later says `0.2.0-3-gabc1234`. The container is the one
+build that cannot do this, because its context excludes `.git`; it is passed the answer as a
+`NODA_VERSION` build argument instead.
+
 libgit2, OpenSSL and libssh2 are vendored, producing a single static binary with HTTPS/SSH sync
 built in. Startup time is a feature — a quick `noda ls` costs more in process startup than in
 work — so the release profile is tuned for size and cold start is measured. How the crate is put
