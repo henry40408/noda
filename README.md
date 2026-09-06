@@ -83,8 +83,9 @@ branch your `init.defaultBranch` names.
 
 **Note.** A Markdown file named `<id>-<slug>.md`. The **id** is a short, stable code (Crockford
 base32, e.g. `k3f9m2p1`) that never changes, even across renames; the **slug** is derived from
-the title and changes when you retitle. The filename is the identity, and nothing else records
-it — there is no index.
+the title, changes when you retitle, and is cut to 100 bytes at a word boundary, so a pasted
+page title still names a file. The filename is the identity, and nothing else records it —
+there is no index.
 
 Anywhere a command takes `<note>`, pass the id or the slug. A slug is matched whole; an id by
 any prefix that names exactly one note, the same bargain git makes with object ids, so `noda
@@ -100,7 +101,14 @@ filenames, which git merges without asking anyone to resolve anything.
 Ids are lowercase and matched case-insensitively, and Crockford maps the easily-confused
 `I`/`L` to `1` and `O` to `0`, so a mistyped id still resolves to the right note. Two notes may
 share a slug, since the id in front of it keeps their filenames apart, and then the slug alone
-is ambiguous.
+is ambiguous — which is also why cutting a long slug is safe rather than a source of
+collisions.
+
+A path component gets 255 bytes and the id and `.md` spend 12 of them, so 243 is the real
+bound; the cut is at 100 because `noda ls -l` pads the slug column to the widest slug in the
+notebook, and one pasted page title would widen every row. Nothing is lost that the note does
+not still hold: the title is in the frontmatter, whole, and the slug was already lossy —
+`C++ vs Rust` has been `c-vs-rust` all along.
 
 </details>
 

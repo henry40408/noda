@@ -212,6 +212,37 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     );
 }
 
+/// A page's `<title>` is often a whole sentence, and `<id>-<slug>.md` spends 12
+/// bytes on the id and the extension before the slug starts. A title long enough
+/// to push the name past the 255 bytes a path component gets used to fail the
+/// write outright with `File name too long`.
+#[test]
+fn a_title_too_long_for_a_filename_still_becomes_a_note() {
+    let (_root, paths) = initialized();
+    let title = "GitHub - coding-horror/basic-computer-games: An updated version of the \
+classic \"Basic Computer Games\" book, with well-written examples in a variety of \
+common MEMORY SAFE, SCRIPTING programming languages. See \
+https://coding-horror.github.io/basic-computer-games/";
+
+    let out = cmd::add(&paths, Some(title), Some("body\n"), &[]).unwrap();
+
+    let file = note_file(&out);
+    assert!(
+        file.len() <= 255,
+        "the filename has to fit a path component: {} bytes, {file}",
+        file.len()
+    );
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    assert!(notebook.join(&file).is_file(), "{file}");
+
+    // The slug is the lossy half; the title is the note's own words and is kept.
+    let (_, slug) = parts(&out);
+    assert!(
+        note_text(&paths, slug).contains(&format!("title: {title}")),
+        "the whole title survives in the frontmatter"
+    );
+}
+
 /// The id in front of the slug keeps the filenames apart. The `-2` suffix this
 /// used to append was a local fix only: two machines adding "Notes" at once both
 /// wrote `notes.md` and the sync conflicted.
@@ -5487,6 +5518,42 @@ fn import_carries_the_times_and_fields_the_wiki_had() {
     )
     .unwrap();
     assert!(out.contains("Meeting Notes"), "{out}");
+}
+
+/// One tiddler with a title too long to name a file used to abort the whole
+/// import, leaving pass one's notes in the working tree and none of them
+/// committed.
+#[test]
+fn import_takes_a_tiddler_whose_title_is_too_long_for_a_filename() {
+    let (root, paths) = initialized();
+    let title = "GitHub - coding-horror/basic-computer-games: An updated version of the \
+classic Basic Computer Games book, with well-written examples in a variety of \
+common MEMORY SAFE, SCRIPTING programming languages. See \
+https://coding-horror.github.io/basic-computer-games/";
+    let file = export(
+        &root,
+        "wiki.json",
+        &format!(r#"[{{"title":"{title}","text":"body\n"}}]"#),
+    );
+
+    let out = plain(&cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap());
+
+    assert!(out.contains("imported  1 note from tiddlywiki"), "{out}");
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let names: Vec<String> = std::fs::read_dir(&notebook)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| note::names_a_note(name))
+        .collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let name = &names[0];
+    assert!(name.len() <= 255, "{} bytes, {name}", name.len());
+    assert!(
+        std::fs::read_to_string(notebook.join(name))
+            .unwrap()
+            .contains(&format!("title: {title}")),
+        "the tiddler's own title is not cut"
+    );
 }
 
 /// The link is to a tiddler by title, and the file it becomes is not named
