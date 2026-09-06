@@ -52,6 +52,9 @@ struct Report {
     converted: usize,
     /// Why a tiddler did not become a note, worst-first as the source gave them.
     skipped: Vec<(String, String)>,
+    /// Why a note that did land could not have its conversion written. It is in
+    /// the notebook holding the source's own text, so this is not `skipped`.
+    not_converted: Vec<(String, String)>,
     /// Constructs left in `WikiText`, and how many notes carry each.
     left: BTreeMap<&'static str, usize>,
 }
@@ -119,12 +122,28 @@ pub fn write(
     }
 
     // Pass one: every note as the source wrote it.
+    //
+    // A note the filesystem refuses joins the ones that were not imported, the
+    // way a title `check` turned down does. Ending the run instead would leave
+    // the notes written so far in the working tree with nothing committed —
+    // an export of a thousand tiddlers lost to one of them.
     let mut files: Vec<PathBuf> = Vec::new();
-    for (id, slug, note) in &named {
-        let file = note::file_name(id, slug);
-        std::fs::write(notebook.path.join(&file), render(note, &note.body, &[]))?;
+    let mut written: Vec<(String, String, Incoming)> = Vec::new();
+    for (id, slug, note) in named {
+        let file = note::file_name(&id, &slug);
+        if let Err(e) = std::fs::write(notebook.path.join(&file), render(&note, &note.body, &[])) {
+            // Links to it must not be pointed at a file that is not there.
+            by_key.remove(&note.key);
+            report.skipped.push((note.title, e.to_string()));
+            continue;
+        }
         files.push(PathBuf::from(file));
         report.written += 1;
+        written.push((id, slug, note));
+    }
+
+    if written.is_empty() {
+        return Ok(summary(&report, source, None));
     }
     commit(
         &notebook,
@@ -140,20 +159,30 @@ pub fn write(
     let resolve = |key: &str| by_key.get(key).cloned();
 
     let mut changed: Vec<PathBuf> = Vec::new();
-    for (id, slug, note) in &named {
+    for (id, slug, note) in &written {
         let converted = convert(&note.body, &resolve);
         let left: Vec<&str> = converted.left.iter().copied().collect();
         if converted.text == note.body && left.is_empty() {
             continue;
         }
+        let file = note::file_name(id, slug);
+        // Pass one's reasoning, one commit later: the note is already in the
+        // notebook holding the source's own text, which is a state to report
+        // rather than to end the run over.
+        if let Err(e) = std::fs::write(
+            notebook.path.join(&file),
+            render(note, &converted.text, &left),
+        ) {
+            report
+                .not_converted
+                .push((note.title.clone(), e.to_string()));
+            continue;
+        }
+        // Counted only once the file carrying the `unconverted:` field is on
+        // disk, or the summary names a field no note has.
         for name in &left {
             *report.left.entry(*name).or_default() += 1;
         }
-        let file = note::file_name(id, slug);
-        std::fs::write(
-            notebook.path.join(&file),
-            render(note, &converted.text, &left),
-        )?;
         changed.push(PathBuf::from(file));
         report.converted += 1;
     }
@@ -235,6 +264,23 @@ fn commit(notebook: &Notebook, files: &[PathBuf], message: &str) -> Result<()> {
     notebook.commit(&paths, message)
 }
 
+/// One heading and the reasons under it, counted rather than listed: an export
+/// large enough to have failures has too many to name, and the reason is what
+/// says whether to do anything about them. Nothing is written for an empty list.
+fn reasons(out: &mut String, heading: &str, entries: &[(String, String)]) {
+    if entries.is_empty() {
+        return;
+    }
+    let mut why: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, reason) in entries {
+        *why.entry(reason.as_str()).or_default() += 1;
+    }
+    let _ = writeln!(out, "\n{}", style::paint(style::MUTED, heading));
+    for (reason, count) in &why {
+        let _ = writeln!(out, "  {count} {reason}");
+    }
+}
+
 /// What landed, what did not, and what is left to do by hand.
 fn summary(report: &Report, source: &str, notebook: Option<&Notebook>) -> String {
     let mut out = String::new();
@@ -266,16 +312,12 @@ fn summary(report: &Report, source: &str, notebook: Option<&Notebook>) -> String
             let _ = writeln!(out, "  {count} {} {name}", noun(*count));
         }
     }
-    if !report.skipped.is_empty() {
-        let mut why: BTreeMap<&str, usize> = BTreeMap::new();
-        for (_, reason) in &report.skipped {
-            *why.entry(reason.as_str()).or_default() += 1;
-        }
-        let _ = writeln!(out, "\n{}", style::paint(style::MUTED, "not imported:"));
-        for (reason, count) in &why {
-            let _ = writeln!(out, "  {count} {reason}");
-        }
-    }
+    reasons(&mut out, "not imported:", &report.skipped);
+    reasons(
+        &mut out,
+        "imported, but left as the source wrote them:",
+        &report.not_converted,
+    );
     if notebook.is_some() && report.converted > 0 {
         let _ = write!(
             out,

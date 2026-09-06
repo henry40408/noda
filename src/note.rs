@@ -29,12 +29,17 @@ const CHARS_PER_DRAW: usize = 12;
 /// Fallback slug for a title that contains nothing sluggable.
 const FALLBACK_SLUG: &str = "note";
 
-/// The longest slug a filename carries, in bytes. A path component gets 255 on
-/// the filesystems noda runs on and [`file_name`] spends 12 of them before the
-/// slug starts, so 243 is the bound; this is well under it because `ls -l` pads
-/// the slug column to the widest one in the notebook, and a page title pasted in
-/// whole would widen every row. Nothing is lost that the note does not still
-/// hold: the title is in the frontmatter, and the slug was already lossy.
+/// What one entry in a directory may be called, in bytes. The number belongs to
+/// the filesystem rather than to noda — ext4, APFS and HFS+ all stop here — and
+/// a name past it fails the write with an errno nobody asked to read.
+pub const MAX_FILE_NAME_LEN: usize = 255;
+
+/// The longest slug a filename carries, in bytes. [`file_name`] spends 12 of
+/// [`MAX_FILE_NAME_LEN`] before the slug starts, so 243 is the bound; this is
+/// well under it because `ls -l` pads the slug column to the widest one in the
+/// notebook, and a page title pasted in whole would widen every row. Nothing is
+/// lost that the note does not still hold: the title is in the frontmatter, and
+/// the slug was already lossy.
 const MAX_SLUG_LEN: usize = 100;
 
 /// The id is not here — it is the filename.

@@ -25,6 +25,12 @@ not imported:
   12 not text (image/webp)
 ```
 
+A note the filesystem will not take — a name it refuses, a disk with no room — is one more
+line under `not imported:` rather than the end of the run, because an export of 1693 tiddlers
+is not worth losing to one of them. Where the original lands but its conversion cannot be
+written, the note is in the notebook holding the wiki's own text, and says so under
+`imported, but left as the source wrote them:`.
+
 ## A wiki exported in pieces
 
 Several files are one import rather than several, because a wiki taken in pieces has links
