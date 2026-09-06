@@ -19,7 +19,7 @@ enum SortField {
     name = "noda",
     // Not clap's bare `version`, which is `Cargo.toml`'s placeholder. build.rs
     // stamps the tag the build came from.
-    version = env!("NODA_VERSION"),
+    version = noda::VERSION,
     about = "A git-native notebook for your terminal"
 )]
 struct Cli {

@@ -22,3 +22,12 @@ pub mod web;
 
 pub use error::{Error, Result};
 pub use paths::Paths;
+
+/// What this build is, as `build.rs` described it: a release tag (`0.2.0`), the
+/// commits since one (`0.2.0-3-gabc1234`), or a bare commit while there is no
+/// tag yet. Not `Cargo.toml`'s `version`, which is a placeholder.
+///
+/// Here rather than in `main.rs` because both front ends say it — `--version`
+/// and the web status screen — and two `env!` calls are two chances for them to
+/// come to differ.
+pub const VERSION: &str = env!("NODA_VERSION");
