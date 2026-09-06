@@ -480,6 +480,7 @@ fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
             touch,
         } => cmd::tag(paths, &key, &changes, touch),
         tui::Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
+        tui::Action::Pin { key, pinned, touch } => cmd::pin(paths, &key, pinned, touch),
         tui::Action::Remove(key) => cmd::rm(paths, &key),
         tui::Action::Restore { key, rev, touch } => cmd::restore(paths, &key, &rev, touch),
         // A screen about a note the prompt named, resolved by the notebook
@@ -1348,6 +1349,76 @@ fn the_log_screen_marks_what_the_remote_has_not_seen() {
             "`{id}` was clipped: {log:#?}"
         );
     }
+}
+
+/// **`p` is a toggle, so it has to read the row before it decides.** Pressed
+/// twice it goes and comes back, and the listing moves under it both times.
+#[test]
+fn p_pins_the_note_under_the_cursor_and_the_second_press_lets_it_down() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+
+    app.on_key(key(KeyCode::Char('j')));
+    let id = app.selected().expect("a note under the cursor").id.clone();
+    let action = app.on_key(key(KeyCode::Char('p'))).expect("p pins");
+    assert_eq!(
+        action,
+        tui::Action::Pin {
+            key: id.clone(),
+            pinned: true,
+            touch: cmd::Touch::Stamp,
+        }
+    );
+    perform(&paths, &mut app, action);
+
+    // Floated to the top of the listing, and saying why it is there.
+    assert_eq!(app.rows().next().expect("a first row").id, id);
+    let screen = screen(&paths, &mut app);
+    assert!(has_line_with(&screen, &[&id, "pinned"]), "{screen:#?}");
+
+    app.on_key(key(KeyCode::Char('g')));
+    let action = app.on_key(key(KeyCode::Char('p'))).expect("p unpins");
+    assert_eq!(
+        action,
+        tui::Action::Pin {
+            key: id.clone(),
+            pinned: false,
+            touch: cmd::Touch::Stamp,
+        }
+    );
+    perform(&paths, &mut app, action);
+    assert!(
+        !app.note_of(&id).expect("still there").note.is_pinned(),
+        "the second press left it pinned"
+    );
+}
+
+/// The key and the prompt run the same command, and the prompt is the half that
+/// says which way it goes.
+#[test]
+fn the_prompt_pins_and_unpins_the_note_it_is_aimed_at() {
+    let (_root, paths) = a_notebook();
+    let mut app = tui::load(&paths).expect("load");
+    let id = app.selected().expect("a note").id.clone();
+
+    for (line, pinned) in [("pin", true), ("unpin", false)] {
+        app.on_key(key(KeyCode::Char(':')));
+        for c in line.chars() {
+            app.on_key(key(KeyCode::Char(c)));
+        }
+        let action = app.on_key(key(KeyCode::Enter)).expect("the prompt runs it");
+        assert_eq!(
+            action,
+            tui::Action::Pin {
+                key: id.clone(),
+                pinned,
+                touch: cmd::Touch::Stamp,
+            }
+        );
+        perform(&paths, &mut app, action);
+        app.on_key(key(KeyCode::Char('g')));
+    }
+    assert!(!app.note_of(&id).expect("still there").note.is_pinned());
 }
 
 #[test]

@@ -179,6 +179,9 @@ fn render(note: &Incoming, body: &str, left: &[&str]) -> String {
         tags: note.tags.clone(),
         created: note.created.clone(),
         updated: note.updated.clone(),
+        // Nothing imported arrives pinned: it is a judgement about this
+        // notebook's listing, which the source had no way to make.
+        pinned: None,
         extra,
         body: body.to_string(),
     }

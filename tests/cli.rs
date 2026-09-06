@@ -391,6 +391,111 @@ fn tag_adds_and_removes_and_commits_once() {
     );
 }
 
+#[test]
+fn pin_and_unpin_are_one_commit_each_and_the_second_press_is_neither() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    let before = commit_count(&notebook);
+
+    let out = cmd::pin(&paths, "alpha", true, cmd::Touch::Stamp).unwrap();
+    assert!(out.ends_with("  pinned"), "{out}");
+    assert_eq!(commit_count(&notebook), before + 1);
+    assert!(note_text(&paths, "alpha").contains("pinned: true"));
+
+    // Already pinned: nothing written, so nothing committed.
+    let again = cmd::pin(&paths, "alpha", true, cmd::Touch::Stamp).unwrap();
+    assert!(again.ends_with("(no change)"), "{again}");
+    assert_eq!(commit_count(&notebook), before + 1);
+
+    let off = cmd::pin(&paths, "alpha", false, cmd::Touch::Stamp).unwrap();
+    assert!(off.ends_with("  unpinned"), "{off}");
+    assert_eq!(commit_count(&notebook), before + 2);
+    // **The line goes rather than turning false**, so the file is the one it
+    // was before any of this.
+    assert!(!note_text(&paths, "alpha").contains("pinned"));
+}
+
+#[test]
+fn a_pin_is_above_every_listing_and_below_every_reversed_one() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Gamma"), Some("g\n"), &[]).unwrap();
+    cmd::pin(&paths, "beta", true, cmd::Touch::Stamp).unwrap();
+
+    let listed = |reverse: bool| {
+        cmd::ls(
+            &paths,
+            &cmd::List {
+                format: cmd::Format::Quiet,
+                reverse,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let first = |out: &str| out.lines().next().unwrap().to_string();
+    let beta = note_id(&paths, "beta");
+
+    assert_eq!(first(&listed(false)), beta, "a pin comes first");
+    // `-r` turns the whole listing, pins included: an order half-reversed is
+    // not an order anybody asked for.
+    assert_eq!(
+        listed(true).lines().last().unwrap(),
+        beta,
+        "-r left the pin on top"
+    );
+
+    let table = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap());
+    assert!(
+        table.lines().next().unwrap().ends_with("  pinned"),
+        "{table}"
+    );
+    assert_eq!(
+        table.lines().filter(|line| line.contains("pinned")).count(),
+        1,
+        "{table}"
+    );
+
+    let json = cmd::ls(
+        &paths,
+        &cmd::List {
+            format: cmd::Format::Json,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(json.contains("\"pinned\":true"), "{json}");
+    assert!(json.contains("\"pinned\":false"), "{json}");
+}
+
+#[test]
+fn search_narrows_to_the_pinned_notes_and_away_from_them() {
+    let (_root, paths) = initialized();
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
+    cmd::pin(&paths, "beta", true, cmd::Touch::Stamp).unwrap();
+
+    let found = |query: &str| cmd::search(&paths, &[query.to_string()]).unwrap();
+    assert!(found("pinned:true").contains("Beta"));
+    assert!(!found("pinned:true").contains("Alpha"));
+    assert!(found("pinned:false").contains("Alpha"));
+    assert!(!found("pinned:false").contains("Beta"));
+    // Refused where it was typed rather than quietly finding everything.
+    assert!(cmd::search(&paths, &["pinned:ture".to_string()]).is_err());
+}
+
+/// The id `ls -q` prints for a note, for a test comparing an order.
+fn note_id(paths: &Paths, key: &str) -> String {
+    let path = cmd::path(paths, Some(key)).unwrap();
+    let stem = Path::new(path.trim_end()).file_stem().unwrap();
+    note::split_stem(stem.to_str().unwrap())
+        .unwrap()
+        .0
+        .to_string()
+}
+
 /// The note as it sits on disk. `show` dims the frontmatter, so it is the wrong
 /// side of the colour handling to read a field back from.
 fn note_text(paths: &Paths, key: &str) -> String {

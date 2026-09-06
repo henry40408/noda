@@ -233,6 +233,7 @@ pub fn add_in(
         tags,
         created: Some(now.clone()),
         updated: Some(now),
+        pinned: None,
         extra: Vec::new(),
         body: body.trim_start_matches('\n').to_string(),
     };
@@ -393,6 +394,18 @@ pub fn import_tiddlywiki(paths: &Paths, files: &[PathBuf], convert: bool) -> Res
     )
 }
 
+/// One note's row, with every column already the string it prints as — so the
+/// widths are measured over the same values the row is written from.
+struct Listed {
+    id: String,
+    slug: String,
+    created: String,
+    updated: String,
+    title: String,
+    tags: Vec<String>,
+    pinned: bool,
+}
+
 /// Lists notes as `id  title  [tags]`, aligned, then the notebook's files under
 /// their own heading. `-l` adds the slug and both timestamps.
 pub fn ls(paths: &Paths, options: &List) -> Result<String> {
@@ -435,17 +448,16 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
 
     // Nothing invents a time, so the column says so rather than leaving a hole.
     let stamp = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
-    let rows: Vec<(String, String, String, String, String, Vec<String>)> = notes
+    let rows: Vec<Listed> = notes
         .into_iter()
-        .map(|file| {
-            (
-                file.id,
-                file.slug,
-                stamp(file.note.created),
-                stamp(file.note.updated),
-                file.note.title,
-                file.note.tags,
-            )
+        .map(|file| Listed {
+            id: file.id,
+            slug: file.slug,
+            pinned: file.note.is_pinned(),
+            created: stamp(file.note.created),
+            updated: stamp(file.note.updated),
+            title: file.note.title,
+            tags: file.note.tags,
         })
         .collect();
 
@@ -453,13 +465,28 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         return Ok(String::new());
     }
 
-    let id_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
-    let slug_width = rows.iter().map(|r| display_width(&r.1)).max().unwrap_or(0);
-    let created_width = rows.iter().map(|r| display_width(&r.2)).max().unwrap_or(0);
-    let updated_width = rows.iter().map(|r| display_width(&r.3)).max().unwrap_or(0);
-    let title_width = rows.iter().map(|r| display_width(&r.4)).max().unwrap_or(0);
+    let widest = |of: fn(&Listed) -> &String| {
+        rows.iter()
+            .map(|row| display_width(of(row)))
+            .max()
+            .unwrap_or(0)
+    };
+    let id_width = widest(|row| &row.id);
+    let slug_width = widest(|row| &row.slug);
+    let created_width = widest(|row| &row.created);
+    let updated_width = widest(|row| &row.updated);
+    let title_width = widest(|row| &row.title);
     let mut out = String::new();
-    for (id, slug, created, updated, title, tags) in rows {
+    for Listed {
+        id,
+        slug,
+        created,
+        updated,
+        title,
+        tags,
+        pinned,
+    } in rows
+    {
         // `-l` extends the default row rather than rearranging it: id and title
         // stay the first two columns, so a script cutting fields off the front
         // reads the same thing either way.
@@ -484,6 +511,13 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         }
         if !tags.is_empty() {
             let _ = write!(line, "  {}", style::tags(&tags));
+        }
+        // Behind the tags, for their reason turned around: the mark is the other
+        // thing a note may not have, and a row is easier to read with the two
+        // optional columns together at the end than with one of them in front of
+        // the id, where it would displace the column every script cuts.
+        if pinned {
+            let _ = write!(line, "  {}", style::paint(style::PIN, style::PIN_MARK));
         }
         out.push_str(line.trim_end());
         out.push('\n');
@@ -515,7 +549,9 @@ fn instant(stamp: Option<&String>) -> Option<jiff::Timestamp> {
 
 /// Public because the browser offers the same orders, and an order that came out
 /// differently by route would be two features wearing one name. The reverse is
-/// the caller's, applied afterwards.
+/// the caller's, applied afterwards — which is what puts the pinned notes at the
+/// bottom under `-r`: a pin is part of the order, and an order half-reversed is
+/// not one anybody asked for.
 pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
     match sort {
         // The walk already sorts by slug.
@@ -539,6 +575,10 @@ pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
             )
         }),
     }
+    // Last, and stable, so the pinned notes float to the top of whichever order
+    // was just applied while keeping their places within it. `false` sorts
+    // first, so the negation is what puts a pin above everything else.
+    notes.sort_by_key(|file| !file.note.is_pinned());
 }
 
 /// Hand-written rather than derived: five string fields do not justify the
@@ -563,13 +603,16 @@ fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> St
         };
         let _ = write!(
             out,
-            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{},\"created\":{},\"updated\":{},\"tags\":[",
+            "{{\"id\":{},\"slug\":{},\"file\":{},\"title\":{},\"created\":{},\"updated\":{},\"pinned\":{},\"tags\":[",
             json_string(&file.id),
             json_string(&file.slug),
             json_string(&note::file_name(&file.id, &file.slug)),
             json_string(&file.note.title),
             stamp(file.note.created.as_ref()),
             stamp(file.note.updated.as_ref()),
+            // The judgement, not the field: a reader should not have to know
+            // that `pinned: yes` is not a pin.
+            file.note.is_pinned(),
         );
         for (n, tag) in file.note.tags.iter().enumerate() {
             if n > 0 {
@@ -777,6 +820,65 @@ fn apply_tags(notebook: &Notebook, key: &str, edits: &[TagEdit], touch: Touch) -
     std::fs::write(&located.path, note.render())?;
     Ok(Applied {
         summary: summary(&located.id, &located.slug, &note.tags),
+        id: located.id,
+        slug: located.slug,
+        files: vec![file],
+        changed: true,
+    })
+}
+
+/// Floats a note to the top of every listing, or lets it back down.
+pub fn pin(paths: &Paths, key: &str, pinned: bool, touch: Touch) -> Result<String> {
+    let notebook = Notebook::open_active(paths)?;
+    pin_in(&notebook, key, pinned, touch)
+}
+
+/// `pin`, in a notebook the caller already has open.
+pub fn pin_in(notebook: &Notebook, key: &str, pinned: bool, touch: Touch) -> Result<String> {
+    let done = apply_pin(notebook, key, pinned, touch)?;
+    if done.changed {
+        let verb = if pinned { "pin" } else { "unpin" };
+        notebook.commit(&done.paths(), &format!("{verb}: {}", done.slug))?;
+    }
+    Ok(done.summary)
+}
+
+/// Writes the pin into one note's file. Nothing is committed.
+fn apply_pin(notebook: &Notebook, key: &str, pinned: bool, touch: Touch) -> Result<Applied> {
+    let located = locate(notebook, key)?;
+    let mut note = located.note;
+    let before = note.pinned.clone();
+
+    // Unpinning drops the line rather than writing `false`, so a note that has
+    // been pinned and unpinned is the file it was before either happened.
+    note.pinned = pinned.then(|| note::PINNED.to_string());
+
+    let file = note::file_name(&located.id, &located.slug);
+    let mark = |pinned: bool| if pinned { "pinned" } else { "unpinned" };
+    if note.pinned == before {
+        return Ok(Applied {
+            summary: format!(
+                "{}  {}  (no change)",
+                summary(&located.id, &located.slug, &note.tags),
+                mark(pinned)
+            ),
+            id: located.id,
+            slug: located.slug,
+            files: vec![file],
+            changed: false,
+        });
+    }
+
+    if touch == Touch::Stamp {
+        note.updated = Some(note::now());
+    }
+    std::fs::write(&located.path, note.render())?;
+    Ok(Applied {
+        summary: format!(
+            "{}  {}",
+            summary(&located.id, &located.slug, &note.tags),
+            mark(pinned)
+        ),
         id: located.id,
         slug: located.slug,
         files: vec![file],
@@ -3299,6 +3401,58 @@ mod tests {
             at = at.next();
         }
         assert_eq!(at, Sort::default(), "the ring stopped coming round");
+    }
+
+    /// A note with fixed everything, so what a sort did is the only thing that
+    /// can move — see `noda-test-ids-must-be-fixed`.
+    fn a_note(id: &str, title: &str, updated: &str, pinned: bool) -> notebook::NoteFile {
+        notebook::NoteFile {
+            id: id.to_string(),
+            slug: note::slugify(title),
+            note: note::Note {
+                title: title.to_string(),
+                tags: Vec::new(),
+                created: Some(updated.to_string()),
+                updated: Some(updated.to_string()),
+                pinned: pinned.then(|| note::PINNED.to_string()),
+                extra: Vec::new(),
+                body: String::new(),
+            },
+        }
+    }
+
+    /// **A pin is above everything in every order, and inside the pins the order
+    /// is still the order asked for.** All four, because the pin is applied
+    /// after the sort and `Slug` is the one that does no sorting at all.
+    #[test]
+    fn a_pin_floats_to_the_top_of_whichever_order_was_asked_for() {
+        for sort in Sort::ALL {
+            let mut notes = vec![
+                a_note("aaaa1111", "Alpha", "2026-01-01T00:00:00Z", false),
+                a_note("bbbb2222", "Bravo", "2026-01-02T00:00:00Z", true),
+                a_note("cccc3333", "Charlie", "2026-01-03T00:00:00Z", false),
+                a_note("dddd4444", "Delta", "2026-01-04T00:00:00Z", true),
+            ];
+            sort_notes(&mut notes, sort);
+            let ids: Vec<&str> = notes.iter().map(|file| file.id.as_str()).collect();
+            assert!(
+                notes[0].note.is_pinned() && notes[1].note.is_pinned(),
+                "{} let a loose note above a pinned one: {ids:?}",
+                sort.name()
+            );
+            // Newest first for a stamp, alphabetical otherwise: the pinned two
+            // came out in the order the sort would have put them in anyway.
+            let want = match sort {
+                Sort::Created | Sort::Updated => ["dddd4444", "bbbb2222"],
+                Sort::Slug | Sort::Title => ["bbbb2222", "dddd4444"],
+            };
+            assert_eq!(
+                [ids[0], ids[1]],
+                want,
+                "{} lost the order inside the pins",
+                sort.name()
+            );
+        }
     }
 
     /// The browser receives an order as text, under the name `--sort` accepts.

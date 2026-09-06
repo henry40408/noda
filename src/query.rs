@@ -8,7 +8,7 @@
 //! query := group (' ' group)*        every group must match
 //! group := term ('OR' term)*         any term in the group will do
 //! term  := ['-'] [field ':'] value
-//! field := tag | title | id | text
+//! field := tag | title | id | pinned | text
 //! ```
 //!
 //! An AND of ORs — every query in conjunctive normal form, so parentheses buy
@@ -26,6 +26,8 @@
 //! Every field matches the way noda already matches that thing — a tag whole, an
 //! id by folded prefix, text and titles by case-insensitive substring, because
 //! splitting on spaces finds nothing in a language that does not use them.
+//! `pinned:` is the exception and reads as one: it takes `true` or `false` and
+//! compares rather than searches.
 
 use crate::note::{self, Note};
 use crate::{Error, Result};
@@ -103,6 +105,10 @@ enum Field {
     Tag,
     Title,
     Id,
+    /// `pinned:true` or `pinned:false`. The one field whose value is not looked
+    /// for but compared, so it is the one field that can be misspelled — hence
+    /// the two words and nothing else.
+    Pinned,
     /// The title, the tags and the body together: what a bare word searches.
     Text,
 }
@@ -204,6 +210,14 @@ impl Term {
         if value.is_empty() {
             return Err(Error::msg(format!("`{token}` has nothing to look for")));
         }
+        // Every other field finds nothing when it is asked for nothing, which is
+        // an answer. `pinned:ture` would find every note instead, so it is
+        // refused where it was typed.
+        if field == Field::Pinned && !matches!(value, "true" | "false") {
+            return Err(Error::msg(format!(
+                "`pinned:` takes `true` or `false`, not `{value}`"
+            )));
+        }
         Ok(Term {
             field,
             value: value.to_string(),
@@ -216,6 +230,7 @@ impl Term {
             Field::Tag => note.tags.iter().any(|tag| tag == &self.value),
             Field::Id => note::normalize_id(id).starts_with(&note::normalize_id(&self.value)),
             Field::Title => contains_ignoring_case(&note.title, &self.value),
+            Field::Pinned => note.is_pinned() == (self.value == "true"),
             Field::Text => {
                 contains_ignoring_case(&note.title, &self.value)
                     || contains_ignoring_case(&note.body, &self.value)
@@ -235,6 +250,7 @@ impl Field {
             "tag" => Some(Field::Tag),
             "title" => Some(Field::Title),
             "id" => Some(Field::Id),
+            "pinned" => Some(Field::Pinned),
             "text" => Some(Field::Text),
             _ => None,
         }
@@ -280,6 +296,7 @@ mod tests {
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
             created: None,
             updated: None,
+            pinned: None,
             extra: Vec::new(),
             body: body.to_string(),
         }
@@ -292,6 +309,40 @@ mod tests {
         assert!(query("meeting").matches("k3f9m2p1", &note), "and the title");
         assert!(query("work").matches("k3f9m2p1", &note), "and the tags");
         assert!(!query("hiring").matches("k3f9m2p1", &note));
+    }
+
+    #[test]
+    fn pinned_asks_for_one_of_two_states_and_the_negation_asks_for_the_other() {
+        let mut pinned = a_note("Alpha", &[], "x\n");
+        pinned.pinned = Some(note::PINNED.to_string());
+        let loose = a_note("Beta", &[], "x\n");
+
+        assert!(query("pinned:true").matches("k3f9m2p1", &pinned));
+        assert!(!query("pinned:true").matches("k3f9m2p1", &loose));
+        assert!(query("pinned:false").matches("k3f9m2p1", &loose));
+        assert!(!query("pinned:false").matches("k3f9m2p1", &pinned));
+        // The two spellings of the same question.
+        assert!(query("-pinned:true").matches("k3f9m2p1", &loose));
+
+        // A field noda reads, on a value it does not: `is_pinned`'s answer and
+        // not the field's presence is what the query compares.
+        let mut odd = a_note("Gamma", &[], "x\n");
+        odd.pinned = Some("yes".to_string());
+        assert!(query("pinned:false").matches("k3f9m2p1", &odd));
+    }
+
+    /// **The one term that can be misspelled.** Every other field asked for
+    /// nonsense finds nothing, which is an answer; `pinned:ture` would find
+    /// every note in the notebook.
+    #[test]
+    fn pinned_refuses_a_value_that_is_not_one_of_the_two() {
+        let tokens = |text: &str| vec![text.to_string()];
+        assert!(Query::parse(&tokens("pinned:ture")).is_err());
+        assert!(Query::parse(&tokens("pinned:yes")).is_err());
+        assert!(Query::parse(&tokens("-pinned:1")).is_err());
+        assert!(Query::parse(&tokens("pinned:true")).is_ok());
+        // Not the field at all: a bare word that happens to start with it.
+        assert!(Query::parse(&tokens("pinnedness")).is_ok());
     }
 
     #[test]

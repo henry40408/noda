@@ -104,7 +104,7 @@ is ambiguous.
 
 </details>
 
-**Frontmatter.** Having one is what marks a file as a note. noda reads these four fields and
+**Frontmatter.** Having one is what marks a file as a note. noda reads these five fields and
 leaves anything else in the block alone:
 
 ```
@@ -113,13 +113,17 @@ title: Reading notes on TAOCP
 tags: [books, algorithms]
 created: 2019-03-14T08:21:00Z
 updated: 2024-11-02T16:40:12Z
+pinned: true
 ---
 ```
 
+`pinned` is the only optional one that is normally absent: `noda pin` writes it and `noda
+unpin` takes the line back out, so an unpinned note says nothing rather than `false`.
+
 `created` is set once and never moves again; `updated` follows every change noda makes.
-`--no-touch` opts one command out of that — on `edit`, `tag`, `mv` and `restore` — for changes
-that are not the note being rewritten and, above all, for a note that arrived carrying dates
-from somewhere else:
+`--no-touch` opts one command out of that — on `edit`, `tag`, `pin`, `mv` and `restore` — for
+changes that are not the note being rewritten and, above all, for a note that arrived carrying
+dates from somewhere else:
 
 ```
 $ noda edit imported --no-touch          # the 2019 date it came with is still the date it has
@@ -264,6 +268,8 @@ a README is the day it goes somewhere people can see, which is rarely the day it
 | `noda rm <note>` | Delete a note (as a revertible commit). |
 | `noda mv <note> <new-title> [--update-links] [--no-touch]` | Rename a note (updates slug; id is preserved). |
 | `noda tag <note> [--no-touch] [+tag]... [-tag]...` | Add/remove tags. |
+| `noda pin <note> [--no-touch]` | Float a note to the top of every listing. Auto-commits. |
+| `noda unpin <note> [--no-touch]` | Let a pinned note back down among the rest. |
 | `noda search <term>...` | Search the active notebook. Terms may name a field, be `OR`ed, or be negated. |
 | `noda tui` | Browse the notebook on a screen — see [Browsing](#browsing). |
 | `noda todo [--json]` | List every unticked `- [ ]` in the notebook, soonest due first. |
@@ -320,6 +326,34 @@ k3f9m2p1  Imported       imported       -                     -
 `--sort created|updated|title` puts the listing in order — the times newest first, the title
 alphabetically — and `-r` turns whichever order is in force, the default one included. The
 notebook's files turn with the notes: it is one listing on one screen.
+
+`noda pin` floats a note above all four orders, marked `pinned` at the end of its row, and
+`noda unpin` lets it back down. A pin is part of the order rather than an exception to it, so
+`-r` turns it too and the pinned notes come last. `pinned:true` and `pinned:false` narrow a
+search to one side or the other.
+
+```
+$ noda pin meeting-notes
+jjvgqnrv  meeting-notes  pinned
+
+$ noda ls
+jjvgqnrv  Meeting notes  [work, q3]  pinned
+b60ccfw0  Reading log
+```
+
+<details>
+<summary>Why it is a frontmatter field and not a tag, and what an unpinned note's file says</summary>
+
+A tag says what a note is *about*; a pin says how a listing should treat it, and mixing the two
+would put a word in your own tag namespace and a state in the column that groups notes by
+subject. So `pinned: true` sits in the frontmatter beside `created` and `updated` — the fifth
+and last field noda interprets.
+
+An unpinned note carries no `pinned` line at all rather than `pinned: false`, so a note pinned
+and unpinned again is byte-for-byte the file it started as. A value noda cannot read — `pinned:
+yes` — is not a pin and is not thrown away either, exactly as a malformed `created` is kept.
+
+</details>
 
 <details>
 <summary>Why the title and not the slug, why <code>-l</code> only extends the row, and where a note with no timestamps sorts</summary>
@@ -393,7 +427,7 @@ The grammar is four lines and stays that way:
 query := term-group…                 every group must match
 group := term ('OR' term)…           any term in the group will do
 term  := ['-'] [field ':'] value
-field := tag | title | id | text
+field := tag | title | id | pinned | text
 ```
 
 `OR` binds tighter than the space between groups, so the example above reads as `budget AND
@@ -406,8 +440,12 @@ invented.
 **Each field matches the way noda already matches that thing.** `tag:` compares a tag whole,
 like `ls --tag`. `id:` takes any prefix and folds the confusable characters, like `noda show
 k3f9`. `title:` and `text:` are case-insensitive substrings, like the rest of search. An unknown
-prefix is not an error: only those four are fields, so `noda search https://example.com` looks
+prefix is not an error: only those five are fields, so `noda search https://example.com` looks
 for that text.
+
+`pinned:` is the one that compares rather than looks, so it takes `true` or `false` and refuses
+anything else — every other field asked for nonsense finds nothing, which is an answer, while
+`pinned:ture` would quietly find every note in the notebook.
 
 **`OR` must be uppercase**, so that `noda search or` can still find the English word. **A
 leading `-` is always a negation**, so a term that really starts with one is written

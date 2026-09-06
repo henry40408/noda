@@ -137,18 +137,27 @@ It is logged like any other request, which is to say not at all until `RUST_LOG=
 asks — and then as `route="/health"`, one line in a report rather than one per probe.
 
 It writes as well as reads: a note can be started, its body rewritten, its title changed, its
-tags ticked on and off, and it can be deleted. Every one of those runs the command that does
-it — the same `add`, `mv`, `tag` and `rm` the terminal calls — so what a change *means* has
-one implementation, and each lands as its own commit with the same message it would have had.
+tags ticked on and off, it can be pinned to the top of the listing, and it can be deleted.
+Every one of those runs the command that does it — the same `add`, `mv`, `tag`, `pin` and `rm`
+the terminal calls — so what a change *means* has one implementation, and each lands as its own
+commit with the same message it would have had.
 
-**A note's own bar is five things to do to it** — Edit, Tags, Rename, Links and Delete — and
-Delete is the only item on any bar here that carries a colour. It was a line past the end of
+**A note's own bar is six things to do to it** — Edit, Tags, Rename, Links, Pin and Delete —
+and Delete is the only item on any bar here that carries a colour. It was a line past the end of
 the prose until it was not, on the argument that the one action that cannot be undone by doing
 it again should cost a scroll of the whole note to reach. What that argument missed is that
 the friction was already built and is somewhere else: `/delete` is a confirmation page, so a
 thumb that lands on the wrong item spends a page and never a note. Hiding the way in bought no
 safety the confirmation was not already providing, and what it did cost was a reader learning
 that a note can be deleted at all.
+
+**Pin is the one write with no page in between**, and the only item on the bar that is a button
+rather than a link: a write has to be a `POST`, or the `Origin` check has nothing to check when
+somebody else's page loads the address as an image. There is nothing to confirm about a change
+undone by pressing it again, so it says `Pin` or `Unpin` — which way it goes, not what it is —
+and the two are separate addresses, so a browser retrying a lost `POST` lands where you asked
+rather than back where you started. A pinned row on the listing says `pinned` after its tags:
+without it, the top of a sorted listing reads as a broken sort.
 
 The tags form ticks off what should go and takes the new ones in one field, separated by
 spaces — `ops docs "24.04 Dark patterns"` adds three, quoted the way the `:` prompt and the

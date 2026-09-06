@@ -72,6 +72,7 @@ still marked in the note you opened to read it in.
 | `a` | new note: a title along the bottom, then `$EDITOR` for the body (`Enter` on an empty title takes it from the body, as `noda add` does) |
 | `m` | retitle, starting from the title it has |
 | `#` | tags: a card of every tag the notebook has, `Tab` to choose, `Enter` to apply. Type to narrow it, or to name one it does not have yet |
+| `p` | pin, or unpin what is already pinned: a pinned note is above every order, marked `pinned` at the end of its row. `:pin` and `:unpin` say which way rather than toggling |
 | `Ctrl-d` | delete, once you have said `y`. With notes marked, `#` and `Ctrl-d` are aimed at the marked set and go into the queue instead |
 | `T` | `--no-touch` for the rest of the session: changes stop moving `updated`. The title band says `keeping updated` for as long as it is on |
 | `t`, `l` | the notebook's unticked boxes; commits — this note's, or the notebook's from the listing |
@@ -83,8 +84,10 @@ still marked in the note you opened to read it in.
 | `r` | read the notebook again |
 | `?`, `q` / `Ctrl-C` | keys, quit |
 
-`e`, `m`, `#` and `Ctrl-d` aim at whatever the screen is about — the row under the cursor on
-the listing, and the note itself once you have opened it — so they read the same on either.
+`e`, `m`, `#`, `p` and `Ctrl-d` aim at whatever the screen is about — the row under the cursor
+on the listing, and the note itself once you have opened it — so they read the same on either.
+`p` is the one that is not on the bar along the bottom: every column of that grid is full, and
+of the keys here it is the one with a second way of being found (`?`, and `:pin`).
 The delete is behind a modifier because it is the one key here that cannot be taken back by
 pressing something else.
 

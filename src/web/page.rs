@@ -18,6 +18,7 @@ use std::fmt::Write;
 
 use crate::cmd::Sort;
 use crate::notebook::NoteFile;
+use crate::style;
 use crate::web::asset::Asset;
 use crate::web::encoded;
 
@@ -77,6 +78,9 @@ pub struct Row {
     /// `hidden` is not a class but the attribute every browser's own stylesheet
     /// already hides, so the scriptless page needs nothing of noda's.
     pub shown: bool,
+    /// Why this row is above one with a newer stamp. Without it the top of a
+    /// sorted listing reads as a broken sort.
+    pub pinned: bool,
 }
 
 /// A file the notebook holds that is not a note, as the files page lists it.
@@ -132,6 +136,8 @@ pub struct Reading {
     /// pages written out as it stands. Not called `body` for that reason:
     /// `escape(&reading.body)` was right while a note was shown as text.
     pub rendered: String,
+    /// Which way the bar's pin item goes.
+    pub pinned: bool,
 }
 
 impl Row {
@@ -148,6 +154,7 @@ impl Row {
                 Sort::Slug | Sort::Updated | Sort::Title => file.note.updated.clone(),
             },
             shown: true,
+            pinned: file.note.is_pinned(),
         }
     }
 }
@@ -371,17 +378,41 @@ impl Mark {
     }
 }
 
+/// What an item on the bar does when it is pressed.
+///
+/// A write is a `POST` and cannot be a link: `guard.rs` is the whole defence
+/// against a cross-site write, and it has nothing to check when somebody else's
+/// page loads a link of ours as an image.
+///
+/// The form is emitted beside the button and associated by `form=`, rather than
+/// wrapped around it, so the bar's children stay what the stylesheet lays out —
+/// a wrapper would become the flex item and the button inside it would not.
+enum Act {
+    Go(String),
+    Post { to: String, id: &'static str },
+}
+
 /// Shipped only once there was something in every slot: two greyed-out buttons
 /// are not a design. A fixed strip at the foot of a page is an extension and not
 /// a rearrangement, which is the rule this project applies to a listing's row.
-fn action_bar(items: &[(&str, &str, String, Mark)]) -> String {
+fn action_bar(items: &[(&str, &str, Act, Mark)]) -> String {
     let mut out = String::from("<nav class=\"actionbar\">");
-    for (icon, label, href, mark) in items {
+    for (icon, label, act, mark) in items {
+        let (open, close) = match act {
+            Act::Go(href) => (format!("<a href=\"{}\"", escape(href)), "</a>"),
+            Act::Post { to, id } => (
+                format!(
+                    "<form method=\"post\" action=\"{}\" id=\"{id}\" hidden></form>\
+                     <button type=\"submit\" form=\"{id}\"",
+                    escape(to)
+                ),
+                "</button>",
+            ),
+        };
         let _ = write!(
             out,
-            "<a href=\"{}\"{}><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
-             <span>{label}</span></a>",
-            escape(href),
+            "{open}{}><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>\
+             <span>{label}</span>{close}",
             // `aria-current` and not a class: a screen reader says "current
             // page" and the stylesheet hangs the colour off the same fact.
             //
@@ -415,6 +446,10 @@ const FILES: &str = "<path d=\"M18.5 10.5 11 18a4 4 0 0 1-5.7-5.7l7.8-7.8a2.6 2.
 /// An arrow arriving at a line: the line is the note, the arrow is what points
 /// at it.
 const LINKS: &str = "<path d=\"M19 5v14\"/><path d=\"M4 12h11\"/><path d=\"M11 8l4 4-4 4\"/>";
+/// A thumbtack seen from the side: head, plate, needle. One drawing for both
+/// labels — which way it goes is the word under it, and an icon that changed as
+/// well would be saying it twice and reading as two different buttons.
+const PIN: &str = "<path d=\"M9 3h6l-1 5.5 3.5 3v1.5h-11V11.5l3.5-3z\"/><path d=\"M12 13v8\"/>";
 /// Drawn in the same stroke as the rest: the odd one out by colour, and being
 /// odd by weight too would read as a mistake rather than a warning.
 const TRASH: &str = "<path d=\"M5 7h14\"/><path d=\"M9.5 7V4.5h5V7\"/>\
@@ -494,10 +529,30 @@ fn notebook_bar(book: &str, here: At) -> String {
         "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
          <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
         action_bar(&[
-            (NOTES, "Notes", format!("/nb/{at}"), mark(At::Notes)),
-            (TAGS, "Tags", format!("/nb/{at}/tags"), mark(At::Tags)),
-            (TODO, "Todo", format!("/nb/{at}/todo"), mark(At::Todo)),
-            (FILES, "Files", format!("/nb/{at}/files"), mark(At::Files)),
+            (
+                NOTES,
+                "Notes",
+                Act::Go(format!("/nb/{at}")),
+                mark(At::Notes)
+            ),
+            (
+                TAGS,
+                "Tags",
+                Act::Go(format!("/nb/{at}/tags")),
+                mark(At::Tags)
+            ),
+            (
+                TODO,
+                "Todo",
+                Act::Go(format!("/nb/{at}/todo")),
+                mark(At::Todo)
+            ),
+            (
+                FILES,
+                "Files",
+                Act::Go(format!("/nb/{at}/files")),
+                mark(At::Files)
+            ),
         ])
     )
 }
@@ -766,7 +821,14 @@ pub fn listing_pane(
     for row in rows {
         // `ls -l`'s order, tags last for its reason: they are the one column a
         // note may not have, so anything after them shifts from row to row.
-        let under = [when(row.stamp.as_deref()), tag_line(&row.tags)]
+        // Last on the line, behind the tags: the answer to "why is this row
+        // above a newer one", which is only asked after the row has been read.
+        let mark = if row.pinned {
+            format!("<span class=\"pin\">{}</span>", style::PIN_MARK)
+        } else {
+            String::new()
+        };
+        let under = [when(row.stamp.as_deref()), tag_line(&row.tags), mark]
             .into_iter()
             .filter(|piece| !piece.is_empty())
             .collect::<Vec<_>>()
@@ -1359,12 +1421,45 @@ fn read_pane(book: &str, reading: &Reading) -> String {
     //
     // Last, so the four that were here keep the positions a hand has learned,
     // and the only item on any bar that carries a colour.
+    // Pin says which way it goes rather than what it is, because that is the
+    // question a toggle has to answer before it is pressed. It is the one item
+    // that writes without a page in between: there is nothing to confirm about
+    // a change undone by pressing it again.
+    let (pin_label, pin_to) = if reading.pinned {
+        ("Unpin", format!("{at}/unpin"))
+    } else {
+        ("Pin", format!("{at}/pin"))
+    };
     let bar = action_bar(&[
-        (EDIT, "Edit", format!("{at}/edit"), Mark::Plain),
-        (TAGS, "Tags", format!("{at}/tags"), Mark::Plain),
-        (RENAME, "Rename", format!("{at}/rename"), Mark::Plain),
-        (LINKS, "Links", format!("{at}/backlinks"), Mark::Plain),
-        (TRASH, "Delete", format!("{at}/delete"), Mark::Danger),
+        (EDIT, "Edit", Act::Go(format!("{at}/edit")), Mark::Plain),
+        (TAGS, "Tags", Act::Go(format!("{at}/tags")), Mark::Plain),
+        (
+            RENAME,
+            "Rename",
+            Act::Go(format!("{at}/rename")),
+            Mark::Plain,
+        ),
+        (
+            LINKS,
+            "Links",
+            Act::Go(format!("{at}/backlinks")),
+            Mark::Plain,
+        ),
+        (
+            PIN,
+            pin_label,
+            Act::Post {
+                to: pin_to,
+                id: "pin",
+            },
+            Mark::Plain,
+        ),
+        (
+            TRASH,
+            "Delete",
+            Act::Go(format!("{at}/delete")),
+            Mark::Danger,
+        ),
     ]);
     let home = format!("/nb/{}", escape(book));
 
@@ -2020,6 +2115,7 @@ a{color:inherit;text-decoration:none}\
    named three times. */\
 .row .ident{display:none;font-family:var(--mono);font-size:12px;color:var(--id)}\
 .tags{color:var(--tag)}\
+.pin{color:var(--pin)}\
 .sep{color:var(--punct)}\
 .when{color:var(--muted)}\
 /* A due date that has gone by. The one colour in noda that marks what a thing \
@@ -2106,10 +2202,13 @@ text-decoration:underline;text-underline-offset:3px}\
 :focus-visible{outline:2px solid var(--tag);outline-offset:-2px}\
 .actionbar{position:sticky;bottom:0;display:flex;border-top:1px solid var(--rule);\
 background:var(--bg-sunk);padding-bottom:env(safe-area-inset-bottom,0px)}\
-.actionbar a{flex:1;min-height:64px;padding:9px 0 10px;display:flex;flex-direction:column;\
-align-items:center;justify-content:center;gap:4px;color:var(--muted);\
+/* The one write on the bar is a button, because a write is a POST. Everything \
+   after the selector is what makes it stop looking like one. */\
+.actionbar a,.actionbar button{flex:1;min-height:64px;padding:9px 0 10px;display:flex;\
+flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted);\
 -webkit-tap-highlight-color:transparent}\
-.actionbar a:active{background:var(--press)}\
+.actionbar button{background:none;border:0;font:inherit;cursor:pointer}\
+.actionbar a:active,.actionbar button:active{background:var(--press)}\
 .actionbar svg{width:26px;height:26px}\
 .actionbar span{font-size:11.5px;letter-spacing:0.02em}\
 /* Where you are, said by the attribute a screen reader reads for the same \
@@ -2348,9 +2447,10 @@ button.go,button.danger{flex:0 0 auto;min-width:190px}\
 .read .topbar{order:-2}\
 .read .actionbar{order:-1;position:static;background:var(--bg);border-top:0;\
 border-bottom:1px solid var(--rule);justify-content:flex-start;gap:2px;padding:7px 20px}\
-.read .actionbar a{flex:0 0 auto;flex-direction:row;gap:8px;min-height:38px;\
-padding:0 13px;border-radius:9px;font-size:13px}\
-.read .actionbar a:hover{background:var(--press);color:var(--text)}\
+.read .actionbar a,.read .actionbar button{flex:0 0 auto;flex-direction:row;gap:8px;\
+min-height:38px;padding:0 13px;border-radius:9px;font-size:13px}\
+.read .actionbar a:hover,.read .actionbar button:hover{background:var(--press);\
+color:var(--text)}\
 /* The rule above lifts every item to `--text` under the pointer, which would \
    take the colour off the one item whose colour is the point. */\
 .read .actionbar a.danger:hover{color:var(--alert)}\
@@ -2602,6 +2702,7 @@ mod tests {
                 created: None,
                 updated: None,
                 rendered: "<p>a <em>rendered</em> note</p>".into(),
+                pinned: false,
             },
             "in sync",
         );
@@ -2639,6 +2740,7 @@ mod tests {
                 created: Some("2026-08-12T08:03:00Z".into()),
                 updated: Some("2026-08-15T09:54:23Z".into()),
                 rendered: String::new(),
+                pinned: false,
             },
             "in sync",
         );
@@ -2684,6 +2786,7 @@ mod tests {
             tags: vec!["work".into()],
             stamp: Some("2026-08-12T08:03:00Z".into()),
             shown,
+            pinned: false,
         }
     }
 
@@ -2831,6 +2934,7 @@ mod tests {
                 tags: vec![],
                 created: Some("2019-03-14T16:21:00+08:00".into()),
                 updated: Some("2026-08-12T08:03:00Z".into()),
+                pinned: None,
                 extra: vec![],
                 body: String::new(),
             },
@@ -2865,6 +2969,7 @@ mod tests {
             created: None,
             updated: None,
             rendered: "<p>late</p>".into(),
+            pinned: false,
         };
         let page = note("work", &reading, "in sync");
         // The field is on a note page at every width, and is the way back.
@@ -2996,6 +3101,7 @@ mod tests {
                 created: Some("2026-08-12T08:03:00Z".into()),
                 updated: Some("2026-08-15T16:59:00Z".into()),
                 rendered: "late".into(),
+                pinned: false,
             },
             "in sync",
         );
@@ -3014,6 +3120,7 @@ mod tests {
             tags: vec![],
             stamp: Some("2026-08-12T08:03:00Z".into()),
             shown: true,
+            pinned: false,
         }];
         let page = listing(
             "work",
@@ -3144,6 +3251,7 @@ mod tests {
                 created: None,
                 updated: None,
                 rendered: String::new(),
+                pinned: false,
             },
             "in sync",
         );
@@ -3207,6 +3315,7 @@ mod tests {
             created: None,
             updated: None,
             rendered: "late".into(),
+            pinned: false,
         }
     }
 
@@ -3232,6 +3341,7 @@ mod tests {
             tags: vec!["work".into()],
             stamp: None,
             shown: true,
+            pinned: false,
         }];
         let column = listing_pane(
             "work",
