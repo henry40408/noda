@@ -368,6 +368,11 @@ the listing's bar carries where the notebook stands against its remote — `2 to
 sync`, `never synced` — and pressing it opens `/nb/<book>/status`: the same facts `noda
 status` prints, none of them fetched, with `Sync`, `Pull` and `Push` under them.
 
+The last row is the one thing on that screen that is not about the notebook: the version of the
+build answering, the same string `noda --version` prints. It is inside the `<main>` the poll
+swaps rather than in the chrome around it, so a sync does not carry it away — the point of it is
+that a bug report about `noda web` can name what was running instead of guessing.
+
 A sync is a fetch over somebody's network, so it takes as long as it takes. Pressing starts it
 and answers straight away; the screen you land on says what is happening and brings itself
 back for news every couple of seconds until it stops. That is a `<meta http-equiv="refresh">`

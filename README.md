@@ -587,7 +587,9 @@ noda is at http://127.0.0.1:8080
 ```
 
 The listing is searched and ordered from one bar, a note's links work the way they do on disk,
-and times are rendered in the zone you are standing in.
+and times are rendered in the zone you are standing in. The status screen behind the listing's
+standing — `2 to push`, `in sync` — says the same things `noda status` prints, and ends with the
+version of the build that is answering, so a phone can tell you what is running.
 
 **There is no password on it, and there is not going to be one** — it is meant to be reached
 over a tailnet or from behind something that already authenticates. So it listens on **this

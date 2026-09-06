@@ -1884,6 +1884,10 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     for problem in &standing.problems {
         row("Problem", problem, false);
     }
+    // Last, and the one row here that is not about the notebook: which build is
+    // answering. A bug report against `noda web` is otherwise a guess about
+    // what is running, and the page is what the reporter is looking at.
+    row("Version", crate::VERSION, true);
 
     let said = match errand {
         None => String::new(),
@@ -3474,6 +3478,22 @@ mod tests {
         let quiet = standing_main("work", &still(), None);
         assert!(!quiet.contains("http-equiv"), "{quiet}");
         assert!(quiet.starts_with("<main>"), "{quiet}");
+    }
+
+    /// Inside the `<main>` and not the chrome, so it survives the swap the poll
+    /// makes: a screen that showed which build was answering until the first
+    /// sync finished would be worse than one that never showed it.
+    #[test]
+    fn the_status_screen_names_the_build_answering() {
+        let expected = format!(
+            "<div class=\"name\">Version</div>\
+             <div class=\"under\"><span class=\"mono\">{}</span></div>",
+            escape(crate::VERSION)
+        );
+        let page = standing("work", &still(), None);
+        assert!(page.contains(&expected), "{page}");
+        let news = standing_main("work", &still(), None);
+        assert!(news.contains(&expected), "{news}");
     }
 
     fn still() -> Standing {
