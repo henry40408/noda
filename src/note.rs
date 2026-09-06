@@ -29,6 +29,14 @@ const CHARS_PER_DRAW: usize = 12;
 /// Fallback slug for a title that contains nothing sluggable.
 const FALLBACK_SLUG: &str = "note";
 
+/// The longest slug a filename carries, in bytes. A path component gets 255 on
+/// the filesystems noda runs on and [`file_name`] spends 12 of them before the
+/// slug starts, so 243 is the bound; this is well under it because `ls -l` pads
+/// the slug column to the widest one in the notebook, and a page title pasted in
+/// whole would widen every row. Nothing is lost that the note does not still
+/// hold: the title is in the frontmatter, and the slug was already lossy.
+const MAX_SLUG_LEN: usize = 100;
+
 /// The id is not here — it is the filename.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
@@ -291,7 +299,8 @@ pub fn validate_tag(tag: &str) -> Result<()> {
 }
 
 /// A filename-safe, human-readable name derived from the title. Alphanumerics are
-/// kept (so CJK titles stay legible), everything else collapses to a single `-`.
+/// kept (so CJK titles stay legible), everything else collapses to a single `-`,
+/// and the result is cut to [`MAX_SLUG_LEN`] bytes.
 pub fn slugify(title: &str) -> String {
     let mut slug = String::new();
     let mut pending_dash = false;
@@ -309,7 +318,27 @@ pub fn slugify(title: &str) -> String {
     if slug.is_empty() {
         FALLBACK_SLUG.to_string()
     } else {
-        slug
+        shorten(&slug)
+    }
+}
+
+/// Cuts a slug to [`MAX_SLUG_LEN`] bytes, at the last `-` inside the cap so the
+/// name does not end mid-word. A word running past the cap on its own has no
+/// boundary worth retreating to — falling back to an earlier one would throw
+/// away most of the name to avoid a ragged edge — so it is cut on a character
+/// boundary instead, which UTF-8 makes a real constraint: half a CJK character
+/// is not a filename.
+fn shorten(slug: &str) -> String {
+    if slug.len() <= MAX_SLUG_LEN {
+        return slug.to_string();
+    }
+    let mut cut = MAX_SLUG_LEN;
+    while !slug.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    match slug[..cut].rfind('-') {
+        Some(dash) if dash * 2 >= MAX_SLUG_LEN => slug[..dash].to_string(),
+        _ => slug[..cut].to_string(),
     }
 }
 
@@ -415,6 +444,50 @@ mod tests {
     fn slugify_keeps_cjk_and_falls_back_when_empty() {
         assert_eq!(slugify("會議 筆記"), "會議-筆記");
         assert_eq!(slugify("!!!"), FALLBACK_SLUG);
+    }
+
+    /// A page title pasted in whole. The filename it names has to fit a path
+    /// component, and it is the slug that gives way — the title does not.
+    #[test]
+    fn slugify_cuts_a_long_title_at_a_word_boundary() {
+        let slug = slugify(
+            "GitHub - coding-horror/basic-computer-games: An updated version of the \
+             classic Basic Computer Games book, with well-written examples in a variety \
+             of common MEMORY SAFE, SCRIPTING programming languages.",
+        );
+        assert_eq!(
+            slug,
+            "github-coding-horror-basic-computer-games-an-updated-version-of-the-classic-basic-computer-games"
+        );
+        assert!(slug.len() <= MAX_SLUG_LEN, "{} bytes", slug.len());
+        assert!(file_name("k3f9m2p1", &slug).len() <= 255);
+    }
+
+    /// No `-` to retreat to, so the cut is the cap itself.
+    #[test]
+    fn slugify_cuts_a_single_long_word_at_the_cap() {
+        let slug = slugify(&"a".repeat(300));
+        assert_eq!(slug.len(), MAX_SLUG_LEN);
+    }
+
+    /// The cap is bytes and a CJK character is three of them, so the cut lands
+    /// inside one unless it is walked back to a boundary.
+    #[test]
+    fn slugify_cuts_cjk_on_a_character_boundary() {
+        let slug = slugify(&"漢".repeat(200));
+        assert_eq!(slug, "漢".repeat(MAX_SLUG_LEN / 3));
+        assert!(slug.len() <= MAX_SLUG_LEN, "{} bytes", slug.len());
+    }
+
+    /// The cut never leaves the `-` it retreated to on the end, which would name
+    /// a file after a word it does not contain.
+    #[test]
+    fn slugify_leaves_no_trailing_dash() {
+        for extra in 0..8 {
+            let slug = slugify(&format!("{} {}", "ab ".repeat(40), "c".repeat(extra)));
+            assert!(!slug.ends_with('-'), "{slug}");
+            assert!(slug.len() <= MAX_SLUG_LEN, "{slug}");
+        }
     }
 
     #[test]
