@@ -6,8 +6,10 @@
 //!   RFC 3339.
 //! - `tags` is space-separated, with `[[double brackets]]` around a tag that
 //!   contains a space.
-//! - Other single-line string fields are carried through, except the wiki's
-//!   bookkeeping (`revision`, `bag`, `type`).
+//! - Other string fields are carried through, except the wiki's bookkeeping
+//!   (`revision`, `bag`, `type`). A multi-line value becomes one double-quoted
+//!   line with JSON escapes, which YAML reads back as the same string; a block
+//!   scalar would not survive, because noda reads frontmatter a line at a time.
 
 use std::collections::BTreeSet;
 
@@ -117,11 +119,11 @@ fn incoming(tiddler: &Value, title: &str) -> std::result::Result<Incoming, Strin
             let Value::String(value) = value else {
                 continue;
             };
-            // Frontmatter is one line per field.
             if value.contains(['\n', '\r']) {
-                continue;
+                extra.push(format!("{name}: {}", Value::String(value.clone())));
+            } else {
+                extra.push(format!("{name}: {value}"));
             }
-            extra.push(format!("{name}: {value}"));
         }
     }
 
@@ -235,6 +237,17 @@ mod tests {
         assert!(
             !note.extra.iter().any(|line| line.starts_with("revision")),
             "the wiki's bookkeeping is not the note's"
+        );
+    }
+
+    #[test]
+    fn a_multi_line_field_is_carried_as_one_quoted_line() {
+        let export =
+            read(r#"[{"title":"A","text":"body","caption":"one\ntitle: two\r\n\"three\""}]"#)
+                .unwrap();
+        assert_eq!(
+            export.notes[0].extra,
+            [r#"caption: "one\ntitle: two\r\n\"three\"""#]
         );
     }
 

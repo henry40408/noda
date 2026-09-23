@@ -105,7 +105,8 @@ the field once a note is dealt with and the count goes down.
 TiddlyWiki's `created` and `modified` are `YYYYMMDDhhmmssXXX` in UTC; they become RFC 3339 with
 their milliseconds intact. A `tags` field is a title list, so `[[26.04 Occam's razor]]` arrives as
 one tag with its spaces. Every other field — `creator`, `modifier`, anything you invented — is
-carried into the frontmatter untouched, and `source_key` records what the wiki called the note, so
+carried into the frontmatter untouched — one spanning several lines as a single double-quoted line
+with `\n` escapes — and `source_key` records what the wiki called the note, so
 a second import says "already imported" instead of making a second copy.
 
 What is not a note is reported rather than dropped: system tiddlers under `$:/`, pictures and other

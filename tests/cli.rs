@@ -5372,6 +5372,26 @@ fn import_carries_the_times_and_fields_the_wiki_had() {
     assert!(out.contains("Meeting Notes"), "{out}");
 }
 
+#[test]
+fn import_keeps_a_multi_line_field_without_it_reading_as_another() {
+    let (root, paths) = initialized();
+    let file = export(
+        &root,
+        "wiki.json",
+        r#"[{"title":"Kept","text":"body","caption":"one\ntitle: two"}]"#,
+    );
+    cmd::import_tiddlywiki(&paths, std::slice::from_ref(&file), true).unwrap();
+
+    let text = note_text(&paths, "kept");
+    assert!(text.contains(r#"caption: "one\ntitle: two""#), "{text}");
+    let out = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap());
+    assert!(out.contains("Kept"), "{out}");
+    assert!(
+        !out.contains("two"),
+        "the value's second line is not a title: {out}"
+    );
+}
+
 /// A title too long for a filename used to abort the whole import, leaving
 /// pass one's notes uncommitted.
 #[test]
