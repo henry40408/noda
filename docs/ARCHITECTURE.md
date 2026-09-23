@@ -19,7 +19,10 @@ link · query · todo        derived from the CommonMark event stream, never fro
 paths · config · error · style · sign · remote
 ```
 
-`tui/`, `web/` and `import/` sit on top. None of them reaches past `cmd` to write a note.
+`tui/`, `web/` and `import/` sit on top. Neither front end reaches past `cmd` to write a note.
+`import/mod.rs` is the one other writer, and only `cmd::import_*` calls it: it validates titles and
+tags as `cmd` does and commits through `Notebook::commit`, but keeps each note's times from the
+source rather than stamping `updated`.
 
 ## Three paths through it
 
