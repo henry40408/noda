@@ -1,6 +1,7 @@
 //! XDG base directories, honoured on every platform including macOS. Per the
 //! spec a variable counts only when it holds an absolute path.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
@@ -94,8 +95,13 @@ impl Paths {
 }
 
 fn xdg(var: &str, home: &Path, default: &str) -> PathBuf {
-    match std::env::var_os(var) {
-        Some(value) if Path::new(&value).is_absolute() => PathBuf::from(value).join("noda"),
+    resolve(std::env::var_os(var).as_deref(), home, default)
+}
+
+/// Split from `xdg` so tests can pass a value without touching the env.
+fn resolve(value: Option<&OsStr>, home: &Path, default: &str) -> PathBuf {
+    match value {
+        Some(value) if Path::new(value).is_absolute() => Path::new(value).join("noda"),
         _ => home.join(default).join("noda"),
     }
 }
@@ -105,7 +111,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn relative_xdg_value_falls_back_to_home_default() {
+    fn only_an_absolute_xdg_value_is_used() {
+        let home = Path::new("/home/someone");
+        let fallback = Path::new("/home/someone/.config/noda");
+        for value in [Some("relative/config"), Some(""), None] {
+            assert_eq!(
+                resolve(value.map(OsStr::new), home, ".config"),
+                fallback,
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            resolve(Some(OsStr::new("/elsewhere")), home, ".config"),
+            Path::new("/elsewhere/noda")
+        );
+    }
+
+    #[test]
+    fn an_unset_xdg_variable_falls_back_to_home_default() {
         let home = Path::new("/home/someone");
         assert_eq!(
             xdg("NODA_TEST_UNSET_VAR", home, ".config"),
