@@ -1,11 +1,7 @@
-# Pinned so that a local build, a CI run and a release build are the same
-# compiler. The trade is deliberate: an upstream clippy release can no longer
-# turn CI red on its own, and in exchange a breaking compiler change only
-# surfaces when this line is bumped.
-#
-# The musl targets are declared here rather than installed in CI, so the
-# cross-compile that guards the PR/FAQ's distribution claim can be reproduced
-# locally with the same one command.
+# Pinned so local, CI and release builds use the same compiler: a new clippy
+# cannot turn CI red on its own, at the cost of breaking changes surfacing only
+# when this is bumped. The musl targets are declared here so the release
+# cross-compile is reproducible locally.
 [toolchain]
 channel = "1.98.1"
 components = ["clippy", "rustfmt"]

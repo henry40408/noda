@@ -1,108 +1,58 @@
 //! The enhancement layer: the only part of this interface allowed to be absent.
 //!
-//! Every page works with scripts off, and six pull requests were spent making
-//! sure of it before a line of this file existed. That order was deliberate —
-//! write the script first and the scriptless path quietly loses a corner nobody
-//! notices. **Nothing here adds a capability. Everything here removes a wait**,
-//! with one exception set out below.
+//! Every page works with scripts off. **Nothing here adds a capability;
+//! everything here removes a wait** — a round trip to narrow the listing, a
+//! whole-page reload on the network screen, a press to see backlinks on a wide
+//! screen, a rebuilt page on search and on back — with one exception.
 //!
-//! The waits:
+//! ## The exception: stamps
 //!
-//! * **The listing waits for a round trip to narrow itself**, though every fact
-//!   a title-or-tag query needs is already on the page.
-//! * **The network screen waits by reloading itself whole.** A fetch of the same
-//!   URL is the same news without the flash, the scroll jump and the lost focus.
-//! * **What points at a note waits behind a press.** On a screen with room
-//!   beside the prose, the Links page buys nothing that could not be there
-//!   already. The button stays, and is still the only way there on a phone.
-//! * **Sending the search, and going back, wait for the page to be built
-//!   again** — the same wait from either end of one press, and back was paying
-//!   for it in full as a reload.
+//! Nothing in a request says where the reader is, so the server cannot render
+//! `2026-08-15T23:30:00Z` as the day it was for them. `STAMPS` converts it to
+//! the reader's zone. The scriptless page is unconverted rather than wrong: it
+//! shows the stamp as the file holds it, `Z` and all, as `noda show` does. A
+//! `due:` date is left alone — it is a calendar day somebody typed, and
+//! converting it would move an item due today into tomorrow.
 //!
-//! ## And one thing here does add something
+//! ## The rule
 //!
-//! A stamp is an instant, and an instant is not a day until somebody says where
-//! they are standing. Nothing in a request says so, so the server cannot render
-//! `2026-08-15T23:30:00Z` as the day it was: for half the world it was the
-//! sixteenth. `script::STAMPS` says the same instant in the reader's own zone —
-//! the one fact this interface cannot state from the server at all.
+//! *The server is the only authority; the script may answer sooner, or not at
+//! all, never differently.*
 //!
-//! What keeps it honest is that the scriptless page is not *wrong* but
-//! unconverted: it shows the stamp as the file holds it, `Z` and all, which is
-//! what `noda show` prints and the one rendering that cannot be misread. It
-//! follows that a listing's day may differ from the scriptless one, and that is
-//! the point rather than a defect — but it is the first time anything here has
-//! drawn what the server would have drawn differently.
-//!
-//! Two stamps are deliberately untouched. A `due:` date is a calendar day
-//! somebody typed and `noda todo` already decides against git's own offset, so
-//! converting it would move an item due today into tomorrow. And the count
-//! beside a tag wears a stamp's class without being one — which is why this
-//! looks for `<time datetime>` and never a class.
-//!
-//! ## The rule both halves are written against
-//!
-//! *The server is the only authority, and the script must never be able to
-//! answer differently — only sooner, or not at all.*
-//!
-//! For the network screen that is free: the script fetches the page the server
-//! would have sent, and even "is it still running?" is read off the server's own
-//! `<meta refresh>`.
-//!
-//! For the listing it costs an argument, a filter being a second implementation
-//! of `query.rs` — the only one this project permits itself. What keeps it
-//! honest is that it may be *narrower* than the server and never wider:
+//! The network screen gets that free: it fetches the server's own page and
+//! reads "still running?" off its `<meta refresh>`. The listing filter is a
+//! second implementation of `query.rs`, and stays honest by being *narrower*
+//! than the server, never wider:
 //!
 //! | the query holds | the script can say | why |
 //! | --- | --- | --- |
 //! | only `tag:` / `title:` / `id:` / `pinned:` | the whole answer | the page carries every field those terms read — a pinned row is the one wearing the mark |
-//! | a bare word, or `text:` | part of the answer | `Field::Text` reads the body too, and a row's body is not here. Title-and-tag hits are a **subset** of text hits, so what is shown is right and possibly short — never wrong |
-//! | a *negated* bare word or `text:` | nothing | this is the case that inverts. `-budget` asks for notes without the word; the script cannot see the body, so it would *keep* a row the server would drop. Widening is the one thing the rule forbids, so the filter stands aside |
+//! | a bare word, or `text:` | part of the answer | `Field::Text` reads the body too, which is not on the page; title-and-tag hits are a **subset** of text hits, so what is shown is right and possibly short |
+//! | a *negated* bare word or `text:` | nothing | `-budget` wants notes without the word, and the script cannot see bodies, so it would *keep* a row the server drops. The filter stands aside |
 //!
-//! The third row is why this is a table and not a sentence: the subset property
-//! that makes the second row safe is destroyed by a leading `-`, which is not
-//! visible from the design — it comes from `Term::matches` returning
-//! `found != negated`, and was found by writing the filter rather than planning
-//! it.
+//! The third row is not visible from the design: it follows from
+//! `Term::matches` returning `found != negated`, which inverts the subset.
+//! A query that does not parse also makes the listing stand aside, without
+//! repeating the server's complaint — a half-typed query is not a mistake.
 //!
-//! A query that does not parse is the same case: the listing stands aside. It
-//! does not repeat the server's complaint, a half-typed query not being a
-//! mistake.
+//! The script touches only what the server put there: excluded rows arrive
+//! `hidden`, so filtering here and there are the same operation on one DOM,
+//! and nothing changes before the first keystroke.
 //!
-//! ## What the script is allowed to touch
-//!
-//! Only what the server put there. Every row is on the page whatever is typed —
-//! the excluded ones arrive `hidden` — so filtering here and there are the same
-//! operation on the same DOM. Nothing is touched until the first keystroke:
-//! until then the screen holds the server's answer to the URL.
-//!
-//! ## And what it is allowed to ask for
-//!
-//! Every fetch takes one region out of the page and drops the rest, which on a
-//! note is 48 of 52 KB thrown away on a round trip a reader waits through.
-//!
-//! So each says which region it will use — `x-noda-fragment`, the vocabulary in
-//! `web::Part` — and the server sends it out of the same function the whole page
-//! is built from. **This is the enhancement rule rather than an exception**:
-//! every fetch parses what arrives and asks it for the element it wants, so a
-//! server ignoring the header would still be answering correctly.
+//! Each fetch names the region it will use in `x-noda-fragment` (`web::Part`),
+//! since the rest of a note page is 48 of its 52 KB. Every fetch still looks up
+//! the element it wants in what arrives, so a server ignoring the header answers
+//! correctly.
 
-/// The listing's filter, and the grouping it drew on the way.
+/// The listing's filter, and its grouping pills.
 ///
-/// Reads the rows out of the DOM rather than a copy: a JSON block beside the
-/// list would put every title and tag on the page twice, and the second copy
-/// goes stale. `textContent` also unwraps the server's `<mark>`s for free.
+/// Reads the rows out of the DOM rather than a JSON copy, which would double the
+/// page and go stale; `textContent` also unwraps the server's `<mark>`s.
 ///
-/// ## The grouping is the one thing here that never stands aside
-///
-/// This redraws `page::grouping` on every keystroke, from the same `parse` the
-/// filter runs on — not a third implementation but the one the table above
-/// already requires, used for a second thing.
-///
-/// It answers in the two cases the *filter* refuses to: a grouping is a fact
-/// about the words and not about the notes, so where there is a parse there is
-/// a grouping. Where there is not, the box empties — drawing the last complete
-/// grouping under a line that no longer says it is worse than saying nothing.
+/// The grouping (`page::grouping`, redrawn per keystroke from the filter's own
+/// `parse`) never stands aside: it is a fact about the words, not the notes, so
+/// it is drawn whenever the query parses — negated text included — and emptied
+/// when it does not, rather than left showing a stale line.
 pub const LISTING: &str = r#"
 (() => {
   const app = document.querySelector(".app");
@@ -112,12 +62,8 @@ pub const LISTING: &str = r#"
   const field = form.querySelector("input[name=q]");
   if (!field) return;
 
-  // Read again when `script::PANES` replaces the rows without a reload, which
-  // is why these are `let`: an element taken out of the document is one this
-  // would go on filtering, invisibly, for the session.
-  //
-  // The field and the form are never replaced — the reader may have a cursor
-  // in one — which is why they are read once above.
+  // Re-read when `PANES` replaces the rows, or this would go on filtering
+  // detached elements. The form and field are never replaced, so read once.
   let count, hint, parsed, problem, empty, asked, notes, total;
   const look = () => {
     count = document.querySelector(".topbar .count");
@@ -135,8 +81,6 @@ pub const LISTING: &str = r#"
         title,
         words: title.textContent,
         tags: tags ? tags.textContent.split(", ") : [],
-        // The mark the server drew is the whole fact, so `pinned:` is one of
-        // the terms this can answer exactly rather than narrowly.
         pinned: !!row.querySelector(".pin"),
         id: row.getAttribute("href").split("/").pop(),
       };
@@ -148,8 +92,8 @@ pub const LISTING: &str = r#"
 
   const FIELDS = ["tag", "title", "id", "pinned", "text"];
 
-  // `query::split`, said again: quotes hold a piece together, and an unclosed
-  // one runs to the end because its closer is usually the next character.
+  // `query::split`: an unclosed quote runs to the end, its closer usually being
+  // the next character typed.
   const split = (text) => {
     const pieces = [];
     let piece = "";
@@ -169,8 +113,7 @@ pub const LISTING: &str = r#"
     return pieces;
   };
 
-  // The token as typed, kept because the grouping is drawn from it: what goes
-  // on the screen has to be the reader's own line.
+  // `said` keeps the token as typed: the grouping draws the reader's own words.
   const term = (token) => {
     const negated = token.startsWith("-");
     const rest = negated ? token.slice(1) : token;
@@ -182,14 +125,12 @@ pub const LISTING: &str = r#"
       field = rest.slice(0, colon);
       value = rest.slice(colon + 1);
     }
-    // `Term::parse` refuses any other value, and a query the server will refuse
-    // is one this stands aside for — the same answer it gives half a query.
+    // `Term::parse` refuses any other value.
     if (field === "pinned" && value !== "true" && value !== "false") return null;
     return value ? { field, value, negated, said: token } : null;
   };
 
-  // `null` for anything that does not parse — one answer for the two cases the
-  // script treats alike: half a query, and one it may not run.
+  // `null` for half a query and for one the server would refuse alike.
   const parse = (tokens) => {
     const groups = [];
     let expecting = false;
@@ -209,7 +150,7 @@ pub const LISTING: &str = r#"
     return expecting || !groups.length ? null : groups;
   };
 
-  // `note::normalize_id`: an id is read off a screen and typed back.
+  // `note::normalize_id`.
   const fold = (id) => id.toLowerCase().replace(/[il]/g, "1").replace(/o/g, "0");
 
   const hits = (parsed, note) => {
@@ -220,14 +161,13 @@ pub const LISTING: &str = r#"
     else if (parsed.field === "id") found = fold(note.id).startsWith(fold(parsed.value));
     else if (parsed.field === "title") found = inWords;
     else if (parsed.field === "pinned") found = note.pinned === (parsed.value === "true");
-    // Everything a bare word reaches *here*; the body is what is missing.
+    // A bare word, minus the body, which is not on the page.
     else found = inWords || note.tags.some((tag) => tag.toLowerCase().includes(value));
     return found !== parsed.negated;
   };
 
-  // `page::highlight`: the earliest match wins and the longest of those, so two
-  // overlapping terms mark one run. Built as nodes rather than markup — the way
-  // to be sure a title is never read as HTML is never to make it a string.
+  // `page::highlight`: earliest match wins, then longest. Built as nodes, never
+  // markup, so a title can never be read as HTML.
   const paint = (element, text, terms) => {
     element.textContent = "";
     const hay = text.toLowerCase();
@@ -250,8 +190,8 @@ pub const LISTING: &str = r#"
     element.append(text.slice(at));
   };
 
-  // `page::grouping`, again: a pill per group, `or` inside and `and` between.
-  // Nodes rather than markup, for `paint`'s reason.
+  // `page::grouping`: a pill per group, `or` inside and `and` between. Nodes,
+  // for `paint`'s reason.
   const chips = (groups) => {
     if (!parsed) return;
     parsed.textContent = "";
@@ -281,8 +221,8 @@ pub const LISTING: &str = r#"
     }
   };
 
-  // `full` is whether the screen holds the whole answer: when it does not, the
-  // count would be a lie in the server's voice, so the hint says whose it is.
+  // `full`: the screen holds the whole answer. When it does not, the hint says
+  // the count is the script's, not the server's.
   const show = (shown, full) => {
     if (count) count.textContent = shown === total && full ? `${total}` : `${shown} of ${total}`;
     if (empty) {
@@ -301,15 +241,12 @@ pub const LISTING: &str = r#"
   };
 
   const apply = () => {
-    // The complaint is about the query in the URL and the field no longer holds
-    // it. Nothing here writes a new one — a query being typed is half-written by
-    // definition.
+    // The complaint was about the URL's query, which the field no longer holds.
     if (problem) problem.hidden = true;
 
     const tokens = split(field.value);
-    // Before anything is decided about the rows, from the same parse: both ways
-    // out below leave the listing alone, and neither is a reason to leave the
-    // grouping wrong.
+    // Before either early return below, which leave the rows but not the
+    // grouping alone.
     const groups = tokens.length ? parse(tokens) : null;
     chips(groups);
 
@@ -324,7 +261,7 @@ pub const LISTING: &str = r#"
 
     if (!groups) return stand();
     const terms = groups.flat();
-    // The row that inverts. See the table at the top of `script.rs`.
+    // Negated text inverts the subset: see the module table.
     if (terms.some((parsed) => parsed.field === "text" && parsed.negated)) return stand();
 
     const full = !terms.some((parsed) => parsed.field === "text");
@@ -343,16 +280,14 @@ pub const LISTING: &str = r#"
   };
 
   field.addEventListener("input", apply);
-  // The rows just sent are the answer to the query in the address: what is on
-  // the screen is the server's until the next keystroke.
+  // New rows are the server's answer, left as sent until the next keystroke.
   if (app) app.addEventListener("noda:rows", look);
 })();
 "#;
 
-/// The page the server would have sent, without the reload: it asks for its own
-/// URL and swaps `<main>`, so every word is still the server's — including
-/// whether an errand is running, read off the same `<meta refresh>` the
-/// scriptless page steers by. When that stops arriving, so does the polling.
+/// The network screen's reload, as a fetch of its own URL that swaps `<main>`.
+/// It polls while the answer still carries the `<meta refresh>` the scriptless
+/// page steers by.
 pub const STANDING: &str = r#"
 (() => {
   const meta = document.querySelector('meta[http-equiv="refresh"]');
@@ -360,7 +295,6 @@ pub const STANDING: &str = r#"
   let main = document.querySelector("main");
   if (!main) return;
 
-  // From the meta rather than repeated, so neither can be changed alone.
   const every = (Number(meta.getAttribute("content")) || 2) * 1000;
   meta.remove();
 
@@ -375,8 +309,7 @@ pub const STANDING: &str = r#"
       if (!answer.ok) return location.reload();
       text = await answer.text();
     } catch {
-      // A phone that lost the tailnet mid-sync. The errand is running either
-      // way, so ask again rather than invent an error over the server's page.
+      // A phone that lost the network: the errand runs regardless, so ask again.
       return again();
     }
     const fresh = new DOMParser().parseFromString(text, "text/html");
@@ -391,30 +324,16 @@ pub const STANDING: &str = r#"
 })();
 "#;
 
-/// The two panes: bringing the index one, and keeping it.
+/// The two panes: bringing the index pane, and keeping it.
 ///
-/// A note page is sent without the listing beside it — about 290 bytes a note,
-/// half a megabyte at two thousand, and below 1024px none of it drawn — so the
-/// page carries the pane's frame and this asks for the rest where the column is
-/// on screen.
+/// A note page is sent without the listing — about 290 bytes a note, half a
+/// megabyte at two thousand, none of it drawn below 1024px — so on a wide screen
+/// this fetches `/nb/<book>` and lifts its `main.rows`: the listing keeps one
+/// renderer. `indexed` goes on synchronously, before the first paint, or the
+/// reading pane is laid out twice.
 ///
-/// The rows inserted are the ones `/nb/<book>` sent, lifted out of that page's
-/// own `main.rows` rather than built here: the listing has exactly one renderer,
-/// and this can only be later or absent.
-///
-/// **Bring it.** On a note route with an empty pane and room for three columns,
-/// fetch the listing. `indexed` goes on synchronously — the column has to exist
-/// before the first paint or the reading pane is laid out twice.
-///
-/// **Keep it.** Picking a note replaces the reading pane and leaves the rows
-/// alone; without this every press would throw the listing away and ask for it
-/// again, when the reason to keep it was that it *stays* while you read. It is
-/// also what makes the fetch happen once rather than once per note.
-///
-/// No loading state on the pane, which follows from keeping it: after the first
-/// arrival there is nothing to load, and a notice on every note would *be* the
-/// flicker rather than report it.
-///
+/// Picking a note then swaps only the reading pane, so the rows are fetched once
+/// and stay while you read — which is also why the pane has no loading state.
 /// Every row is still a link to a page that renders on its own.
 pub const PANES: &str = r#"
 (() => {
@@ -427,8 +346,6 @@ pub const PANES: &str = r#"
     return form ? form.getAttribute("action") : null;
   };
 
-  // Asked when the pane is empty, which — picking a note keeping it — is once
-  // on a note page opened cold.
   let asking = false;
   const bring = async () => {
     if (!wide.matches || !app.classList.contains("at-note")) return;
@@ -445,8 +362,7 @@ pub const PANES: &str = r#"
       if (!answer.ok) return;
       text = await answer.text();
     } catch {
-      // The note is on the screen and whole, and a column that never arrives is
-      // the scriptless layout — a working one.
+      // A column that never arrives is the scriptless layout, which works.
       return;
     } finally {
       asking = false;
@@ -456,16 +372,12 @@ pub const PANES: &str = r#"
     column(sent, false);
   };
 
-  // The index column, as the server now has it.
+  // The index column, as the server now has it. The input is never replaced,
+  // only what follows it: it may hold a cursor, and `LISTING` listens to it.
   //
-  // **The form is never replaced, only what hangs off it.** There may be a
-  // cursor in that field, and `script::LISTING` listens to the element the page
-  // loaded with — replacing it drops both, and a listing that no longer filters
-  // as you type. So the input stays and everything after it goes.
-  //
-  // `retype` is whether the field is the server's to set: it is when the address
-  // changed under the reader, and it is not when they just typed it, where the
-  // answer catching up must not take the keystrokes made in flight.
+  // `retype`: the server may set the field — true when the address changed
+  // under the reader, false when they just typed, so keystrokes made in flight
+  // survive.
   const column = (sent, retype) => {
     const box = app.querySelector(".index main.rows");
     const rows = sent.querySelector("main.rows");
@@ -489,14 +401,12 @@ pub const PANES: &str = r#"
     }
 
     mark();
-    // Different elements now, and the filter holds the ones it was built with.
-    // Said rather than observed: one script's doing is another script's fact.
+    // New elements; the filter holds the old ones.
     app.dispatchEvent(new CustomEvent("noda:rows"));
     return true;
   };
 
-  // Off the address rather than remembered, so it is right after a swap and
-  // after a hard load.
+  // Off the address, so it is right after a swap and after a hard load.
   const mark = () => {
     const at = location.pathname;
     for (const row of app.querySelectorAll(".index main.rows a.row")) {
@@ -504,14 +414,9 @@ pub const PANES: &str = r#"
     }
   };
 
-  // **The address moves first, and the answer catches up.**
-  //
-  // A navigation changes the address the moment it starts, and so must this: a
-  // reader who presses a row then presses back before the note lands would
-  // otherwise go back past the page they are on and leave the notebook. So the
-  // entry is pushed on the press, and every way this can fail ends somewhere
-  // that address is correct. `replace` and not `assign`, the entry being there
-  // already.
+  // The address is pushed on the press, before the fetch, as a navigation
+  // would: otherwise back pressed mid-flight skips past this page and out of
+  // the notebook. Failures therefore `replace`, the entry being there already.
   const swap = async (href, push = true) => {
     if (push) history.pushState(null, "", href);
     let text;
@@ -532,14 +437,11 @@ pub const PANES: &str = r#"
     app.classList.remove("at-list");
     app.classList.add("at-note");
     mark();
-    // Replaced whole, so anything hanging off the note read is now a different,
-    // empty element. Said rather than observed: a pane swap is a fact about this
-    // script, not something another should infer from the DOM.
+    // The pane is a new element, so `BESIDE` and `STAMPS` must look again.
     app.dispatchEvent(new CustomEvent("noda:read"));
   };
 
-  // Two panes of one answer in one round trip: a screen half arrived
-  // flickers.
+  // Both panes in one round trip, so the screen never half-arrives.
   const screen = async (href) => {
     let text;
     try {
@@ -549,8 +451,7 @@ pub const PANES: &str = r#"
       if (!answer.ok) return location.reload();
       text = await answer.text();
     } catch {
-      // Nothing arrived, so nothing is claimed. A reload asks the same question
-      // by the same route, and is what going back did before any of this.
+      // A reload asks the same question the scriptless way.
       return location.reload();
     }
     const sent = new DOMParser().parseFromString(text, "text/html");
@@ -564,10 +465,8 @@ pub const PANES: &str = r#"
     app.dispatchEvent(new CustomEvent("noda:read"));
   };
 
-  // Two presses arrive here and are the same press: sending the search and
-  // choosing an order both change which rows there are and nothing else. The
-  // address moves first for `swap`'s reason, and every way this can fail ends
-  // where a scriptless press would have gone.
+  // Sending the search and choosing an order: both change only the rows. Pushes
+  // first for `swap`'s reason; failures go where a scriptless press would.
   const relist = async (where) => {
     history.pushState(null, "", where);
     let text;
@@ -581,20 +480,12 @@ pub const PANES: &str = r#"
       return location.replace(where);
     }
     const sent = new DOMParser().parseFromString(text, "text/html");
-    // `false`: the reader just typed in that field, and the answer catching up
-    // must not take the keystrokes made in flight. An order press does not touch
-    // the field, so the same answer suits both.
+    // `false`: keep keystrokes typed in flight; an order press leaves the field.
     if (!column(sent, false)) return location.replace(where);
   };
 
-  // Sending the search: the rows change and the page does not.
-  //
-  // **Only on the listing screen.** The same form is in a note page's index
-  // column, where ⏎ is the way *to* the listing — answering it here would keep
-  // the note on screen, which is not the server's answer.
-  //
-  // It asks for the address the form would have submitted, so what lands in the
-  // history is what a scriptless press leaves there.
+  // Only on the listing screen: on a note page ⏎ in this form is the way *to*
+  // the listing, and answering in place would keep the note on screen.
   app.addEventListener("submit", (event) => {
     if (event.defaultPrevented) return;
     const form = event.target.closest(".index form.searchbar");
@@ -603,16 +494,13 @@ pub const PANES: &str = r#"
     const action = form.getAttribute("action");
     if (!field || !action) return;
     event.preventDefault();
-    // **Every field, not just the one typed in.** The form also holds the
-    // order, and rebuilding the address out of `q` alone put the notes back in
-    // the default order without saying so — the script answering differently
-    // from the server, which this file may not do.
+    // Every field, as the form would submit: it also holds the order, which a
+    // URL built from `q` alone would silently drop.
     const where = action + "?" + new URLSearchParams(new FormData(form));
     relist(where);
   });
 
-  // The same press, from the other control on that form. **Only on the listing
-  // screen**, for the reason the search gives above.
+  // The order chips, on the listing screen only for the same reason.
   app.addEventListener("click", (event) => {
     if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey ||
         event.shiftKey || event.altKey) return;
@@ -627,9 +515,7 @@ pub const PANES: &str = r#"
   app.addEventListener("click", (event) => {
     if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey ||
         event.shiftKey || event.altKey) return;
-    // The margin note's links are the index's rows by another name — a note one
-    // press away — so they travel the same way, rather than being the full
-    // navigation `swap` exists to avoid.
+    // The margin note's links are rows too, so they swap as well.
     const row = event.target.closest(".index main.rows a.row,.read .beside .mini");
     if (!row || !wide.matches) return;
     const href = row.getAttribute("href");
@@ -638,16 +524,12 @@ pub const PANES: &str = r#"
     swap(href);
   });
 
-  // A press pushed an address, so back has to put what it names on the screen.
-  // Asking the server is the reload's answer without the reload.
+  // Back puts on screen what the address names, without a reload.
   addEventListener("popstate", () => {
-    // Below the breakpoint nothing was pushed, so anything arriving here is
-    // history this script does not own and a reload is correct.
+    // Below the breakpoint nothing was pushed, so this history is not ours.
     if (!wide.matches) return location.reload();
     const at = location.pathname;
-    // A note's address is the only kind this script pushes besides the
-    // listing's own, and the two are told apart the way the router tells them
-    // apart: `/nb/<book>/n/<id>` names a note and nothing else does.
+    // As the router tells them apart: only `/nb/<book>/n/<id>` names a note.
     if (/\/n\/[^/]+$/.test(at)) return swap(at, false);
     screen(at + location.search);
   });
@@ -658,37 +540,25 @@ pub const PANES: &str = r#"
 })();
 "#;
 
-/// What points at the note, in the margin of the note.
+/// Backlinks in the note's margin, above 1440px; the Links button stays for
+/// phones.
 ///
-/// Backlinks are a page behind the Links button, and on a screen wide enough to
-/// hold them beside the prose that press buys nothing. The button stays, and is
-/// still the only way on a phone.
+/// Fetched rather than sent: `backlinks_to_note` walks every note (about 8% on
+/// top of `ls` at two thousand), which would turn a note page's one file read
+/// into two thousand on every phone. `margined` goes on before the answer, as
+/// `indexed` does, so the layout reserves the 236px column and lays the prose
+/// out once.
 ///
-/// **Why the server does not send it.** `backlinks_to_note` walks every note —
-/// about 8% on top of `ls` at two thousand — which is cheap for a page that was
-/// asked for and waste for a column no screen under 1440px draws. And a note
-/// page reads exactly one file today, so putting the aside in the markup would
-/// turn one read into two thousand on every phone.
-///
-/// **`margined` goes on before the answer**, the bargain `indexed` makes: the
-/// class is what lets the layout keep 236px for a column still in flight, so
-/// the prose is laid out once. No script, no class, no reserved column.
-///
-/// **The one loading state on the page.** The index pane says nothing because
-/// it keeps its rows after the first arrival; this column is empty on every note
-/// and the walk behind it is the whole notebook, so an unexplained gap under
-/// "Backlinks" reads as a column that failed.
-///
-/// An answer of none is an answer and is drawn as one. A fetch that never comes
-/// back is not: the box closes and the reader keeps the whole note.
+/// Unlike the index pane this shows a loading state: it is empty on every note,
+/// and an unexplained gap reads as failure. No backlinks is drawn as an answer;
+/// a failed fetch closes the box.
 pub const BESIDE: &str = r#"
 (() => {
   const app = document.querySelector(".app.split");
   if (!app) return;
   const wide = matchMedia("(min-width:1440px)");
 
-  // Off the address rather than remembered, and the string the fetch is built
-  // from — so the two can never be about different notes.
+  // The pathname the fetch was built from, so the two cannot disagree.
   let asked = null;
 
   const working = (text) => {
@@ -708,9 +578,8 @@ pub const BESIDE: &str = r#"
   };
 
   const ask = async () => {
-    // The reading pane may not hold a note at all — going back puts the
-    // notebook's own page there. Forgetting what was asked is what lets the
-    // same note, opened again, ask again.
+    // Going back can put the notebook's page in the reading pane. Forgetting
+    // lets the same note, opened again, ask again.
     if (!app.classList.contains("at-note")) {
       asked = null;
       return;
@@ -719,8 +588,7 @@ pub const BESIDE: &str = r#"
     const aside = app.querySelector(".pane.read .beside");
     const answer = aside && aside.querySelector(".answer");
     if (!answer) return;
-    // Before the first paint and the first await, or the note is laid out at
-    // one measure and then another.
+    // Before the first await, or the note is laid out twice.
     app.classList.add("margined");
     const at = location.pathname;
     if (asked === at) return;
@@ -737,10 +605,8 @@ pub const BESIDE: &str = r#"
       if (!got.ok) throw new Error(got.status);
       text = await got.text();
     } catch {
-      // Nothing arrived, so nothing is claimed: the box closes, what was asked
-      // is forgotten so the next note may try again, and the scriptless page is
-      // what is left. Conditional on this still being the note being read — the
-      // reader may have moved on to one whose answer is in flight.
+      // Close and forget, unless the reader has moved to another note whose
+      // answer is in flight.
       if (asked === at) {
         asked = null;
         aside.hidden = true;
@@ -749,16 +615,13 @@ pub const BESIDE: &str = r#"
       return;
     }
 
-    // The reader may have moved on while the notebook was walked.
     if (location.pathname !== at) return;
     const box = app.querySelector(".pane.read .beside");
     const into = box && box.querySelector(".answer");
     if (!into) return;
 
-    // Said in the margin's own shape. `bring` lifts the listing's rows because
-    // that column *is* the listing; this is 236px beside prose, where a row's
-    // tags would wrap into a paragraph. What is taken is which notes and what
-    // they are called.
+    // Rebuilt as title-and-id minis rather than lifted whole like `bring`'s
+    // rows: in 236px a row's tags would wrap into a paragraph.
     const sent = new DOMParser().parseFromString(text, "text/html");
     const minis = [];
     for (const row of sent.querySelectorAll("main.rows a.row")) {
@@ -779,30 +642,23 @@ pub const BESIDE: &str = r#"
     box.hidden = false;
   };
 
-  // Widening past the breakpoint is the reader asking for the column.
   wide.addEventListener("change", ask);
   app.addEventListener("noda:read", ask);
   ask();
 })();
 "#;
 
-/// Every stamp on the page, said again where the reader is standing.
+/// Every stamp on the page, in the reader's time zone.
 ///
-/// The marker is `<time datetime>` and never a class: `.when` is typography and
-/// gets worn by a tag's note count and a `due:` date, neither of which is an
-/// instant.
-///
-/// Repainted rather than watched — `script::PANES` already says when it has
-/// replaced the rows or the note — and re-reading `datetime` makes a second pass
-/// produce exactly what the first did.
+/// Selected by `<time datetime>`, never a class: `.when` is also worn by a
+/// tag's note count and a `due:` date, neither an instant. Repainted on
+/// `PANES`'s events; reading `datetime` makes a second pass idempotent.
 pub const STAMPS: &str = r#"
 (() => {
-  // English, and only the zone is the reader's: what a reader in Taipei needs
-  // is the hour they were at their desk, not a Chinese month name.
+  // English: only the zone is the reader's, not the locale.
   const clock = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
 
-  // `noda ls -l`'s shape, which is what a column of them reads as. By hand
-  // rather than `Intl`, because what is wanted is that one spelling.
+  // `noda ls -l`'s spelling, by hand because `Intl` has no fixed ISO format.
   const iso = (at) => {
     const pad = (n) => String(n).padStart(2, "0");
     return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate());
@@ -812,17 +668,14 @@ pub const STAMPS: &str = r#"
     for (const said of root.querySelectorAll("time[datetime]")) {
       const raw = said.getAttribute("datetime");
       const at = new Date(raw);
-      // An import leaves what it found, and a date nothing can parse is left
-      // as it reads: the file's own words beat a guess.
+      // An imported date nothing can parse is left as the file has it.
       if (Number.isNaN(at.getTime())) continue;
       said.textContent = said.hasAttribute("data-clock") ? clock.format(at) : iso(at);
-      // What the file holds: the page no longer shows it.
       said.title = raw;
     }
 
-    // A row prints its day twice and the stylesheet draws one at a time. Only
-    // one carries the stamp — the second copy is thirty bytes a note on the one
-    // page where bytes are counted — so the other is told what it came to.
+    // A row prints its day twice, drawn one at a time, but only one carries
+    // the stamp (saving thirty bytes a note), so copy the result across.
     for (const row of root.querySelectorAll("a.row")) {
       const said = row.querySelector("time.when");
       const beside = row.querySelector(".ident .day");
@@ -834,7 +687,6 @@ pub const STAMPS: &str = r#"
 
   paint(document);
 
-  // Said rather than observed: one script's doing is another's fact.
   const app = document.querySelector(".app");
   if (!app) return;
   for (const done of ["noda:rows", "noda:read"]) {
@@ -843,22 +695,12 @@ pub const STAMPS: &str = r#"
 })();
 "#;
 
-/// Says, while somebody is typing, that the note under them has moved.
+/// Warns, while somebody is editing, that the note has changed on disk.
 ///
-/// The server already merges an edit onto a note that changed underneath, so
-/// this changes nothing about what Save does — it is the same fact arriving
-/// before the press instead of after it. That is the whole of its claim on the
-/// creed: with the script absent, the note is merged just the same and the
-/// first anybody hears of it is the answer to their Save.
-///
-/// **The address is derived, not templated.** These are static files, so the
-/// note's id cannot be written into one; the editor is at `…/edit` and its
-/// watch is the same address with the last part changed. A page that is not an
-/// edit form leaves without opening anything.
-///
-/// The fingerprint the form is holding is what each message is compared
-/// against, which is what makes a reader's own save — landing here as a
-/// message about a file they already agree with — say nothing.
+/// Save merges either way; this only says so sooner. The watch address is
+/// derived from `…/edit` because scripts are static files and cannot carry the
+/// id. Each message is compared with the form's fingerprint, so the reader's own
+/// save says nothing.
 pub const WATCHING: &str = r#"
 (() => {
   const form = document.querySelector("form.write");
@@ -877,9 +719,7 @@ pub const WATCHING: &str = r#"
     if (said) return;
     said = document.createElement("p");
     said.className = "said bad";
-    // What it does *not* say is "reload": their work is in the box, and the
-    // server merges. A warning that implies the two are in a race would be
-    // asking them to hurry over something already handled.
+    // Not "reload": their work is in the box and the server merges.
     said.innerHTML =
       "<b>This note has changed since you opened it.</b> " +
       "Nothing of yours is lost — saving merges what you wrote with what was saved.";
@@ -887,14 +727,10 @@ pub const WATCHING: &str = r#"
   };
 
   const source = new EventSource(at);
-  // Every message is the note's fingerprint now, so one that matches the form
-  // is the reader's own doing, or a change already accounted for.
   source.onmessage = (e) => {
     if (e.data && e.data !== held.value) tell();
   };
-  // Left to reconnect on its own: a stream that ends is a server stopping or a
-  // proxy timing out an idle connection, and what a reconnect re-reads is a
-  // fingerprint compared exactly as this one was.
+  // `EventSource` reconnects by itself after a server stop or proxy timeout.
 })();
 "#;
 
@@ -902,7 +738,7 @@ pub const WATCHING: &str = r#"
 mod tests {
     use super::*;
 
-    /// The whole of the injection defence, and it is one string.
+    /// The scripts are inlined, so this is the whole injection defence.
     #[test]
     fn no_script_can_end_its_own_element() {
         for source in [LISTING, STANDING, PANES, BESIDE, STAMPS, WATCHING] {
@@ -910,9 +746,8 @@ mod tests {
         }
     }
 
-    /// It reads the form the server writes, and derives its address from the
-    /// one the editor is at. Both are agreements with `web::page`, and neither
-    /// side can see the other break it.
+    /// The hook tests below pin selectors shared with `web::page`: a rename on
+    /// either side compiles and passes every other Rust test.
     #[test]
     fn the_watch_looks_for_what_the_edit_form_writes() {
         for hook in ["form.write", "input[name=\"fingerprint\"]", "/watch"] {
@@ -920,9 +755,6 @@ mod tests {
         }
     }
 
-    /// The same pact for the stamps. Anything carrying a `datetime`, which is a
-    /// decision as much as a selector: converting a tag's note count or a `due:`
-    /// date would be wrong in a way nobody notices until another country.
     #[test]
     fn the_stamps_look_for_what_the_pages_write() {
         for hook in [
@@ -939,17 +771,10 @@ mod tests {
                 "the stamps stopped looking for {hook}"
             );
         }
-        // The decision, not the default: `undefined` follows the browser's
-        // locale and prints a month name in a language nothing else here uses.
+        // `undefined` would follow the browser's locale.
         assert!(STAMPS.contains("Intl.DateTimeFormat(\"en\""), "{STAMPS}");
-        // The other half is asserted from the page's side, where it can fail:
-        // grepping this string for a selector it does not contain passes for the
-        // wrong reason the moment somebody writes a different one.
     }
 
-    /// Not a test of the JavaScript — `e2e/` runs that — but that the two halves
-    /// of one decision stayed together: renaming a class on one side is a silent
-    /// no-op every Rust test still passes.
     #[test]
     fn the_filter_looks_for_what_the_listing_writes() {
         for hook in [
@@ -973,10 +798,8 @@ mod tests {
         }
     }
 
-    /// Drawn twice, by `page::grouping` and by this on every keystroke, and they
-    /// cannot share a function across the language boundary — so a pill changing
-    /// shape at the first key would be a flicker nothing catches. What can be
-    /// checked is that both write the classes the stylesheet draws.
+    /// Drawn by `page::grouping` and by `LISTING`, which cannot share code; this
+    /// checks both write the classes the stylesheet draws.
     #[test]
     fn both_halves_of_the_grouping_draw_the_same_pill() {
         for hook in ["\".parse\"", "\"and\"", "\"g\"", "\"t\"", "\"i\""] {
@@ -994,9 +817,6 @@ mod tests {
         }
     }
 
-    /// The same for the panes, and it matters most here: this script reads the
-    /// *other* page's markup, fetched at runtime, so a class renamed in
-    /// `page.rs` breaks it with no compile error and no failing test.
     #[test]
     fn the_panes_look_for_what_the_pages_write() {
         for hook in [
@@ -1014,8 +834,7 @@ mod tests {
         ] {
             assert!(PANES.contains(hook), "the panes stopped looking for {hook}");
         }
-        // The order rides in the form's fields, so the press has to send the
-        // form: rebuilt out of `q` it drops the order silently.
+        // Built from `q` alone, the URL would drop the order.
         assert!(PANES.contains("new FormData(form)"), "{PANES}");
         let sheet = crate::web::page::stylesheet();
         for rule in [".sortbar", ".sortbar a[aria-current] .pill"] {
@@ -1026,8 +845,6 @@ mod tests {
         }
     }
 
-    /// Written twice, in the stylesheet and here, and the two have to agree or
-    /// the script asks for a column that is not there.
     #[test]
     fn the_script_and_the_stylesheet_split_at_the_same_width() {
         assert!(PANES.contains("(min-width:1024px)"), "{PANES}");
@@ -1037,8 +854,6 @@ mod tests {
         );
     }
 
-    /// The same for the screen that polls: the server's own facts read back,
-    /// silent when they go missing.
     #[test]
     fn the_poll_steers_by_the_meta_the_scriptless_page_steers_by() {
         assert!(
@@ -1048,8 +863,6 @@ mod tests {
         assert!(STANDING.contains("querySelector(\"main\")"), "{STANDING}");
     }
 
-    /// It reads two pages it did not write, and both break it silently: the
-    /// column arrives empty, at a width no unit test has.
     #[test]
     fn the_margin_note_looks_for_what_the_pages_write() {
         for hook in [
@@ -1070,8 +883,6 @@ mod tests {
         }
     }
 
-    /// The grouping's pairing again: markup written in JavaScript against rules
-    /// written in Rust, with nothing between them but a name.
     #[test]
     fn the_stylesheet_draws_what_the_margin_note_builds() {
         let sheet = crate::web::page::stylesheet();
@@ -1094,8 +905,6 @@ mod tests {
         }
     }
 
-    /// Written twice for the panes' reason: ask at a width the stylesheet does
-    /// not draw and the answer lands in a column nobody can see.
     #[test]
     fn the_margin_note_and_the_stylesheet_widen_at_the_same_number() {
         assert!(BESIDE.contains("(min-width:1440px)"), "{BESIDE}");
@@ -1105,19 +914,15 @@ mod tests {
         );
     }
 
-    /// A swap replaces the pane whole, so its aside becomes a different, empty
-    /// element. Drop either half of the say-and-listen and the margin note is
-    /// right on a hard load and stale on every press after.
+    /// Without it the margin note is right on a hard load and stale after.
     #[test]
     fn a_pane_swap_tells_the_margin_note_the_note_changed() {
         assert!(PANES.contains("\"noda:read\""), "{PANES}");
         assert!(BESIDE.contains("\"noda:read\""), "{BESIDE}");
     }
 
-    /// A string in JavaScript against a `match` arm in Rust, so a name changed
-    /// on one side compiles, passes, and quietly costs a reader the whole
-    /// stylesheet on every press — the answer still being correct is what makes
-    /// it silent.
+    /// A mismatched name still gets a correct answer — the whole page — so it
+    /// would fail silently.
     #[test]
     fn every_fetch_asks_for_a_part_the_server_can_send() {
         use crate::web::{PART, Part};
@@ -1133,9 +938,8 @@ mod tests {
         }
     }
 
-    /// And each still reads the answer by looking for what it wants rather than
-    /// assuming a shape, which is what makes the header an optimisation instead
-    /// of a protocol.
+    /// Selecting what it wants, not assuming a shape, keeps the header an
+    /// optimisation rather than a protocol.
     #[test]
     fn a_whole_page_would_still_answer_every_one_of_them() {
         for (script, looked_for) in [
@@ -1151,20 +955,14 @@ mod tests {
         }
     }
 
-    /// The rows a search replaces are the rows the filter holds a list of, and
-    /// the two scripts are the two halves of that. Drop either and the listing
-    /// goes on filtering elements that are no longer in the document — a page
-    /// that looks right until the next keystroke, which is the kind of failure
-    /// no Rust test can see.
+    /// Without it the filter goes on filtering detached rows.
     #[test]
     fn replacing_the_rows_tells_the_filter_to_read_them_again() {
         assert!(PANES.contains("\"noda:rows\""), "{PANES}");
         assert!(LISTING.contains("\"noda:rows\""), "{LISTING}");
     }
 
-    /// Going back is answered rather than reloaded, and only above the width
-    /// where anything was ever pushed. Below it every press was a navigation,
-    /// so the history is not this script's to answer for.
+    /// Only above the width where anything was pushed.
     #[test]
     fn going_back_asks_the_server_rather_than_the_page() {
         assert!(PANES.contains("popstate"), "{PANES}");
@@ -1174,10 +972,7 @@ mod tests {
         );
     }
 
-    /// And sending a search is answered the same way — but only where a
-    /// scriptless press would have stayed on the listing. In the index column
-    /// of a note page the same form is the way *to* the listing, and answering
-    /// it in place would leave the note on the screen.
+    /// On a note page the same form is the way *to* the listing.
     #[test]
     fn a_search_is_answered_in_place_only_on_the_listing() {
         assert!(PANES.contains("submit"), "{PANES}");
@@ -1191,16 +986,10 @@ mod tests {
         );
     }
 
-    /// **The address moves on the press, not on the answer.** Both of these
-    /// push before they fetch, and a reader who presses back while one is in
-    /// flight has an entry to go back to; pushing afterwards left them going
-    /// back past the page they were standing on and out of the notebook. It is
-    /// also why the failures use `replace` — the entry is already there.
+    /// Back pressed mid-flight must have an entry to return to; see `swap`.
     #[test]
     fn a_press_pushes_its_address_before_it_asks_for_the_answer() {
-        // Read from where each of them starts, because `bring` fetches a
-        // `where` of its own — finding the first one in the file would be
-        // asking the question about the wrong function.
+        // From each function's start: `bring` fetches a `where` of its own.
         for (what, from, push, ask) in [
             (
                 "the swap",
@@ -1209,8 +998,6 @@ mod tests {
                 "fetch(href",
             ),
             (
-                // The search and the order are one function now — they are the
-                // same press, and this is the property they share.
                 "the relisting",
                 "const relist = async",
                 "history.pushState",
@@ -1230,9 +1017,7 @@ mod tests {
             assert!(pushed < asked, "{what} asks before it pushes");
         }
         assert!(!PANES.contains("location.assign("), "{PANES}");
-        // And both presses go through it rather than one of them growing its
-        // own copy, which is how the two would come to disagree about what
-        // happens when the fetch fails.
+        // Search and order share one `relist`, so they fail alike.
         assert_eq!(PANES.matches("relist(").count(), 2, "{PANES}");
     }
 }

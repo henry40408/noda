@@ -1,11 +1,8 @@
 # Architecture
 
-Every module in `src/` opens with a `//!` header explaining the decisions inside it, and they are
-thorough — read the header before changing a module. What none of them can state is the rules that
-hold *between* modules, because each one only speaks for itself.
-
-That is what this document is for: the shape, the paths through it, and the places where two
-modules agree on something neither can enforce alone.
+Every module in `src/` opens with a `//!` header recording its decisions — read it before changing
+the module. This document covers what no single header can: the shape, the paths through it, and
+the rules that hold *between* modules.
 
 ## The shape
 
@@ -26,8 +23,6 @@ paths · config · error · style · sign · remote
 
 ## Three paths through it
 
-The layering is easiest to see by following something all the way down.
-
 ### `noda add "Meeting notes"`
 
 ```
@@ -46,8 +41,8 @@ cmd::add_in       validates again         → it is reachable on its own; see be
 main.rs           cmd::print(&output)     → the only write to stdout in the crate
 ```
 
-The commit is part of the command, not a step after it. Nothing in noda writes a note to disk and
-leaves committing to somebody else.
+The commit is part of the command. Nothing in noda writes a note and leaves committing to somebody
+else.
 
 ### A write from the browser
 
@@ -63,13 +58,9 @@ web::new_note     answer(move || { … }).await
                      → Answer::Elsewhere("/nb/{book}/n/{id}")   303, so a reload is a GET
 ```
 
-Two things in that are not obvious:
-
-- **It calls `add_in`, not `add`.** The handler already has the notebook open — a second handle on
-  the same repository is the thing the `_in` half exists to avoid — and `add_in` cannot open
-  `$EDITOR`, which a request must never do. Most of `cmd` comes in this pair.
-- **It does not read the new id out of what `add_in` returned.** See below; the TUI does the same
-  thing the same way.
+- **It calls `add_in`, not `add`.** The handler already has the notebook open, and `add_in` cannot
+  open `$EDITOR`, which a request must never do. Most of `cmd` comes in this pair.
+- **It does not read the new id out of what `add_in` returned** — see below.
 
 ### One keystroke in the TUI
 
@@ -88,19 +79,13 @@ tui::run          loop {
 ```
 
 `app.rs` opens no file, repository or terminal; everything it wants from the world leaves as an
-`Action`. That is what lets the whole interaction be tested with no terminal attached — which
-matters more here than anywhere else in noda, because every other command is a function returning a
-string and this one is a loop.
+`Action`, so the whole interaction is testable with no terminal attached.
 
 ## One core, two front ends
 
-Both front ends are built out of `cmd`, and the rules that keep them from drifting are rules
-neither can enforce on its own.
-
-**A command's return value is prose, not an interface.** It is a sentence written for a person, and
-a caller that parses it has quietly turned the wording of a message into an API. So when a caller
-needs a fact about what just happened, it asks the notebook — and both front ends independently
-arrived at the same shape for the same question:
+**A command's return value is prose, not an interface.** A caller that parses it turns the wording
+of a message into an API. When a caller needs a fact about what just happened, it asks the
+notebook:
 
 ```rust
 // web/mod.rs                                  // tui/mod.rs
@@ -110,27 +95,20 @@ let after  = notebook.taken_ids()?;            // then reload and diff
 after.difference(&before)
 ```
 
-**Resolving a key is `Notebook::resolve`'s job and nobody else's.** An id prefix that names two
-notes has exactly one right answer, and it is a refusal. The TUI holds every note in memory and
-could plausibly answer from there — so `Action::Open` deliberately does not, and asks the notebook
-instead.
+**Resolving a key is `Notebook::resolve`'s job and nobody else's.** An id prefix naming two notes
+must be refused. The TUI holds every note in memory but `Action::Open` still asks the notebook.
 
-**The layer that produces a screen touches nothing.** `tui/app.rs` and `web/page.rs` follow the
-same rule for the same reason: `page.rs` takes what a page is about and returns a string, opening
-no repository and knowing nothing about requests. The interesting half of an interface is what it
-puts on the screen, and that is worth being able to test without one.
+**The layer that produces a screen touches nothing.** `tui/app.rs` returns `Action`s; `web/page.rs`
+takes what a page is about and returns a string, opening no repository and knowing nothing about
+requests. Both exist so what goes on screen can be tested without one.
 
-**One palette, translated twice.** `style.rs` decides what an id looks like. `tui/theme.rs` hands
-that decision to ratatui, and `web/theme.rs` restates it in CSS — twice over, because a terminal
-brings its own theme and a browser does not, so light and dark both have to be written down. An id
-is the same yellow in `noda ls`, in the TUI and in a browser because it is the same thing being
-named.
+**One palette, translated twice.** `style.rs` decides what an id looks like; `tui/theme.rs` hands
+that to ratatui and `web/theme.rs` restates it in CSS, for light and dark both, because a browser
+brings no theme of its own. An id is the same yellow in `noda ls`, the TUI and a browser.
 
 ## Concurrency, which exists only in the web server
 
-Everywhere else noda is one process doing one thing. `noda web` is the exception, and its whole
-model follows from one fact: **`git2::Repository` is `!Send`.** It cannot be held across an await,
-so it cannot live in an async handler at all.
+**`git2::Repository` is `!Send`**, so it cannot be held across an await:
 
 ```rust
 async fn handler(…) -> Response {
@@ -141,84 +119,68 @@ async fn handler(…) -> Response {
 ```
 
 Every handler has that shape, and `answer` turns what the closure decided — `Page`, `Elsewhere`,
-`Missing`, `Held` — into a response. Opening the notebook per request is not overhead worked
-around; it is what a `!Send` handle requires.
+`Missing`, `Held` — into a response. Opening the notebook per request is what a `!Send` handle
+requires.
 
-**Writes take a lock, one per notebook.** Two commits racing in one repository meet at
-`index.lock`, and what comes back is libgit2 saying a file exists — a true statement about a lock
-file and no help to somebody who pressed Save. It was a single lock over everything until a network
-errand held one for as long as a network takes: a notebook whose remote had gone quiet froze Save
-on every *other* notebook too. `index.lock` is a file inside one repository, so the lock belongs
-where the collision is.
+**Writes take a lock, one per notebook.** Two commits racing in one repository collide at
+`index.lock`, and libgit2's "file exists" is no help to somebody who pressed Save. It was once one
+global lock, until a notebook with an unresponsive remote froze Save on every other notebook;
+`index.lock` is per repository, so the lock is too.
 
-It is a `std::sync::Mutex`, not tokio's, because it is only ever taken off the async threads. And
-it does not lock the notebook against the world — a terminal in another window is writing to the
-same repository and always could be. That is what the per-note fingerprint (the optimistic lock on
-every edit form) is for. Being a git blob id, it is an address and not only a marker: when it no
-longer matches, `web::merge` fetches the version the edit began from and merges the two with
-`git2::merge_file`, so a refusal is what an overlap gets rather than what a clash gets.
+It is a `std::sync::Mutex`, not tokio's, because it is only taken off the async threads. It does
+not guard against another process — a terminal in another window can always write. That is what
+the per-note fingerprint on every edit form is for. Being a git blob id, it also addresses the
+version the edit began from: on a mismatch `web::merge` fetches that version and three-way merges
+with `git2::merge_file`, so only an overlap is refused.
 
-**Network errands do not run in a request at all.** `sync`, `pull` and `push` take as long as
-somebody's tailnet does. A `POST` starts one and answers `303` immediately; `web/work.rs` runs it
-on a plain `std::thread` — the blocking pool is for work a request is waiting on, and this is
-precisely the work no request waits on — and the outcome outlives the errand, because a page that
-says nothing after a sync looks exactly like a page that ignored the button.
+**Network errands do not run in a request.** A `POST` to `sync`, `pull` or `push` answers `303`
+immediately; `web/work.rs` runs the errand on a plain `std::thread` (the blocking pool is for work
+a request waits on), and keeps its outcome, because a page that says nothing after a sync looks like
+one that ignored the button.
 
-**`web/watch.rs` is the second plain thread, and it is one whatever is open.** An editor with
-JavaScript holds an SSE connection so it can be told the note under it moved; a thread per
-connection would be a thread outliving the tab it was opened for, a sleeping thread having no way
-to notice a browser go away. So there is one, walking a registry that connections add themselves
-to — and every tick prunes the senders whose readers have gone, rather than discovering it at the
-next send, because a note nobody edits again is never sent to.
+**`web/watch.rs` is one plain thread for all watches.** An editor with JavaScript holds an SSE
+connection to hear that its note moved; a thread per connection could not notice its browser go
+away. The one thread walks a registry, and every tick prunes senders whose readers have gone,
+since a note nobody edits again is never sent to.
 
-**And that is the only reason stopping is more than closing the listener.** A signal — `SIGINT` or
-the `SIGTERM` a supervisor sends — makes `axum::serve` stop accepting and finish what is in flight,
-which by itself covers every kind of work here *except* an errand, because an errand is by
-definition the one that outlives its request. A watch is the mirror of that problem and is dealt
-with in the other direction: "finish what is in flight" would wait forever on a stream designed
-never to finish, so `watch::Watch::stop` drops every sender as the shutdown begins, which ends the
-streams and lets that wait be a wait. So `serve` ends with `work::Errands::settle`, a
-condvar the errand thread wakes on its way out. The wait has no deadline: an errand is a commit and
-a push under `index.lock`, and a process killed halfway through leaves that lock file for whoever
-writes next. A second signal ends the waiting — not the errand, which nothing here can stop — and
-the process leaves non-zero to say it did.
+**Shutdown.** `SIGINT` or `SIGTERM` makes `axum::serve` stop accepting and finish what is in
+flight. Two things need more. A watch stream never finishes, so `watch::Watch::stop` drops every
+sender as shutdown begins. An errand outlives its request, so `serve` ends with
+`work::Errands::settle`, a condvar the errand thread wakes on its way out. The wait has no
+deadline, because an errand killed mid-commit leaves `index.lock` behind; a second signal ends the
+wait (not the errand) and the process exits non-zero.
 
 ## Adding to it
 
-**A new command.** Five places, in this order: a variant in `main.rs`'s `Command` enum (clap
-derives the parsing and the help), a match arm calling into `cmd`, the function in `cmd.rs`
-returning `Result<String>`, its row in README.md's command table, and a test in `tests/cli.rs`. If
-a front end will call it with a notebook already open, write it as the `foo_in(notebook, …)` half
-with `foo(paths, …)` opening the active notebook and delegating.
+**A new command.** In order: a variant in `main.rs`'s `Command` enum, a match arm calling into
+`cmd`, the function in `cmd.rs` returning `Result<String>`, its row in README.md's command table,
+and a test in `tests/cli.rs`. If a front end will call it with a notebook already open, write the
+`foo_in(notebook, …)` half and have `foo(paths, …)` open the active notebook and delegate.
 
-**A new import source.** One parser producing `Incoming`, and nothing else. Minting ids, writing
-files, resolving links between them and committing are the shared back end in `import/mod.rs` —
-they are the same work whatever the notes came from.
+**A new import source.** One parser producing `Incoming`, nothing else. Minting ids, writing files,
+resolving links and committing are the shared back end in `import/mod.rs`.
 
-**A new TUI screen.** The chrome is `frame.rs` and applies to every screen; `view.rs` draws only
-the middle band. A screen is pushed onto the stack in `app.rs`, keeping its own cursor, query and
-scroll, so going back lands where you left.
+**A new TUI screen.** The chrome is `frame.rs`; `view.rs` draws only the middle band. A screen is
+pushed onto the stack in `app.rs` with its own cursor, query and scroll, so going back lands where
+you left.
 
-**A new web page.** The markup goes in `page.rs` as a function returning a string, the route in the
-router in `web/mod.rs`, and the handler wraps its work in `answer(move || …)`. If it writes, take
-the notebook's lock first. If it is reachable without a script, it must work without one — the
-enhancement layer in `script.rs` may make an answer arrive sooner, never differently.
+**A new web page.** Markup in `page.rs` as a function returning a string, the route in
+`web/mod.rs`'s router, and a handler wrapping its work in `answer(move || …)`. If it writes, take
+the notebook's lock first. If it is reachable without a script it must work without one —
+`script.rs` may make an answer arrive sooner, never differently.
 
-**Something every page needs.** It belongs in `web/asset.rs`, linked rather than written into the
-markup: one address per thing, the content's own hash in the name, served for a year and never
-asked for twice. The pages are `no-cache` so that they always name addresses this build wrote — the
-two halves are one decision, and either alone serves somebody a page whose stylesheet is a 404.
+**Something every page needs.** It goes in `web/asset.rs`, linked rather than inlined: the content
+hash in the name, served for a year. The pages are `no-cache` so they always name addresses this
+build wrote; the two halves are one decision, and either alone serves a page whose stylesheet 404s.
 
 **A part of a page.** When the script fetches a page to take one region out of it, that region gets
-a name in `web::Part`, a function of its own in `page.rs`, and a branch in the handler; the fetch
-sends `x-noda-fragment: <name>`. One route may answer several — the listing sends its column to a
-search and both of its panes to a press of back — and which is asked for is decided by what the
-reader is doing, never by the route. Two rules hold it together. The whole page must be *built from* the
-part — one rendering, asserted by containment in `page.rs`, never two that look alike — and the
-whole page must stay a correct answer, because an unknown name, a missing header and a reader typing
-the address all get it. That is what keeps the header an optimisation rather than a protocol: the
-script parses what arrives and queries it for the element it wants, so a server that ignored the
-header entirely would still be answering.
+a name in `web::Part`, its own function in `page.rs`, and a branch in the handler; the fetch sends
+`x-noda-fragment: <name>`. One route may answer several parts, chosen by what the reader is doing,
+never by the route. Two rules: the whole page is *built from* the part (asserted by containment in
+`page.rs`, never two renderings that look alike), and the whole page stays a correct answer for an
+unknown name or a missing header. The script queries what arrives for the element it wants, so a
+server ignoring the header would still be answering — the header is an optimisation, not a
+protocol.
 
 ## Testing
 
@@ -231,23 +193,19 @@ Seven layers, each catching what the ones above it cannot:
 | `tests/tui.rs` | what is on a screen — ratatui's test backend, a character buffer |
 | `tests/pty.rs` | *layout*: a real pty and `vt100`. A padding on the wrong side, a column sliding left, a card outgrowing 24 rows — each passed every assertion in `tui.rs` |
 | `tests/web.rs` | the real binary on a real socket, requests written by hand, because the guard tests need a `Host` that lies |
-| `tests/version.rs` | what `build.rs` stamped into the binary, which is decided at compile time and so has nothing a library test can call |
+| `tests/version.rs` | what `build.rs` stamped into the binary at compile time, which no library test can call |
 | `e2e/` | a real browser over Gherkin features. Its own workspace, so the root suite never compiles it |
 
-Two harness facts that are not optional. **`sign = false` in every test notebook**: the XDG roots
-are per-test but git's are not, so libgit2 reads the developer's real `~/.config/git/config` and a
-machine with `commit.gpgsign = true` sends every test commit to gpg. **`Paths::rooted(<temp>)`
-rather than environment variables**: tests run in parallel and cannot safely mutate process-wide
-env.
+Two harness rules are not optional. **`sign = false` in every test notebook**: the XDG roots are
+per-test but git's are not, so libgit2 reads the developer's real `~/.config/git/config`, and
+`commit.gpgsign = true` there sends every test commit to gpg. **`Paths::rooted(<temp>)`, not
+environment variables**: tests run in parallel and cannot safely mutate process-wide env.
 
 ## Where the reasoning lives
 
 - **Module `//!` headers** — why a module is the way it is. Start here.
-- **`build.rs`** — where the version `--version` prints comes from, and why `Cargo.toml`'s
-  `version` field is not it.
+- **`build.rs`** — where `--version` comes from, and why it is not `Cargo.toml`'s `version`.
 - **`Cargo.toml`** — why each dependency is present, what was rejected, and the measurements
-  behind it (`env-filter` was dropped for `Targets` after measuring it at 355 KB, 69% of the whole
-  of the logging).
-- **`README.md`** — the user-facing contract. It says what each command does; the four
-  documents beside this one carry the reasoning: [tui.md](tui.md), [web.md](web.md),
-  [history.md](history.md), [importing.md](importing.md).
+  behind it.
+- **`README.md`** — the user-facing contract. The reasoning behind it is in [tui.md](tui.md),
+  [web.md](web.md), [history.md](history.md) and [importing.md](importing.md).

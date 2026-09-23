@@ -1,16 +1,12 @@
-//! `noda --version` against the real binary, because what the version is gets
-//! decided in build.rs and baked in at compile time — there is nothing for a
-//! library test to call.
+//! `noda --version` against the real binary: build.rs bakes the version in, so
+//! there is nothing for a library test to call.
 
 use std::process::Command;
 
 #[test]
 fn version_is_the_tag_the_build_came_from() {
-    // Not skipped when `NODA_VERSION` is set: Cargo puts every `rustc-env` into
-    // the test's own environment too, so its presence says nothing about whether
-    // anybody overrode the version. A build that did override it fails here, and
-    // should — the assertion is that a build from this repository reports this
-    // repository's tag.
+    // Not skipped when `NODA_VERSION` is set: Cargo exports every `rustc-env` to
+    // tests too, so it is always set. A build that overrode it fails here, and should.
     let Some(described) = describe() else {
         eprintln!("skipped: no git, so the binary carries Cargo.toml's version");
         return;

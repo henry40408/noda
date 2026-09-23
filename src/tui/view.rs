@@ -1,13 +1,9 @@
-//! Drawing one frame.
+//! Drawing one frame: the body band and the cards; the other bands are
+//! `super::frame`.
 //!
-//! Every screen is the same five bands and only the middle one is drawn here;
-//! the rest is [`super::frame`], which is what makes a screen added later look
-//! like the ones already there.
-//!
-//! The listing is `noda ls`'s row, for the reason that row was settled on: a
-//! note is named the same way wherever it is named. A note is `noda show`, the
-//! frontmatter dimmed and the prose left alone but for the search match —
-//! `noda search`'s own exception.
+//! The listing uses `noda ls`'s row, so a note is named the same everywhere. A
+//! note is drawn as `noda show` prints it, with search matches picked out as
+//! `noda search` does.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -25,44 +21,37 @@ use super::theme;
 use crate::cmd::{self, display_width, find_ignoring_case};
 use crate::style as palette;
 
-/// The longest set of keys on one row, so the descriptions line up.
+/// The widest key cell on the help card, so the descriptions line up.
 const KEY_COLUMN: usize = 22;
 
-/// In front of the id, the same width marked or not, so nothing moves.
+/// In front of the id, the same width marked or not, so columns never shift.
 const MARK: &str = "• ";
 const UNMARKED: &str = "  ";
 
-/// Between the columns, and how much title survives however long the tags.
+/// `TITLE_FLOOR` is the title width kept however long the tags.
 const COLUMN_GAP: usize = 2;
 const TITLE_FLOOR: usize = 10;
 
-/// What git abbreviates an object id to.
 const SHORT_COMMIT: u16 = 7;
 
-/// Wider by the unpushed mark. Only the log's: `deleted` names a commit too, and
-/// one a note was restored from is not something a remote waits for.
+/// Wider by the unpushed mark, which only the log shows.
 const MARKED_COMMIT: u16 = SHORT_COMMIT + 2;
 
-/// Both columns are spoken for — the cursor's bar on the left, a scrollbar on
-/// the right — and both are taken whether or not anything is drawn in them: a
-/// bar appearing when a list overflows moves every column at the moment the list
-/// gets longer.
+/// The scrollbar's column, reserved even when no bar is drawn so columns do not
+/// shift when a list overflows.
 const PADDING: u16 = 1;
 
-/// A half block rather than an arrow: it points at the row and not at a place in
-/// the text, and a solid edge says so without reading as a character. The space
-/// is not decoration — against a commit hash the bar would read as part of it.
+/// A half block points at the row, not a place in the text. The space keeps it
+/// from reading as part of a commit hash.
 const CURSOR_BAR: &str = "▌ ";
 
-/// What every measurement of the row has to be made against.
+/// The cursor bar's width, taken off every row measurement.
 const GUTTER: usize = 2;
 
-/// The row every table spends on the names of its columns.
 const HEADING_ROWS: u16 = 1;
 
-/// The keys for the screen you are on are along the top, so this is the rest.
-/// Thirteen rows and a border, which is what fits on a terminal short enough to
-/// have made the point once already.
+/// The `?` card: what the header's key grid leaves out or may drop. Kept short
+/// enough to fit a 24-row terminal.
 const KEYS: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "move · scroll"),
     ("ctrl-f / ctrl-b, g / G", "half a screen · first / last"),
@@ -70,27 +59,22 @@ const KEYS: &[(&str, &str)] = &[
     ("/", "filter: tag:work OR tag:q3 budget"),
     (":, ctrl-a", "run a command · the list of what it takes"),
     ("space, *, Q", "mark · mark all shown · the queue"),
-    // `p` is not on the bar along the bottom: every column of that grid is
-    // full, and it is the newest key with a second way of being found.
+    // `p` is only here: every column of the header's grid is full.
     ("e, a, p", "edit in $EDITOR · new note · pin, and unpin"),
     ("m, #", "retitle · tags: a box each, tab chooses"),
     ("ctrl-d, T", "delete (after a y) · leave updated alone"),
-    // One row per group: the card has to stay inside twenty-four rows, which it
-    // has already failed to do twice.
     ("t, l, b, B", "todo · log · backlinks · blame"),
     (
         "S, R, ctrl-w, 1-9",
         "sort · reverse · wide row · a tag (0 = all)",
     ),
     ("r, ctrl-g, q / ctrl-c", "read again · crumbs · quit"),
-    // A keymap nobody has to read: the row says these keys are answered rather
-    // than teaching them.
     ("while typing", "readline: ctrl-a/e/w/u/k/y, alt-b/f"),
 ];
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    // Given no rows rather than drawn empty, so the notes get it back.
+    // Hidden crumbs get zero rows, so the body gets them.
     let [header, title, body, crumbs, status] = ratatui::layout::Layout::vertical([
         Constraint::Length(frame::header_rows(area.height)),
         Constraint::Length(1),
@@ -100,8 +84,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
-    // A heading row is one row fewer to move through, and a half-screen jump
-    // measured against the whole body lands a row past it.
+    // Less the heading row, or a half-screen jump lands a row too far.
     app.set_page(if app.has_rows() {
         body.height.saturating_sub(HEADING_ROWS)
     } else {
@@ -116,7 +99,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if let Some(x) = frame::draw_status(f, status, app) {
         f.set_cursor_position((x, status.y));
     }
-    // Only ever one: a card is what the keyboard is doing.
+    // At most one card, matching the mode.
     match app.mode {
         Mode::Help => draw_help(f, area),
         Mode::Commands => draw_commands(f, area, app),
@@ -128,17 +111,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-/// Split off whether or not a bar is drawn: taken only on overflow, every column
-/// would shift at the moment the list got longer.
 fn less_the_bar(area: Rect) -> (Rect, Rect) {
     let [content, bar] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(PADDING)]).areas(area);
     (content, bar)
 }
 
-/// Nothing is drawn when everything is on screen: an always-full bar says only
-/// that the list ends where the reader can see it end. No end arrows either —
-/// two of twelve rows is a sixth of the answer spent on decoration.
+/// Drawn only on overflow, and without end arrows, which would cost two rows.
 fn draw_scrollbar(f: &mut Frame, area: Rect, total: usize, shown: usize, at: usize) {
     if total <= shown || area.height == 0 {
         return;
@@ -158,13 +137,8 @@ fn draw_scrollbar(f: &mut Frame, area: Rect, total: usize, shown: usize, at: usi
     );
 }
 
-/// One builder rather than one per screen: they are the notebook answering a
-/// different question in the same rows-and-a-cursor, and only the columns
-/// differ.
-///
-/// The cursor is a bar and a bolder row rather than a reversed one, which would
-/// invert the id's yellow and the tags' cyan along with the rest. The bar sits
-/// in what used to be padding, so the row under it sits where every row sits.
+/// The one table shape for every screen of rows. The cursor is a bar and bold
+/// rather than reversed, which would invert the id's and tags' colours.
 fn sheet<'a>(rows: Vec<Row<'a>>, widths: Vec<Constraint>, headings: &[String]) -> Table<'a> {
     Table::new(rows, widths)
         .header(Row::new(
@@ -176,25 +150,21 @@ fn sheet<'a>(rows: Vec<Row<'a>>, widths: Vec<Constraint>, headings: &[String]) -
         .column_spacing(COLUMN_GAP as u16)
         .row_highlight_style(Style::default().add_modifier(Modifier::BOLD))
         .highlight_symbol(Span::styled(CURSOR_BAR, theme::from(palette::CURSOR)))
-        // Always, or the columns shift on a list with no cursor — which is what
-        // a query being typed produces most often.
+        // Always, or the columns shift on a list with no cursor.
         .highlight_spacing(HighlightSpacing::Always)
 }
 
-/// Indented past the mark, which is part of the cell rather than a column of its
-/// own — so a heading starting where the cell does would sit over it.
+/// A heading indented past the mark, which is inside the cell.
 fn under_mark(name: &str) -> String {
     format!("{UNMARKED}{name}")
 }
 
-/// The names along the top of a screen's table, as one row of headings.
 fn headings(names: &[&str]) -> Vec<String> {
     names.iter().map(|name| (*name).to_string()).collect()
 }
 
-/// Two shapes and no more: a list with a cursor, or a page to scroll. Which one
-/// is the state's answer and not decided again here — a screen that was a list
-/// to the keys and a page to the drawing has a `j` that does nothing.
+/// A list with a cursor or a page to scroll, as `app` decided; deciding again
+/// here could disagree with what `j` does.
 fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
     match app.view().clone() {
         View::Notes => draw_listing(f, area, app),
@@ -217,12 +187,11 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-/// In the notebook's own words rather than "no results": an empty todo list is a
-/// state worth recognising, and "0 rows" is a spreadsheet talking.
+/// An empty screen says why in its own words, not "no results".
 fn draw_nothing(f: &mut Frame, area: Rect, said: &str) {
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(said, theme::from(palette::MUTED))))
-            // So a list and the sentence standing in for one start alike.
+            // Aligned with where a list's rows start.
             .block(Block::new().padding(Padding::new(GUTTER as u16, PADDING, 0, 0))),
         area,
     );
@@ -244,35 +213,20 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
 
     let (area, bar) = less_the_bar(area);
 
-    // So the rows may borrow the notes while ratatui writes this frame's offset
-    // — different fields, but the borrow checker sees `app`.
+    // Taken out so rows can borrow `app` while ratatui writes the offset.
     let mut state = app.take_table();
 
-    // In front of the id rather than a column of its own, and as wide either
-    // way: a listing that shifted the moment you marked something would make
-    // the marking harder to read than the mark is worth.
     let id_width = MARK.chars().count()
         + app
             .rows()
             .map(|file| file.id.chars().count())
             .max()
             .unwrap_or(0);
-    // As wide as the longest tag list, unless that would starve the title.
-    //
-    // A tag may be a sentence, and a column sized to the longest can take a
-    // narrow screen whole. So the title gets a floor first and the tags what is
-    // left: a note is found by its title, and a cut tag list still says there
-    // are tags.
-    //
-    // Measured against what the row actually gets — the width less the
-    // scrollbar's column and the cursor bar's gutter — because counting either
-    // as usable is how the title ends up short of its floor.
+    // The row's real width, less the cursor bar's gutter (the scrollbar's
+    // column is already gone).
     let inner = (area.width as usize).saturating_sub(GUTTER);
 
-    // What `-l` adds, measured the same way and dropped from the right when
-    // there is no room. A note may have no times at all — nothing invents one,
-    // so the column says so rather than leaving a hole the eye has to measure,
-    // which is what `noda ls -l` does with it too.
+    // What `-l` adds.
     let mut extra: Vec<(&'static str, Vec<String>)> = Vec::new();
     if app.long {
         extra.push(("slug", app.rows().map(|file| file.slug.clone()).collect()));
@@ -289,15 +243,13 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
                 .collect(),
         ));
     }
-    // Dropped from the right, one whole column at a time, while the title still
-    // has less than its floor. The id and the title are what name a note; the
-    // columns behind them are a density, and a density is the thing to give up.
+    // `-l`'s columns are dropped whole from the right while the title is below
+    // its floor: the id and title name a note, the rest is density.
     let mut widths: Vec<usize> = extra
         .iter()
         .map(|(_, values)| values.iter().map(|v| display_width(v)).max().unwrap_or(0))
         .collect();
-    // A column only a listing holding a pin pays for: no pins and the row is the
-    // row it has always been, down to the column the tags start in.
+    // Only a listing holding a pin gets the pin column.
     let pinned_here = app.rows().any(|file| file.note.is_pinned());
     let pin_width = if pinned_here {
         palette::PIN_MARK.chars().count() + COLUMN_GAP
@@ -316,17 +268,8 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         extra.pop();
     }
 
-    // As wide as the longest tag list, unless that would starve the title.
-    //
-    // A tag may be a sentence — `24.04 Dark patterns` is what an import leaves
-    // behind — and a column sized to the longest one can take a narrow screen
-    // whole, leaving the title nothing at all. So the title is given a floor
-    // first and the tags get what is left: a note is found by its title, and a
-    // cut tag list still says there are tags. Short tag lists, which is nearly
-    // all of them, are not affected by this at all.
-    // Measured against what the row actually gets, which is the width less the
-    // padding on either side of it. Counting the padding as usable is how the
-    // title ends up one column short of the floor it was promised.
+    // As wide as the longest tag list, but only what the title's floor leaves:
+    // an imported tag may be a sentence, and a note is found by its title.
     let room = inner.saturating_sub(spent(&widths));
     let tag_width = app
         .rows()
@@ -349,13 +292,10 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
                     ),
                     Span::styled(file.id.as_str(), theme::from(palette::ID)),
                 ]),
-                // The title is the column the eye lands on, so it is the one
-                // left uncoloured — the same reason `noda ls` leaves it alone.
+                // Uncoloured, as in `noda ls`: it is where the eye lands.
                 marked(&file.note.title, &terms, Style::default()),
             ];
-            // `-l` extends the row rather than rearranging it: the id and the
-            // title are the first two columns in both, and the tags stay last
-            // in both. Same order, same colours, same reasons as the CLI's.
+            // `-l` extends the row, in the CLI's order and colours.
             for (which, values) in &extra {
                 let style = if *which == "slug" {
                     theme::from(palette::SLUG)
@@ -365,8 +305,6 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
                 cells.push(Line::from(Span::styled(values[at].clone(), style)));
             }
             cells.push(Line::from(
-                // The brackets and the commas grey behind the tags they hold,
-                // the same split `noda ls` prints.
                 palette::tag_pieces(&file.note.tags)
                     .into_iter()
                     .map(|(style, text)| Span::styled(text, theme::from(style)))
@@ -390,8 +328,7 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         constraints.push(Constraint::Length(palette::PIN_MARK.chars().count() as u16));
     }
 
-    // In `-l`'s own order, which is why the row is here: `created` and `updated`
-    // are the same twenty characters twice.
+    // Headings are needed with `-l`: `created` and `updated` look alike.
     let mut names = vec![under_mark("ID"), "TITLE".to_string()];
     names.extend(extra.iter().map(|(which, _)| which.to_uppercase()));
     names.push("TAGS".to_string());
@@ -411,22 +348,18 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     app.put_table(state);
 }
 
-/// What a scrollbar has to line up with: the heading is not a row, and a bar
-/// starting above the first one is never quite where it says it is.
+/// The bar lines up with the rows, not the heading.
 fn rows_area(area: Rect) -> Rect {
     let [_, rows] =
         Layout::vertical([Constraint::Length(HEADING_ROWS), Constraint::Fill(1)]).areas(area);
     rows
 }
 
-/// With `noda ls -l`'s dash for a note that has none: nothing invents one, and
-/// a hole is a thing the eye has to measure.
+/// `noda ls -l`'s dash for a missing time, rather than a blank cell.
 fn stamp(value: Option<&String>) -> String {
     value.cloned().unwrap_or_else(|| "-".to_string())
 }
 
-/// The listing's table down to the padding: these are the notebook answering
-/// different questions, not different programs.
 fn draw_rows(f: &mut Frame, area: Rect, app: &mut App, sheet_of: Sheet, empty: &str) {
     if sheet_of.rows.is_empty() {
         draw_nothing(f, area, empty);
@@ -450,22 +383,17 @@ fn draw_rows(f: &mut Frame, area: Rect, app: &mut App, sheet_of: Sheet, empty: &
     app.put_table(state);
 }
 
-/// Each screen builds its own; the drawing is the same for all of them.
 struct Sheet {
     names: Vec<String>,
     widths: Vec<Constraint>,
     rows: Vec<Row<'static>>,
 }
 
-/// Measured rather than fixed: every column holds something somebody else chose
-/// the length of.
 fn widest(of: impl Iterator<Item = usize>) -> u16 {
     of.max().unwrap_or(0) as u16
 }
 
-/// A row outlives the borrow of the session it was measured against, so the text
-/// comes with it. Only the screens built a row at a time need this — the listing
-/// hands ratatui borrowed spans.
+/// A `Sheet` row outlives the borrow of `app`, so it owns its text.
 fn owned(line: Line<'_>) -> Line<'static> {
     Line::from(
         line.spans
@@ -475,9 +403,7 @@ fn owned(line: Line<'_>) -> Line<'static> {
     )
 }
 
-/// The date is the only thing coloured and only when missed, that being the one
-/// thing on the row that has changed since it was written. Never truncated, as
-/// `noda todo` never truncates it.
+/// Only an overdue date is coloured. Never truncated, as in `noda todo`.
 fn todo_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let notes = |pick: fn(&crate::notebook::NoteFile) -> &str| {
@@ -520,7 +446,7 @@ fn todo_rows(app: &App) -> Sheet {
     }
 }
 
-/// Every tag, commonest first, and how many notes carry it.
+/// Every tag, commonest first, with its note count.
 fn tag_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let width = widest(app.tallies().iter().map(|t| display_width(&t.tag)));
@@ -529,8 +455,7 @@ fn tag_rows(app: &App) -> Sheet {
         .iter()
         .enumerate()
         .map(|(at, tally)| {
-            // Those nine digits are the keys that reach them from anywhere, and
-            // a key you can only find in the help is a key nobody has.
+            // The digit key that filters the listing by this tag.
             let key = if at < SCOPE_KEYS {
                 format!("{}", at + 1)
             } else {
@@ -544,7 +469,7 @@ fn tag_rows(app: &App) -> Sheet {
         })
         .collect();
     Sheet {
-        // No word for it is shorter than the column is wide.
+        // No heading fits a one-column cell.
         names: headings(&["", "TAG", "NOTES"]),
         widths: vec![
             Constraint::Length(1),
@@ -555,7 +480,6 @@ fn tag_rows(app: &App) -> Sheet {
     }
 }
 
-/// What the notebook holds that is not a note.
 fn file_rows(app: &App) -> Sheet {
     let rows = app
         .files()
@@ -569,8 +493,7 @@ fn file_rows(app: &App) -> Sheet {
     }
 }
 
-/// The listing's mark, and as wide when there is nothing to show: a list that
-/// shifted sideways is one you re-find your place in.
+/// The listing's mark on the current notebook.
 fn notebook_rows(app: &App) -> Sheet {
     let rows = app
         .notebooks()
@@ -593,9 +516,8 @@ fn notebook_rows(app: &App) -> Sheet {
     }
 }
 
-/// The revision shown is the one `restore` needs — the commit *before* the
-/// deletion. Leaving the `~1` to be worked out reports a problem without its
-/// remedy, which is `noda deleted`'s call too.
+/// The revision shown is the one `restore` needs, the commit before the
+/// deletion, as `noda deleted` shows it.
 fn deleted_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let ids = widest(app.gone().iter().map(|gone| display_width(&gone.id)));
@@ -620,8 +542,7 @@ fn deleted_rows(app: &App) -> Sheet {
         })
         .collect();
     Sheet {
-        // `FROM` and not `COMMIT`: the revision is the one *before* the
-        // deletion, and the word has to fit in seven columns.
+        // `FROM`: it is the commit before the deletion, in seven columns.
         names: headings(&["ID", "SLUG", "DELETED", "FROM", "TITLE"]),
         widths: vec![
             Constraint::Length(ids),
@@ -634,8 +555,7 @@ fn deleted_rows(app: &App) -> Sheet {
     }
 }
 
-/// `noda ls`'s row: what comes back is a note, and there is one shape for
-/// naming one.
+/// `noda ls`'s row, since each result is a note.
 fn backlink_rows(app: &App) -> Sheet {
     let found = || app.linking().iter().filter_map(|&at| app.note_at(at));
     let ids = widest(found().map(|file| display_width(&file.id)));
@@ -667,16 +587,15 @@ fn backlink_rows(app: &App) -> Sheet {
     }
 }
 
-/// Commits, newest first — the same three columns `noda log` prints.
+/// Commits, newest first, in `noda log`'s columns.
 fn log_rows(app: &App) -> Sheet {
     let muted = theme::from(palette::MUTED);
     let rows = app
         .entries()
         .iter()
         .map(|entry| {
-            // Inside the commit column: one of its own would cost a heading and
-            // a width on every row to say nothing on most. The arrow lands where
-            // `noda log` puts it, one character wide either way.
+            // Inside the commit column, where `noda log` puts it, rather than a
+            // column that is blank on most rows.
             let mark = if app.is_unpushed(entry.id) {
                 cmd::UNPUSHED
             } else {
@@ -696,8 +615,7 @@ fn log_rows(app: &App) -> Sheet {
         })
         .collect();
     Sheet {
-        // Over the ids and not the margin, or the heading points at the
-        // arrows.
+        // Indented over the ids, not the arrows.
         names: headings(&["  COMMIT", "WHEN", "SUMMARY"]),
         widths: vec![
             Constraint::Length(MARKED_COMMIT),
@@ -708,9 +626,7 @@ fn log_rows(app: &App) -> Sheet {
     }
 }
 
-/// A page rather than a list, the rows being the note's own lines. Not wrapped,
-/// for a patch's reason: the two columns down the left only line up while every
-/// line is one row.
+/// A page, not a list. Not wrapped, so the commit and time columns line up.
 fn draw_blame(f: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let lines: Vec<Line> = app
@@ -720,7 +636,6 @@ fn draw_blame(f: &mut Frame, area: Rect, app: &App) {
             let when = if line.commit.is_some() {
                 cmd::format_time(line.seconds, line.offset_minutes)
             } else {
-                // To the width of a time, as `noda blame` pads it.
                 format!("{:<width$}", "not committed", width = cmd::TIME_WIDTH)
             };
             Line::from(vec![
@@ -735,14 +650,13 @@ fn draw_blame(f: &mut Frame, area: Rect, app: &App) {
     draw_page(f, area, lines, app.scroll(), false);
 }
 
-/// The bar is measured in the note's own lines, which is what `j` moves by. On a
-/// wrapped note that is not the number of rows drawn — but a bar disagreeing
-/// with the key is worse than one that is approximate.
+/// The bar counts source lines, which `j` moves by, not wrapped rows: an
+/// approximate bar beats one that disagrees with the key.
 fn draw_page(f: &mut Frame, area: Rect, lines: Vec<Line>, scroll: u16, wrap: bool) {
     let (area, bar) = less_the_bar(area);
     let total = lines.len();
     let mut page = Paragraph::new(lines)
-        // The cursor bar's gutter, so the text starts where the rows do.
+        // The gutter, so text starts where rows do.
         .block(Block::new().padding(Padding::new(GUTTER as u16, 0, 0, 0)))
         .scroll((scroll, 0));
     if wrap {
@@ -752,9 +666,8 @@ fn draw_page(f: &mut Frame, area: Rect, lines: Vec<Line>, scroll: u16, wrap: boo
     draw_scrollbar(f, bar, total, bar.height as usize, scroll as usize);
 }
 
-/// Coloured by what each line is rather than by escapes carried over: `cmd::diff`
-/// paints for a pipe, and reading those back out would be parsing its own
-/// output. The patch is written down once; the colour is the drawing's.
+/// Coloured by each line's prefix; `fetch` strips `cmd::diff`'s escapes rather
+/// than parsing them.
 fn draw_diff(f: &mut Frame, area: Rect, app: &App) {
     let Some(patch) = app.text() else {
         f.render_widget(Block::new().padding(Padding::horizontal(PADDING)), area);
@@ -783,7 +696,7 @@ fn draw_diff(f: &mut Frame, area: Rect, app: &App) {
             Line::from(Span::styled(line, style))
         })
         .collect();
-    // A patch is a grid, and a wrapped `+` line reads as two additions.
+    // Unwrapped: a wrapped `+` line reads as two additions.
     draw_page(f, area, lines, app.scroll(), false);
 }
 
@@ -792,7 +705,7 @@ fn draw_note(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(Block::new(), area);
         return;
     };
-    // A reader scrolling sideways to finish a sentence is not reading.
+    // Wrapped, so prose needs no sideways scrolling.
     draw_page(f, area, lines(text, app.terms()), app.scroll(), true);
 }
 
@@ -809,13 +722,8 @@ fn draw_help(f: &mut Frame, area: Rect) {
     card(f, area, " keys ", keys, theme::from(palette::MUTED));
 }
 
-/// Searched by what a command *does* as well as by its name: the list is for
-/// somebody who knows they want their notes on the remote and not that it is
-/// spelled `push`.
-///
-/// Cut to what the terminal holds, cursor kept in view and the rest counted on
-/// the last line — a card that ran off the bottom would take its footer with
-/// it, which the help card did once already.
+/// Cut to what the terminal holds, cursor kept in view and the rest counted in
+/// the footer, which would otherwise run off the bottom.
 fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let shown: Vec<&command::Spec> = command::matching(app.input.text()).collect();
@@ -825,11 +733,8 @@ fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
         .max()
         .unwrap_or(0);
 
-    // Two of border, one blank and one footer; the rest is the list.
-    //
-    // One row per command, true only because the description is cut rather than
-    // wrapped: let it wrap and the budget is out by a factor of two and the
-    // footer goes off the bottom of its own card.
+    // Less two of border, a blank and the footer. One row per command, which
+    // holds only because descriptions are cut rather than wrapped.
     let room = (area.height as usize).saturating_sub(4).max(1);
     let first = app.commands_at().saturating_sub(room.saturating_sub(1));
     let told = (area.width as usize).saturating_sub(2 + width + 2);
@@ -872,13 +777,11 @@ fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
     card(f, area, &title, lines, muted);
 }
 
-/// At a prompt a delete is a command you typed on purpose; here it is one chord.
-/// Asked on the screen, because the terminal is in raw mode and a command
-/// reading stdin would take keystrokes out from under the browser.
+/// Asked on screen: here a delete is one chord, and in raw mode a command
+/// reading stdin would steal the browser's keystrokes.
 fn draw_confirm(f: &mut Frame, area: Rect, app: &App, what: What) {
     let muted = theme::from(palette::MUTED);
     let queued = || {
-        // Described by what it will do, not by how it was built.
         Line::from(format!(
             "{} over {}",
             plural(app.queue.len(), "change"),
@@ -901,7 +804,7 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, what: What) {
                 "y  delete       any other key  keep it",
             )
         }
-        // Counted on their own: they are why the question is asked.
+        // Deletions counted apart: they are why the question is asked.
         What::Send => (
             " send the queue? ",
             queued(),
@@ -911,7 +814,6 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, what: What) {
             ),
             "y  send it       any other key  back to the queue",
         ),
-        // About work written down nowhere that will not survive the process.
         What::Quit => (
             " leave the queue behind? ",
             queued(),
@@ -929,8 +831,7 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, what: What) {
     card(f, area, title, lines, muted);
 }
 
-/// Each line is the sentence the commit message will use, so what is read before
-/// sending is what the history says after.
+/// Each line is the sentence the commit message will use.
 fn draw_queue(f: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let mut lines: Vec<Line> = if app.queue.is_empty() {
@@ -960,12 +861,8 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App) {
     card(f, area, " queued ", lines, muted);
 }
 
-/// A box per tag rather than a line to write `+work -q3` on, listing every tag
-/// the notebook has in the tags screen's order — so the tag being reached for is
-/// a keystroke rather than a spelling.
-///
-/// The number answers what the boxes cannot: over one note it says how
-/// established the tag is, and over a marked set it says twelve of forty.
+/// A box per notebook tag, in the tags screen's order. The count is the tag's
+/// note total for one note, or how many of the marked set hold it.
 fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
     let muted = theme::from(palette::MUTED);
     let total = app.picking_notes();
@@ -973,8 +870,7 @@ fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
     let shown = app.shown_tags();
     let proposal = app.proposal();
 
-    // So the counts line up. Measured in what a terminal shows, not characters:
-    // a tag is as likely to be Chinese as the note it is on.
+    // In terminal columns, not characters, so the counts line up past CJK.
     let width = shown
         .iter()
         .filter_map(|&at| app.choices().get(at))
@@ -996,7 +892,7 @@ fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
         rows.push(proposed(proposal, width, shown.len() == here));
     }
 
-    // Two of border, one blank and one footer: what is left is for the list.
+    // Less two of border, a blank and the footer.
     let room = (area.height as usize).saturating_sub(4).max(1);
     let first = here.saturating_sub(room.saturating_sub(1));
     let mut lines: Vec<Line> = if rows.is_empty() {
@@ -1008,8 +904,7 @@ fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
         rows.into_iter().skip(first).take(room).collect()
     };
 
-    // Said in the words for what it will do: with a set marked the change is
-    // queued, and "apply" would promise something that waits for the send.
+    // With marks the change is queued, so "apply" would overpromise.
     let doing = if app.marks.is_empty() {
         "apply"
     } else {
@@ -1036,11 +931,8 @@ fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
     card(f, area, &title, lines, muted);
 }
 
-/// One tag on the picker, with its box and its count.
-///
-/// A tag no note carries is one made a keystroke ago on this very card, and it
-/// goes on saying what it said then. `0 notes` would be true and would read as
-/// a tag that had somehow lost all of them.
+/// A tag no note carries was just made on this card, so it says `new`, not
+/// `0 notes`.
 fn chosen(choice: &Choice, total: usize, width: usize, here: bool) -> Line<'static> {
     let count = if choice.notes == 0 {
         "new".to_string()
@@ -1056,11 +948,7 @@ fn chosen(choice: &Choice, total: usize, width: usize, here: bool) -> Line<'stat
     ])
 }
 
-/// The row for what has been typed, when the notebook has no such tag.
-///
-/// Its box is empty until it is chosen, because it has not been: the row is an
-/// offer, and a row that arrived already ticked would be making the decision the
-/// keystroke is there to make.
+/// The row offering a typed tag the notebook lacks, unticked until chosen.
 fn proposed(proposal: &Proposal, width: usize, here: bool) -> Line<'static> {
     match proposal {
         Proposal::New { tag, near } => {
@@ -1069,10 +957,7 @@ fn proposed(proposal: &Proposal, width: usize, here: bool) -> Line<'static> {
                 Span::styled(padded(tag, width), name_style(here)),
                 Span::styled("  new", theme::from(palette::MUTED)),
             ];
-            // The one thing on this card that has to be read rather than
-            // glanced at: a tag one keystroke from one the notebook already runs
-            // on is nearly always the one it is a misspelling of, and the whole
-            // cost of getting it wrong is that both go on existing.
+            // A near-miss of an existing tag is nearly always a misspelling.
             if let Some((near, notes)) = near {
                 spans.push(Span::styled(
                     format!(" — close to {near}, {}", plural(*notes, "note")),
@@ -1081,8 +966,7 @@ fn proposed(proposal: &Proposal, width: usize, here: bool) -> Line<'static> {
             }
             Line::from(spans)
         }
-        // In `cmd`'s own words. The row cannot be chosen, and saying why is more
-        // use than leaving it off the card and letting `Tab` do nothing.
+        // In `cmd`'s words: shown so `Tab` doing nothing is explained.
         Proposal::Refused(why) => Line::from(Span::styled(
             format!("    {why}"),
             theme::from(palette::INVALID),
@@ -1090,7 +974,7 @@ fn proposed(proposal: &Proposal, width: usize, here: bool) -> Line<'static> {
     }
 }
 
-/// A name padded out to the column's width, in columns and not in characters.
+/// Padded in terminal columns, not characters.
 fn padded(name: &str, width: usize) -> String {
     let pad = " ".repeat(width.saturating_sub(display_width(name)));
     format!("{name}{pad}")
@@ -1104,8 +988,7 @@ fn name_style(here: bool) -> Style {
     }
 }
 
-/// A diff's green and red for the two that change something, the tags' colour
-/// for a tick, nothing for an empty box.
+/// Diff colours for a change, the tags' colour for a tick, muted otherwise.
 fn box_style(choice: &Choice, total: usize) -> Style {
     match choice.mark {
         Mark::Add => theme::from(palette::ADDED),
@@ -1115,9 +998,8 @@ fn box_style(choice: &Choice, total: usize) -> Style {
     }
 }
 
-/// A card rather than the status bar, because the part worth reading is the part
-/// that does not fit: `edit` says where it left an unparseable file, and `bulk`
-/// says what it could not do underneath what it did.
+/// A card for a multi-line answer the status line would cut, such as `bulk`'s
+/// list of what it could not do.
 fn draw_alert(f: &mut Frame, area: Rect, app: &App) {
     let Some(said) = &app.message else {
         return;
@@ -1131,8 +1013,7 @@ fn draw_alert(f: &mut Frame, area: Rect, app: &App) {
     card(f, area, title, lines, border);
 }
 
-/// Cut on a character and not a byte: a slice through the middle of a code point
-/// is a panic rather than a short line.
+/// Cut on a character, not a byte, which could panic mid-code-point.
 fn cut(text: &str, room: usize) -> String {
     if text.chars().count() <= room {
         return text.to_string();
@@ -1141,9 +1022,8 @@ fn cut(text: &str, room: usize) -> String {
     format!("{}…", kept.trim_end())
 }
 
-/// Uncoloured, which is what the column has to be wide enough to hold. Built
-/// from the pieces the row is drawn from, so the width cannot drift from what
-/// lands in it. Tags are the last column because an empty cell shifts nothing.
+/// The uncoloured tag list, built from the same pieces as the row so the
+/// column width cannot drift from it.
 fn tags(tags: &[String]) -> String {
     palette::tag_pieces(tags)
         .into_iter()
@@ -1151,8 +1031,7 @@ fn tags(tags: &[String]) -> String {
         .collect()
 }
 
-/// The file as the screen shows it: the frontmatter pushed into the background
-/// so the note reads first, and the search terms picked out of the prose.
+/// The frontmatter dimmed and search terms marked in the body.
 fn lines<'a>(text: &'a str, terms: &[String]) -> Vec<Line<'a>> {
     let muted = theme::from(palette::MUTED);
     let (frontmatter, body) = split_frontmatter(text);
@@ -1167,8 +1046,7 @@ fn lines<'a>(text: &'a str, terms: &[String]) -> Vec<Line<'a>> {
     out
 }
 
-/// Nothing is dimmed when there is no block to dim, as `dim_frontmatter` judges
-/// it: a file the screen cannot read this way is one to show as it stands.
+/// Judged as `cmd::dim_frontmatter` does: no closed block, nothing dimmed.
 fn split_frontmatter(text: &str) -> (&str, &str) {
     let Some(rest) = text.strip_prefix("---\n") else {
         return ("", text);
@@ -1179,8 +1057,8 @@ fn split_frontmatter(text: &str) -> (&str, &str) {
     text.split_at("---\n".len() + end + "\n---\n".len())
 }
 
-/// The earliest match wins where two overlap and the search resumes after it, so
-/// a line is walked once however many terms are in the query.
+/// The earliest match wins an overlap and the search resumes after it, so a
+/// line is walked once.
 fn marked<'a>(text: &'a str, terms: &[String], base: Style) -> Line<'a> {
     let mut spans: Vec<Span<'a>> = Vec::new();
     let mut at = 0;
@@ -1213,11 +1091,7 @@ mod tests {
 
     #[test]
     fn the_gutter_is_the_same_width_on_every_screen() {
-        // Everything measured against it assumes this width, the title's floor
-        // included.
         assert_eq!(CURSOR_BAR.chars().count(), GUTTER);
-        // Inside the row rather than the gutter, so screens with and without a
-        // mark column start their first value in the same place.
         assert_eq!(under_mark("ID"), "  ID");
         assert_eq!(UNMARKED.len(), MARK.chars().count());
     }
@@ -1263,7 +1137,6 @@ mod tests {
             .filter(|span| span.style == theme::from(palette::MATCH))
             .map(|span| span.content.as_ref())
             .collect();
-        // The note's own text is on screen; only its colour changes.
         assert_eq!(marked_spans, vec!["Q3"]);
     }
 
@@ -1300,7 +1173,6 @@ mod tests {
         assert_eq!(front, "");
         assert_eq!(body, "just prose\n");
 
-        // An opening fence that never closes is not a block either.
         let (front, body) = split_frontmatter("---\ntitle: unfinished\n");
         assert_eq!(front, "");
         assert_eq!(body, "---\ntitle: unfinished\n");
@@ -1314,22 +1186,16 @@ mod tests {
 
     #[test]
     fn the_help_card_still_fits_a_short_terminal() {
-        // The card outgrew a twenty-four row terminal once. Thirteen rows and
-        // two of border, the last spent on the field keys — worth a row because
-        // they are the ones nobody thinks to look up.
+        // Thirteen rows and a border, inside a 24-row terminal.
         assert!(KEYS.len() + 2 <= 15, "the card has {} rows", KEYS.len() + 2);
-        // As wide as the widest set of keys, or the descriptions stop lining
-        // up.
         let widest = KEYS.iter().map(|(key, _)| key.chars().count()).max();
         assert_eq!(widest, Some(KEY_COLUMN));
     }
 
     #[test]
     fn every_key_that_only_the_card_can_teach_is_on_the_card() {
-        // The grid drops columns from the right, so a key out there needs a
-        // second way of being found — and for these it is the card and nothing
-        // else. Both columns, because one row names its keys in the description
-        // rather than in the key cell.
+        // The grid may drop these. Both columns are searched, since the
+        // readline row names its keys in the description.
         let said = KEYS
             .iter()
             .map(|(key, what)| format!("{key} {what}"))
@@ -1341,9 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn a_note_is_not_named_twice_when_the_row_is_the_short_one() {
-        // The default row answers "which note is this" and the title is the
-        // answer; the slug arrives only with `-l`.
+    fn a_missing_time_is_a_dash() {
         assert_eq!(stamp(None), "-");
         assert_eq!(
             stamp(Some(&"2026-01-01T00:00:00Z".to_string())),

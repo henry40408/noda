@@ -1,13 +1,11 @@
 #!/bin/sh
-# Cold-start benchmark. For a note-taking CLI the dominant cost of a quick
-# `noda ls` is process startup, not the work itself, so we measure whole
-# processes rather than in-process code.
+# Cold-start benchmark: a quick `noda ls` is mostly process startup, so this
+# times whole processes.
 #
 #   scripts/bench-coldstart.sh [binary ...]      (default: target/release/noda)
 #   RUNS=500 scripts/bench-coldstart.sh
 #
-# `/usr/bin/true` is measured too: that is the floor this shell loop can reach,
-# so subtract it to read the binary's own startup cost.
+# Subtract the `/usr/bin/true` floor to read the binary's own startup cost.
 set -eu
 
 RUNS=${RUNS:-200}

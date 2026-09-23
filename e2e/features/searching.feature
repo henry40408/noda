@@ -1,8 +1,7 @@
 Feature: Finding a note
 
-  The search field is a form. It is submitted by the key a phone's keyboard
-  offers, and it works with the page's scripts turned off — which is the whole
-  contract the enhancement layer will later have to keep.
+  The search field is a form, submitted by the phone keyboard's key, and it
+  works with scripts off; `enhancing.feature` covers what scripts add.
 
   Scenario: A query narrows the listing
     Given I open the notebook

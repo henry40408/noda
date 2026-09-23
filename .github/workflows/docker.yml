@@ -1,40 +1,22 @@
-# Distribution. noda is not published to crates.io or Homebrew; the container
-# image on ghcr.io is how you get a built noda without building it yourself.
-#
-# Actions are pinned to commit SHAs for the same reason as in ci.yml: a tag can
-# be repointed at other code by whoever controls it, and this workflow holds a
-# token that can write packages.
+# Distribution: the ghcr.io image is the only prebuilt noda (not on crates.io or
+# Homebrew). Actions are pinned to SHAs as in ci.yml; this token can write packages.
 name: Docker
 
 on:
   push:
     branches: [main]
     tags: ['v*']
-  # Build on pull requests that touch the packaging, without publishing, so a
-  # Dockerfile that no longer builds is caught before it lands rather than after.
-  #
-  # Only those, though. This job takes 9m24s against 1m27s for the whole of
-  # ci.yml's cross-compile, and it does not get faster with a warm cache: the
-  # cargo work happens inside a `RUN --mount=type=cache`, which the GHA cache
-  # backend does not carry, so any source change rebuilds the vendored OpenSSL
-  # and libgit2 from scratch for both architectures. On a source-only pull
-  # request that buys nothing either — ci.yml already compiles the same code for
-  # both musl targets and asserts the result is statically linked. What is left
-  # that only this can catch is the packaging itself, which is what it now
-  # watches.
+  # Pull requests build without publishing, and only when they touch packaging:
+  # this job takes 9m24s against 1m27s for ci.yml's cross-compile (the GHA cache
+  # does not carry `RUN --mount=type=cache`), and ci.yml already covers the source.
   pull_request:
     paths:
       - Dockerfile
       - .dockerignore
       - .github/workflows/docker.yml
 
-# One build per ref at a time. Three merges in quick succession started three
-# nine-minute builds racing to push the same `:main` tag, where the winner is
-# whichever finished last rather than whichever commit is newer.
-#
-# Superseding is right for a branch, where the tag always means "latest", and
-# wrong for a release: a `v*` build is publishing one specific version and
-# nothing should quietly cancel it.
+# One build per ref, so racing builds cannot leave an older commit as `:main`.
+# A `v*` release build is never cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -48,16 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `git describe` below needs the tags, and the default shallow fetch
-          # brings none of them.
+          # `git describe` needs the tags a shallow fetch omits.
           fetch-depth: 0
-      # The version stamped into the binary. It is described here rather than in
-      # the image because `.dockerignore` excludes `.git` — see the Dockerfile.
+      # Described here because `.dockerignore` excludes `.git` from the image.
       - id: version
         run: |
           echo "value=$(git describe --tags --always --match 'v[0-9]*')" >> "$GITHUB_OUTPUT"
-      # No qemu: the Dockerfile's builder stays on the native platform and zig
-      # cross-compiles both musl targets, so arm64 needs no emulation.
+      # No qemu: zig cross-compiles arm64 on the native builder.
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request'

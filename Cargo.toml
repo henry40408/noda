@@ -1,16 +1,14 @@
 [package]
 name = "noda"
-# A placeholder, and not the version anything reports. noda is not published to
-# crates.io, so nothing reads this field; releases are git tags cut by
-# `gh release`, and build.rs stamps the one the build came from into the binary.
-# Bumping this by hand would put a second, wrong answer next to the real one.
+# A placeholder nothing reads: noda is not on crates.io, releases are `gh release`
+# tags, and build.rs stamps the real version into the binary.
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-# Cold start dominates every quick `noda ls`, and it scales with how much of the
-# binary has to be paged in. Vendoring libgit2/OpenSSL makes that binary large, so
-# the release profile is tuned for size: measured with scripts/bench-coldstart.sh.
+# Cold start dominates a quick `noda ls` and scales with binary size, and vendored
+# libgit2/OpenSSL make the binary large, so the profile is tuned for size
+# (measured with scripts/bench-coldstart.sh).
 [profile.release]
 lto = "fat"
 codegen-units = 1
@@ -18,176 +16,72 @@ panic = "abort"
 strip = true
 
 [dependencies]
-# Both are already in the tree by way of clap, so reaching for them directly adds
-# no supply-chain surface. anstream detects the terminal, honours NO_COLOR, and
-# strips the escape codes when output goes to a pipe or a file — which is what
-# makes the bytes `noda show` emits identical to the file itself.
+# Already in the tree via clap. anstream honours NO_COLOR and strips escapes when
+# output is not a terminal, so a piped `noda show` emits the file's exact bytes.
 anstream = "1.0.0"
 anstyle = "1.0.14"
-# `env` is only for `--log-format`, and only because the thing that sets it is
-# usually a unit file or a container rather than a person: `RUST_LOG` is already
-# an environment variable, so the log's other knob being one too is the shape
-# anybody deploying this expects. Nothing else noda takes is configured that way
-# — the rest is `config.toml` and flags.
+# `env` is only for `--log-format`, usually set by a unit file or container
+# alongside `RUST_LOG`; everything else is `config.toml` and flags.
 clap = { version = "4.6.2", features = ["derive", "env"] }
-# Only `std`: the default features bundle a copy of the tz database and read the
-# system zone, and noda does neither. It records instants in UTC and prints them
-# back as they were written, so `Timestamp` is the whole of what it needs.
-#
-# Hand-rolling this was the alternative and would have been about sixty lines.
-# The line is the parsing: a note that came from elsewhere carries a UTC offset
-# (`2019-03-14T16:21:00+08:00`), and an offset is where a hand-written date
-# parser starts getting the day rollover wrong.
+# Only `std`: noda records UTC instants and needs no tz database. Chosen over ~60
+# hand-rolled lines because imported notes carry UTC offsets, where a hand-written
+# parser gets the day rollover wrong.
 jiff = { version = "0.2.35", default-features = false, features = ["std"] }
-# The transports are always compiled in: GitHub and GitLab are reached over HTTPS
-# or SSH, so a build that made either optional could not sync to the hosts every
-# user actually targets.
-# vendored-*: libgit2 and OpenSSL are built from source into the binary, which is
-# what buys a single static executable and a clean cross-compile (musl/arm64).
+# HTTPS and SSH are always compiled in: they are how GitHub and GitLab are reached.
+# vendored-*: libgit2 and OpenSSL built from source, for a single static
+# executable and a clean musl/arm64 cross-compile.
 git2 = { version = "0.21.0", default-features = false, features = [
     "vendored-libgit2",
     "https",
     "ssh",
     "vendored-openssl",
 ] }
-# The parser, plus the HTML renderer that `noda web` hands its events to. Not
-# `getopts`, which is only there for pulldown-cmark's own example CLI.
-#
-# `html` pulls in one crate, `pulldown-cmark-escape`, from the same project. The
-# alternative was to write the renderer here, and it would have been a second
-# implementation of tables, entities and tight lists in exchange for nothing:
-# what noda actually needs to decide is which destinations may be followed and
-# what raw HTML turns into, and both of those are decided by rewriting the
-# events *before* they are rendered. Policy here, rendering there.
-#
-# A hand-rolled regex would not do. It cannot resolve reference-style links, and
-# it cannot tell that a link inside a code fence is not a link — and both of
-# those are how an attachment gets reported as an orphan when it is not one.
+# `html` (one extra crate, pulldown-cmark-escape) rather than a second renderer:
+# noda's link and raw-HTML policy is applied by rewriting events before rendering.
+# A regex could not resolve reference links or skip code fences, which is how an
+# attachment gets misreported as an orphan.
 pulldown-cmark = { version = "0.13.4", default-features = false, features = [
     "html",
 ] }
-# `noda import` reads a JSON export somebody else's program wrote. noda writes
-# its own JSON by hand — one object of five string fields does not justify a
-# crate — but reading is the other direction: a hand-written parser for a file
-# that may be tens of megabytes of arbitrary text is the kind of code that is
-# fine until it is not.
+# Reads `noda import`'s JSON, which may be megabytes of foreign text; noda writes
+# its own small JSON by hand.
 serde_json = "1.0.151"
 toml_edit = "0.25.13"
-# The one screen noda draws, for `noda tui`. Every other command prints a string
-# and stops; a browser has to keep a terminal in raw mode, survive a resize,
-# measure a wide character before laying a column out and redraw only what
-# changed — which is a library, not an afternoon.
-#
-# One dependency and not two: ratatui re-exports crossterm (`ratatui::crossterm`),
-# so the backend, the terminal control and the key events all arrive through the
-# crate that is already here.
-#
-# The default features are off because they are for other people's programs: a
-# calendar widget, a macro crate, and a colour-space conversion library. What is
-# left is the widgets, the layout solver and the crossterm backend.
+# `noda tui`: raw mode, resize, wide-character width and diffed redraws are a
+# library, not an afternoon. crossterm comes re-exported as `ratatui::crossterm`;
+# the default features (calendar, macros, palette) are for other programs.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 
-# `noda web`. The cost lands on every other command — a bigger binary is more of
-# it to page in, and a quick `noda ls` is mostly page-in — so it is measured on
-# every change to this section and reported, not assumed. See the README's
-# cold-start note and scripts/bench-coldstart.sh.
+# `noda web`. Its size costs every command's cold start, so changes to this
+# section are measured with scripts/bench-coldstart.sh, not assumed.
 #
-# Why an async stack for a program whose every request is blocking file and
-# libgit2 work: the small synchronous HTTP crates are all unmaintained
-# (tiny_http's last release is 2022, rouille's 2023), and this is a server whose
-# parser meets input nobody here controls. Between "the shape fits" and "someone
-# is still fixing it", the second wins.
+# Async despite blocking work because the small sync HTTP crates are unmaintained
+# (tiny_http last released 2022, rouille 2023) and this parser meets untrusted
+# input. `git2::Repository` is `!Send`, so every handler runs in `spawn_blocking`.
 #
-# The mismatch is paid for honestly rather than hidden: `git2::Repository` is
-# `!Send`, so it cannot be held across an await at all, and every handler does
-# its work inside `spawn_blocking`. That is not a workaround — opening the
-# notebook per request is what a `!Send` handle requires anyway.
-#
-# Features: `http1` and `tokio` are the server, `query` is the `?q=` on the
-# listing, and `matched-path` is the route template — the only name `web::log`
-# is allowed to call a request by, an address here carrying a note's id or a
-# file's name. No `json` (nothing here speaks it), no `http2` — a notebook on a
-# tailnet is not multiplexing streams — and not axum's own `tracing` either:
-# what noda wants said about a request is said by one middleware of its own,
-# which is a dozen lines and says the four things it actually wants.
+# `query` is the listing's `?q=`. No `json`, `http2`, or axum's `tracing`:
+# request logging is noda's own middleware.
 axum = { version = "0.8.9", default-features = false, features = [
     "http1",
     "tokio",
     "query",
-    # The template the router matched, which is the only thing the log is
-    # allowed to call a request: an address here holds a note's id or a file's
-    # name, and both of those are the reader's own. See `web::log`.
+    # The route template: the only name `web::log` may give a request, because
+    # the path holds a note's id or a file's name.
     "matched-path",
 ] }
-# gzip on the way out, and it is here for one number: a listing is a column of
-# rows that differ in a few words each, and that is the most compressible thing
-# this server sends. Measured against the five-note fixture and a two-hundred
-# note notebook, release profile, one machine:
-#
-#     a sort switch (the index fragment, 200 notes)   74,163 -> 4,043  (-94.6%)
-#     a listing page                                  75,900 -> 4,802  (-93.7%)
-#     the stylesheet                                  39,598 -> 12,489 (-68.5%)
-#
-# **Three ways of making a sort switch smaller were costed, and this is the one
-# that beat the clever one.** Sending only the new order — a list of ids for the
-# script to reorder the rows it already has — comes to 4,704 bytes, which is
-# *larger than gzip alone* and worth another 2.3 KB after it. It would have cost
-# a new fragment vocabulary and a client that rewrites stamps, so the protocol
-# stayed as it was and the bytes went through a deflater instead.
-#
-# What it costs, same profile, against the commit this branched from:
-#
-#     main                      7,591,472 bytes
-#     with `compression-gzip`  +   66,208   (+0.87%)
-#
-# Which is a third of what `Targets` was accepted at a few dependencies down,
-# and an eighth of what `EnvFilter` was turned down at. Cold start moves about
-# +0.04 ms on `ls`, against a run-to-run spread of ~0.02 ms on one binary —
-# `scripts/bench-coldstart.sh` cannot quite resolve it.
-#
-# `compression-gzip` alone: no brotli, which compresses a little better and
-# carries a dictionary to do it, and no zstd. gzip is the encoding every browser
-# has sent since before this project started, and the second one would be paying
-# again for the same 94%.
-#
-# The features are the minimum: `compression-gzip` brings `futures-core` and
-# `tokio-util` with it and nothing else. `tower-http` has forty other features
-# and noda wants none of them — the guard, the logging and the caching headers
-# here are all noda's own, written against what a notebook needs rather than
-# what a server usually needs.
+# gzip, measured (release, 200-note notebook): a sort-switch fragment
+# 74,163 -> 4,043 bytes (-94.6%), a listing 75,900 -> 4,802, the stylesheet
+# 39,598 -> 12,489; binary +66,208 bytes (+0.87%), cold start within noise.
+# Sending only the new row order came to 4,704 bytes, more than gzip, and needed
+# a new protocol. No brotli or zstd: a second encoding pays again for the same 94%.
 tower-http = { version = "0.7.0", default-features = false, features = [
     "compression-gzip",
 ] }
-# The runtime, the socket, and the two signals that mean stop: no timers, no
-# process spawning, no `fs`. The blocking pool that `rt-multi-thread` brings is
-# the part that matters, because that is where every one of these handlers
-# actually runs.
-#
-# `signal` is what makes `noda web` stop rather than die. Everything else here
-# finishes inside a request, so closing the listener would be the whole of
-# stopping — except that `sync`, `pull` and `push` deliberately outlive the
-# request that started them, and a `push` killed halfway is a repository with
-# `index.lock` still in it. `web::serve` says what the three steps are.
-#
-# `macros` is `tokio::select!`, used once, to wait on `SIGINT` and `SIGTERM`
-# together.
-#
-# **Neither of them brings a new crate to the binary.** `signal` wants
-# `signal-hook-registry`, which is already here — `crossterm` brings it for the
-# TUI — and `macros` builds `tokio-macros`, a proc macro, whose own `syn` and
-# `quote` are here for clap's derives. What they cost, release profile, against
-# the commit this branched from:
-#
-#     main                     7,657,680 bytes
-#     with `signal` + `macros` 7,690,848   (+33,168, +0.43%)
-#
-# Which is half of what gzip was accepted at one dependency up.
-#
-# `sync` is the channel between the thread watching a note's file and the
-# stream telling a browser about it — `web::watch`. Still no timers: that tick
-# is a `Condvar` on a plain thread, deliberately, so the runtime stays built
-# with I/O alone. `sync = []` in tokio's own manifest, so it is features
-# compiled in rather than a crate arriving.
+# No timers, process or `fs`; `rt-multi-thread` is for its blocking pool, where
+# every handler runs. `signal` + `macros` (`tokio::select!` on SIGINT/SIGTERM) let
+# `noda web` finish a background `push` rather than leave `index.lock` behind (see
+# `web::serve`); they add no crate, +33,168 bytes (+0.43%). `sync` is the channel
+# in `web::watch`, whose tick is a `Condvar` thread so the runtime stays I/O-only.
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt-multi-thread",
     "net",
@@ -195,98 +89,47 @@ tokio = { version = "1.53.1", default-features = false, features = [
     "macros",
     "sync",
 ] }
-# One trait, for one `impl`: `Stream`, which `web::watch`'s SSE response is.
-# axum takes it and does not re-export it, so naming it means depending on it.
-#
-# **Nothing arrives.** It is already compiled — `axum-core` needs it, and so
-# does `tower-http`'s gzip — and this only makes a transitive dependency a
-# stated one. The alternative was `tokio-stream` for its `Receiver` wrapper,
-# which *is* a new crate, and `mpsc::Receiver::poll_recv` is already the shape
-# `poll_next` wants.
+# The `Stream` trait for `web::watch`'s SSE response; axum does not re-export it.
+# Already compiled via axum-core, so nothing new arrives (unlike `tokio-stream`).
 futures-core = { version = "0.3.34", default-features = false }
-# What `noda web` says about itself while it runs. Every other command answers
-# and exits, so its output is its answer; a server outlives the question, and
-# the only way to find out afterwards what it refused, what it failed at, or
-# what was slow is for it to have said so at the time.
-#
-# `tracing` and not `log` because the events carry fields — a request is a
-# method, a route, a status and a duration, and a line that has already had them
-# formatted into a sentence cannot be filtered or aggregated on any of them.
-# `RUST_LOG` and the subscriber's own JSON renderer then do the rest, which is
-# what makes this the same operational surface as any other Rust server.
+# Server logs. `tracing` rather than `log` because events carry fields (method,
+# route, status, duration) that can be filtered on.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
-# `default-features = false` and then most of them back, because the ones that
-# are off are off for a reason. `tracing-log` bridges the `log` crate, and
-# nothing noda depends on writes to it. `smallvec` trades code size for fewer
-# allocations per event, which is not a trade something that logs one line per
-# request needs to make.
-#
-# **`env-filter` is deliberately not here, and it is the one place this departs
-# from the servers it was modelled on.** It is what `RUST_LOG` is normally read
-# with, and both of them use it — but it matches directives with a regex engine,
-# and noda's tree has no other regex in it. Measured on one machine, release
-# profile, against the commit this branched from:
-#
-#     main                      7,326,256 bytes
-#     with `Targets`           +  166,016   (+2.27%)
-#     with `EnvFilter`         +  530,080   (+7.24%)
-#
-# The filter alone is 355 KB — 69% of the whole of the logging — and
-# `tracing_subscriber::filter::Targets` reads the same `noda=debug` and
-# `noda::web::log=debug` directives out of the same variable. What it will not
-# do is filter on spans and fields, and nothing here writes either. A server can
-# pay 355 KB without noticing; noda is a CLI that happens to serve, which is
-# what the note above `axum` is about.
+# Off: `tracing-log` (nothing writes to `log`) and `smallvec` (code size for
+# allocations one line per request does not need). No `env-filter`: its regex
+# engine measured +530,080 bytes (+7.24%) against +166,016 (+2.27%) for `Targets`
+# (the filter alone 355 KB, 69% of the logging). `Targets`
+# which reads the same `RUST_LOG` directives but cannot filter on spans or fields,
+# which noda does not use.
 tracing-subscriber = { version = "0.3.23", default-features = false, features = [
     "std",
     "fmt",
-    # Colour, and it is switched off the way the rest of noda switches it off:
-    # `NO_COLOR`, honoured here by hand because a subscriber does not read
-    # `anstream`'s mind.
+    # `NO_COLOR` is honoured by hand in `web::log`.
     "ansi",
-    # What a `Targets` filter is layered onto.
     "registry",
-    # Line-delimited JSON for something that collects logs. `serde_json` is
-    # already here by way of the import and the query string, so this is the
-    # renderer and not the parser.
     "json",
 ] }
 
-# Only the browser's end-to-end tests use these, so they cost the shipped binary
-# and its cold start nothing.
-#
-# The reason a crate is needed at all rather than sixty lines of FFI: opening a
-# pty is `openpty(3)`, and `unsafe_code = "deny"` is a line above. portable-pty
-# is wezterm's own pty layer, so it is what a real terminal emulator uses.
-#
-# vt100 is the other half. A pty hands back a byte stream, and what a test wants
-# to assert on is the screen those bytes leave behind — so something has to keep
-# the grid, honour the cursor moves and the erases, and answer "what does row 9
-# say now". That is a terminal emulator's state machine; writing a partial one
-# was how this was done before, and a partial one is wrong about exactly the
-# things (wrapping, scroll regions) that a layout bug hides behind.
+# For tests/pty.rs only, so they cost the shipped binary nothing. portable-pty
+# (wezterm's pty layer) because `openpty(3)` is FFI and `unsafe_code = "deny"`;
+# vt100 because a hand-written partial emulator got wrapping and scroll regions
+# wrong, which is where layout bugs hide.
 [dev-dependencies]
 portable-pty = "0.9.0"
 vt100 = "0.16.2"
 
-# Lints encoded in-manifest so `cargo build`/`cargo clippy` and IDEs apply them
-# without extra flags (CI additionally runs `clippy --all-targets -- -D warnings`,
-# which promotes every one of these warnings to a hard error). Kept 1:1 with the
-# sibling `pingward` project's curated set so both repos enforce the same rules.
-# Self-maintained lint set (originally seeded from Embark Studios' rust-ecosystem
-# list). The bulk of the old itemised pedantic lints are now covered by the
-# `pedantic` group; only the noisy/low-signal ones are opted back out, plus the
-# restriction and nursery lints that have no safe umbrella group.
+# In the manifest so every build and IDE applies them; CI adds `-D warnings`.
+# Kept in step with the sibling `pingward` project.
 [lints.rust]
 unexpected_cfgs = "deny"
 unsafe_code = "deny"
 
 [lints.clippy]
-# Groups (priority -1 so the individual entries below win).
+# Priority -1 so the individual entries below win.
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
-# Opt out of the noisy / low-signal pedantic lints.
+# Noisy / low-signal pedantic lints.
 cast_lossless = "allow"
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
@@ -304,7 +147,7 @@ struct_excessive_bools = "allow"
 struct_field_names = "allow"
 too_many_lines = "allow"
 
-# Restriction lints (no safe umbrella group — kept itemised).
+# Restriction lints (no safe umbrella group).
 dbg_macro = "warn"
 exit = "warn"
 float_cmp_const = "warn"
@@ -317,7 +160,7 @@ todo = "warn"
 unimplemented = "warn"
 verbose_file_reads = "warn"
 
-# Nursery picks (the nursery group as a whole is too unstable to enable).
+# Nursery picks (the group as a whole is too unstable).
 debug_assert_with_mut_call = "warn"
 fallible_impl_from = "warn"
 trait_duplication_in_bounds = "warn"

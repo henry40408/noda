@@ -5,21 +5,16 @@ edition = "2024"
 publish = false
 description = "Browser end-to-end tests for `noda web`"
 
-# Deliberately its own workspace, not a member of the one at the repository
-# root. `cargo nextest run` at the root is the suite everybody runs, and it
-# should not compile a WebDriver client and drive a real browser to answer
-# whether `noda ls` still works. Running these is a separate decision, taken by
-# running them.
+# Its own workspace, so the root `cargo nextest run` never compiles a WebDriver
+# client or needs a browser.
 [workspace]
 
 [dependencies]
 anyhow = "1.0.104"
-# Reads the same Gherkin the features are written in, so what a scenario says
-# is independent of what runs it.
 cucumber = "0.23.0"
 serde_json = "1.0.151"
-# Pinned exactly: 0.37.5 was published 2026-08-12, inside the seven-day cooldown
-# this project applies to fresh releases. Relax to a caret once it has aged out.
+# Pinned exactly: 0.37.5 (2026-08-12) was inside the seven-day cooldown for new
+# releases. Relax to a caret once it has aged out.
 thirtyfour = "=0.37.4"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
 
@@ -27,9 +22,8 @@ tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
 name = "e2e"
 harness = false
 
-# Mirrors the root crate's lint set, minus the entries that only apply to the
-# program. A separate workspace inherits none of it, and test code that lints
-# differently from the code it tests drifts.
+# The root crate's lint set minus program-only entries; a separate workspace
+# inherits none of it.
 [lints.rust]
 unexpected_cfgs = "deny"
 unsafe_code = "deny"

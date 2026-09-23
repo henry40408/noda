@@ -1,19 +1,13 @@
 Feature: Getting around the notebook
 
-  Four places and one action, told apart by not being in the same row. Notes,
-  Tags, Todo and Files are somewhere to go and they sit on the bar; New is
-  something to do, and it is the round button above it. The bar also answers
-  "where am I" — the screen you are on is the one marked on it.
+  Notes, Tags, Todo and Files are places and sit on the bar, which marks the
+  current one; New is an action, the round button above it.
 
-  An earlier design left the listing off the bar, on the argument that the bar
-  held the places you go *from* it. Two things undid that: a rail is read as a
-  list of where you can be, and one missing the place you spend most of your
-  time reads as an omission; and on a screen wide enough to hold both panes the
-  listing is no longer somewhere you leave.
+  The listing is on the bar because a rail missing the place you spend most
+  time reads as an omission, and with two panes the listing is never left.
 
-  The one screen that is not on it is the network screen, which is about the
-  notebook rather than about anything inside it. The chip in the corner reaches
-  that one.
+  The network screen is about the notebook, not inside it: the corner chip
+  reaches it and the bar does not.
 
   Scenario: The bar reaches the notes
     Given I open "/nb/default/tags"
@@ -60,9 +54,8 @@ Feature: Getting around the notebook
     Then I see a row for "Budget review"
     And I do not see a row for "Reading list"
 
-  # A tag may hold a space — a TiddlyWiki import leaves such things behind —
-  # and the field it lands in splits the way a shell does. Unquoted it would
-  # arrive as three terms and-ed together and find nothing at all.
+  # A TiddlyWiki import leaves tags with spaces, and the query splits like a
+  # shell, so unquoted this would be three terms and find nothing.
   Scenario: A tag with a space in it still finds its notes
     Given I open "/nb/default/tags"
     When I press "24.04 Dark patterns"

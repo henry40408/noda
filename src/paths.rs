@@ -1,6 +1,5 @@
-//! XDG base directory resolution, honoured on every platform including macOS.
-//! Per the spec a variable only counts when it holds an absolute path; otherwise
-//! the default under `$HOME` applies.
+//! XDG base directories, honoured on every platform including macOS. Per the
+//! spec a variable counts only when it holds an absolute path.
 
 use std::path::{Path, PathBuf};
 
@@ -29,8 +28,8 @@ impl Paths {
         })
     }
 
-    /// All four roots under one directory. Used by tests, which cannot safely
-    /// mutate process-wide environment variables in parallel.
+    /// All four roots under one directory, for tests, which cannot safely mutate
+    /// process-wide env in parallel.
     pub fn rooted(root: impl AsRef<Path>) -> Self {
         let root = root.as_ref();
         Self {
@@ -57,7 +56,7 @@ impl Paths {
         self.notebooks_dir().join(name)
     }
 
-    /// Pointer to the active notebook. Deliberately in state, not in the synced data.
+    /// In state, not in the synced data.
     pub fn active_file(&self) -> PathBuf {
         self.state.join("active")
     }
@@ -72,8 +71,7 @@ impl Paths {
 
     pub fn active_notebook(&self) -> Result<String> {
         let file = self.active_file();
-        // A missing pointer gets the ordinary advice; an unreadable one must say
-        // so instead, because `noda init` will not fix it.
+        // An unreadable pointer is reported as such: `noda init` will not fix it.
         let name = match std::fs::read_to_string(&file) {
             Ok(name) => name,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -108,7 +106,6 @@ mod tests {
 
     #[test]
     fn relative_xdg_value_falls_back_to_home_default() {
-        // The spec says a relative XDG_* value must be ignored.
         let home = Path::new("/home/someone");
         assert_eq!(
             xdg("NODA_TEST_UNSET_VAR", home, ".config"),

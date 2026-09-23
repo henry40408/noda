@@ -1,8 +1,8 @@
 # noda — PR/FAQ
 
-> **Working Backwards artifact.** This is written *as if noda has already shipped*, to
-> pin down who it is for and what problem it solves before a line of product code exists.
-> Status: design draft — not yet implemented.
+> **Working Backwards artifact.** Written *as if noda had already shipped*, to pin down who it is
+> for and what problem it solves before any product code existed. Kept as the record of those
+> decisions; README.md is the current contract.
 
 ---
 
@@ -10,122 +10,103 @@
 
 **noda 1.0 — your notes are just a git repo, and the terminal is the fastest way in**
 
-*2026-07-25* — Today we're releasing **noda**, a git-native notebook for the command
-line. Every note you take is a plain Markdown file in an ordinary git repository, so your
-knowledge base is versioned, diffable, syncable, and yours — no proprietary format, no
-lock-in, no cloud account required.
+*2026-07-25* — Today we're releasing **noda**, a git-native notebook for the command line. Every
+note is a plain Markdown file in an ordinary git repository, so your knowledge base is versioned,
+diffable, syncable, and yours — no proprietary format, no lock-in, no cloud account.
 
-People who live in the terminal have always faced a bad trade-off for notes. Cloud
-note apps are fast to write in but hold your data hostage in opaque formats and sync
-through someone else's server. Plain files in a folder are portable but give you no
-history, no search, and no easy way to sync across machines. Existing git-backed tools
-either bury you in raw `git` commands or wrap everything in a heavy GUI.
+Terminal users have faced a bad trade-off for notes. Cloud note apps are fast to write in but hold
+your data in opaque formats and sync through someone else's server. Plain files in a folder are
+portable but have no history, no search, and no easy sync. Existing git-backed tools either bury
+you in raw `git` commands or wrap everything in a heavy GUI.
 
-noda closes the gap. `noda add "meeting notes"` drops you into your editor and, the moment
-you save, commits the note to git automatically. `noda ls` lists everything by a short
-id *or* a human-readable slug — use whichever your fingers reach for first.
-`noda sync` pushes and pulls to GitHub, GitLab, or any git host over HTTPS or SSH, with
-the transport compiled straight into the single static binary — nothing to install, no
-system libraries to chase down.
+noda closes the gap. `noda add "meeting notes"` opens your editor and commits the note when you
+save. `noda ls` lists everything by a short id *or* a readable slug — use either. `noda sync`
+pushes and pulls to GitHub, GitLab, or any git host over HTTPS or SSH, with the transport compiled
+into the single static binary — nothing to install.
 
-Because a notebook *is* a git repo, you get things other note apps charge for, for free:
-full per-note history (`noda log`), point-in-time restore (`noda restore`), branching,
-and honest offline-first behavior. And because noda keeps multiple notebooks — one repo
-each — you can keep `work` and `personal` cleanly separated and pointed at different
-remotes.
+Because a notebook *is* a git repo, you get per-note history (`noda log`), point-in-time restore
+(`noda restore`), branching, and honest offline-first behaviour for free. Multiple notebooks — one
+repo each — keep `work` and `personal` separate and pointed at different remotes.
 
-"I wanted my notes to outlive any app I happen to be using this year," said the author.
-"Git already solved durable, syncable, versioned text. noda is just the smallest possible
-layer that makes git feel like a notebook."
+"I wanted my notes to outlive any app I happen to be using this year," said the author. "Git
+already solved durable, syncable, versioned text. noda is just the smallest possible layer that
+makes git feel like a notebook."
 
-noda builds to a single self-contained binary — statically linked musl on Linux, native on
-macOS — and is distributed as a container image on `ghcr.io` for `linux/amd64` and
-`linux/arm64`. Anywhere else, `cargo build --release` produces the same one file. It is
-open source.
+noda builds to a single self-contained binary — statically linked musl on Linux, native on macOS —
+and is distributed as a container image on `ghcr.io` for `linux/amd64` and `linux/arm64`.
+Anywhere else, `cargo build --release` produces the same one file. It is open source.
 
 ---
 
 ## Customer FAQ
 
 **Q: What exactly is a "notebook"?**
-A git repository. `noda notebook add work` creates one; `noda use work` makes it the
-active notebook. Each notebook can point at its own remote, so `work` can live on your
-company GitLab while `personal` lives on GitHub.
+A git repository. `noda notebook add work` creates one; `noda use work` makes it active. Each
+notebook has its own remote, so `work` can live on your company GitLab and `personal` on GitHub.
 
 **Q: Do I need to know git to use it?**
-No. Day to day you use `noda add / ls / edit / sync` and never touch git. But nothing is
-hidden — it's a normal repo, so `cd` in and run `git log` anytime. noda never does
-anything to the repo you couldn't inspect or undo with git.
+No. Day to day you use `noda add / ls / edit / sync`. Nothing is hidden — it's a normal repo, so
+`cd` in and run `git log` anytime. noda never does anything you couldn't inspect or undo with git.
 
 **Q: How do I refer to a note?**
-By a short **id** or by its **slug**. A note's filename is `<id>-<slug>.md`: the id is a
-stable Crockford base32 code that never changes, even across renames, and the slug is
-derived from the title. A slug is matched whole; an id is matched by any prefix that names
-exactly one note, the same bargain git makes with object ids — so `noda show k3f9` works
-without you typing all eight characters. An ambiguous key is an error listing the
-candidates, never a guess, and there are no positional numbers to reshuffle.
+By a short **id** or by its **slug**. A note's filename is `<id>-<slug>.md`: the id is a stable
+Crockford base32 code that never changes, even across renames, and the slug comes from the title.
+A slug is matched whole; an id by any prefix naming exactly one note, as git does with object ids —
+so `noda show k3f9` works. An ambiguous key is an error listing the candidates, never a guess, and
+there are no positional numbers to reshuffle.
 
 **Q: Will ids get scrambled when I sync across machines?**
-No. The id is the filename, so it is part of the synced state by construction — machine A
-and machine B always agree that `k3f9m2p1` is the same note, and there is nothing derived
-that could drift away from it. Two machines that each add a note write two different
-filenames, so the merge is clean and noda has nothing to reconcile afterwards.
+No. The id is the filename, so it is part of the synced state by construction, and nothing derived
+can drift from it. Two machines that each add a note write two different filenames, so the merge is
+clean.
 
-In the rare event two machines mint the same id offline, git still merges them without
-complaint — the filenames differ, because the slugs do — and `noda status` reports the
-collision. noda will not settle it: both files are real notes, and keeping one identity
-means discarding the other's. Renaming one of the files is a person's call.
+If two machines mint the same id offline, git still merges them — the slugs differ, so the
+filenames do — and `noda status` reports the collision. noda will not settle it: both files are
+real notes, and renaming one is a person's call.
 
 **Q: Does it work offline?**
-Always. Writing, editing, searching, and history are 100% local git operations. `noda
-sync` is the only command that touches the network, and only when you run it.
+Always. Writing, editing, searching and history are local git operations. Only the commands that
+talk to a remote — `sync`, `push`, `pull`, `clone` — touch the network, and only when you run them.
 
 **Q: Can I use my existing notes repo?**
-Yes. `noda clone <url>` pulls an existing remote, and pointing noda at a directory of
-Markdown files adopts them in place.
+Yes. `noda clone <url>` pulls an existing remote, and pointing noda at a directory of Markdown
+files adopts them in place.
 
 **Q: Can I keep images or PDFs in a notebook?**
-Yes. `noda file add ~/Downloads/diagram.png` puts one in the active notebook and commits it,
-and `noda file rm diagram.png` takes it out again — you never need to know where on disk the
-notebook lives. The file is synced like anything else, and a note points at it with an
-ordinary Markdown link, so the note still renders correctly in any other Markdown reader.
-`noda ls` lists those files under their own heading and `noda status` counts them.
-`noda doctor --links` follows every link and tells you which files no note uses and which
-links name nothing — it only reports, and it never deletes.
+Yes. `noda file add ~/Downloads/diagram.png` puts one in the active notebook and commits it, and
+`noda file rm diagram.png` takes it out — you never need to know where the notebook lives. The file
+syncs like anything else, and a note points at it with an ordinary Markdown link, so it renders in
+any Markdown reader. `noda ls` lists files under their own heading and `noda status` counts them.
+`noda doctor --links` reports files no note uses and links that name nothing; it never deletes.
 
 **Q: How do I use a note with pandoc, or open an attachment in something else?**
 `noda path` prints where it lives: `pandoc "$(noda path meeting-notes)" -o notes.pdf`,
-`open "$(noda path diagram.png)"`, `cd "$(noda path)"`. noda does not wrap your toolchain,
-so rather than growing a verb per tool it tells you the one thing those tools need. The
-argument is resolved as a note first — by id prefix or slug — and then as a file by name; a
-key that means both is an error naming both.
+`open "$(noda path diagram.png)"`, `cd "$(noda path)"`. Rather than a verb per tool, noda gives the
+one thing those tools need. The argument resolves as a note first (id prefix or slug), then as a
+file by name; a key that means both is an error naming both.
 
 **Q: Is there anything more interactive than one command at a time?**
-`noda tui` opens the notebook as a screen you can go into and come back out of: the listing,
-the same query language `noda search` takes narrowing it as you type, and `Enter` to open
-what the cursor is on as a screen of its own. The keys that change a note ask the commands to
-do it — `e` runs `noda edit`, `#` runs `noda tag` — so that what a change means (validate,
-stamp `updated`, commit) has exactly one implementation and it is the one every command
-already uses. Nothing in the browser writes a note itself.
+`noda tui` opens the notebook as a screen: the listing, narrowed as you type in the query language
+`noda search` takes, and `Enter` to open what the cursor is on. Keys that change a note run the
+commands — `e` runs `noda edit`, `#` runs `noda tag` — so validating, stamping `updated` and
+committing have exactly one implementation. Nothing in the browser writes a note itself.
 
 **Q: What about a web UI?**
-`noda web` serves the notebooks over HTTP, for reading and writing them from a phone. It
-renders on the server and needs no JavaScript; because storage is just git, it works on the
-exact same files the CLI does, and every change runs the command the terminal would have run
-— so each lands as its own commit with the message it would have had. Notes are rendered,
-attachments are served, and the notebook syncs: pressing Sync starts it and answers straight
-away, and the screen you land on says how it is going until it stops. What is left is the
-enhancement layer — filtering as you type, over pages that already work without a script.
+`noda web` serves the notebooks over HTTP, for reading and writing from a phone. It renders on the
+server and needs no JavaScript, works on the same files the CLI does, and every change runs the
+command the terminal would have run, landing as its own commit. Notes are rendered, attachments
+served, and Sync starts at once and answers straight away, with the landing page reporting progress
+until it stops. Scripting is only an enhancement — filtering as you type, over pages that already
+work without it.
 
-An edit carries the note's git blob id and a stale one is refused, with both versions handed
-back so nothing typed is lost. The blob id and not the `updated` stamp: `--no-touch` exists
-precisely so content can change without that stamp moving.
+An edit carries the note's git blob id. A stale one is merged with what changed meanwhile, and
+refused only where the two overlap, with both versions handed back so nothing typed is lost. The blob id and not the `updated` stamp, because `--no-touch` exists so
+content can change without that stamp moving.
 
-There is no password on it, deliberately: it listens on your own machine until told
-otherwise, and the way to reach it from elsewhere is a tailnet or something in front of it
-that already does authentication. What it does carry is the two protections that need no
-account — it refuses requests that say they came from another site, and it answers to a
-hostname only when started with that name.
+There is deliberately no password: it listens on your own machine unless told otherwise, and the
+way to reach it from elsewhere is a tailnet or an authenticating proxy. It carries the two
+protections that need no account — it refuses requests that say they came from another site, and
+answers to a hostname only when started with that name.
 
 ---
 
@@ -133,175 +114,145 @@ hostname only when started with that name.
 
 **Q: Why compile HTTPS *and* SSH transport into every binary instead of making them
 optional features?**
-Because the two hosts every user actually targets — GitHub and GitLab — are reached over
-HTTPS or SSH. A build that omits them produces a notebook that can't sync to the services
-100% of users use, which is a support trap, not a saving. We accept the cost: the binary
-grows from ~1.0 MB to ~5.6 MB and build time roughly triples, because libgit2, OpenSSL,
-and libssh2 are all vendored and compiled from source. This was validated by
-cross-compiling to `x86_64` and `aarch64` `-unknown-linux-musl` via cargo-zigbuild.
+The hosts users actually target — GitHub and GitLab — are reached over HTTPS or SSH. A build
+without them cannot sync to what everyone uses, which is a support trap, not a saving. The cost is
+accepted: the binary grows from ~1.0 MB to ~5.6 MB and build time roughly triples, because
+libgit2, OpenSSL and libssh2 are vendored and compiled from source. Validated by cross-compiling to
+`x86_64` and `aarch64` `-unknown-linux-musl` via cargo-zigbuild.
 
 **Q: Why git2/libgit2 rather than shelling out to the `git` binary?**
-A single static binary with no runtime dependency on a system `git` is the whole
-distribution story (one file, musl, arm64). Shelling out would reintroduce a runtime
-dependency and fragile output parsing. Trade-off accepted; if we ever need a transport
-libgit2 lacks, we can selectively shell out for that one operation.
+A single static binary with no runtime dependency on a system `git` is the whole distribution
+story (one file, musl, arm64). Shelling out would bring back that dependency and fragile output
+parsing. If we ever need a transport libgit2 lacks, we can shell out for that one operation.
 
 **Q: Why is a note's id in its filename rather than in its frontmatter?**
-Because that is where git can enforce it. An earlier design put the id in the frontmatter
-and kept a committed `id ↔ slug` index beside the notes; this replaced both.
+Because that is where git can enforce it. An earlier design put the id in the frontmatter and kept
+a committed `id ↔ slug` index beside the notes; this replaced both.
 
-git's own conventions decided it. git gives unchanging things an identity from their content
-(a blob's hash) and changing things a name (a branch, a tag) — a note is a changing thing,
-so it gets a name. git commits no bookkeeping of its own: refs, the staging index and the
-reflog all live outside the tree, which is precisely why git never has to merge them. And
-where git does keep a mutable map, it is one file per name — two people creating two branches
-create two files, not two edits to one.
+git's conventions decided it. git names changing things (branches, tags) and gives content an
+identity by hash; a note changes, so it gets a name. git commits none of its own bookkeeping —
+refs, the index and the reflog live outside the tree, which is why git never merges them. And
+where git keeps a mutable map, it is one file per name, so two new branches are two files, not two
+edits to one.
 
-Every problem the old design had came from breaking those rules. Two notebooks that each
-added a note both appended to the index, so it conflicted on nearly every divergent sync and
-noda needed a special case to rebuild it. The frontmatter could be edited to claim an id the
-index never minted, so `edit` needed a guard, `sync` needed a refusal, and `mv`, `rm` and
-`restore` each needed rules for which entry to move. Putting the id in the path deletes all
-of it: uniqueness is structural (git forbids duplicate paths in a tree), the ids of two
-concurrently-added notes cannot collide into one file, and there is no second copy of
-anything to keep in step.
+The old design broke those rules. Two notebooks that each added a note both appended to the index,
+which conflicted on nearly every divergent sync and needed a special case to rebuild. The
+frontmatter could claim an id the index never minted, so `edit` needed a guard, `sync` a refusal,
+and `mv`, `rm` and `restore` rules for which entry to move. The id in the path deletes all of it:
+uniqueness is structural (git forbids duplicate paths in a tree), two concurrently-added notes
+cannot collide into one file, and there is no second copy to keep in step.
 
-It also made history simpler rather than harder. `noda log <note>` followed a rename by
-reading the index committed alongside each commit; now it looks for the tree entry carrying
-that id prefix. Every commit records the filenames, so every commit already records the map.
+History got simpler too. `noda log <note>` used to follow a rename through the index committed
+with each commit; now it looks for the tree entry carrying that id. Every commit already records
+the map.
 
 **Q: Why is the container image the only distribution channel?**
-Because it is the only one that can be kept honest. crates.io and Homebrew are promises to
-keep publishing — a formula to maintain, a version to bump, a name to defend — and the
-earlier draft of this document made all three before any of them existed. The image is
-built by the same workflow that already cross-compiles the binary, so distribution costs
-nothing beyond the push, and there is no channel that can quietly go stale. Anyone who
-wants the binary itself still gets it from `cargo build --release`; running a CLI through
-a container is a real inconvenience, and one an alias absorbs.
+Because it is the only one that can be kept honest. crates.io and Homebrew are promises to keep
+publishing — a formula to maintain, a version to bump, a name to defend — and an earlier draft of
+this document made all three before any existed. The image is built by the workflow that already
+cross-compiles the binary, so it costs nothing beyond the push and cannot quietly go stale. The
+binary itself is still one `cargo build --release` away; running a CLI through a container is an
+inconvenience an alias absorbs.
 
 **Q: Why does `search` have no index?**
-Measured on 5000 notes totalling 12.4 MiB: `noda search` takes 68 ms for a term almost
-nothing matches and 82 ms when nearly everything does, against 67 ms for `noda ls`, which
-already opens and parses every note. Ripgrep over the same tree takes 56 ms and `git grep`
-55 ms, so a plain scan is already within a whisker of tools built for this. The cost is
-dominated by opening five thousand files, not by matching bytes — which is why searching
-costs about what listing costs, and why both are imperceptible at the hundreds-of-notes
-sizes that are actually common. An index would buy
-maybe 50 ms at 5000 notes and cost a staleness story, a `reindex` command, invalidation
-after every `pull`, and a corruption path. v1 declines that trade. If notebooks in the tens
-of thousands turn up, a cache is a cache: it can be added later without changing anything
-the user's repository holds.
+Measured on 5000 notes totalling 12.4 MiB: `noda search` takes 68 ms for a term almost nothing
+matches and 82 ms when nearly everything does, against 67 ms for `noda ls`, which already opens
+and parses every note. ripgrep takes 56 ms and `git grep` 55 ms on the same tree. The cost is
+opening five thousand files, not matching bytes, so searching costs about what listing does, and
+both are imperceptible at the hundreds of notes that are common. An index would save maybe 50 ms at
+5000 notes and cost a staleness story, a `reindex` command, invalidation after every `pull`, and a
+corruption path. v1 declines that trade. A cache can be added later without changing anything the
+repository holds.
 
 **Q: Why is the command `noda file add <path>` rather than `noda attach <note> <file>`?**
 Because the file goes into the notebook, not into a note.
 
-An earlier draft of this document argued there should be no command at all: a notebook is a
-directory, `cp` already puts a file in one, and a verb wrapping `cp` would be ceremony the
-filesystem already provides. That was wrong, and the sentence it produced in the README is
-what showed it — `cp ~/Downloads/diagram.png ~/.local/share/noda/notebooks/work/`. Every
-other thing you can do to a notebook, noda does; that line sent you to find noda's own
-directory and operate the storage by hand, and it was only correct when `XDG_DATA_HOME` was
-unset and the notebook happened to be called `work`. A command that saves someone from
-knowing where their data lives is not ceremony.
+An earlier draft argued for no command at all: `cp` already puts a file in a directory. That was
+wrong, and the README sentence it produced showed it —
+`cp ~/Downloads/diagram.png ~/.local/share/noda/notebooks/work/` sent you to find noda's storage
+and operate it by hand, and was only correct with `XDG_DATA_HOME` unset and a notebook called
+`work`. A command that saves someone from knowing where their data lives is not ceremony.
 
-What stayed rejected is the *note* argument. Which note uses a file is written in that
-note's prose as a Markdown link; a command that also took a note would record the same
-relationship in two places, and they would disagree the first time anyone edited one of
-them.
+The *note* argument stayed rejected. Which note uses a file is written in that note's prose as a
+Markdown link; a command that also took a note would record the relationship twice, and the two
+would disagree at the first edit.
 
-Tying an attachment to a note by naming it `<note-id>-diagram.png` was rejected for a
-different reason again. It is nearly free to check — ownership would be structural, readable
-from a directory listing without opening a single note — but it asks a person to encode a
-relationship in a filename by hand, and to keep encoding it. That is a mental burden the
-model puts on the user in exchange for a saving the machine enjoys, which is the wrong way
-round. It also breaks the id-prefix bargain: `k3f9m2p1-diagram.md` and its owning note share
-a prefix, so `noda show k3f9` becomes ambiguous.
+Naming an attachment `<note-id>-diagram.png` was rejected too. Ownership would be structural and
+cheap to check, but it makes a person encode and maintain a relationship by hand for a saving the
+machine enjoys. It also breaks the id-prefix bargain: `k3f9m2p1-diagram.md` shares a prefix with
+its note, so `noda show k3f9` becomes ambiguous.
 
-What is left is the honest reading — a file is used if a note links to it — and that has to
-be read with a CommonMark parser rather than a text search. A reference-style link holds its
-destination at the bottom of the file, so the paragraph using it never contains the
-filename; `%20` in a destination is a space on disk; and a link inside a fenced code block
-is prose about a link. Each of those turns a used file into a reported one, and a report
-about unused files that cries wolf is a report nobody reads. The cost is a read of every
-note — `search`'s cost, not `ls`'s — which is why it sits behind `--links` rather than
-running on every `status`.
+What is left: a file is used if a note links to it, read with a CommonMark parser rather than a
+text search. A reference-style link keeps its destination at the bottom of the file, `%20` in a
+destination is a space on disk, and a link in a fenced code block is prose about a link; each
+would turn a used file into a reported one, and an unused-file report that cries wolf goes unread.
+The cost is reading every note — `search`'s cost, not `ls`'s — which is why it sits behind
+`--links` rather than running on every `status`.
 
 **Q: Why do `noda file mv` and `noda mv` edit notes only when asked, when they know exactly
 which links they just broke?**
-Because it would be the first time noda changed prose the command was not pointed at. Every
-other write is to the thing named on the command line: `tag` rewrites one note's
-frontmatter, `mv` renames one note's file. A rename that silently reached into three other
-notes and rewrote their bodies is a different kind of act, however correct each individual
-edit is, and it should be asked for.
+Because it would be the first time noda changed prose the command was not pointed at. Every other
+write is to the thing named on the command line. A rename that reached into three other notes and
+rewrote their bodies is a different kind of act, however correct, and should be asked for.
 
-Reporting is not a lesser answer either. It is the same rule the orphan check already
-follows — say what is true, let the person decide — and it is what makes `--update-links`
-safe to offer at all: the rewrite is checked by re-reading the notes afterwards, so a
-destination written with backslash escapes, which cannot be located in the source, is
-reported as still pointing at the old name rather than assumed fixed.
+Reporting follows the orphan check's rule — say what is true, let the person decide — and is what
+makes `--update-links` safe to offer: the rewrite is checked by re-reading the notes afterwards, so
+a destination written with backslash escapes, which cannot be located in the source, is reported as
+still pointing at the old name rather than assumed fixed.
 
-The two renames differ in what they match, and only in that. An attachment's name is the whole
-of its identity, so `file mv` looks for the name it just left. A note keeps its id across every
-retitle, so `mv` looks for that — which catches a destination written two renames ago, the one
-an exact-name match walks past while leaving it stale.
+The two renames differ only in what they match. An attachment's name is its whole identity, so
+`file mv` looks for the name it just left. A note keeps its id across retitles, so `mv` looks for
+the id — which also catches a destination written two renames ago.
 
 **Q: Why does the search grammar have `OR` but no parentheses, and why does `OR` bind
 tighter than a space?**
-Because those two choices are the same choice. A query language compounds — `tag:` invites
-`OR`, `OR` invites parentheses, parentheses invite precedence rules nobody remembers — so
-the grammar is fixed at one shape: an AND of ORs, four lines, written into the README.
+Because those are the same choice. A query language compounds — `tag:` invites `OR`, `OR` invites
+parentheses, parentheses invite precedence rules nobody remembers — so the grammar is fixed at one
+shape: an AND of ORs, four lines, written into the README.
 
-Binding `OR` tighter than the space is what makes that shape sufficient rather than
-crippled. `a OR b c OR d` reads as `(a OR b) AND (c OR d)`, and an AND of ORs is
-conjunctive normal form, which is every query expressible at all — so parentheses would add
-notation without adding power. Boolean algebra would have bound the other way and made
-`budget tag:x OR tag:y` mean `(budget AND tag:x) OR tag:y`, which is not what anybody
-listing two acceptable tags meant.
+Binding `OR` tighter than the space makes that shape sufficient. `a OR b c OR d` reads as
+`(a OR b) AND (c OR d)`, and an AND of ORs is conjunctive normal form, which expresses every
+query — so parentheses would add notation, not power. Boolean convention would make
+`budget tag:x OR tag:y` mean `(budget AND tag:x) OR tag:y`, which is not what anybody listing two
+acceptable tags meant.
 
-The one thing the grammar cannot express is `(a AND b) OR (c AND d)`. That is two searches,
-and running two searches is cheaper than a language nobody can predict.
+The grammar cannot write `(a AND b) OR (c AND d)` directly. That is two searches, which is cheaper
+than a language nobody can predict.
 
 **Q: Why hand-write the JSON instead of adding serde?**
-Because it is one object with five string fields, and the alternative is two crates and a
-derive macro on the dependency path of a tool whose whole distribution story is one small
-static binary. The part that has to be right is the escaping, and that is thirty lines with
-tests rather than a judgement call. This is the same trade the project already made for
-percent-decoding and for having no error-handling crate.
+Because it is one object with five string fields, and the alternative is two crates and a derive
+macro in a tool whose distribution story is one small static binary. The part that must be right is
+the escaping: thirty lines with tests. The project made the same trade for percent-decoding and for
+having no error-handling crate.
 
 **Q: If serde was too much dependency for five string fields, why is a whole UI library not
 too much for one screen?**
-Because the two are not the same size of problem. The JSON was thirty lines whose hard part
-was escaping; a browser has to hold a terminal in raw mode, put it back on the way out
-*including* when the process panics, survive a resize, measure a wide character before it can
-lay a column out, and redraw only the cells that changed. Hand-writing that is not an
-afternoon, and getting it subtly wrong leaves somebody's terminal unusable.
+Because the problems differ in size. The JSON was thirty lines whose hard part was escaping; a
+terminal UI must hold raw mode, restore the terminal on the way out *including* on panic, survive a
+resize, measure wide characters to lay out a column, and redraw only changed cells. Getting that
+subtly wrong leaves somebody's terminal unusable.
 
-The cost was measured rather than assumed, on the same harness the cold-start numbers come
-from: the release binary grows 243 KiB (6069 → 6312 KiB) and `noda ls` grows 0.10 ms
-(1.95 → 2.05 ms of its own time, both binaries in one run so the floor is shared). It is one
-dependency and not two — ratatui re-exports crossterm, so the backend, the terminal control
-and the key events all arrive through it — and its default features are off, which drops a
-calendar widget, a macro crate and a colour-space converter that a two-pane reader has no use
-for.
+The cost was measured on the cold-start harness: the release binary grows 243 KiB
+(6069 → 6312 KiB) and `noda ls` 0.10 ms (1.95 → 2.05 ms of its own time, both binaries in one run).
+It is one dependency, not two — ratatui re-exports crossterm — and its default features are off,
+dropping a calendar widget, a macro crate and a colour-space converter a two-pane reader does not
+need.
 
 **Q: Why does `noda ls -0` exist when `-q` already prints one record per line?**
-Because `noda file add` allows a space in a filename, so newline-separated output is not
-safe to hand to `xargs`, and a listing that is *nearly* safe is worse than one that is
-obviously not.
+Because `noda file add` allows a space in a filename, so newline-separated output is not safe for
+`xargs`, and a listing that is *nearly* safe is worse than one that is obviously not.
 
-It also turned out to be the one thing the test suite could not see. Every other test calls
-the command functions directly, where the behaviour lives — but `-0` is a promise about the
-bytes leaving the process, and the layer between the two ate them: the colour handling that
-makes a piped `noda show` byte-exact strips NUL along with the escape sequences it exists to
-remove, and the trailing newline every other command wants arrived after the last
-terminator. Machine-separated output now bypasses both, and one test runs the real binary to
-say so.
+It was also the one thing the test suite could not see. Other tests call the command functions
+directly, but `-0` is a promise about the bytes leaving the process, and the layer between ate
+them: the colour handling that makes a piped `noda show` byte-exact stripped NUL along with escape
+sequences, and the trailing newline other commands want arrived after the last terminator.
+Machine-separated output now bypasses both, and one test runs the real binary to prove it.
 
 **Q: What's explicitly *out* of scope for v1?**
-Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is:
-multiple git-backed notebooks, add/ls/show/edit/rm, id+slug addressing, full-text search,
-per-note history/restore, and HTTPS/SSH sync.
+Web UI, real-time collaboration, encryption-at-rest, mobile, and plugin systems. v1 is: multiple
+git-backed notebooks, add/ls/show/edit/rm, id+slug addressing, full-text search, per-note
+history/restore, and HTTPS/SSH sync. (`noda web`, answered above, came later.)
 
 **Q: How do we know it's working backwards and not feature-driven?**
-This document is the contract. A feature that doesn't serve a promise made in the press
-release or answer a customer FAQ above does not go into v1.
+This document is the contract. A feature that doesn't serve a promise in the press release or
+answer a customer FAQ above does not go into v1.

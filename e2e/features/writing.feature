@@ -1,10 +1,7 @@
 Feature: Writing from a phone
 
-  The forms are the newest thing here and the least like anything the terminal
-  does, which makes them the ones a browser has most to say about. Every one is
-  checked at a phone's width for the same three things a page has to get right
-  before it gets anything else right: reachable controls, no sideways scroll,
-  and a field a phone will not zoom in on.
+  Each form is checked at phone width for reachable controls, no sideways
+  scroll, and fields a phone will not zoom in on.
 
   Scenario: A note can be written, start to finish
     Given I open the notebook

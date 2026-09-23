@@ -1,5 +1,5 @@
-//! One error type for the whole crate, so commands can bubble up I/O, libgit2
-//! and plain human-readable failures without pulling in an error library.
+//! One error type for the crate — I/O, libgit2 or a human-readable message —
+//! without pulling in an error library.
 
 use std::fmt;
 
@@ -18,9 +18,8 @@ impl Error {
         Error::Msg(text.into())
     }
 
-    /// Rust leaves `SIGPIPE` ignored, so `noda log | head` comes back as a write
-    /// error instead of ending the process. Nothing is wrong and nobody is left
-    /// to tell.
+    /// Rust ignores `SIGPIPE`, so `noda log | head` surfaces as a write error;
+    /// nothing is wrong and nobody is left to tell.
     pub fn is_broken_pipe(&self) -> bool {
         matches!(self, Error::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe)
     }

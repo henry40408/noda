@@ -1,18 +1,16 @@
 //! `WikiText` to Markdown.
 //!
-//! Pure: text and a way to resolve a tiddler title in, Markdown and the list of
-//! untranslated constructs out. That makes all of it testable with `assert_eq!`,
-//! which matters more here than anywhere else — a conversion that goes wrong
-//! goes wrong silently, and the note still reads fine.
+//! Pure (text and a title resolver in, Markdown and the untranslated constructs
+//! out), so it is all testable with `assert_eq!` — which matters because a bad
+//! conversion fails silently.
 //!
 //! **Nothing is guessed.** What cannot be translated faithfully is copied
-//! through as written and named in [`Converted::left`]: unconverted `WikiText`
-//! is findable and fixable, and Markdown that looks right and says something
-//! else is neither.
+//! through as written and named in [`Converted::left`]: leftover `WikiText` is
+//! findable, Markdown that says something else is not.
 //!
-//! **Nothing is dropped.** Every character reaches the output, as markup or as
-//! text. `tests::text_survives_every_construct` mechanises that promise by
-//! stripping both sides back to their visible words.
+//! **Nothing is dropped.** Every character reaches the output as markup or
+//! text; `tests::no_word_is_lost` and `tests::no_word_is_lost_once_markdown_is_parsed`
+//! check it.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -20,8 +18,7 @@ use std::fmt::Write as _;
 /// The result of converting one tiddler's text.
 pub struct Converted {
     pub text: String,
-    /// Named for the note's `unconverted:` field. Sorted and deduplicated: a
-    /// description of the note, not a log of the walk.
+    /// For the note's `unconverted:` field, so sorted and deduplicated.
     pub left: BTreeSet<&'static str>,
 }
 
@@ -29,8 +26,7 @@ pub struct Converted {
 /// export holds no such tiddler.
 pub type Resolve<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
-/// Names land in the `unconverted:` field, so they read as an answer to "what
-/// is still `WikiText` in here".
+/// The names written into the `unconverted:` field.
 mod left {
     pub const TRANSCLUSION: &str = "transclusion";
     pub const MACRO: &str = "macro";
@@ -60,8 +56,8 @@ pub fn convert(text: &str, resolve: &Resolve) -> Converted {
     }
 }
 
-/// One walk down the lines. Everything that is not a block construct goes
-/// through [`inline`].
+/// One walk down the lines; everything not a block construct goes through
+/// `inline`.
 struct Blocks<'a> {
     out: String,
     left: BTreeSet<&'static str>,
@@ -75,14 +71,12 @@ impl Blocks<'_> {
         while i < lines.len() {
             let line = lines[i];
 
-            // First, and byte for byte: a converter that looks inside a fence
-            // finds `''` in somebody's Rust and turns it bold.
+            // First, and byte for byte: `''` in code is not bold.
             if line.trim_start().starts_with("```") {
                 i = self.fence(&lines, i);
                 continue;
             }
-            // A macro definition makes the tiddler a program, so nothing after
-            // it is safe to read as prose.
+            // A pragma makes the tiddler a program; nothing after it is prose.
             if line.starts_with('\\') && definition(line) {
                 self.left.insert(left::MACRO);
                 for rest in &lines[i..] {
@@ -116,15 +110,13 @@ impl Blocks<'_> {
                 i += 1;
                 continue;
             }
-            // Markdown has no definition list, so the line stands rather than
-            // being bent into a bullet that says something slightly different.
+            // Markdown has no definition list.
             if line.starts_with("; ") || line.starts_with(": ") {
                 self.left.insert(left::DEFINITION_LIST);
                 let _ = writeln!(self.out, "{line}");
                 i += 1;
                 continue;
             }
-            // The content survives and the styling is named.
             if line.trim_end() == "@@" || style_open(line) {
                 self.left.insert(left::STYLE);
                 let _ = writeln!(self.out, "{line}");
@@ -138,8 +130,8 @@ impl Blocks<'_> {
         }
     }
 
-    /// Untouched, closing fence included. An unterminated fence takes the rest
-    /// of the tiddler, as it does in every Markdown parser.
+    /// Untouched, closing fence included; an unterminated fence takes the rest,
+    /// as in Markdown.
     fn fence(&mut self, lines: &[&str], start: usize) -> usize {
         let _ = writeln!(self.out, "{}", lines[start]);
         for (offset, line) in lines[start + 1..].iter().enumerate() {
@@ -151,9 +143,9 @@ impl Blocks<'_> {
         lines.len()
     }
 
-    /// Decided as a whole. `GFM` has one header row and nothing else — no
-    /// footer, caption, class, merged cell or vertical alignment — so a table
-    /// using any of them is copied through rather than quietly losing a row.
+    /// Decided as a whole: `GFM` has only a header row, so a table with a
+    /// footer, caption, class, merged cell or vertical alignment is copied
+    /// through.
     fn table(&mut self, lines: &[&str], start: usize) -> usize {
         let end = lines[start..]
             .iter()
@@ -178,8 +170,7 @@ impl Blocks<'_> {
                 self.out.push_str(" |");
             }
             self.out.push('\n');
-            // `WikiText` has no delimiter row: a header is a row whose cells
-            // open with `!`, and otherwise there is no header at all.
+            // `WikiText` marks header cells with `!`; there may be no header.
             if n == 0 {
                 let header = cells.iter().all(|c| c.trim_start().starts_with('!'));
                 if header {
@@ -213,8 +204,8 @@ impl Blocks<'_> {
         lines.len()
     }
 
-    /// The prefix is read a character at a time: `*#` is a numbered item inside
-    /// a bullet, and only the last character decides this line's marker.
+    /// `*#` is a numbered item inside a bullet: the prefix's length is the
+    /// depth and its last character the marker.
     fn list_item(&mut self, prefix: &str, body: &str) {
         let depth = prefix.chars().count() - 1;
         for _ in 0..depth {
@@ -228,7 +219,6 @@ impl Blocks<'_> {
         self.out.push('\n');
     }
 
-    /// The inline pass over one line.
     fn inline(&mut self, line: &str) {
         let mut rest = line;
         while !rest.is_empty() {
@@ -242,14 +232,14 @@ impl Blocks<'_> {
         }
     }
 
-    /// `None` when there is none and the caller should take a character.
+    /// The length of the inline construct at `rest` it wrote, or `None` to take
+    /// one character.
     fn inline_at(&mut self, rest: &str) -> Option<usize> {
-        // Whole and first: a URL is full of `//` and `__`.
+        // First: a URL is full of `//` and `__`.
         if let Some(len) = url(rest) {
             self.out.push_str(&rest[..len]);
             return Some(len);
         }
-        // Inline code is literal, like a fence.
         if let Some(after) = rest.strip_prefix('`')
             && let Some(end) = after.find('`')
         {
@@ -266,8 +256,7 @@ impl Blocks<'_> {
         if let Some(len) = self.camel_case(rest) {
             return Some(len);
         }
-        // No Markdown at all. Copied to the end of their own syntax, so what
-        // follows reads as prose again.
+        // No Markdown equivalent: copied through to their closing syntax.
         for (open, close, name) in [("{{", "}}", left::TRANSCLUSION), ("<<", ">>", left::MACRO)] {
             if rest.starts_with(open) {
                 let len = rest.find(close).map_or(rest.len(), |n| n + close.len());
@@ -289,8 +278,7 @@ impl Blocks<'_> {
             return Some(len);
         }
 
-        // Recursing on the inside is what makes `//''both''//` work without a
-        // stack of its own.
+        // Recursing on the inside handles `//''both''//`.
         for (delim, open, close, name) in [
             ("''", "**", "**", None),
             ("//", "*", "*", None),
@@ -303,7 +291,7 @@ impl Blocks<'_> {
             if !rest.starts_with(delim) {
                 continue;
             }
-            // Punctuation, not markup: emphasis would run to the end.
+            // Unclosed: punctuation, not markup.
             let Some(end) = rest[delim.len()..].find(delim) else {
                 continue;
             };
@@ -319,13 +307,10 @@ impl Blocks<'_> {
         None
     }
 
-    /// In `WikiText` a link whether anybody meant it or not; `~CamelCase` turns
-    /// that off.
-    ///
-    /// Only the resolvable ones become links: against `TiddlyWiki`'s own
-    /// documentation fewer than a third name a tiddler, the rest being `GitHub`
-    /// and `JavaScript`. The `~` goes either way, saying "not a link" to a
-    /// language with no automatic links.
+    /// Always a link in `WikiText`; `~CamelCase` turns that off. Only those that
+    /// resolve become links: in `TiddlyWiki`'s own documentation fewer than a
+    /// third name a tiddler (the rest are the likes of `JavaScript`). The `~` is
+    /// dropped either way.
     fn camel_case(&mut self, rest: &str) -> Option<usize> {
         let (suppressed, word) = match rest.strip_prefix('~') {
             Some(after) => (true, after),
@@ -346,7 +331,7 @@ impl Blocks<'_> {
     fn image(&mut self, rest: &str) -> Option<usize> {
         let after = rest.strip_prefix("[img")?;
         let open = after.find('[')?;
-        // Width, class and style, which Markdown has nowhere to put.
+        // Width, class and style: Markdown has nowhere to put them.
         if !after[..open].trim().is_empty() {
             self.left.insert(left::IMAGE_ATTRIBUTES);
         }
@@ -356,20 +341,18 @@ impl Blocks<'_> {
             Some((caption, target)) => (caption, target),
             None => ("", body),
         };
-        // A binary tiddler's title or a filename. Unlike a link, an unresolved
-        // one is kept: it names a file the notebook is expected to gain, and
-        // `doctor --links` says whether it did.
+        // Unlike a link, an unresolved target is kept: it names a file the
+        // notebook is expected to gain, which `doctor --links` checks.
         let target = target.trim();
         let destination = self.resolved(target).unwrap_or_else(|| target.to_string());
         let _ = write!(self.out, "![{caption}]({destination})");
         Some("[img".len() + open + end + 2)
     }
 
-    /// The caption comes first in `WikiText` as in Markdown. The trap is that
-    /// `MediaWiki` puts it second, so habit writes the order the wrong way round
-    /// and the link still looks fine.
+    /// `[[caption|target]]`: caption first, as in Markdown (it is `MediaWiki`
+    /// that puts it second).
     fn link(&mut self, rest: &str) -> Option<usize> {
-        // `[ext[..]]` is outside the wiki, so its target is taken as written.
+        // `[ext[..]]` targets are taken as written.
         let (skip, after, external) = match rest.strip_prefix("[ext[") {
             Some(after) => ("[ext[".len(), after, true),
             None => ("[[".len(), rest.strip_prefix("[[")?, false),
@@ -387,8 +370,7 @@ impl Blocks<'_> {
         } else {
             self.resolved(target.trim())
         };
-        // A link to a file that will not exist is worse than the `WikiText`
-        // saying so, which `doctor` can be pointed at.
+        // Left as `WikiText` rather than linking to a file that will not exist.
         let Some(destination) = destination else {
             self.left.insert(left::LINK);
             self.out.push_str(&rest[..len]);
@@ -400,8 +382,7 @@ impl Blocks<'_> {
         Some(len)
     }
 
-    /// A URL or anchor as itself, a tiddler title as its filename, and `None`
-    /// for a tiddler the export does not hold.
+    /// A URL or anchor as itself, a tiddler title as its filename, or `None`.
     fn resolved(&self, target: &str) -> Option<String> {
         if url(target).is_some_and(|len| len == target.len()) || target.starts_with('#') {
             return Some(target.to_string());
@@ -409,8 +390,8 @@ impl Blocks<'_> {
         (self.resolve)(target)
     }
 
-    /// Escaped only where Markdown would read it as syntax: escaping every `_`
-    /// puts backslashes through every `snake_case` word in the notebook.
+    /// Escaped only where Markdown would read it as syntax, so `snake_case`
+    /// stays clean.
     fn escaped(&mut self, ch: char, at_line_start: bool) {
         let needs = match ch {
             '\\' | '`' | '*' | '[' | '<' => true,
@@ -430,8 +411,7 @@ fn heading(line: &str) -> Option<(String, &str, Styled)> {
     if level == 0 || level > 6 {
         return None;
     }
-    // The space after the marks is optional in `WikiText` — `!Heading` is one —
-    // so requiring it would leave the commonest form as prose.
+    // The space after the marks is optional: `!Heading` is a heading.
     let (rest, styled) = declassed(&line[level..]);
     Some(("#".repeat(level), rest.trim_start(), styled))
 }
@@ -452,10 +432,8 @@ fn list(line: &str) -> Option<(&str, &str, Styled)> {
 /// Whether a block construct carried CSS classes that were dropped.
 type Styled = bool;
 
-/// Strips the `.myClass.another` a heading or list item may carry between its
-/// marker and its text. The classes name a stylesheet noda does not have, so
-/// they go — but going is reported, because a name that vanishes without
-/// anybody saying so is the one thing this import may not do.
+/// Strips the `.myClass.another` a heading or list item may carry after its
+/// marker. noda has no stylesheet for them, so they go, but are reported.
 fn declassed(rest: &str) -> (&str, Styled) {
     match rest.strip_prefix('.') {
         Some(classes) => (classes.split_once(' ').map_or("", |(_, text)| text), true),
@@ -463,8 +441,8 @@ fn declassed(rest: &str) -> (&str, Styled) {
     }
 }
 
-/// `\define`, `\procedure` and the rest of the pragmas that make a tiddler a
-/// program rather than a note.
+/// `\define`, `\procedure` and the other pragmas that make a tiddler a
+/// program.
 fn definition(line: &str) -> bool {
     [
         "\\define",
@@ -485,8 +463,6 @@ fn style_open(line: &str) -> bool {
     line.starts_with("@@") && !line[2..].contains("@@")
 }
 
-/// A table row `GFM` can hold: no merged cells, no pseudo-rows, no vertical
-/// alignment.
 fn plain_row(row: &str) -> bool {
     let trimmed = row.trim_end();
     // `|…|h`, `|…|f`, `|…|c`, `|…|k` — header, footer, caption, class.
@@ -500,13 +476,12 @@ fn plain_row(row: &str) -> bool {
         .all(|cell| !matches!(cell.trim(), "~" | "<" | ">") && !cell.starts_with(['^', ',']))
 }
 
-/// A row's cells, without the bars that bound them.
 fn split_row(row: &str) -> Vec<&str> {
     let inner = row.trim_end().trim_start_matches('|').trim_end_matches('|');
     inner.split('|').collect()
 }
 
-/// The length of the URL at the head of `text`, if one starts here.
+/// The length of the URL at the head of `text`.
 fn url(text: &str) -> Option<usize> {
     let scheme = ["https://", "http://", "mailto:", "ftp://", "file://"]
         .iter()
@@ -514,14 +489,12 @@ fn url(text: &str) -> Option<usize> {
     let end = text[scheme.len()..]
         .find(|c: char| c.is_whitespace() || c == '|' || c == ']')
         .map_or(text.len(), |n| scheme.len() + n);
-    // A sentence's full stop is not part of its URL.
     let end = text[..end].trim_end_matches([',', '.', ';', ':']).len();
     Some(end)
 }
 
-/// The length of the `CamelCase` word at the head of `text`, if one starts
-/// here: two capitals with lower case between and after them, which is what
-/// `TiddlyWiki` treats as a link.
+/// The length of the `CamelCase` word at the head of `text`: two capitals with
+/// lower case between and after them.
 fn camel_len(text: &str) -> Option<usize> {
     let mut chars = text.char_indices();
     let (_, first) = chars.next()?;
@@ -545,13 +518,11 @@ fn camel_len(text: &str) -> Option<usize> {
         }
         end = at + ch.len_utf8();
     }
-    // A word must have lower case after its second capital too, or `IDs` and
-    // `HTMLPage` would be links nobody wrote.
+    // Lower case after the second capital too, so `IDs` is not a link.
     (second_capital && text[..end].ends_with(char::is_lowercase)).then_some(end)
 }
 
-/// An HTML tag opening here — as opposed to a `<` in prose, which is far more
-/// common and must stay a `<`.
+/// An HTML tag opening here, as opposed to a `<` in prose.
 fn html_tag(text: &str) -> bool {
     let after = text.strip_prefix('<').unwrap_or("");
     let after = after.strip_prefix('/').unwrap_or(after);
@@ -562,9 +533,7 @@ fn html_tag(text: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// A resolver that turns a title into the filename its slug would give it,
-    /// so a link's target words survive into the destination and the loss
-    /// invariant can hold links to the same standard as prose.
+    /// Keeps a title's words in the filename, so the loss tests see them.
     fn resolver(known: &[&str]) -> impl Fn(&str) -> Option<String> + use<> {
         let known: Vec<String> = known.iter().map(|t| (*t).to_string()).collect();
         move |title: &str| {
@@ -589,10 +558,8 @@ mod tests {
     #[test]
     fn headings_take_their_level_from_the_marks() {
         assert_eq!(text_of("!Top\n!!!Third\n"), "# Top\n### Third\n");
-        // Seven is not a heading in Markdown, so it is not one here either —
-        // and `!` needs no escaping, since only `![` opens anything.
+        // Seven is not a heading in Markdown; `!` alone needs no escaping.
         assert_eq!(text_of("!!!!!!!Seven\n"), "!!!!!!!Seven\n");
-        // A bare `!` that opens a sentence is punctuation, not a heading.
         assert_eq!(text_of("!!! Warning\n"), "### Warning\n");
     }
 
@@ -616,20 +583,15 @@ mod tests {
         assert_eq!(text_of("''bold''\n"), "**bold**\n");
         assert_eq!(text_of("//italic//\n"), "*italic*\n");
         assert_eq!(text_of("//''both''//\n"), "***both***\n");
-        // Already Markdown.
         assert_eq!(text_of("~~gone~~\n"), "~~gone~~\n");
     }
 
-    /// The rule that keeps a converter honest: punctuation that looks like a
-    /// delimiter but closes nothing is punctuation.
     #[test]
     fn an_unmatched_delimiter_stays_text() {
         assert_eq!(text_of("it cost 5'' of tape\n"), "it cost 5'' of tape\n");
         assert_eq!(text_of("a // b\n"), "a // b\n");
     }
 
-    /// A URL is full of `//`, and every one of them would otherwise open an
-    /// italic that runs to the end of the paragraph.
     #[test]
     fn a_url_is_not_read_as_emphasis() {
         assert_eq!(
@@ -645,9 +607,6 @@ mod tests {
         assert!(out.left.is_empty());
     }
 
-    /// The caption comes first in both languages. It is `MediaWiki` that puts it
-    /// second, and writing this from habit is how a link ends up pointing at its
-    /// own caption while still looking perfectly fine.
     #[test]
     fn a_captioned_link_keeps_caption_first() {
         let out = convert_with("[[the notes|Meeting Notes]]\n", &["Meeting Notes"]);
@@ -701,9 +660,6 @@ mod tests {
         );
     }
 
-    /// `GFM` has one header row and nothing else. A table using a footer, a
-    /// caption or a merged cell is left alone rather than flattened into one
-    /// that has quietly lost a row.
     #[test]
     fn a_table_markdown_cannot_hold_is_left_alone() {
         for table in [
@@ -755,8 +711,6 @@ mod tests {
         }
     }
 
-    /// `CamelCase` is a link in `WikiText` whether anybody meant it or not, and
-    /// `~` is how it is turned off. Neither survives into Markdown as a tilde.
     #[test]
     fn camel_case_links_only_where_it_resolves() {
         let out = convert_with("See CamelCase and JavaScript\n", &["CamelCase"]);
@@ -764,16 +718,13 @@ mod tests {
             out.text, "See [CamelCase](k3f9m2p1-camelcase.md) and JavaScript\n",
             "prose that names no tiddler stays prose"
         );
-        // The suppression mark is markup, not a character somebody typed.
         assert_eq!(text_of("~CamelCase stays text\n"), "CamelCase stays text\n");
-        // Neither is every capitalised word a link.
         assert_eq!(
             text_of("HTML and IDs and Hello\n"),
             "HTML and IDs and Hello\n"
         );
     }
 
-    /// Prose that means nothing in `WikiText` can mean something in Markdown.
     #[test]
     fn markdown_syntax_in_prose_is_escaped() {
         assert_eq!(text_of("2 * 3 * 4\n"), "2 \\* 3 \\* 4\n");
@@ -781,8 +732,7 @@ mod tests {
         assert_eq!(text_of("a < b\n"), "a \\< b\n");
     }
 
-    /// The notebook this import exists for is written in Chinese, and every
-    /// slice in here is taken by byte.
+    /// Every slice in this module is taken by byte.
     #[test]
     fn multibyte_text_survives_every_slice() {
         let out = convert_with(
@@ -828,11 +778,8 @@ fenced code stays exactly as written
 Prose in 中文，含有標點與空白。
 ";
 
-    /// Words, in the loosest sense that survives Chinese: runs of alphanumerics.
-    ///
-    /// `img` and `ext` are the two words that are syntax rather than content —
-    /// they name the construct, not anything a reader was meant to see — so they
-    /// are the only thing the invariant below forgives.
+    /// Runs of alphanumerics, which works for Chinese too. `img` and `ext` are
+    /// syntax, not content, so they are excluded.
     fn words(text: &str) -> BTreeSet<String> {
         text.split(|c: char| !c.is_alphanumeric())
             .filter(|w| w.chars().count() >= 3)
@@ -841,11 +788,8 @@ Prose in 中文，含有標點與空白。
             .collect()
     }
 
-    /// The promise, mechanised: **no text disappears**. Every word in the source
-    /// is somewhere in the output, as prose, as markup, or as `WikiText` that
-    /// was left alone. A converter that swallows a paragraph, drops a table row
-    /// or eats the far side of a delimiter fails here and nowhere else — which
-    /// is the whole reason this test exists rather than a pile of golden files.
+    /// Every source word is somewhere in the output: a swallowed paragraph,
+    /// table row or delimiter's far side fails here and nowhere else.
     #[test]
     fn no_word_is_lost() {
         let out = convert_with(EVERYTHING, &["Meeting Notes", "Some Tiddler"]);
@@ -855,10 +799,7 @@ Prose in 中文，含有標點與空白。
         assert!(missing.is_empty(), "these words vanished: {missing:?}");
     }
 
-    /// The same promise held against the Markdown as a reader sees it, rather
-    /// than as the file spells it. `pulldown-cmark` is already in the tree for
-    /// reading links, and here it answers the harder question: does the prose
-    /// still say what it said, once a Markdown parser has had its turn?
+    /// The same, against the Markdown as parsed rather than as spelled.
     #[test]
     fn no_word_is_lost_once_markdown_is_parsed() {
         use pulldown_cmark::{Event, Parser, Tag};
@@ -871,9 +812,8 @@ Prose in 中文，含有標點與空白。
                     rendered.push_str(&t);
                     rendered.push(' ');
                 }
-                // A destination is carried rather than displayed — in `WikiText`
-                // as much as in Markdown — so it counts as survived. What the
-                // invariant is looking for is text that reached neither.
+                // A destination is carried, not displayed, in both languages, so
+                // it counts as survived.
                 Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
                     rendered.push_str(&dest_url);
                     rendered.push(' ');

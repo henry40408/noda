@@ -39,14 +39,10 @@ fn initialized() -> (TempRoot, Paths) {
     (root, paths)
 }
 
-/// Turns signing off for a test notebook, before anything commits.
-///
-/// The XDG roots are per-test and git's are not: libgit2 reads the real
-/// `~/.config/git/config`, so a developer with `commit.gpgsign = true` would
-/// send every test to gpg — slowly, and on a locked keyring not at all. noda's
-/// own setting outranks git's, which is what makes one line enough.
-///
-/// Tests that write `config.toml` wholesale say `sign = false` themselves.
+/// Turns signing off before anything commits. libgit2 reads the developer's real
+/// `~/.config/git/config`, so `commit.gpgsign = true` would send every test to
+/// gpg; noda's setting outranks git's. Tests that write `config.toml` wholesale
+/// set `sign = false` themselves.
 fn unsigned(paths: &Paths) {
     std::fs::create_dir_all(paths.config_dir()).expect("config dir");
     std::fs::write(paths.config_dir().join("config.toml"), "sign = false\n").expect("config");
@@ -59,14 +55,12 @@ fn commit_count(notebook: &Path) -> usize {
     walk.count()
 }
 
-/// The id and the slug out of the `id  slug  [tags]` line every mutating
-/// command prints.
+/// The id and slug from the `id  slug  [tags]` line mutating commands print.
 fn parts(summary: &str) -> (&str, &str) {
     let (id, rest) = summary.split_once("  ").expect("id and slug");
     (id, rest.split("  ").next().expect("slug"))
 }
 
-/// The file a note lives in, from that same line.
 fn note_file(summary: &str) -> String {
     let (id, slug) = parts(summary);
     format!("{id}-{slug}.md")
@@ -104,8 +98,7 @@ fn add_writes_the_id_into_the_filename_and_commits() {
 
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let text = std::fs::read_to_string(notebook.join(format!("{id}-meeting-notes.md"))).unwrap();
-    // The identity is the filename; the frontmatter carries only what a person
-    // wrote, so there is nothing in the file to fall out of step with the name.
+    // The identity is the filename; nothing in the file can disagree with it.
     assert!(!text.contains("id:"), "{text}");
     assert!(text.contains("title: Meeting Notes"), "{text}");
     assert!(text.ends_with("agenda\n"), "{text}");
@@ -142,8 +135,8 @@ fn add_refuses_a_title_or_a_tag_the_frontmatter_cannot_carry() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let before = commit_count(&notebook);
 
-    // A second line in the title becomes a field of its own, which makes `render`
-    // and `parse` stop being inverses.
+    // A second line would become a field of its own, so `render` and `parse`
+    // would stop being inverses.
     let err = cmd::add(&paths, Some("Meeting\ntitle: other"), Some("body\n"), &[])
         .unwrap_err()
         .to_string();
@@ -175,8 +168,8 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     )
     .unwrap();
 
-    // Surrounding space is dropped on the way in, because it is dropped on the
-    // way out — otherwise the tag shown is not the tag `ls --tag` matches.
+    // Trimmed on the way in because it is trimmed on the way out; otherwise the
+    // tag shown is not the tag `ls --tag` matches.
     assert!(cmd::show(&paths, "alpha").unwrap().contains("tags: [work]"));
     assert!(
         cmd::ls(
@@ -199,8 +192,7 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     .unwrap_err()
     .to_string();
     assert!(err.contains('`'), "{err}");
-    // Removal stays permissive: a tag that got in before the check must still
-    // have a way out.
+    // Removal stays permissive so a tag that predates the check can still go.
     assert!(
         cmd::tag(
             &paths,
@@ -212,10 +204,8 @@ fn a_tag_is_stored_the_way_it_reads_back() {
     );
 }
 
-/// A page's `<title>` is often a whole sentence, and `<id>-<slug>.md` spends 12
-/// bytes on the id and the extension before the slug starts. A title long enough
-/// to push the name past the 255 bytes a path component gets used to fail the
-/// write outright with `File name too long`.
+/// `<id>-<slug>.md` spends 12 bytes before the slug, and a long title used to
+/// push the name past the 255-byte component limit (`File name too long`).
 #[test]
 fn a_title_too_long_for_a_filename_still_becomes_a_note() {
     let (_root, paths) = initialized();
@@ -235,7 +225,7 @@ https://coding-horror.github.io/basic-computer-games/";
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     assert!(notebook.join(&file).is_file(), "{file}");
 
-    // The slug is the lossy half; the title is the note's own words and is kept.
+    // The slug is cut; the title is kept whole.
     let (_, slug) = parts(&out);
     assert!(
         note_text(&paths, slug).contains(&format!("title: {title}")),
@@ -243,9 +233,8 @@ https://coding-horror.github.io/basic-computer-games/";
     );
 }
 
-/// The id in front of the slug keeps the filenames apart. The `-2` suffix this
-/// used to append was a local fix only: two machines adding "Notes" at once both
-/// wrote `notes.md` and the sync conflicted.
+/// The id keeps the filenames apart. The old `-2` suffix was only local: two
+/// machines adding "Notes" both wrote `notes.md` and the sync conflicted.
 #[test]
 fn two_notes_may_share_a_slug_because_the_id_separates_them() {
     let (_root, paths) = initialized();
@@ -270,16 +259,15 @@ fn two_notes_may_share_a_slug_because_the_id_separates_them() {
         2
     );
 
-    // The slug alone no longer says which one, so noda asks rather than guesses.
+    // The slug is ambiguous, so noda asks rather than guesses.
     let err = cmd::show(&paths, "notes").unwrap_err().to_string();
     assert!(err.contains("matches 2 notes"), "{err}");
     assert!(err.contains(first_id), "{err}");
-    // Either id still resolves outright.
     assert!(cmd::show(&paths, first_id).unwrap().contains("one"));
     assert!(cmd::show(&paths, second_id).unwrap().contains("two"));
 }
 
-/// An id prefix resolves the way git lets an abbreviated object id resolve.
+/// As git resolves an abbreviated object id.
 #[test]
 fn a_note_resolves_from_a_prefix_of_its_id() {
     let (_root, paths) = initialized();
@@ -304,7 +292,7 @@ fn show_resolves_by_slug_and_by_id_including_confusable_characters() {
     let by_slug = cmd::show(&paths, "meeting-notes").unwrap();
     assert_eq!(cmd::show(&paths, id).unwrap(), by_slug);
 
-    // Crockford folds case and the I/L/O confusables; a mistyped id still lands.
+    // Crockford folds case and the I/L/O confusables.
     let mistyped: String = id
         .chars()
         .map(|c| match c {
@@ -340,8 +328,8 @@ fn ls_lists_notes_and_filters_by_tag() {
     let all = cmd::ls(&paths, &cmd::List::default()).unwrap();
     assert_eq!(all.lines().count(), 2);
     assert!(all.lines().next().unwrap().contains("Alpha"), "{all}");
-    // Under the escapes: the brackets and the tag are coloured apart, so the
-    // raw output no longer holds `[work]` as one run.
+    // The brackets and the tag are coloured separately, so the raw output does
+    // not contain `[work]` as one run.
     assert!(plain(&all).contains("[work]"), "{all}");
 
     let tagged = cmd::ls(
@@ -434,7 +422,7 @@ fn pin_and_unpin_are_one_commit_each_and_the_second_press_is_neither() {
     assert_eq!(commit_count(&notebook), before + 1);
     assert!(note_text(&paths, "alpha").contains("pinned: true"));
 
-    // Already pinned: nothing written, so nothing committed.
+    // Already pinned: nothing written, nothing committed.
     let again = cmd::pin(&paths, "alpha", true, cmd::Touch::Stamp).unwrap();
     assert!(again.ends_with("(no change)"), "{again}");
     assert_eq!(commit_count(&notebook), before + 1);
@@ -442,8 +430,7 @@ fn pin_and_unpin_are_one_commit_each_and_the_second_press_is_neither() {
     let off = cmd::pin(&paths, "alpha", false, cmd::Touch::Stamp).unwrap();
     assert!(off.ends_with("  unpinned"), "{off}");
     assert_eq!(commit_count(&notebook), before + 2);
-    // **The line goes rather than turning false**, so the file is the one it
-    // was before any of this.
+    // The line is removed rather than set to false, so the file is as it was.
     assert!(!note_text(&paths, "alpha").contains("pinned"));
 }
 
@@ -470,8 +457,7 @@ fn a_pin_is_above_every_listing_and_below_every_reversed_one() {
     let beta = note_id(&paths, "beta");
 
     assert_eq!(first(&listed(false)), beta, "a pin comes first");
-    // `-r` turns the whole listing, pins included: an order half-reversed is
-    // not an order anybody asked for.
+    // `-r` reverses the whole listing, pins included.
     assert_eq!(
         listed(true).lines().last().unwrap(),
         beta,
@@ -513,11 +499,10 @@ fn search_narrows_to_the_pinned_notes_and_away_from_them() {
     assert!(!found("pinned:true").contains("Alpha"));
     assert!(found("pinned:false").contains("Alpha"));
     assert!(!found("pinned:false").contains("Beta"));
-    // Refused where it was typed rather than quietly finding everything.
+    // A typo is refused rather than matching everything.
     assert!(cmd::search(&paths, &["pinned:ture".to_string()]).is_err());
 }
 
-/// The id `ls -q` prints for a note, for a test comparing an order.
 fn note_id(paths: &Paths, key: &str) -> String {
     let path = cmd::path(paths, Some(key)).unwrap();
     let stem = Path::new(path.trim_end()).file_stem().unwrap();
@@ -527,14 +512,13 @@ fn note_id(paths: &Paths, key: &str) -> String {
         .to_string()
 }
 
-/// The note as it sits on disk. `show` dims the frontmatter, so it is the wrong
-/// side of the colour handling to read a field back from.
+/// The note as it sits on disk; `show` dims the frontmatter.
 fn note_text(paths: &Paths, key: &str) -> String {
     let path = cmd::path(paths, Some(key)).unwrap();
     std::fs::read_to_string(path.trim_end()).unwrap()
 }
 
-/// The two times a note carries.
+/// `(created, updated)`.
 fn times(paths: &Paths, key: &str) -> (Option<String>, Option<String>) {
     let note = note::Note::parse(&note_text(paths, key)).unwrap();
     (note.created, note.updated)
@@ -555,15 +539,13 @@ fn a_new_note_is_created_and_updated_at_the_same_moment() {
     assert!(created.ends_with('Z'), "{created}");
 }
 
-/// `created` is a fact about the note and never moves again. `updated` is the
-/// one that follows what noda does to it.
 #[test]
 fn changing_a_note_moves_updated_and_leaves_created_alone() {
     let (_root, paths) = initialized();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let created = times(&paths, "alpha").0;
 
-    // Backdated, so the change is visible however fast the test runs.
+    // Backdated so the change is visible however fast the test runs.
     let path = paths
         .notebook_dir(cmd::DEFAULT_NOTEBOOK)
         .join(note_file(&added));
@@ -592,8 +574,7 @@ fn changing_a_note_moves_updated_and_leaves_created_alone() {
     );
 }
 
-/// Backdates `updated` on a note already on disk, so a change to it is visible
-/// however fast the test runs.
+/// Backdates `updated` so a change to it is visible however fast the test runs.
 fn backdate(paths: &Paths, summary: &str) -> PathBuf {
     let path = paths
         .notebook_dir(cmd::DEFAULT_NOTEBOOK)
@@ -608,9 +589,7 @@ fn backdate(paths: &Paths, summary: &str) -> PathBuf {
     path
 }
 
-/// For the changes that are not the note being rewritten. The commit still
-/// records that something happened; `updated`, the note's own claim about
-/// itself, is what is left alone.
+/// The commit still records the change; only `updated` is left alone.
 #[test]
 fn no_touch_leaves_updated_where_it_stands() {
     let (_root, paths) = initialized();
@@ -646,9 +625,8 @@ fn no_touch_leaves_updated_where_it_stands() {
     );
 }
 
-/// `tag` takes hyphen values, so a flag written after the tags arrives as one
-/// more tag. `--no-touch` would strip to `-no-touch` and remove a tag nobody
-/// has: a command that reports success and did nothing it was asked to.
+/// `tag` takes hyphen values, so a flag after the tags would arrive as a tag:
+/// `--no-touch` would become removing `-no-touch`, reporting success and doing nothing.
 #[test]
 fn tag_says_where_a_flag_goes_rather_than_swallowing_it() {
     let (_root, paths) = initialized();
@@ -673,8 +651,7 @@ fn tag_says_where_a_flag_goes_rather_than_swallowing_it() {
     );
 }
 
-/// The case the flag exists for: a note that arrived with the dates its old
-/// system gave it. Editing it must not overwrite them with today.
+/// The case the flag exists for: an imported note's dates must survive an edit.
 #[cfg(unix)]
 #[test]
 fn no_touch_keeps_an_imported_notes_own_dates_through_an_edit() {
@@ -702,9 +679,8 @@ fn no_touch_keeps_an_imported_notes_own_dates_through_an_edit() {
     assert!(text.contains("and one more line"), "{text}");
 }
 
-/// Notes that predate the fields, or arrived without them, are left as they are.
-/// The only honest value would come from git, and inventing one from the
-/// filesystem would be inventing it after a clone.
+/// The only honest value would come from git; one taken from the filesystem
+/// would be invented after a clone.
 #[test]
 fn a_note_without_times_does_not_get_them_invented() {
     let (_root, paths) = initialized();
@@ -717,8 +693,7 @@ fn a_note_without_times_does_not_get_them_invented() {
 
     assert_eq!(times(&paths, "imported"), (None, None));
 
-    // A change noda makes is a change noda can date. It still does not backfill
-    // the one it was never told.
+    // A change noda makes is dated, but the missing `created` is not backfilled.
     cmd::tag(
         &paths,
         "imported",
@@ -731,8 +706,7 @@ fn a_note_without_times_does_not_get_them_invented() {
     assert!(updated.is_some(), "it does know when it just touched it");
 }
 
-/// A note written somewhere else brings fields noda has never heard of. `tag`
-/// rewrites the note through `render`, so that is where they would be lost —
+/// `tag` rewrites through `render`, which is where unknown fields would be lost —
 /// and for an imported note the file is the only copy.
 #[test]
 fn a_write_back_keeps_the_fields_noda_does_not_understand() {
@@ -790,7 +764,6 @@ fn tag_requires_a_sign_and_commits_nothing_when_there_is_no_change() {
     let err = cmd::tag(&paths, "alpha", &["work".to_string()], cmd::Touch::Stamp).unwrap_err();
     assert!(err.to_string().contains("+work"), "{err}");
 
-    // Re-adding a tag it already has, and dropping one it never had.
     let out = cmd::tag(
         &paths,
         "alpha",
@@ -829,8 +802,7 @@ fn mv_renames_the_slug_and_keeps_the_id() {
     );
     assert!(notebook.join(format!("{id}-beta-notes.md")).is_file());
 
-    // Only the slug half of the filename moved, so the id still resolves; the
-    // old slug no longer does. Nothing had to be told about the rename.
+    // Only the slug moved, so the id still resolves and the old slug does not.
     assert!(
         cmd::show(&paths, &id)
             .unwrap()
@@ -856,9 +828,8 @@ fn mv_retitles_without_moving_when_the_slug_is_unchanged() {
     assert!(text.contains("title: ALPHA"), "{text}");
 }
 
-/// The default: retitle, then say which notes still name the filename it left.
-/// Their links are stale rather than dead — the id in them still resolves — but
-/// every Markdown reader outside noda sees only the path that is gone.
+/// The links are stale rather than dead (their id still resolves), but any
+/// Markdown reader outside noda sees only the path that is gone.
 #[test]
 fn mv_says_which_notes_linked_to_the_name_it_left() {
     let (_root, paths) = initialized();
@@ -879,8 +850,7 @@ fn mv_says_which_notes_linked_to_the_name_it_left() {
     );
 }
 
-/// The opt-in half. The rename and the rewrites land in one commit, so the
-/// notebook is never left in a state where half the links moved.
+/// The rename and the rewrites are one commit, so no state has half the links moved.
 #[test]
 fn mv_update_links_rewrites_the_notes_that_pointed_at_the_old_name() {
     let (_root, paths) = initialized();
@@ -921,9 +891,8 @@ fn mv_update_links_rewrites_the_notes_that_pointed_at_the_old_name() {
     );
 }
 
-/// The reason the match is on the id and not on the filename the rename just
-/// left. After two retitles a link is two names behind, and an exact-name match
-/// would walk straight past it — leaving it stale with nothing having said so.
+/// Why the match is on the id: after two retitles a link is two names behind,
+/// and an exact-name match would miss it.
 #[test]
 fn mv_update_links_catches_a_link_two_renames_behind() {
     let (_root, paths) = initialized();
@@ -942,9 +911,8 @@ fn mv_update_links_catches_a_link_two_renames_behind() {
     assert!(audit.contains("in order"), "{audit}");
 }
 
-/// Which is also the repair for damage already done: the flag means "make the
-/// links to this note say the name it has", so asking for it on a retitle that
-/// renames nothing fixes what an earlier rename left behind.
+/// The flag means "make links say this note's current name", so it also repairs
+/// what an earlier rename left behind.
 #[test]
 fn mv_update_links_repairs_without_having_to_retitle_again() {
     let (_root, paths) = initialized();
@@ -959,9 +927,7 @@ fn mv_update_links_repairs_without_having_to_retitle_again() {
     );
 }
 
-/// The note being retitled is a note like any other, so a link it makes to
-/// itself is rewritten too — read back from the file the rename just wrote,
-/// never from the copy that was there a moment ago.
+/// Read back from the file the rename just wrote, not the copy from before.
 #[test]
 fn mv_update_links_reaches_a_note_that_links_to_itself() {
     let (_root, paths) = initialized();
@@ -979,9 +945,7 @@ fn mv_update_links_reaches_a_note_that_links_to_itself() {
     assert!(text.contains(&format!("[me]({id}-beta.md)")), "{text}");
 }
 
-/// A retitle that leaves the filename alone breaks nothing, so it says nothing —
-/// and skips the walk that would have found out, which is `doctor --links`' cost
-/// and has no business being paid on a rename that renamed nothing.
+/// And skips the link walk, which is `doctor --links`' cost.
 #[test]
 fn a_retitle_that_keeps_the_slug_says_nothing_about_links() {
     let (_root, paths) = initialized();
@@ -1000,8 +964,7 @@ fn a_retitle_that_keeps_the_slug_says_nothing_about_links() {
     assert_eq!(out, format!("{target_id}  meeting-notes"), "{out}");
 }
 
-/// Retitling onto a slug another note already uses is no longer a collision to
-/// step around: the ids differ, so the filenames do.
+/// The ids differ, so the filenames do.
 #[test]
 fn mv_may_land_on_a_slug_another_note_already_uses() {
     let (_root, paths) = initialized();
@@ -1048,9 +1011,8 @@ fn mv_refuses_a_title_the_frontmatter_cannot_carry() {
     );
 }
 
-/// Writes an executable stand-in for `$EDITOR`. The note path arrives as `$1`.
-/// A path is used rather than an inline `sh -c '…'` because the editor string is
-/// split on whitespace, exactly as a real `$EDITOR` would be.
+/// Writes an executable stand-in for `$EDITOR`; the note path arrives as `$1`. A
+/// script rather than `sh -c '…'` because the editor string is split on whitespace.
 #[cfg(unix)]
 fn editor_script(root: &TempRoot, name: &str, script: &str) -> String {
     use std::os::unix::fs::PermissionsExt;
@@ -1081,9 +1043,8 @@ fn edit_commits_what_was_saved() {
     assert!(repo.statuses(None).unwrap().is_empty());
 }
 
-/// `edit` is how a note is usually changed, so it has to record that — but it
-/// records it in place. Rearranging the block somebody just arranged in their
-/// editor, as the price of noting that they did, is not a trade worth making.
+/// `updated` is stamped in place: noda does not rearrange a block somebody just
+/// arranged in their editor.
 #[cfg(unix)]
 #[test]
 fn edit_records_the_change_without_rearranging_the_block() {
@@ -1151,9 +1112,7 @@ fn edit_refuses_to_commit_a_broken_note() {
     );
 }
 
-/// An editor cannot change which note it is editing. The id is in the filename,
-/// and an editor is handed the file — so the guard `edit` used to need against a
-/// rewritten `id:` field has nothing left to guard against.
+/// The id is in the filename, which an editor cannot change.
 #[cfg(unix)]
 #[test]
 fn an_edit_cannot_change_a_notes_identity() {
@@ -1161,7 +1120,7 @@ fn an_edit_cannot_change_a_notes_identity() {
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let id = parts(&added).0.to_string();
 
-    // Writing an `id:` line into the frontmatter is now just another field.
+    // An `id:` line in the frontmatter is just another field.
     let reid = editor_script(
         &root,
         "reid",
@@ -1208,7 +1167,7 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
     let repo = git2::Repository::open(&notebook).unwrap();
     assert!(repo.statuses(None).unwrap().is_empty());
 
-    // The note is still in history: the commit before HEAD still carries the file.
+    // Still in history: the commit before HEAD carries the file.
     let parent = repo
         .head()
         .unwrap()
@@ -1222,9 +1181,8 @@ fn rm_deletes_the_note_and_leaves_a_revertible_commit() {
     );
 }
 
-/// The commands that only need to know *which* note used to parse the file
-/// anyway, so they refused to run on a broken one — leaving the tools for
-/// clearing it up unusable exactly when they were wanted.
+/// Commands that only need to know which note must not refuse a broken one;
+/// they are the tools for clearing it up.
 #[test]
 fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
     let (_root, paths) = initialized();
@@ -1234,14 +1192,12 @@ fn the_commands_that_do_not_read_a_note_work_on_one_that_cannot_be_read() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     std::fs::write(notebook.join(&file), "frontmatter is gone\n").unwrap();
 
-    // The filename still says which note this is, so `resolve` never needed to
-    // read it. History is about the file, and seeing what changed is how you
-    // find out why it will not parse.
+    // `resolve` reads only the filename, and history is how you find out why it
+    // will not parse.
     assert!(cmd::log(&paths, Some(&id), None).unwrap().contains("add:"));
     assert!(cmd::diff(&paths, Some(&id), false).unwrap().contains(&file));
 
-    // And the one that undoes the damage. It writes over the file, so reading it
-    // first was never necessary.
+    // It writes over the file, so it never needs to read it.
     cmd::restore(&paths, &id, "HEAD", cmd::Touch::Stamp).unwrap();
     let back = cmd::show(&paths, &id).unwrap();
     assert!(back.contains("the original body"), "{back}");
@@ -1260,7 +1216,6 @@ fn rm_removes_a_note_whose_frontmatter_is_gone() {
     let file = note_file(&added);
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
-    // Deleting a file does not require understanding it.
     std::fs::write(notebook.join(&file), "broken\n").unwrap();
     let out = cmd::rm(&paths, &id).unwrap();
     assert!(
@@ -1278,8 +1233,7 @@ fn the_commands_that_read_a_note_still_refuse_one_that_cannot_be_read() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     std::fs::write(notebook.join(note_file(&added)), "frontmatter is gone\n").unwrap();
 
-    // The line is drawn at whether the command uses the note's contents. These
-    // rewrite the frontmatter, so they have to be able to read it first.
+    // These rewrite the frontmatter, so they must read it first.
     for err in [
         cmd::mv(&paths, &id, "Renamed", false, cmd::Touch::Stamp).unwrap_err(),
         cmd::tag(&paths, &id, &["+work".to_string()], cmd::Touch::Stamp).unwrap_err(),
@@ -1288,8 +1242,7 @@ fn the_commands_that_read_a_note_still_refuse_one_that_cannot_be_read() {
     }
 }
 
-/// A file with neither an id in its name nor frontmatter is not a note, so it
-/// does not resolve — it is a file the notebook happens to hold.
+/// Neither an id in its name nor frontmatter: a file, not a note.
 #[test]
 fn a_file_that_is_not_a_note_does_not_resolve() {
     let (_root, paths) = initialized();
@@ -1327,7 +1280,7 @@ fn notebook_add_creates_a_repo_and_records_its_remote() {
         "{listed}"
     );
 
-    // A second notebook of the same name, and a name that escapes the data dir.
+    // A duplicate name, and a name that escapes the data dir.
     assert!(cmd::notebook_add(&paths, "work", None).is_err());
     assert!(cmd::notebook_add(&paths, "../escape", None).is_err());
 }
@@ -1420,22 +1373,19 @@ fn notebook_rm_asks_before_deleting_and_takes_no_for_an_answer() {
     assert!(out.contains("kept"), "{out}");
     assert!(paths.notebook_dir("work").exists(), "no still means no");
 
-    // `--force` is the answer, so nothing is asked.
     cmd::notebook_rm_confirmed(&paths, "work", true, |_| panic!("--force must not ask")).unwrap();
     assert!(!paths.notebook_dir("work").exists());
 }
 
-/// `noda status` speaks only about the active notebook, so one untouched for a
-/// fortnight could be thirty commits behind with nothing saying so. This is the
-/// row that says it, without going to the network.
+/// `noda status` covers only the active notebook; this shows how far behind the
+/// others are, without going to the network.
 #[test]
 fn notebook_ls_says_where_each_notebook_stands() {
     let (root, paths) = initialized();
     let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
     let url = bare_remote(&root, "origin.git", &branch);
 
-    // One with nowhere to sync to, which is not the same as one that has never
-    // synced: it can never leave that state, so it is given its own answer.
+    // No remote is not the same as never synced: it can never leave that state.
     cmd::notebook_add(&paths, "solo", None).unwrap();
     let listed = plain(&cmd::notebook_ls(&paths).unwrap());
     let solo = listed.lines().find(|l| l.contains("solo")).unwrap();
@@ -1452,15 +1402,13 @@ fn notebook_ls_says_where_each_notebook_stands() {
     let active = listed.lines().find(|l| l.starts_with('*')).unwrap();
     assert!(active.contains("in sync"), "{listed}");
 
-    // And the state the whole column exists for.
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
     let listed = plain(&cmd::notebook_ls(&paths).unwrap());
     let active = listed.lines().find(|l| l.starts_with('*')).unwrap();
     assert!(active.contains("1 to push"), "{listed}");
 
-    // Nothing above went out to the host, so a notebook pointed at a URL that
-    // does not answer costs no more to list than any other. A bare path that
-    // was never created is as unreachable as an unplugged network.
+    // Nothing above touches the network, so an unreachable remote costs nothing
+    // to list. A path that was never created stands in for one.
     cmd::notebook_add(&paths, "gone", Some("file:///nowhere/at/all.git")).unwrap();
     let listed = plain(&cmd::notebook_ls(&paths).unwrap());
     let gone = listed.lines().find(|l| l.contains("gone")).unwrap();
@@ -1472,8 +1420,8 @@ fn notebook_rm_refuses_when_there_is_nobody_to_ask() {
     let (_root, paths) = initialized();
     cmd::notebook_add(&paths, "work", None).unwrap();
 
-    // The test harness has no terminal, which is exactly the case being checked:
-    // piped or scripted, an irreversible delete must not be assumed.
+    // The harness has no terminal, which is the case being checked: piped or
+    // scripted, an irreversible delete is not assumed.
     let err = cmd::notebook_rm(&paths, "work", false)
         .unwrap_err()
         .to_string();
@@ -1492,7 +1440,6 @@ fn notebook_rename_carries_the_active_pointer() {
     assert!(cmd::show(&paths, "alpha").is_ok(), "the notes came along");
     assert!(!paths.notebook_dir(cmd::DEFAULT_NOTEBOOK).exists());
 
-    // Renaming a notebook that is not active leaves the pointer where it is.
     cmd::notebook_rename(&paths, "work", "archive").unwrap();
     assert_eq!(cmd::notebook_current(&paths).unwrap(), "personal");
 
@@ -1501,8 +1448,7 @@ fn notebook_rename_carries_the_active_pointer() {
 }
 
 /// A bare repository standing in for GitHub. libgit2's local transport is the
-/// same push/fetch machinery HTTPS and SSH use, so these tests exercise the real
-/// sync code without a network or credentials.
+/// same push/fetch machinery as HTTPS and SSH, with no network or credentials.
 fn bare_remote(root: &TempRoot, name: &str, branch: &str) -> String {
     let path = root.0.join(name);
     let repo = git2::Repository::init_bare(&path).expect("init bare remote");
@@ -1511,8 +1457,7 @@ fn bare_remote(root: &TempRoot, name: &str, branch: &str) -> String {
     path.to_str().expect("utf-8 path").to_string()
 }
 
-/// The branch a notebook is on — `main` or `master`, depending on the machine's
-/// `init.defaultBranch`, so no test may assume either.
+/// `main` or `master` per `init.defaultBranch`, so no test may assume either.
 fn branch_of(paths: &Paths, name: &str) -> String {
     noda::notebook::Notebook::open(paths, name)
         .expect("open notebook")
@@ -1534,16 +1479,15 @@ fn merge_commits(notebook: &Path) -> usize {
         .count()
 }
 
-/// A token in the URL is how the container image authenticates over HTTPS, the
-/// credential helper needing a shell that image does not carry. So a remote is
-/// something to assume is carrying a secret.
+/// The container image authenticates over HTTPS with a token in the URL (it has
+/// no shell for a credential helper), so a remote may carry a secret.
 #[test]
 fn a_token_in_the_remote_is_never_printed_back() {
     const URL: &str = "https://x-access-token:ghp_secret@github.com/me/notes.git";
 
     let (_root, paths) = initialized();
 
-    // Four screens, and the first of them is the answer to `remote set` itself.
+    // Four places a remote is shown, starting with `remote set`'s answer.
     let screens = [
         cmd::remote_set(&paths, URL).unwrap(),
         cmd::remote_show(&paths).unwrap(),
@@ -1555,8 +1499,7 @@ fn a_token_in_the_remote_is_never_printed_back() {
         assert!(shown.contains("***@github.com"), "{shown}");
     }
 
-    // Redacting is a way of showing a remote, not a way of storing one: what
-    // was configured is what push and fetch still open.
+    // Redaction is display only: push and fetch still use what was configured.
     let repo = git2::Repository::open(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)).expect("open");
     let origin = repo.find_remote("origin").expect("remote");
     assert_eq!(
@@ -1566,8 +1509,6 @@ fn a_token_in_the_remote_is_never_printed_back() {
     );
 }
 
-/// The command that acts on the difference was the one never reporting it: a
-/// push of twenty commits printed the same line as a push of nothing.
 #[test]
 fn push_says_how_much_it_sent() {
     let (root, paths) = initialized();
@@ -1576,9 +1517,8 @@ fn push_says_how_much_it_sent() {
     cmd::remote_set(&paths, &url).unwrap();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    // Never synced. What the remote holds is unknown until something has been
-    // fetched from it, so there is no count to give — and a number counted off
-    // the local history would be a guess wearing the clothes of a fact.
+    // Never synced: what the remote holds is unknown until fetched, so no
+    // count is given rather than one guessed from local history.
     let out = plain(&cmd::push(&paths).unwrap());
     assert!(out.starts_with("push:"), "{out}");
     assert!(
@@ -1586,8 +1526,7 @@ fn push_says_how_much_it_sent() {
         "a first push counted what it could not know: {out}"
     );
 
-    // Nothing has moved since, and saying so is the point: this used to be
-    // indistinguishable from the line above it.
+    // Nothing moved, and saying so distinguishes this from the line above.
     let out = plain(&cmd::push(&paths).unwrap());
     assert!(out.contains("nothing to send"), "{out}");
 
@@ -1596,15 +1535,13 @@ fn push_says_how_much_it_sent() {
     let out = plain(&cmd::push(&paths).unwrap());
     assert!(out.contains("(2 commits)"), "{out}");
 
-    // Singular when it is one, because a line that says `1 commits` is a line
-    // that was assembled rather than written.
+    // Singular for one.
     cmd::add(&paths, Some("Delta"), Some("d\n"), &[]).unwrap();
     let out = plain(&cmd::push(&paths).unwrap());
     assert!(out.contains("(1 commit)"), "{out}");
 }
 
-/// A push that carries no commits but does carry a snapshot has sent something,
-/// and `nothing to send` would be a lie about the one thing it did.
+/// A push carrying only a snapshot has sent something, so not `nothing to send`.
 #[test]
 fn a_snapshot_is_something_sent_even_when_no_commit_is() {
     let (root, paths) = initialized();
@@ -1614,16 +1551,15 @@ fn a_snapshot_is_something_sent_even_when_no_commit_is() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     cmd::push(&paths).unwrap();
 
-    // The notebook is clean, so this adds a tag and no commit at all.
+    // The notebook is clean, so this adds a tag and no commit.
     cmd::snapshot(&paths, "q3", None).unwrap();
     let out = plain(&cmd::push(&paths).unwrap());
     assert!(out.contains("1 snapshot"), "{out}");
     assert!(!out.contains("nothing to send"), "{out}");
 }
 
-/// The other direction, and the harder count: it is read between the fetch and
-/// the merge, which is the one moment the tracking ref carries the remote's news
-/// and the branch has not moved yet.
+/// Counted between the fetch and the merge, the one moment the tracking ref has
+/// moved and the branch has not.
 #[test]
 fn pull_says_how_much_arrived() {
     let (root, paths) = initialized();
@@ -1638,13 +1574,12 @@ fn pull_says_how_much_arrived() {
     cmd::add(&paths, Some("Gamma"), Some("c\n"), &[]).unwrap();
     cmd::sync(&paths).unwrap();
 
-    // Only the remote moved, so the whole of it arrives as a fast-forward.
+    // Only the remote moved: a fast-forward.
     cmd::use_notebook(&paths, "mirror").unwrap();
     let out = plain(&cmd::pull(&paths).unwrap());
     assert!(out.contains("fast-forwarded 2 commits"), "{out}");
 
-    // Now both sides move, which is the branch that makes a merge commit — and
-    // the count has to survive the merge being the thing that happened.
+    // Both sides move, so this makes a merge commit, and the count has to survive it.
     cmd::add(&paths, Some("Local"), Some("l\n"), &[]).unwrap();
     cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
     cmd::add(&paths, Some("Remote"), Some("r\n"), &[]).unwrap();
@@ -1665,7 +1600,7 @@ fn push_and_clone_round_trip_a_notebook() {
     cmd::add(&paths, Some("Meeting Notes"), Some("agenda\n"), &[]).unwrap();
     cmd::push(&paths).unwrap();
 
-    // No name given: it comes from the URL, `origin.git` -> `origin`.
+    // No name given: `origin.git` -> `origin`.
     cmd::clone(&paths, &url, None).unwrap();
     cmd::use_notebook(&paths, "origin").unwrap();
     assert!(
@@ -1679,15 +1614,14 @@ fn push_and_clone_round_trip_a_notebook() {
             .contains("agenda")
     );
 
-    // Cloning over an existing notebook is refused rather than merged into it.
     assert!(cmd::clone(&paths, &url, Some("origin")).is_err());
 }
 
 #[test]
 fn clone_adopts_the_only_branch_when_the_remote_head_points_elsewhere() {
     let (root, paths) = initialized();
-    // The remote's HEAD names a branch nothing was ever pushed to — what two
-    // machines that disagree about `init.defaultBranch` produce between them.
+    // The remote's HEAD names a branch nothing was pushed to — what two machines
+    // with different `init.defaultBranch` produce.
     let url = bare_remote(&root, "origin.git", "trunk");
     cmd::remote_set(&paths, &url).unwrap();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
@@ -1730,7 +1664,7 @@ fn sync_commits_pending_changes_before_pushing() {
     cmd::remote_set(&paths, &url).unwrap();
     let added = cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    // Edited outside noda — a `$EDITOR` left open, a file synced by another tool.
+    // Edited outside noda.
     let note = paths
         .notebook_dir(cmd::DEFAULT_NOTEBOOK)
         .join(note_file(&added));
@@ -1751,16 +1685,11 @@ fn sync_commits_pending_changes_before_pushing() {
         "the out-of-band edit reached the remote"
     );
 
-    // A second sync has nothing to commit and nothing to send.
     let out = cmd::sync(&paths).unwrap();
     assert!(!out.contains("commit:"), "{out}");
     assert!(out.contains("already up to date"), "{out}");
 }
 
-/// `edit` refuses to commit an id change and leaves the file on disk. `sync`
-/// stages the whole working tree, so without a guard of its own it picks that
-/// file up and makes the disagreement permanent — and remote.
-#[cfg(unix)]
 #[test]
 fn sync_fast_forwards_a_notebook_that_only_received() {
     let (root, paths) = initialized();
@@ -1813,13 +1742,11 @@ fn sync_merges_notebooks_that_both_moved() {
     assert!(listed.contains("Laptop"), "{listed}");
     assert!(listed.contains("Desktop"), "{listed}");
 
-    // Each side wrote its own filename, so there was nothing to conflict over:
-    // the merge is clean without noda rebuilding anything.
+    // Each side wrote its own filename, so the merge is clean.
     let repo = git2::Repository::open(paths.notebook_dir("mirror")).unwrap();
     assert!(repo.statuses(None).unwrap().is_empty(), "nothing left over");
     assert_eq!(repo.state(), git2::RepositoryState::Clean);
 
-    // And the merge comes back to the notebook that pushed first.
     cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
     cmd::sync(&paths).unwrap();
     assert!(
@@ -1869,8 +1796,8 @@ fn a_conflicting_pull_is_rolled_back() {
     assert!(err.contains("shared.md"), "{err}");
     assert!(err.contains("rolled back"), "{err}");
 
-    // The rollback has to leave a notebook that still works: no conflict
-    // markers on disk, no half-finished merge, the local commit still there.
+    // The rollback leaves a working notebook: no conflict markers, no
+    // half-finished merge, the local commit still there.
     let repo = git2::Repository::open(paths.notebook_dir("mirror")).unwrap();
     assert!(repo.statuses(None).unwrap().is_empty(), "worktree is clean");
     assert_eq!(repo.state(), git2::RepositoryState::Clean);
@@ -1900,7 +1827,6 @@ fn push_is_rejected_when_the_remote_moved_ahead() {
     let err = cmd::push(&paths).unwrap_err().to_string();
     assert!(err.contains("noda pull"), "{err}");
 
-    // Which is exactly what unblocks it.
     cmd::pull(&paths).unwrap();
     cmd::push(&paths).unwrap();
 }
@@ -1950,8 +1876,7 @@ fn the_network_commands_say_when_no_remote_is_set() {
     assert!(cmd::remote_set(&paths, "  ").is_err(), "a URL is required");
 }
 
-/// Command output carries colour unconditionally — `anstream` strips it on the
-/// way out when nobody is looking. Tests look at the text underneath.
+/// Output carries colour unconditionally (`anstream` strips it); tests read the text.
 fn plain(text: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars();
@@ -1977,7 +1902,6 @@ fn commit_working_tree(paths: &Paths, notebook: &str, message: &str) {
         .expect("commit");
 }
 
-/// The value beside a label in `noda status` output.
 fn status_row<'a>(status: &'a str, key: &str) -> Option<&'a str> {
     status
         .lines()
@@ -2036,8 +1960,7 @@ fn status_counts_the_distance_from_the_remote_without_touching_it() {
         "{out}"
     );
 
-    // The other side of the drift: a second notebook pushes, and this one is
-    // behind it — but only once it has fetched, because status never does.
+    // Behind a second notebook's push — but only once fetched, as status never fetches.
     mirror(&paths, &url, "mirror");
     cmd::sync(&paths).unwrap();
     cmd::use_notebook(&paths, "mirror").unwrap();
@@ -2054,9 +1977,8 @@ fn status_counts_the_distance_from_the_remote_without_touching_it() {
     );
 }
 
-/// A file with neither an id in its name nor a frontmatter block is not a note
-/// and not a mistake — it is a file. It is listed as one and counted as one, and
-/// it is never a problem, because a notebook is allowed to hold it.
+/// A file with neither an id in its name nor frontmatter is listed and counted as
+/// a file, never as a problem.
 #[test]
 fn a_file_that_declares_nothing_is_listed_as_a_file() {
     let (_root, paths) = initialized();
@@ -2084,8 +2006,7 @@ fn a_file_that_declares_nothing_is_listed_as_a_file() {
     assert_eq!(status_row(&out, "changes"), Some("1 file uncommitted"));
 }
 
-/// The frontmatter is the declaration "I am a note". A file that makes it but
-/// carries no id in its name is one waiting to be adopted.
+/// Frontmatter declares a note; one with no id in its name is waiting to be adopted.
 #[test]
 fn status_reports_a_note_with_no_id_in_its_name() {
     let (_root, paths) = initialized();
@@ -2108,9 +2029,8 @@ fn status_reports_a_note_with_no_id_in_its_name() {
     );
 }
 
-/// The other half of the pair: a name that claims an id over a file that never
-/// declared itself. `abcdefgh` is a perfectly legal id, so the shape alone
-/// cannot settle whether this is a broken note or somebody's file.
+/// `abcdefgh` is a legal id, so the shape alone cannot tell a broken note from
+/// somebody's file.
 #[test]
 fn status_reports_a_file_that_claims_an_id_without_frontmatter() {
     let (_root, paths) = initialized();
@@ -2126,15 +2046,14 @@ fn status_reports_a_file_that_claims_an_id_without_frontmatter() {
     );
 }
 
-/// Two machines can mint one id without ever meeting. The filenames differ, so
-/// git merges them without a word and this is the only place it shows up.
+/// Two machines can mint one id; the filenames differ, so git merges them
+/// silently and this is the only place it shows.
 #[test]
 fn status_reports_one_id_carried_by_two_notes() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     plant(&notebook, "k3f9m2p1", "alpha");
-    // Folded, the way every other comparison folds them: `K3F9M2P1` is not a
-    // second id.
+    // Ids fold case, so `K3F9M2P1` is not a second id.
     plant(&notebook, "K3F9M2P1", "beta");
 
     let out = plain(&cmd::status(&paths).unwrap());
@@ -2145,9 +2064,8 @@ fn status_reports_one_id_carried_by_two_notes() {
     );
 }
 
-/// A note the way a merge or another machine delivers one: already adopted, with
-/// an id noda never minted here. Minting has to see it, or it could hand the
-/// same id out twice — and there is no undoing that.
+/// Minting must see ids that arrived from elsewhere, or it could hand one out
+/// twice — which cannot be undone.
 #[test]
 fn a_new_note_avoids_an_id_that_arrived_from_outside() {
     let (_root, paths) = initialized();
@@ -2181,8 +2099,7 @@ fn a_wholesale_problem_is_counted_rather_than_listed() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     cmd::add(&paths, Some("Anchor"), Some("body\n"), &[]).unwrap();
 
-    // A directory of hand-written notes copied in at once makes every one of
-    // them a problem together. `status` has to stay one screen through that.
+    // A directory of hand-written notes copied in at once; `status` must stay one screen.
     for n in 0..12 {
         plant_unnamed(&notebook, &format!("note-{n:02}"));
     }
@@ -2199,9 +2116,7 @@ fn a_wholesale_problem_is_counted_rather_than_listed() {
         "three named, not twelve: {row}"
     );
     assert!(row.ends_with("…)"), "and the rest elided: {row}");
-    // Six lines: five rows plus the pointer to `noda doctor`. What matters is
-    // that the count does not follow the number of notes, so a notebook four
-    // times the size prints the same screen.
+    // The line count does not grow with the number of notes.
     assert_eq!(out.lines().count(), 6, "{out}");
     for n in 12..48 {
         plant_unnamed(&notebook, &format!("note-{n:02}"));
@@ -2245,8 +2160,7 @@ fn plant(notebook: &Path, id: &str, slug: &str) {
     .unwrap();
 }
 
-/// Writes a note that declares itself but has no id in its name — a file written
-/// by hand, or brought in from somewhere that never heard of noda.
+/// Writes a note with frontmatter but no id in its name — hand-written or from elsewhere.
 fn plant_unnamed(notebook: &Path, name: &str) {
     std::fs::write(
         notebook.join(format!("{name}.md")),
@@ -2255,8 +2169,8 @@ fn plant_unnamed(notebook: &Path, name: &str) {
     .unwrap();
 }
 
-/// The one repair that cannot lose anything: the file has already said it is a
-/// note, and all it lacks is a name.
+/// The one repair that cannot lose anything: the file declares itself a note and
+/// only lacks a name.
 #[test]
 fn doctor_adopts_a_note_that_only_lacks_an_id() {
     let (_root, paths) = initialized();
@@ -2297,15 +2211,14 @@ fn doctor_names_every_file_where_status_elides() {
         plant_unnamed(&notebook, &format!("note-{n:02}"));
     }
 
-    // `status` shows three and a `…`; this is where the rest can be seen.
+    // `status` shows three and a `…`; this shows the rest.
     let out = plain(&cmd::doctor(&paths, true, false, false).unwrap());
     assert_eq!(out.matches(".md").count(), 12, "{out}");
     assert!(!out.contains('…'), "nothing elided here: {out}");
 }
 
-/// The break `updated` cannot avoid: a note edited outside noda changes without
-/// noda getting to record that it did. git is the only witness, which is why
-/// this check costs a walk of history and is asked for rather than assumed.
+/// An edit outside noda leaves `updated` behind; only git saw it, which is why
+/// this check walks history and is opt-in.
 #[test]
 fn doctor_times_reports_a_note_changed_outside_noda() {
     let (_root, paths) = initialized();
@@ -2313,7 +2226,6 @@ fn doctor_times_reports_a_note_changed_outside_noda() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     let path = notebook.join(note_file(&added));
 
-    // A note whose contents moved on while its own record of when did not.
     let text = std::fs::read_to_string(&path).unwrap();
     let edited = note::set_field(
         &text.replace("a\n", "edited elsewhere\n"),
@@ -2341,8 +2253,7 @@ fn doctor_times_reports_a_note_changed_outside_noda() {
     );
 }
 
-/// The cheap half of the same flag: what the two fields say about each other,
-/// without asking git anything.
+/// The cheap half of the flag: the two fields checked against each other, without git.
 #[test]
 fn doctor_times_reports_what_cannot_be_read_and_what_runs_backwards() {
     let (_root, paths) = initialized();
@@ -2367,13 +2278,10 @@ fn doctor_times_reports_what_cannot_be_read_and_what_runs_backwards() {
     assert!(out.contains("1 note changed before being created"), "{out}");
     assert!(out.contains("k3f9m2p2-backwards.md"), "{out}");
 
-    // An unreadable value is reported, not refused: it must not come between
-    // somebody and their own prose.
+    // Reported, not refused: it must not come between somebody and their prose.
     assert!(cmd::show(&paths, "unreadable").unwrap().contains("body"));
 }
 
-/// A notebook noda wrote by itself has nothing to report, which is what makes
-/// the check worth running at all.
 #[test]
 fn doctor_times_is_quiet_about_notes_noda_wrote() {
     let (_root, paths) = initialized();
@@ -2417,8 +2325,7 @@ fn doctor_says_so_when_there_is_nothing_to_do() {
     );
 }
 
-/// Both files are real notes. Keeping either one's identity means discarding the
-/// other's, so this is reported and left alone.
+/// Keeping either note's identity discards the other's, so it is only reported.
 #[test]
 fn doctor_reports_but_does_not_settle_a_shared_id() {
     let (_root, paths) = initialized();
@@ -2435,9 +2342,7 @@ fn doctor_reports_but_does_not_settle_a_shared_id() {
     assert_eq!(commit_count(&notebook), commits, "nothing was decided");
 }
 
-/// The `abcdefgh-hello.md` case: a name that claims an id over a file that never
-/// declared itself. It might be a note that lost its frontmatter, or a file that
-/// was never one. Only its author knows.
+/// It might be a note that lost its frontmatter, or never a note; only its author knows.
 #[test]
 fn doctor_reports_but_does_not_settle_a_file_that_claims_an_id() {
     let (_root, paths) = initialized();
@@ -2462,8 +2367,7 @@ fn doctor_ignores_a_file_that_was_never_a_note() {
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    // No id in the name, no frontmatter inside: not noda's business, and it must
-    // not stand between an adoptable note and its repair.
+    // Not noda's business, and it must not block the adoptable note's repair.
     std::fs::write(notebook.join("scratch.md"), "just some markdown\n").unwrap();
     plant_unnamed(&notebook, "hand-written");
 
@@ -2473,13 +2377,11 @@ fn doctor_ignores_a_file_that_was_never_a_note() {
     assert!(notebook.join("scratch.md").exists(), "left where it was");
 }
 
-/// Drops `name` into the notebook as a file that is not a note.
 fn plant_file(notebook: &Path, name: &str) {
     std::fs::write(notebook.join(name), "contents\n").unwrap();
 }
 
-/// The expensive checks are the ones nobody asked for until they ask, so the
-/// default run must not perform them — nor mention what they would have found.
+/// The expensive checks are opt-in, so the default run neither performs nor mentions them.
 #[test]
 fn doctor_says_nothing_about_links_until_it_is_asked_to() {
     let (_root, paths) = initialized();
@@ -2530,9 +2432,8 @@ fn doctor_links_reports_a_link_that_names_nothing() {
     );
 }
 
-/// The split the one "broken" category used to hide: a retitled note leaves the
-/// destination naming a path that is gone and an id that is not. noda knows what
-/// the link should say, and saying so is the whole point of separating them.
+/// A retitle leaves a link naming a path that is gone and an id that is not;
+/// noda knows what the link should say.
 #[test]
 fn doctor_links_tells_a_stale_link_from_a_broken_one() {
     let (_root, paths) = initialized();
@@ -2559,9 +2460,8 @@ fn doctor_links_tells_a_stale_link_from_a_broken_one() {
     );
 }
 
-/// The other half of the split. A destination shaped like a note's filename but
-/// naming an id the notebook does not hold resolves to nothing, so it stays in
-/// the category only its author can settle.
+/// A note-shaped destination whose id the notebook lacks resolves to nothing,
+/// so only its author can settle it.
 #[test]
 fn doctor_links_calls_a_link_to_no_note_at_all_broken() {
     let (_root, paths) = initialized();
@@ -2592,8 +2492,7 @@ fn plant_hook(notebook: &Path, name: &str, executable: bool) {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("set mode");
 }
 
-/// The gap this closes: the same hook fires under `git commit` and is dead under
-/// `noda add`, and nothing said so.
+/// A hook fires under `git commit` but not under `noda add`; this says so.
 #[cfg(unix)]
 #[test]
 fn doctor_reports_the_hooks_that_will_never_run() {
@@ -2612,7 +2511,7 @@ fn doctor_reports_the_hooks_that_will_never_run() {
     );
 }
 
-/// Neither is a hook git would have run either, so neither is noda's doing.
+/// Neither would run under git either.
 #[cfg(unix)]
 #[test]
 fn doctor_ignores_hooks_git_would_not_run() {
@@ -2625,8 +2524,7 @@ fn doctor_ignores_hooks_git_would_not_run() {
     assert!(out.contains("in order"), "{out}");
 }
 
-/// Costs one `read_dir`, so it is not behind a flag — but a notebook with no
-/// hooks must not gain a line saying so.
+/// One `read_dir`, so not behind a flag — but no hooks means no line.
 #[test]
 fn doctor_says_nothing_about_hooks_when_there_are_none() {
     let (_root, paths) = initialized();
@@ -2637,8 +2535,19 @@ fn doctor_says_nothing_about_hooks_when_there_are_none() {
     assert!(!out.contains("hook"), "{out}");
 }
 
-/// A hook is not a problem with the notes, so it must not reach the summary that
-/// counts them.
+#[cfg(unix)]
+#[test]
+fn doctor_ignores_a_symlink_to_a_directory_among_the_hooks() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant_hook(&notebook, "post-commit", false);
+    std::os::unix::fs::symlink(&notebook, notebook.join(".git/hooks/pre-commit.d")).unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(out.contains("in order"), "{out}");
+}
+
+/// A hook is not a problem with the notes, so it stays out of the summary.
 #[cfg(unix)]
 #[test]
 fn status_says_nothing_about_hooks() {
@@ -2652,9 +2561,8 @@ fn status_says_nothing_about_hooks() {
     assert!(!out.contains("problems"), "{out}");
 }
 
-/// `core.hooksPath` is where git looks, so it is where noda has to look: hooks
-/// left behind in `.git/hooks` are dead under git too, and blaming noda for them
-/// would be a false report.
+/// Git looks in `core.hooksPath`, so noda does: hooks left in `.git/hooks` are
+/// dead under git too.
 #[cfg(unix)]
 #[test]
 fn doctor_follows_core_hookspath() {
@@ -2685,14 +2593,12 @@ fn doctor_follows_core_hookspath() {
     );
 }
 
-/// The reason this reads Markdown with a parser instead of searching for the
-/// filename: both of these are how a correct answer differs from a plausible
-/// one, and both would otherwise be wrong.
+/// Why Markdown is parsed rather than searched for the filename.
 #[test]
 fn only_a_real_link_counts_as_a_reference() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    // Named in a fenced block, which is prose about a link, not a link.
+    // In a fenced block: prose about a link, not a link.
     cmd::add(
         &paths,
         Some("Alpha"),
@@ -2700,7 +2606,7 @@ fn only_a_real_link_counts_as_a_reference() {
         &[],
     )
     .unwrap();
-    // Named only at the bottom, which a search of the paragraph would miss.
+    // Only at the bottom (a reference definition), which a search of the paragraph would miss.
     cmd::add(
         &paths,
         Some("Beta"),
@@ -2722,8 +2628,7 @@ fn only_a_real_link_counts_as_a_reference() {
     );
 }
 
-/// A destination that reaches outside the notebook, or names somebody else's
-/// server, is not a file this notebook can be missing.
+/// Outside the notebook or on another server: not a file this notebook can be missing.
 #[test]
 fn a_destination_the_notebook_does_not_own_is_never_broken() {
     let (_root, paths) = initialized();
@@ -2739,7 +2644,6 @@ fn a_destination_the_notebook_does_not_own_is_never_broken() {
     assert!(out.contains("in order"), "{out}");
 }
 
-/// Asking for a tag is asking about notes.
 #[test]
 fn listing_by_tag_does_not_list_the_notebooks_files() {
     let (_root, paths) = initialized();
@@ -2764,7 +2668,7 @@ fn listing_by_tag_does_not_list_the_notebooks_files() {
     assert!(tagged.contains("Alpha"), "{tagged}");
 }
 
-/// A notebook holding one tagged note and one file, for the listing tests.
+/// One tagged note and one file.
 fn listable() -> (TempRoot, Paths, String) {
     let (root, paths) = initialized();
     let summary = cmd::add(
@@ -2809,8 +2713,7 @@ fn ls_json_carries_the_filename_as_well_as_the_id() {
     assert!(out.contains("\"notebook\":\"default\""), "{out}");
 }
 
-/// The times are in `--json` whether or not `--time` was passed: `--time` is
-/// about what fits on a terminal, and a program is not reading a terminal.
+/// `--time` is about terminal width, and a program is not reading a terminal.
 #[test]
 fn ls_json_always_carries_the_times() {
     let (_root, paths, _) = listable();
@@ -2839,9 +2742,8 @@ fn ls_json_always_carries_the_times() {
     assert!(out.contains("\"updated\":\"20"), "{out}");
 }
 
-/// The title is the answer to "which note is this"; the slug says the same words
-/// without the spaces, and two RFC 3339 columns are forty characters nobody
-/// asked for. Neither costs anything to read, so this is about width.
+/// The default row is narrow: the slug repeats the title, and two RFC 3339
+/// columns are forty characters.
 #[test]
 fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     let (_root, paths) = initialized();
@@ -2890,9 +2792,8 @@ fn ls_long_adds_the_slug_and_the_times_and_says_when_there_are_none() {
     );
 }
 
-/// Painted per column, with the padding outside the escapes. Both halves break
-/// at once: a cell measured with its escapes pushes every column after it out of
-/// line, and spaces before a reset are past the row's `trim_end`.
+/// Padding goes outside the escapes: a cell measured with its escapes misaligns
+/// every column after it, and spaces before a reset escape `trim_end`.
 #[test]
 fn ls_colours_the_columns_without_moving_them() {
     let (_root, paths) = initialized();
@@ -2900,9 +2801,8 @@ fn ls_colours_the_columns_without_moving_them() {
     let short = parts(&added).1.to_string();
     let added = cmd::add(&paths, Some("A Much Longer Title"), Some("b\n"), &[]).unwrap();
     let long_slug = parts(&added).1.to_string();
-    // No times at all, so the last column is one character on this row and a
-    // full stamp on the others — which is the only way to get any padding to
-    // the right of the rightmost cell.
+    // No times, so the last column is short on this row and full on the others —
+    // the only way to get padding right of the rightmost cell.
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
     std::fs::write(
         notebook.join("k3f9m2p1-undated.md"),
@@ -2943,9 +2843,7 @@ fn ls_colours_the_columns_without_moving_them() {
     assert_eq!(slug_at(&short), slug_at("undated"), "{stripped}");
 }
 
-/// Two colours and not one dimmed, which is why no assertion here mentions
-/// `dim`: a terminal free to ignore it is why the grey was chosen. Read before
-/// `plain` strips it.
+/// Grey rather than `dim`, which a terminal may ignore. Read before `plain` strips it.
 #[test]
 fn ls_greys_the_punctuation_a_tag_list_is_written_with() {
     let (_root, paths) = initialized();
@@ -2980,9 +2878,8 @@ fn ls_greys_the_punctuation_a_tag_list_is_written_with() {
     assert!(plain(&out).contains("[work, q3]"), "{out}");
 }
 
-/// `-l` extends the default row rather than rearranging it: a script cutting the
-/// first two fields reads the same thing either way, and the one field a note
-/// may not have stays at the end of both.
+/// A script cutting the first two fields reads the same thing either way, and
+/// the one field a note may lack stays last in both.
 #[test]
 fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
     let (_root, paths) = initialized();
@@ -3029,13 +2926,12 @@ fn ls_long_keeps_the_columns_the_default_listing_starts_with() {
     );
 }
 
-/// Parsed rather than compared as text: noda's own are fixed-width UTC and would
-/// sort either way, but an imported note carries its old offset.
+/// Parsed rather than compared as text: an imported note keeps its old offset.
 #[test]
 fn ls_sorts_by_time_across_the_offsets_an_import_brings() {
     let (_root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    // 08:21Z, written down as 16:21+08:00 — text order would put it last.
+    // 08:21Z, written as 16:21+08:00 — text order would put it last.
     for (name, title, created) in [
         ("k3f9m2p1-middle.md", "Middle", "2019-03-14T16:21:00+08:00"),
         ("k3f9m2p2-oldest.md", "Oldest", "2019-03-14T07:00:00Z"),
@@ -3083,8 +2979,7 @@ fn ls_sorts_by_time_across_the_offsets_an_import_brings() {
     );
 }
 
-/// `--reverse` is applied after the sort, so it turns whichever order was asked
-/// for — including the walk's own, which is why it does not require `--sort`.
+/// Applied after the sort, so it needs no `--sort`.
 #[test]
 fn ls_reverse_turns_whichever_order_was_asked_for() {
     let (_root, paths) = initialized();
@@ -3142,8 +3037,7 @@ fn ls_reverse_turns_whichever_order_was_asked_for() {
     );
 }
 
-/// One listing, one order. A table whose notes run Z-to-A while its files run
-/// A-to-Z is not an order anyone asked for.
+/// One listing, one order: notes and files reverse together.
 #[test]
 fn ls_reverse_turns_the_files_with_the_notes() {
     let (root, paths) = initialized();
@@ -3209,8 +3103,7 @@ fn ls_json_says_so_when_the_notebook_is_empty() {
     );
 }
 
-/// A note is addressed by its id and a file by its name, so that is what each
-/// one prints — whatever takes the output next expects exactly those.
+/// A note by its id and a file by its name, as the next command expects.
 #[test]
 fn ls_quiet_prints_one_identifier_per_record() {
     let (_root, paths, summary) = listable();
@@ -3227,8 +3120,8 @@ fn ls_quiet_prints_one_identifier_per_record() {
     assert_eq!(out, format!("{id}\nmy diagram.png\n"));
 }
 
-/// The reason `-0` exists: `noda file add` allows a space in a name, so a
-/// newline-separated list is not safe to hand to `xargs`.
+/// `noda file add` allows spaces in names, so newline-separated output is not
+/// safe for `xargs`.
 #[test]
 fn ls_quiet_can_separate_with_nul() {
     let (_root, paths, summary) = listable();
@@ -3273,7 +3166,7 @@ fn ls_can_leave_out_either_half() {
     .unwrap();
     assert_eq!(files, "my diagram.png\n");
 
-    // And the same subsetting reaches the other two formats.
+    // The same subsetting in the other two formats.
     let table = plain(
         &cmd::ls(
             &paths,
@@ -3288,12 +3181,8 @@ fn ls_can_leave_out_either_half() {
     assert!(!table.contains("meeting-notes"), "{table}");
 }
 
-/// The one test that runs the real binary.
-///
-/// Everything else calls the command functions, but `-0` is a promise about the
-/// *bytes that leave the process* — and the layer between ate them: colour
-/// handling strips NUL along with the escapes, and the newline every other
-/// command wants would arrive after the last terminator.
+/// Runs the real binary: `-0` is a promise about the bytes that leave the
+/// process, and colour handling strips NUL along with the escapes.
 #[test]
 fn ls_null_separators_survive_the_way_out_of_the_process() {
     let (root, _paths, _) = listable();
@@ -3314,7 +3203,7 @@ fn ls_null_separators_survive_the_way_out_of_the_process() {
     );
 }
 
-/// A file somewhere else on disk, to copy into a notebook from.
+/// A file elsewhere on disk to copy into a notebook.
 fn source_file(root: &TempRoot, name: &str) -> PathBuf {
     let dir = root.0.join("elsewhere");
     std::fs::create_dir_all(&dir).unwrap();
@@ -3494,8 +3383,7 @@ fn file_add_will_not_overwrite_what_the_notebook_already_holds() {
     assert!(notebook.join("diagram-2.png").is_file());
 }
 
-/// Nothing is copied until every source has been checked, so a command that
-/// fails leaves the notebook exactly as it found it.
+/// Every source is checked before anything is copied.
 #[test]
 fn file_add_copies_nothing_when_one_of_them_cannot_be_added() {
     let (root, paths) = initialized();
@@ -3520,8 +3408,7 @@ fn file_add_refuses_the_names_it_could_not_then_account_for() {
     for (rename, expected) in [
         (".hidden.png", "dotfiles"),
         ("sub/x.png", "cannot be a path"),
-        // A `*.md` whose name splits into an id and a slug reads as a note that
-        // has lost its frontmatter, and `doctor` would report it as one.
+        // An id-and-slug `*.md` name reads as a note that lost its frontmatter.
         ("abcdefgh-hello.md", "claims a note's id"),
     ] {
         let err = cmd::file_add(&paths, std::slice::from_ref(&source), Some(rename))
@@ -3536,9 +3423,8 @@ fn file_add_refuses_the_names_it_could_not_then_account_for() {
     assert!(err.contains("cannot be given with several"), "{err}");
 }
 
-/// A note's slug is cut to fit a filename; an attachment's name is what links
-/// point at, so it is refused instead — and said in noda's words rather than
-/// left to surface as an errno from the copy.
+/// Links point at an attachment's name, so it is refused rather than cut like a
+/// slug — in noda's words, not an errno from the copy.
 #[test]
 fn file_add_refuses_a_name_too_long_to_be_a_filename() {
     let (root, paths) = initialized();
@@ -3555,7 +3441,7 @@ fn file_add_refuses_a_name_too_long_to_be_a_filename() {
     assert!(err.contains("has to fit in 255 bytes"), "{err}");
     assert!(err.contains("is 256"), "it says how far over: {err}");
 
-    // The same name through the other door that writes one.
+    // The other command that writes a name.
     let err = cmd::file_mv(&paths, "diagram.png", &too_long, false)
         .unwrap_err()
         .to_string();
@@ -3588,8 +3474,7 @@ fn file_rm_removes_it_as_a_commit() {
     assert_eq!(commit_count(&notebook), commits + 1);
 }
 
-/// The two are not interchangeable: a note has an identity to lose, so the
-/// command that removes one is not the command that removes a file.
+/// A note has an identity to lose, so removing one is a different command.
 #[test]
 fn file_rm_refuses_a_note_and_says_which_command_wants_it() {
     let (_root, paths) = initialized();
@@ -3615,8 +3500,7 @@ fn file_rm_says_so_when_there_is_no_such_file() {
     assert!(err.contains("no file called nope.txt"), "{err}");
 }
 
-/// The default: rename it, then say what that just broke. Silence here would
-/// leave links pointing at nothing with nothing having said so.
+/// The default: rename, then report the links that now point at nothing.
 #[test]
 fn file_mv_renames_and_reports_the_links_it_stranded() {
     let (root, paths) = initialized();
@@ -3643,8 +3527,7 @@ fn file_mv_renames_and_reports_the_links_it_stranded() {
     );
 }
 
-/// A mechanical fixup rather than somebody editing their notes, and dating every
-/// one today would flatten the order they are read in.
+/// A mechanical fixup; dating every note today would flatten their order.
 #[test]
 fn renaming_a_file_does_not_date_the_notes_that_linked_to_it() {
     let (root, paths) = initialized();
@@ -3666,7 +3549,7 @@ fn renaming_a_file_does_not_date_the_notes_that_linked_to_it() {
     assert_eq!(times(&paths, "alpha"), before, "the note was not edited");
 }
 
-/// Opt-in, because it edits the prose of notes the command was not pointed at.
+/// Opt-in, because it edits notes the command was not pointed at.
 #[test]
 fn file_mv_update_links_rewrites_both_spellings_and_leaves_it_in_order() {
     let (root, paths) = initialized();
@@ -3712,8 +3595,8 @@ fn file_mv_update_links_rewrites_both_spellings_and_leaves_it_in_order() {
     );
 }
 
-/// A destination written with backslash escapes is not in the source literally,
-/// so it cannot be rewritten. It is reported rather than assumed fixed.
+/// A backslash-escaped destination is not in the source literally, so it is
+/// reported rather than assumed fixed.
 #[test]
 fn file_mv_says_which_notes_it_could_not_rewrite() {
     let (root, paths) = initialized();
@@ -3801,8 +3684,7 @@ fn path_says_so_when_nothing_answers_to_the_key() {
     assert!(err.contains("no note and no file"), "{err}");
 }
 
-/// A file may be named exactly like a note's slug. noda never guesses which one
-/// was meant.
+/// noda never guesses between a note's slug and a file of the same name.
 #[test]
 fn path_refuses_a_key_that_names_both_a_note_and_a_file() {
     let (root, paths) = initialized();
@@ -3819,7 +3701,7 @@ fn path_refuses_a_key_that_names_both_a_note_and_a_file() {
     assert!(err.contains("diagram.md"), "and lists them: {err}");
 }
 
-/// A query the way a shell hands one over: one token per word.
+/// A query as a shell hands it over: one token per word.
 fn search(paths: &Paths, query: &str) -> noda::Result<String> {
     let tokens: Vec<String> = query
         .split(' ')
@@ -3847,7 +3729,7 @@ fn search_matches_the_body_the_title_and_the_tags() {
     )
     .unwrap();
 
-    // A body hit quotes the line it was found on.
+    // A body hit quotes its line.
     let out = plain(&search(&paths, "Q3 BUDGET").unwrap());
     assert_eq!(out.lines().count(), 2, "one result and its excerpt: {out}");
     assert!(
@@ -3862,7 +3744,7 @@ fn search_matches_the_body_the_title_and_the_tags() {
         "{out}"
     );
 
-    // A title or tag hit needs no excerpt — it is already on the first line.
+    // A title or tag hit needs no excerpt.
     let out = plain(&search(&paths, "work").unwrap());
     assert_eq!(out.lines().count(), 1, "{out}");
     assert!(out.contains("[work]"), "{out}");
@@ -3871,8 +3753,7 @@ fn search_matches_the_body_the_title_and_the_tags() {
         1
     );
 
-    // Substring, not whole word: "budget" finds "budgets" too. Both notes match
-    // in the body, so both bring an excerpt with them.
+    // Substring, not whole word: "budget" finds "budgets".
     let out = plain(&search(&paths, "budget").unwrap());
     assert_eq!(out.lines().count(), 4, "{out}");
     assert!(out.contains("a book about budgets"), "{out}");
@@ -3904,7 +3785,7 @@ fn search_works_on_a_language_without_spaces() {
     .unwrap();
     cmd::add(&paths, Some("Reading Log"), Some("unrelated\n"), &[]).unwrap();
 
-    // No word boundaries to tokenise on: substring matching is the whole point.
+    // No spaces to tokenise on, so substring matching is the point.
     let out = plain(&search(&paths, "第三季預算").unwrap());
     assert_eq!(out.lines().count(), 2, "{out}");
     assert!(out.contains("討論第三季預算與人力計畫"), "{out}");
@@ -3917,14 +3798,10 @@ fn search_only_looks_at_the_note_not_the_file_around_it() {
     let added = cmd::add(&paths, Some("Alpha"), Some("body\n"), &[]).unwrap();
     let id = added.split_once("  ").unwrap().0;
 
-    // The frontmatter is the container, not searchable text. Spelled `text:---`
-    // because a leading `-` is a negation, and the field prefix is the way to
-    // say a term starts with one.
+    // The frontmatter is not searchable. `text:---` because a leading `-` negates.
     assert!(search(&paths, "text:---").unwrap().is_empty());
     assert!(search(&paths, "title:").is_err(), "a field needs a value");
-    // A bare word is text, and the id is not written anywhere in the note — it
-    // is the filename. Asking for it as text finds nothing; `id:` is how you
-    // ask for it as an identity.
+    // The id is the filename, not text in the note; `id:` asks for it.
     assert!(search(&paths, id).unwrap().is_empty());
     assert!(
         search(&paths, &format!("id:{}", &id[..4]))
@@ -3945,8 +3822,7 @@ fn log_reports_the_notebook_history_newest_first() {
     assert!(lines[0].ends_with("add: beta"), "{out}");
     assert!(lines[2].ends_with("chore: initialize notebook"), "{out}");
 
-    // Past the margin that carries the unpushed mark, which is a space on every
-    // row here: this notebook has no remote, so nothing is waiting to go out.
+    // Past the unpushed-mark margin, a space on every row since there is no remote.
     let fields: Vec<&str> = lines[0].trim_start().split("  ").collect();
     assert_eq!(fields[0].len(), 7, "abbreviated commit id: {out}");
     assert_eq!(fields[1].len(), 16, "YYYY-MM-DD HH:MM: {out}");
@@ -3955,16 +3831,14 @@ fn log_reports_the_notebook_history_newest_first() {
     assert_eq!(limited.lines().count(), 1);
 }
 
-/// `status` says how many there are to push. This is which — the question
-/// straight after it, and the one nothing answered.
+/// `status` says how many to push; this says which.
 #[test]
 fn log_marks_the_commits_the_remote_has_not_seen() {
     let (root, paths) = initialized();
     let branch = branch_of(&paths, cmd::DEFAULT_NOTEBOOK);
     let url = bare_remote(&root, "origin.git", &branch);
 
-    // No remote yet: every commit is unpushed in the technical sense, and
-    // marking all of them would say nothing at all.
+    // No remote: every commit is technically unpushed, so marking any would say nothing.
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     let out = plain(&cmd::log(&paths, None, None).unwrap());
     assert!(!out.contains('↑'), "nothing to compare against yet: {out}");
@@ -3980,7 +3854,7 @@ fn log_marks_the_commits_the_remote_has_not_seen() {
     assert!(lines[1].starts_with('↑'), "{out}");
     assert!(lines[2].starts_with(' '), "already pushed: {out}");
 
-    // The count and the marks are the same judgement, so they cannot disagree.
+    // The count and the marks are one judgement.
     let status = plain(&cmd::status(&paths).unwrap());
     assert_eq!(
         status_row(&status, "sync"),
@@ -3988,9 +3862,7 @@ fn log_marks_the_commits_the_remote_has_not_seen() {
     );
     assert_eq!(out.matches('↑').count(), 2, "{out}");
 
-    // The ids stay in one column whether or not a row is marked — the margin is
-    // one character wide on every row, marked or not, which is the whole reason
-    // it is a margin and not a prefix.
+    // The margin is one character on every row, so the ids stay in one column.
     for line in &lines {
         let id: String = line.chars().skip(2).take(7).collect();
         assert!(
@@ -4000,9 +3872,8 @@ fn log_marks_the_commits_the_remote_has_not_seen() {
     }
 }
 
-/// **The trap this had to be built around.** After a merging `pull` the unpushed
-/// commits are not a run along the top of the log, so walking down from `HEAD`
-/// would mark one the remote already has.
+/// After a merging `pull` the unpushed commits are not a run along the top of
+/// the log, so walking down from `HEAD` would mark one the remote has.
 #[test]
 fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
     let (root, paths) = initialized();
@@ -4018,7 +3889,7 @@ fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
     cmd::add(&paths, Some("Theirs"), Some("t\n"), &[]).unwrap();
     cmd::sync(&paths).unwrap();
 
-    // This one adds its own without having seen that, so the pull has to merge.
+    // This one adds its own without having seen that, so the pull merges.
     cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
     cmd::add(&paths, Some("Mine"), Some("m\n"), &[]).unwrap();
     cmd::pull(&paths).unwrap();
@@ -4026,8 +3897,8 @@ fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
     let out = plain(&cmd::log(&paths, None, None).unwrap());
     let marked: Vec<&str> = out.lines().filter(|line| line.starts_with('↑')).collect();
 
-    // The merge commit and the local one; `theirs` sits between them in the log
-    // and is the commit a linear scan would have got wrong.
+    // The merge and the local commit; `theirs` sits between them and is what a
+    // linear scan would get wrong.
     assert_eq!(marked.len(), 2, "{out}");
     assert!(marked.iter().any(|line| line.contains("merge:")), "{out}");
     assert!(marked.iter().any(|line| line.contains("mine")), "{out}");
@@ -4037,8 +3908,7 @@ fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
         "a commit the remote already has was marked: {out}"
     );
 
-    // And it agrees with the number `status` prints, which is the check that
-    // matters: the marks are `graph_ahead_behind`'s answer enumerated.
+    // The marks are `graph_ahead_behind`'s answer enumerated, so they match `status`.
     let status = plain(&cmd::status(&paths).unwrap());
     assert_eq!(
         status_row(&status, "sync"),
@@ -4046,8 +3916,8 @@ fn a_merge_leaves_the_unpushed_commits_scattered_and_they_are_still_right() {
     );
 }
 
-/// `-n` can cut the listing above the oldest unpushed commit, and marks that
-/// are a subset presenting themselves as the whole would be worse than none.
+/// `-n` can cut above the oldest unpushed commit; a subset of marks must not
+/// pass for the whole.
 #[test]
 fn a_cut_listing_says_how_many_marks_are_below_it() {
     let (root, paths) = initialized();
@@ -4062,13 +3932,11 @@ fn a_cut_listing_says_how_many_marks_are_below_it() {
     let cut = plain(&cmd::log(&paths, None, Some(1)).unwrap());
     assert!(cut.contains("1 more to push"), "{cut}");
 
-    // Never on a full listing, where the marks are already the whole count.
     let whole = plain(&cmd::log(&paths, None, None).unwrap());
     assert!(!whole.contains("more to push"), "{whole}");
 
-    // And never for one note's log: `unpushed` counts commits on the branch, so
-    // subtracting the rows of a single note's history from it would produce a
-    // number about nothing.
+    // Nor for one note's log: `unpushed` counts branch commits, so subtracting
+    // one note's rows from it means nothing.
     let note = plain(&cmd::log(&paths, Some("alpha"), Some(1)).unwrap());
     assert!(!note.contains("more to push"), "{note}");
 }
@@ -4079,7 +3947,6 @@ fn log_for_a_note_follows_it_across_a_rename() {
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
     cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
-    // A second note's history must not leak into the first note's.
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
 
     let out = plain(&cmd::log(&paths, Some("renamed"), None).unwrap());
@@ -4090,7 +3957,7 @@ fn log_for_a_note_follows_it_across_a_rename() {
     assert!(lines[2].ends_with("add: alpha"), "{out}");
     assert!(!out.contains("beta"), "{out}");
 
-    // The id addresses the same history as the current slug does.
+    // The id addresses the same history as the current slug.
     let id = plain(&cmd::ls(&paths, &cmd::List::default()).unwrap())
         .lines()
         .find(|line| line.contains("Renamed"))
@@ -4133,13 +4000,11 @@ fn diff_shows_uncommitted_changes_when_there_are_some() {
     assert!(out.contains("-a"), "{out}");
     assert!(!out.contains("beta"), "only what changed: {out}");
 
-    // And it can be narrowed to one note.
     let scoped = plain(&cmd::diff(&paths, Some("beta"), false).unwrap());
     assert!(scoped.is_empty(), "beta is untouched: {scoped}");
 }
 
-/// The third layer: `status` counts what there is to push, `log` marks which
-/// commits, and this is what is actually in them.
+/// `status` counts, `log` marks which, and this shows what is in them.
 #[test]
 fn diff_against_the_remote_shows_what_a_push_would_carry() {
     let (root, paths) = initialized();
@@ -4148,9 +4013,8 @@ fn diff_against_the_remote_shows_what_a_push_would_carry() {
     cmd::remote_set(&paths, &url).unwrap();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    // Never synced. Not an empty diff — a notebook that has never spoken to its
-    // remote differs from it by everything, and "no changes" is the one wrong
-    // answer that looks like a right one.
+    // Never synced: the notebook differs from the remote by everything, and
+    // "no changes" would be the wrong answer that looks right.
     let err = cmd::diff(&paths, None, true).unwrap_err().to_string();
     assert!(err.contains("never synced"), "{err}");
     assert!(
@@ -4167,7 +4031,6 @@ fn diff_against_the_remote_shows_what_a_push_would_carry() {
     assert!(out.contains("+b"), "{out}");
     assert!(!out.contains("alpha"), "alpha is already there: {out}");
 
-    // Narrowed to one note, as the working-tree diff can be.
     let scoped = plain(&cmd::diff(&paths, Some("alpha"), true).unwrap());
     assert!(
         scoped.is_empty(),
@@ -4175,18 +4038,13 @@ fn diff_against_the_remote_shows_what_a_push_would_carry() {
     );
 }
 
-/// **Why it is `origin/main...HEAD` and not `origin/main HEAD`.**
-///
-/// With commits on the remote that have not been pulled, the two-dot form does
-/// not merely report them as deletions. Rename detection — which this command
-/// needs, because `noda mv` renames a note whenever its title changes — then
-/// pairs their file with yours and reports a rename that never happened:
+/// Why `origin/main...HEAD` and not `origin/main HEAD`: with unpulled remote
+/// commits, the two-dot form's rename detection (needed because `noda mv`
+/// renames) pairs their file with yours and reports a rename that never happened:
 ///
 /// ```text
 /// c7pjk17v-theirnote.md => pt1a8xar-beta.md | 4 ++--
 /// ```
-///
-/// Two notes written on two machines, neither of which is the other renamed.
 #[test]
 fn diffing_against_the_remote_ignores_what_has_not_been_pulled() {
     let (root, paths) = initialized();
@@ -4205,8 +4063,7 @@ fn diffing_against_the_remote_ignores_what_has_not_been_pulled() {
     cmd::use_notebook(&paths, cmd::DEFAULT_NOTEBOOK).unwrap();
     cmd::add(&paths, Some("Mine"), Some("m\n"), &[]).unwrap();
 
-    // Fetch without merging — the state a pull leaves when its merge is rolled
-    // back, and the only way a notebook is knowingly behind.
+    // Fetch without merging — what a rolled-back pull leaves.
     let repo = git2::Repository::open(paths.notebook_dir(cmd::DEFAULT_NOTEBOOK)).unwrap();
     repo.find_remote("origin")
         .unwrap()
@@ -4217,7 +4074,6 @@ fn diffing_against_the_remote_ignores_what_has_not_been_pulled() {
         )
         .unwrap();
 
-    // Both sides have moved, and `status` says so.
     let status = plain(&cmd::status(&paths).unwrap());
     assert_eq!(
         status_row(&status, "sync"),
@@ -4247,8 +4103,7 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
     let before = commit_count(&paths.notebook_dir(cmd::DEFAULT_NOTEBOOK));
 
     cmd::restore(&paths, "alpha", "HEAD~1", cmd::Touch::Stamp).unwrap();
-    // Everything but `updated` comes back exactly: that one records when the
-    // file changed, and it changed just now. It has its own test below.
+    // All but `updated`, which records the write just made (tested below).
     let held_aside = |text: &str| note::set_field(text, "updated", "-").unwrap();
     assert_eq!(
         held_aside(&std::fs::read_to_string(&note).unwrap()),
@@ -4274,9 +4129,7 @@ fn restore_returns_a_note_to_an_earlier_version_as_a_new_commit() {
     );
 }
 
-/// The contents travel back; the record of when they landed does not. A version
-/// from last year is being written to disk right now, and `updated` is noda's
-/// answer to "when did this file last change", not to "which version is this".
+/// `updated` answers "when did this file last change", not "which version is this".
 #[test]
 fn restore_dates_the_note_now_rather_than_then() {
     let (_root, paths) = initialized();
@@ -4304,16 +4157,14 @@ fn restore_dates_the_note_now_rather_than_then() {
         "the date they were written did not: {after}"
     );
 
-    // Two back now, the restore having moved history forward. Asking again is
-    // not a change: only the timestamp the restore wrote differs, and that is
-    // not what is compared.
+    // Two back now. Asking again is no change: only `updated` differs, and it is
+    // not compared.
     let out = cmd::restore(&paths, "alpha", "HEAD~2", cmd::Touch::Stamp).unwrap();
     assert!(out.contains("(no change)"), "{out}");
 }
 
-/// `--no-touch` turns a restore into the whole version coming back, `updated`
-/// included — and with nothing written over the copy in history, "no change"
-/// becomes an exact answer rather than one with a field held aside.
+/// With nothing overwritten, "no change" compares in full rather than holding
+/// `updated` aside.
 #[test]
 fn restore_no_touch_brings_the_old_date_back_with_the_contents() {
     let (_root, paths) = initialized();
@@ -4338,8 +4189,7 @@ fn restore_no_touch_brings_the_old_date_back_with_the_contents() {
         "byte for byte the version that was asked for"
     );
 
-    // Asking for that same revision again compares in full rather than around
-    // `updated`, and still says nothing changed.
+    // The same revision again compares in full and still says nothing changed.
     let out = cmd::restore(&paths, "alpha", "HEAD~2", cmd::Touch::Keep).unwrap();
     assert!(out.contains("(no change)"), "{out}");
 }
@@ -4353,8 +4203,7 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
     cmd::rm(&paths, "alpha").unwrap();
     assert!(cmd::show(&paths, "alpha").is_err(), "gone");
 
-    // Addressed by an id nothing on disk carries any more: the answer is in
-    // history, where every commit records the filenames.
+    // By an id no file carries any more: commits record the filenames.
     let out = cmd::restore(&paths, &id, "HEAD~1", cmd::Touch::Stamp).unwrap();
     assert!(out.starts_with(&id), "the id comes back unchanged: {out}");
     assert!(cmd::show(&paths, &id).unwrap().contains("a\n"));
@@ -4378,8 +4227,7 @@ fn restore_brings_back_a_deleted_note_with_its_id() {
     );
 }
 
-/// Deleted with `rm(1)` rather than `noda rm`, so nothing recorded that it went.
-/// The filename is the record, and it comes back with it.
+/// Deleted with `rm(1)`, so nothing recorded it; the filename comes back with the file.
 #[test]
 fn restore_brings_back_a_note_deleted_outside_noda() {
     let (_root, paths) = initialized();
@@ -4398,9 +4246,8 @@ fn restore_brings_back_a_note_deleted_outside_noda() {
     );
 }
 
-/// The commit `deleted` prints is the one *before* the deletion, because that
-/// is what `restore` has to be given — reporting the deletion and leaving the
-/// `~1` to be worked out would be a remedy the reader has to finish.
+/// The commit before the deletion, which is what `restore` needs — not a `~1`
+/// left for the reader to work out.
 #[test]
 fn deleted_names_the_commit_that_brings_a_note_back() {
     let (_root, paths) = initialized();
@@ -4431,8 +4278,7 @@ fn deleted_names_the_commit_that_brings_a_note_back() {
     );
 }
 
-/// `mv` changes a filename without changing an identity. Nothing was deleted,
-/// and the tree comparison has to agree — it compares ids, not names.
+/// `mv` changes a filename, not an identity; the tree comparison compares ids.
 #[test]
 fn deleted_does_not_count_a_rename() {
     let (_root, paths) = initialized();
@@ -4442,8 +4288,7 @@ fn deleted_does_not_count_a_rename() {
     assert_eq!(cmd::deleted(&paths, None, false).unwrap(), "");
 }
 
-/// Nothing here reads a commit message, so a deletion made with plain git is
-/// found exactly like one made with `noda rm`.
+/// No commit message is read, so a plain-git deletion is found like `noda rm`'s.
 #[test]
 fn deleted_finds_what_was_removed_outside_noda() {
     let (_root, paths) = initialized();
@@ -4458,8 +4303,7 @@ fn deleted_finds_what_was_removed_outside_noda() {
     assert!(out.contains("Alpha"), "{out}");
 }
 
-/// Deleted twice with a restore in between: the disappearance that counts is
-/// the last one, so the commit offered is the one that undoes *that*.
+/// The last disappearance counts, so the commit offered undoes that one.
 #[test]
 fn deleted_reports_the_most_recent_disappearance() {
     let (_root, paths) = initialized();
@@ -4478,8 +4322,7 @@ fn deleted_reports_the_most_recent_disappearance() {
         .to_string();
     cmd::restore(&paths, &slug, &commit, cmd::Touch::Stamp).unwrap();
 
-    // Change it, then lose it again. The older commit would bring back the
-    // wrong contents.
+    // Changed, then lost again: the older commit would bring back the wrong contents.
     cmd::tag(&paths, &slug, &["+work".to_string()], cmd::Touch::Stamp).unwrap();
     cmd::rm(&paths, &slug).unwrap();
 
@@ -4502,9 +4345,7 @@ fn deleted_reports_the_most_recent_disappearance() {
     );
 }
 
-/// `--json` carries the full object ids, not the abbreviations the table shows:
-/// `restore` takes either, and an abbreviation is a thing that can stop being
-/// unique later.
+/// Full object ids, not the table's abbreviations, which can stop being unique later.
 #[test]
 fn deleted_json_carries_what_a_script_needs_to_restore() {
     let (_root, paths) = initialized();
@@ -4523,11 +4364,10 @@ fn deleted_json_carries_what_a_script_needs_to_restore() {
         "the name it had when it went: {out}"
     );
     assert!(out.contains("\"title\":\"Gamma\""), "{out}");
-    // RFC 3339 UTC, the same spelling a note's own times use.
+    // RFC 3339 UTC, like a note's own times.
     assert!(out.contains("\"removed_at\":\"20"), "{out}");
     assert!(out.contains("Z\""), "{out}");
 
-    // The revision is usable straight out of the document, at full length.
     let restore_from = out
         .split("\"restore_from\":\"")
         .nth(1)
@@ -4539,8 +4379,7 @@ fn deleted_json_carries_what_a_script_needs_to_restore() {
     assert!(cmd::show(&paths, &id).unwrap().ends_with("g\n"));
 }
 
-/// A program asking for JSON gets a document either way — an empty list is an
-/// answer, where the table prints nothing at all.
+/// An empty list is an answer; the table prints nothing.
 #[test]
 fn deleted_json_is_a_document_even_when_nothing_is_gone() {
     let (_root, paths) = initialized();
@@ -4592,7 +4431,7 @@ fn restore_reports_what_it_cannot_find() {
         .to_string();
     assert!(err.contains("unknown revision"), "{err}");
 
-    // The note exists now, but not that far back.
+    // The note exists, but not that far back.
     let err = cmd::restore(&paths, "alpha", "HEAD~1", cmd::Touch::Stamp)
         .unwrap_err()
         .to_string();
@@ -4609,9 +4448,8 @@ fn config_file(paths: &Paths) -> PathBuf {
 fn init_leaves_a_starter_config_that_changes_nothing() {
     let root = TempRoot::new();
     let paths = root.paths();
-    // The template rather than `init`, because `initialized()` writes a config
-    // of its own to keep the tests away from the developer's signing key — and
-    // this is the same call `init` makes when there is no config yet.
+    // The template rather than `init`, because `initialized()` writes its own
+    // config; this is the call `init` makes when there is none.
     assert!(noda::config::Config::write_template(&paths).expect("template written"));
 
     let text = std::fs::read_to_string(config_file(&paths)).expect("config written");
@@ -4625,15 +4463,14 @@ fn init_leaves_a_starter_config_that_changes_nothing() {
         "everything is commented out, so the defaults still apply: {text}"
     );
 
-    // Which means no setting reports itself as coming from the file. Which
-    // value each has is the machine's business — `sign` follows git's
-    // `commit.gpgsign`, and the developer running this may well set it.
+    // So nothing reports the file as its source. The values are the machine's:
+    // `sign` follows git's `commit.gpgsign`.
     let shown = plain(&cmd::config_show(&paths).unwrap());
     assert_eq!(shown.lines().count(), 4, "{shown}");
     assert!(shown.contains("notebook  default"), "{shown}");
     assert!(!shown.contains("(config.toml)"), "{shown}");
 
-    // And a second init does not overwrite what the user has since written.
+    // A second init does not overwrite what the user wrote.
     let (_root, paths) = initialized();
     std::fs::write(config_file(&paths), "editor = \"nvim\"\n").unwrap();
     cmd::init(&paths).unwrap();
@@ -4654,9 +4491,8 @@ fn config_set_and_get_round_trip_and_report_their_source() {
     assert!(shown.contains("editor    nvim"), "{shown}");
     assert!(shown.contains("(config.toml)"), "{shown}");
 
-    // Unsetting drops back to the environment or the built-in. What that value
-    // is depends on the machine running the tests, so the check is on where the
-    // value now comes from, not on what it is.
+    // Falls back to the environment or the built-in, which varies by machine,
+    // so only the source is checked.
     let out = cmd::config_unset(&paths, "editor").unwrap();
     assert!(out.contains("now from"), "{out}");
     let shown = plain(&cmd::config_show(&paths).unwrap());
@@ -4674,8 +4510,7 @@ fn config_set_and_get_round_trip_and_report_their_source() {
 
 #[test]
 fn the_first_setting_written_lands_under_the_header_not_above_it() {
-    // The starter config, not `initialized()`'s: the header is what this is
-    // about, and the harness writes a config that has none.
+    // The starter config, since `initialized()`'s has no header.
     let root = TempRoot::new();
     let paths = root.paths();
     noda::config::Config::write_template(&paths).expect("template");
@@ -4738,13 +4573,13 @@ fn config_refuses_what_it_cannot_act_on() {
     assert!(err.contains("editor, author, notebook"), "{err}");
     assert!(cmd::config_get(&paths, "editr").is_err());
 
-    // Half an identity is not an identity: it would end up in every commit.
+    // A name without an email would end up in every commit.
     let err = cmd::config_set(&paths, "author", "just-a-name")
         .unwrap_err()
         .to_string();
     assert!(err.contains("Name <email>"), "{err}");
 
-    // A file that is not TOML is reported against its path, not swallowed.
+    // Invalid TOML is reported against its path.
     std::fs::write(config_file(&paths), "editor = = nvim\n").unwrap();
     let err = cmd::config_show(&paths).unwrap_err().to_string();
     assert!(err.contains("config.toml"), "{err}");
@@ -4764,8 +4599,7 @@ fn the_configured_notebook_is_what_init_creates_and_what_stands_in() {
 
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    // State is "where am I now" and can be thrown away; config is "where I
-    // belong", so losing the pointer must not lose the notebook.
+    // State is disposable; config is not, so losing the pointer must not lose the notebook.
     std::fs::remove_file(paths.active_file()).unwrap();
     assert!(
         cmd::ls(&paths, &cmd::List::default())
@@ -4782,7 +4616,6 @@ fn commands_refuse_to_run_before_init() {
     assert!(err.to_string().contains("noda init"), "{err}");
 }
 
-/// The commit the active notebook is on, in full.
 fn head_commit(paths: &Paths) -> String {
     let name = noda::notebook::active_name(paths).expect("active notebook");
     git2::Repository::open(paths.notebook_dir(&name))
@@ -4795,7 +4628,7 @@ fn head_commit(paths: &Paths) -> String {
         .to_string()
 }
 
-/// The `commit` column of every line of a `noda blame`.
+/// The `commit` column of each `noda blame` line.
 fn blamed(paths: &Paths, key: &str) -> Vec<(String, String)> {
     plain(&cmd::blame(paths, key).unwrap())
         .lines()
@@ -4831,9 +4664,8 @@ fn blame_credits_each_line_to_the_commit_that_wrote_it() {
     );
 }
 
-/// Why this is not libgit2's blame: every `TRACK_COPIES` option is documented as
-/// not implemented, so it stops at a rename — and `noda mv` renames on every
-/// retitle. Picking the note out by id means a rename never comes up.
+/// libgit2's blame stops at a rename (every `TRACK_COPIES` option is
+/// unimplemented) and `noda mv` renames on retitle; picking the note by id avoids it.
 #[test]
 fn blame_reaches_past_a_rename() {
     let (_root, paths) = initialized();
@@ -4867,9 +4699,8 @@ fn blame_reaches_past_a_rename() {
     );
 }
 
-/// `updated` is rewritten on every edit, so blaming the frontmatter would put a
-/// block of same-coloured noise above the prose and make every note look like it
-/// was written all at once.
+/// `updated` changes on every edit, so blaming frontmatter would credit it all
+/// to the latest commit.
 #[test]
 fn blame_reports_the_body_and_not_the_frontmatter() {
     let (_root, paths) = initialized();
@@ -4883,8 +4714,7 @@ fn blame_reports_the_body_and_not_the_frontmatter() {
     assert!(out.contains("body"), "{out}");
 }
 
-/// A note edited outside noda has lines nobody has committed. They belong to no
-/// commit, and saying so is the honest answer.
+/// Lines edited outside noda belong to no commit, and are shown that way.
 #[test]
 fn blame_marks_the_lines_that_are_not_committed() {
     let (_root, paths) = initialized();
@@ -4907,8 +4737,7 @@ fn blame_marks_the_lines_that_are_not_committed() {
     );
 }
 
-/// A note the notebook holds and no commit does. There is nothing to walk, and
-/// crediting a line to a commit that never saw it would be worse than saying so.
+/// Crediting a line to a commit that never saw it would be worse than saying so.
 #[test]
 fn blame_says_nothing_is_committed_when_no_commit_holds_the_note() {
     let (_root, paths) = initialized();
@@ -4952,23 +4781,19 @@ fn backlinks_name_the_notes_that_point_at_one() {
     );
     assert!(out.contains("Q3 budget"), "the title comes with it: {out}");
 
-    // The other direction is not this command's question: the note that does
-    // the linking has nothing pointing at it.
+    // The linking note has nothing pointing at it.
     let out = plain(&cmd::backlinks(&paths, &source_slug, cmd::Format::Table).unwrap());
     assert!(out.contains("nothing links to"), "{out}");
 }
 
-/// Why the match is on the id: `noda mv` moves the slug half and says nothing to
-/// the notes that linked here, so the destination names a path that is gone and
-/// an id that is not.
+/// `noda mv` leaves the link naming a path that is gone and an id that is not.
 #[test]
 fn backlinks_survive_a_retitle() {
     let (_root, paths) = initialized();
     let ((_, target), (source_id, _)) = linked_pair(&paths);
     cmd::mv(&paths, &target, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
 
-    // The link is now broken as far as any Markdown reader is concerned, and
-    // stale as far as noda is: the id in it still names exactly one note.
+    // Broken for any Markdown reader, stale for noda: the id still names one note.
     let audit = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(audit.contains("stale link"), "{audit}");
 
@@ -4979,8 +4804,7 @@ fn backlinks_survive_a_retitle() {
     );
 }
 
-/// An attachment has no id to fall back on — its name is the whole of its
-/// identity — but the question is the same one.
+/// An attachment's name is its whole identity, but the question is the same.
 #[test]
 fn backlinks_answer_for_a_file_too() {
     let (_root, paths) = initialized();
@@ -5000,8 +4824,7 @@ fn backlinks_answer_for_a_file_too() {
     assert!(!out.contains("beta"), "{out}");
 }
 
-/// Settled deliberately: it is what the file says, and leaving it out would be
-/// noda deciding the author did not mean it.
+/// It is what the file says; leaving it out would be noda overruling the author.
 #[test]
 fn a_note_that_links_to_itself_is_its_own_backlink() {
     let (_root, paths) = initialized();
@@ -5022,8 +4845,7 @@ fn a_note_that_links_to_itself_is_its_own_backlink() {
     assert!(out.contains(id), "{out}");
 }
 
-/// Three links to one place is one backlink: `link::targets` is a set, and the
-/// question is which notes point here, not how many times.
+/// `link::targets` is a set: the question is which notes, not how many times.
 #[test]
 fn a_note_linking_three_times_is_one_backlink() {
     let (_root, paths) = initialized();
@@ -5043,8 +4865,7 @@ fn a_note_linking_three_times_is_one_backlink() {
     assert_eq!(out.lines().count(), 1, "{out}");
 }
 
-/// Only a real link counts — the same rule `doctor --links` follows, and the
-/// reason both read Markdown with a parser instead of searching for the name.
+/// The same rule `doctor --links` follows: Markdown is parsed, not searched.
 #[test]
 fn a_mention_is_not_a_backlink() {
     let (_root, paths) = initialized();
@@ -5097,13 +4918,11 @@ fn backlinks_say_when_the_key_names_nothing() {
     assert!(err.contains("nothing called `ghost`"), "{err}");
 }
 
-/// A fixed "today", so what counts as overdue is stated rather than read off
-/// the clock the test is running on.
+/// A fixed "today", so overdue does not depend on the clock.
 const TODAY: &str = "2026-08-02";
 
-/// A note of nothing but action items opens with `- `, which clap reads as an
-/// option unless told otherwise. Has to go through the real binary: every other
-/// test here calls `cmd::` directly and never meets the parser.
+/// A body of action items opens with `- `, which clap reads as an option unless
+/// told otherwise. Runs the real binary, since `cmd::` calls never meet the parser.
 #[test]
 fn add_takes_a_body_that_opens_with_a_list() {
     let (root, paths) = initialized();
@@ -5161,8 +4980,7 @@ fn todo_lists_unticked_items_soonest_first() {
     );
 }
 
-/// The whole reason the palette gained an exception. The escapes have to be
-/// there before `plain` strips them, so this looks at the raw output.
+/// Why the palette has an exception. Reads the raw output, before `plain`.
 #[test]
 fn todo_marks_a_due_date_that_has_passed() {
     let (_root, paths) = initialized();
@@ -5188,8 +5006,7 @@ fn todo_marks_a_due_date_that_has_passed() {
     );
 }
 
-/// Today is not late. The comparison is `<`, and a test is the only place that
-/// distinction gets written down.
+/// Today is not late: the comparison is `<`.
 #[test]
 fn todo_does_not_call_today_overdue() {
     let (_root, paths) = initialized();
@@ -5214,8 +5031,7 @@ fn todo_says_when_there_is_nothing_to_do() {
     assert!(out.contains("nothing to do"), "{out}");
 }
 
-/// Like `ls` and `deleted`: a program asking for JSON gets a document either
-/// way, and an empty list is an answer.
+/// Like `ls` and `deleted`: an empty list is still a JSON document.
 #[test]
 fn todo_json_carries_the_fields_and_prints_even_when_empty() {
     let (_root, paths) = initialized();
@@ -5252,8 +5068,7 @@ fn todo_json_carries_the_fields_and_prints_even_when_empty() {
     );
 }
 
-/// Long items are printed whole. A list that cuts the sentence off is a list you
-/// have to open the note to read.
+/// A cut-off item would have to be read in the note.
 #[test]
 fn todo_does_not_truncate_an_item() {
     let (_root, paths) = initialized();
@@ -5265,8 +5080,7 @@ fn todo_does_not_truncate_an_item() {
     assert!(!out.contains('…'), "{out}");
 }
 
-/// A `sync` merge carries a note across without changing it, and must not be
-/// credited with writing it.
+/// A `sync` merge carries a note across unchanged and must not be credited with it.
 #[test]
 fn blame_looks_past_a_merge_that_only_carried_the_note() {
     let (root, paths) = initialized();
@@ -5295,8 +5109,7 @@ fn blame_looks_past_a_merge_that_only_carried_the_note() {
     );
 }
 
-/// Annotated, not lightweight: a snapshot records that somebody closed a chapter
-/// at a moment, and a bare pointer records neither the somebody nor the moment.
+/// Annotated, not lightweight: a snapshot records who closed a chapter and when.
 #[test]
 fn snapshot_marks_the_current_commit_with_an_annotated_tag() {
     let (_root, paths) = initialized();
@@ -5320,8 +5133,7 @@ fn snapshot_marks_the_current_commit_with_an_annotated_tag() {
     assert!(listed.contains("end of quarter"), "{listed}");
 }
 
-/// The point of the whole feature: `restore` already promised to take a tag, and
-/// until now nothing in noda could make one.
+/// `restore` already accepted a tag; this is what makes one.
 #[test]
 fn a_note_restores_from_a_snapshot_by_name() {
     let (_root, paths) = initialized();
@@ -5339,9 +5151,8 @@ fn a_note_restores_from_a_snapshot_by_name() {
     assert!(std::fs::read_to_string(&note).unwrap().contains("first"));
 }
 
-/// `sync` already commits the whole working tree without a guard, and for the
-/// same reason: a snapshot that quietly left out what is on disk would be a
-/// snapshot of something nobody has.
+/// Like `sync`: a snapshot that left out what is on disk would be of something
+/// nobody has.
 #[test]
 fn snapshot_commits_what_is_on_disk_first() {
     let (_root, paths) = initialized();
@@ -5360,13 +5171,13 @@ fn snapshot_commits_what_is_on_disk_first() {
         "the snapshot marks a commit that holds everything"
     );
 
-    // And a clean notebook gains no empty commit.
+    // A clean notebook gains no empty commit.
     let out = cmd::snapshot(&paths, "again", None).unwrap();
     assert!(!out.contains("commit:"), "{out}");
     assert_eq!(commit_count(&notebook), before + 1);
 }
 
-/// A name that can be reassigned cannot be cited, which is the whole use.
+/// A name that can be reassigned cannot be cited.
 #[test]
 fn snapshot_refuses_to_move_one_that_already_exists() {
     let (_root, paths) = initialized();
@@ -5391,6 +5202,23 @@ fn snapshot_refuses_a_name_git_cannot_hold() {
 }
 
 #[test]
+fn a_tag_on_a_blob_does_not_break_the_snapshot_listing() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "kept", None).unwrap();
+
+    let repo = git2::Repository::open(&notebook).unwrap();
+    let blob = repo.blob(b"not a commit").unwrap();
+    repo.reference("refs/tags/on-a-blob", blob, false, "test")
+        .unwrap();
+
+    let listed = plain(&cmd::snapshot_ls(&paths).unwrap());
+    assert!(listed.contains("kept"), "{listed}");
+    assert!(!listed.contains("on-a-blob"), "{listed}");
+}
+
+#[test]
 fn snapshot_says_when_there_are_none() {
     let (_root, paths) = initialized();
     let out = plain(&cmd::snapshot_ls(&paths).unwrap());
@@ -5398,8 +5226,7 @@ fn snapshot_says_when_there_are_none() {
     assert!(out.contains("noda snapshot <name>"), "{out}");
 }
 
-/// A snapshot that stayed on the machine it was taken on could not be cited from
-/// anywhere else, which is most of what a snapshot is for.
+/// A snapshot that stays on one machine cannot be cited from another.
 #[test]
 fn snapshots_travel_with_the_notebook() {
     let (root, paths) = initialized();
@@ -5416,7 +5243,6 @@ fn snapshots_travel_with_the_notebook() {
         "the snapshot reached the remote"
     );
 
-    // And comes back down on the other side.
     mirror(&paths, &url, "mirror");
     cmd::use_notebook(&paths, "mirror").unwrap();
     let listed = plain(&cmd::snapshot_ls(&paths).unwrap());
@@ -5424,9 +5250,8 @@ fn snapshots_travel_with_the_notebook() {
     assert!(listed.contains("end of quarter"), "{listed}");
 }
 
-/// Two machines that each made a `q3` must not overwrite each other in silence —
-/// and the clash must not take the notes down with it, which is what sending the
-/// tag anyway would do.
+/// Two machines' `q3` must not silently overwrite each other, and the clash must
+/// not block the notes, which sending the tag anyway would.
 #[test]
 fn a_snapshot_name_taken_on_the_remote_is_not_overwritten() {
     let (root, paths) = initialized();
@@ -5460,8 +5285,7 @@ fn a_snapshot_name_taken_on_the_remote_is_not_overwritten() {
         Some("theirs"),
         "the remote's snapshot still means what it meant"
     );
-    // The notes went, which is the point: a name nobody can agree on must not
-    // hold up the prose.
+    // The notes still went: a disputed name must not hold up the prose.
     let head = remote
         .find_reference(&format!("refs/heads/{branch}"))
         .unwrap()
@@ -5477,7 +5301,7 @@ fn a_snapshot_name_taken_on_the_remote_is_not_overwritten() {
     );
 }
 
-/// A small export, written to a file the way a browser's "export all" would.
+/// A small export written to a file, as a browser's "export all" would.
 fn export(root: &TempRoot, name: &str, tiddlers: &str) -> PathBuf {
     let path = root.0.join(name);
     std::fs::write(&path, tiddlers).unwrap();
@@ -5494,8 +5318,7 @@ const TIDDLERS: &str = r#"[
   {"title":"A Picture","text":"aGk=","type":"image/png"}
 ]"#;
 
-/// The whole promise of the two-commit import: whatever the conversion did, the
-/// text the export actually held is still in history and one command away.
+/// Whatever the conversion did, the export's text is in history, one command away.
 #[test]
 fn import_writes_the_originals_first_and_the_conversion_second() {
     let (root, paths) = initialized();
@@ -5549,9 +5372,8 @@ fn import_carries_the_times_and_fields_the_wiki_had() {
     assert!(out.contains("Meeting Notes"), "{out}");
 }
 
-/// One tiddler with a title too long to name a file used to abort the whole
-/// import, leaving pass one's notes in the working tree and none of them
-/// committed.
+/// A title too long for a filename used to abort the whole import, leaving
+/// pass one's notes uncommitted.
 #[test]
 fn import_takes_a_tiddler_whose_title_is_too_long_for_a_filename() {
     let (root, paths) = initialized();
@@ -5585,10 +5407,8 @@ https://coding-horror.github.io/basic-computer-games/";
     );
 }
 
-/// A write the filesystem refuses used to end the run with `?`, leaving the
-/// notes written so far in the working tree with nothing committed — a whole
-/// export lost to one note. It is now a reason a note was not imported, the way
-/// a title `check` turned down is.
+/// A refused write used to end the run with `?`, leaving everything so far
+/// uncommitted. It is now a per-note reason, like a title `check` rejected.
 #[test]
 fn import_reports_a_note_it_could_not_write_instead_of_ending_the_run() {
     let (root, paths) = initialized();
@@ -5596,15 +5416,14 @@ fn import_reports_a_note_it_could_not_write_instead_of_ending_the_run() {
     let file = export(&root, "wiki.json", TIDDLERS);
     let commits = commit_count(&notebook);
 
-    // Nothing in the harness can make one write fail and not another — the
-    // filename carries a minted id, so no collision can be laid down for it —
-    // so every write fails instead: the directory takes no new entries.
+    // A single write cannot be made to fail (the filename has a minted id, so
+    // no collision can be planted), so every write fails: the directory is read-only.
     let was = std::fs::metadata(&notebook).unwrap().permissions();
     let mut readonly = was.clone();
     readonly.set_readonly(true);
     std::fs::set_permissions(&notebook, readonly).unwrap();
     if std::fs::write(notebook.join("probe"), "x").is_ok() {
-        // root, or a filesystem that does not enforce the mode.
+        // Running as root, or on a filesystem that ignores the mode.
         std::fs::remove_file(notebook.join("probe")).unwrap();
         std::fs::set_permissions(&notebook, was).unwrap();
         return;
@@ -5628,9 +5447,8 @@ fn import_reports_a_note_it_could_not_write_instead_of_ending_the_run() {
     assert_eq!(left, 0, "and nothing left in the working tree");
 }
 
-/// The link is to a tiddler by title, and the file it becomes is not named
-/// until the id is minted — so the rewrite cannot happen until every note
-/// exists, which is what the second pass is for.
+/// The target file is not named until its id is minted, so links are rewritten
+/// once every note exists — the second pass.
 #[test]
 fn import_points_links_at_the_files_the_notes_became() {
     let (root, paths) = initialized();
@@ -5661,7 +5479,7 @@ fn what_is_not_a_note_is_reported_rather_than_imported() {
     assert!(out.contains("1 not text (image/png)"), "{out}");
 }
 
-/// `--no-convert` is the whole first half and none of the second.
+/// `--no-convert` is the first pass only.
 #[test]
 fn import_can_leave_the_wikitext_as_it_stands() {
     let (root, paths) = initialized();
@@ -5678,7 +5496,6 @@ fn import_can_leave_the_wikitext_as_it_stands() {
     assert!(note_text(&paths, "meeting-notes").contains("''this''"));
 }
 
-/// Running the same import twice is not two notebooks.
 #[test]
 fn a_second_import_of_the_same_export_changes_nothing() {
     let (root, paths) = initialized();
@@ -5697,8 +5514,8 @@ fn a_second_import_of_the_same_export_changes_nothing() {
     );
 }
 
-/// The marker is a frontmatter field rather than a tag, because tags belong to
-/// whoever writes the notes — and `doctor` is what makes a field findable.
+/// A frontmatter field rather than a tag, because tags belong to whoever writes
+/// the notes; `doctor` makes the field findable.
 #[test]
 fn doctor_reports_the_notes_an_import_could_not_finish() {
     let (root, paths) = initialized();
@@ -5727,8 +5544,7 @@ fn a_file_that_is_not_an_export_is_refused_by_name() {
     assert!(err.contains("no tiddler store"), "{err}");
 }
 
-/// A wiki exported in pieces has links running between the pieces, so several
-/// files are one import rather than several.
+/// Links run between the pieces of a split export, so several files are one import.
 #[test]
 fn several_exports_are_read_as_one_import() {
     let (root, paths) = initialized();
@@ -5754,8 +5570,7 @@ fn several_exports_are_read_as_one_import() {
     assert!(out.contains("Beta"), "and in both directions: {out}");
 }
 
-/// Exports taken in pieces overlap. The first copy is the one that lands, and
-/// the second is reported rather than written twice.
+/// Overlapping pieces: the first copy lands and the second is reported.
 #[test]
 fn a_note_given_twice_in_one_import_arrives_once() {
     let (root, paths) = initialized();
@@ -5771,9 +5586,8 @@ fn a_note_given_twice_in_one_import_arrives_once() {
     );
 }
 
-/// The gap this closes: a link written today pointing at a note that arrived
-/// last week. The resolver starts from what the notebook already holds, so a
-/// wiki can be brought in over several sittings.
+/// The resolver starts from what the notebook already holds, so a wiki can be
+/// imported over several sittings.
 #[test]
 fn a_later_import_links_to_what_an_earlier_one_brought() {
     let (root, paths) = initialized();
@@ -5796,8 +5610,7 @@ fn a_later_import_links_to_what_an_earlier_one_brought() {
     assert!(out.contains("Beta"), "{out}");
 }
 
-/// Every file is read before anything is written, so a bad one leaves no half
-/// an import behind.
+/// Every file is read before anything is written.
 #[test]
 fn a_file_that_cannot_be_read_stops_the_import_before_it_writes() {
     let (root, paths) = initialized();
@@ -5814,9 +5627,8 @@ fn a_file_that_cannot_be_read_stops_the_import_before_it_writes() {
     assert!(cmd::ls(&paths, &cmd::List::default()).unwrap().is_empty());
 }
 
-/// Reads the commit on stdin and answers with a fixed armored block. The tests
-/// are about what noda does with a signature; a real key would test gpg
-/// instead, on a keyring that may well be locked.
+/// Reads the commit on stdin and prints a fixed armored block. A real key would
+/// test gpg instead, on a keyring that may be locked.
 fn stub_gpg(root: &TempRoot, name: &str, script: &str) -> String {
     let path = root.0.join(name);
     std::fs::write(&path, format!("#!/bin/sh\n{script}")).expect("write stub");
@@ -5826,15 +5638,14 @@ fn stub_gpg(root: &TempRoot, name: &str, script: &str) -> String {
     path.to_str().expect("utf-8 path").to_string()
 }
 
-/// A stub that signs, and one that refuses to.
+/// A stub that signs; `FAILS` refuses.
 const SIGNS: &str = "cat > /dev/null\n\
      printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nc3R1Yg==\\n-----END PGP SIGNATURE-----\\n'\n";
 const FAILS: &str = "cat > /dev/null\nexit 1\n";
 
-/// `gpg.openpgp.program` rather than `gpg.program`, and `gpg.format` pinned:
-/// both are what the resolution consults first, and a developer who sets them
-/// would otherwise have this test sign with their real key — which passes, and
-/// proves nothing about the stub.
+/// `gpg.openpgp.program` and `gpg.format` are consulted first; without pinning
+/// them a developer's own setting would sign with their real key, and the test
+/// would pass without testing the stub.
 fn sign_with(paths: &Paths, notebook: &str, program: &str) {
     let repo = git2::Repository::open(paths.notebook_dir(notebook)).expect("open repo");
     let mut config = repo.config().expect("config");
@@ -5845,7 +5656,6 @@ fn sign_with(paths: &Paths, notebook: &str, program: &str) {
     cmd::config_set(paths, "sign", "true").expect("sign on");
 }
 
-/// The signature on the commit `HEAD` points at, if it has one.
 fn head_signature(notebook: &Path) -> Option<String> {
     let repo = git2::Repository::open(notebook).expect("open repo");
     let head = repo.head().expect("head").peel_to_commit().expect("commit");
@@ -5871,9 +5681,8 @@ fn signing_attaches_the_signature_and_still_moves_the_branch() {
     let signature = head_signature(&notebook).expect("signed");
     assert!(signature.contains("BEGIN PGP SIGNATURE"), "{signature}");
 
-    // `commit_signed` writes an object and nothing else, so the interesting
-    // half is that the branch came with it: one new commit, the note in it, and
-    // a working tree with nothing left over.
+    // `commit_signed` only writes an object; the branch has to move with it and
+    // leave a clean working tree.
     assert_eq!(commit_count(&notebook), before + 1);
     assert!(
         cmd::ls(&paths, &cmd::List::default())
@@ -5887,7 +5696,7 @@ fn signing_attaches_the_signature_and_still_moves_the_branch() {
         "nothing uncommitted"
     );
 
-    // And the next commit builds on it rather than beside it.
+    // The next commit builds on it.
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
     let head = repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.parent_count(), 1);
@@ -5920,7 +5729,7 @@ fn a_gpg_that_fails_takes_the_commit_with_it() {
 fn a_gpg_that_is_not_gpg_is_not_taken_at_its_word() {
     let (root, paths) = initialized();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
-    // Exits 0 and says nothing, the way a wrong `gpg.program` would.
+    // Exits 0 and prints nothing, as a wrong `gpg.program` would.
     let quiet = stub_gpg(&root, "gpg-quiet", "cat > /dev/null\n");
     sign_with(&paths, cmd::DEFAULT_NOTEBOOK, &quiet);
     let before = commit_count(&notebook);
@@ -5948,7 +5757,7 @@ fn a_format_noda_cannot_sign_is_refused_at_the_commit() {
         .to_string();
     assert!(err.contains("OpenPGP only"), "{err}");
 
-    // Reading is untouched by it: the notebook is only unsignable, not broken.
+    // Reading still works: the notebook is unsignable, not broken.
     assert!(cmd::ls(&paths, &cmd::List::default()).is_ok());
 }
 
@@ -5965,8 +5774,7 @@ fn the_merge_a_pull_makes_is_signed_too() {
     cmd::add(&paths, Some("Laptop"), Some("l\n"), &[]).unwrap();
     cmd::sync(&paths).unwrap();
 
-    // The mirror diverged and signs; the merge it makes is a commit like any
-    // other, so it carries a signature like any other.
+    // The merge is a commit like any other, so it is signed like any other.
     cmd::use_notebook(&paths, "mirror").unwrap();
     sign_with(&paths, "mirror", &stub_gpg(&root, "gpg-merge", SIGNS));
     cmd::add(&paths, Some("Desktop"), Some("d\n"), &[]).unwrap();
@@ -5993,7 +5801,7 @@ fn sign_is_a_setting_like_any_other() {
     cmd::config_set(&paths, "sign", "true").unwrap();
     assert_eq!(cmd::config_get(&paths, "sign").unwrap(), "true");
 
-    // Written as a boolean, not as the string it arrived as.
+    // Written as a boolean, not a string.
     let text = std::fs::read_to_string(config_file(&paths)).unwrap();
     assert!(text.contains("sign = true"), "{text}");
 
@@ -6001,7 +5809,7 @@ fn sign_is_a_setting_like_any_other() {
     assert!(shown.contains("sign      true"), "{shown}");
     assert!(shown.contains("(config.toml)"), "{shown}");
 
-    // git's spellings are not TOML's, and are refused rather than read as false.
+    // git's spellings (`yes`) are refused rather than read as false.
     let err = cmd::config_set(&paths, "sign", "yes")
         .unwrap_err()
         .to_string();

@@ -1,44 +1,27 @@
-//! Telling an open editor that the note under it moved.
+//! Telling an open editor that the note under it changed, before Save rather
+//! than in the merge that answers it.
 //!
-//! The optimistic lock already means an edit onto a note that changed
-//! underneath is merged rather than lost. What it cannot do is say so *while*
-//! somebody is typing: the first they hear of it is the answer to a Save they
-//! have already pressed. This is the same fact, arriving earlier.
+//! **It watches the file, not the server's writes**, because `noda edit`, a
+//! hand-opened editor and `sync` also write to the repository. The cost is
+//! hashing one small file every `EVERY` per open note.
 //!
-//! **It watches the file, not the writes.** A notebook is an ordinary git
-//! repository and a terminal in another window writes to it — `noda edit`, an
-//! editor opened by hand, a `sync` bringing somebody else's afternoon down from
-//! a remote. Broadcasting only what the server itself wrote would be silent in
-//! precisely the case noda exists for, so the file is looked at instead. That
-//! costs a hash of one small file every couple of seconds per open editor, and
-//! buys a mechanism with no blind side.
+//! **One thread for all editors**, walking a registry connections join and
+//! leave; a thread per connection could not notice its tab closing.
 //!
-//! **One thread, however many editors are open.** A thread per connection is a
-//! thread that outlives the tab it was opened for: a browser closing a
-//! connection is not something a sleeping thread can notice. So there is one,
-//! and what it walks is a registry that connections put themselves into and
-//! take themselves out of.
+//! **`stop` ends every stream.** An SSE response never finishes on its own, and
+//! axum's graceful shutdown waits for in-flight requests, so `stop` drops every
+//! sender to close them.
 //!
-//! **Nothing here can hold a connection open past a stop.** An SSE response is
-//! by design a request that never finishes, and `axum`'s graceful shutdown
-//! waits for what is in flight — so a stop that did not end these would wait
-//! for them forever. `stop` drops every sender, each stream sees its channel
-//! close, and the wait has nothing left to wait for.
+//! **Polling, not `notify`.** `notify` 8.2.0 adds five crates, and measured
+//! against a 7,707,504-byte binary:
 //!
-//! **A file watcher was the other way, and it was costed.** `notify` 8.2.0 —
-//! the stable one; 9.0.0 is a release candidate — brings five crates and, with
-//! a watcher actually constructed so the linker keeps it:
+//! ```text
+//! with `notify`      +    52,112   (+0.68%)
+//! with this          +    16,576   (+0.21%)
+//! ```
 //!
-//!     main                7,707,504 bytes
-//!     with `notify`      +    52,112   (+0.68%)
-//!     with this          +    16,576   (+0.21%)
-//!
-//! A third of the size, no new crate at all, and it catches the same writes.
-//! What it gives up is latency — up to `EVERY` — on an event whose whole
-//! content is "somebody else has saved". The watcher's own difficulty argued
-//! the same way: an editor that writes by renaming a temporary file over the
-//! original produces a create where a reader expects a modify, and some write
-//! twice. A hash does not have opinions about how the bytes arrived.
+//! It costs up to `EVERY` of latency, and a hash does not care whether an
+//! editor saved by rename or wrote twice, which a watcher has to.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -47,35 +30,24 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-/// How often the file under an open editor is looked at.
-///
-/// The event is "somebody else has saved", which nobody is waiting on to the
-/// second — and every tick is a hash of a file that is usually a few kilobytes.
-/// Two seconds is under the time it takes to notice a line has appeared.
+/// How often the file under an open editor is hashed.
 const EVERY: Duration = Duration::from_secs(2);
 
-/// How many changes a connection may fall behind before it is dropped.
-///
-/// One would do: every message says the same thing — the file is at this
-/// fingerprint now — so a reader that missed three has missed nothing the
-/// fourth does not carry. The room is here so a saturated channel cannot make
-/// the thread that holds the registry lock wait.
+/// Each connection's channel capacity. When it is full a fingerprint is
+/// skipped, not the connection: each message supersedes the last.
 const BEHIND: usize = 8;
 
 /// One note being watched, and everybody watching it.
 struct Watched {
     path: PathBuf,
-    /// The last fingerprint the thread saw. A change is a change since the last
-    /// look, not since any one page was drawn — the readers each compare what
-    /// arrives against what their own form holds.
+    /// The last fingerprint seen; each reader compares against its own form.
     seen: String,
     tell: Vec<mpsc::Sender<String>>,
 }
 
 #[derive(Default)]
 struct State {
-    /// By notebook and note id. The slug is not in the key: it follows the
-    /// title, and two readers on one note must land on one entry.
+    /// By notebook and note id; not the slug, which follows the title.
     notes: HashMap<(String, String), Watched>,
     stopping: bool,
 }
@@ -92,12 +64,8 @@ impl Default for Watch {
 }
 
 impl Watch {
-    /// Starts the thread that does the looking.
-    ///
-    /// A plain `std::thread`, as `work.rs` uses for the same reason: the
-    /// blocking pool is for work a request is waiting on, and no request waits
-    /// on this. It also keeps the tick out of the runtime, which is built with
-    /// I/O only — a timer here would mean a timer driver for the whole server.
+    /// Starts the watching thread: a plain `std::thread`, since no request waits
+    /// on it and the runtime is built without a timer driver.
     #[must_use]
     pub fn new() -> Watch {
         let shared = Arc::new((Mutex::new(State::default()), Condvar::new()));
@@ -110,10 +78,8 @@ impl Watch {
 
     /// Puts one open editor into the registry.
     ///
-    /// `now` seeds what the thread compares against, so the reader is told about
-    /// the next change rather than about the state of the file when they
-    /// arrived. An entry that already exists keeps the fingerprint it had:
-    /// a second reader must not reset what the first is waiting on.
+    /// `now` seeds the comparison for a new entry; an existing entry keeps its
+    /// fingerprint, so a second reader does not reset the first's.
     pub fn subscribe(
         &self,
         book: &str,
@@ -136,21 +102,17 @@ impl Watch {
         hear
     }
 
-    /// Ends every stream, and the thread with them.
-    ///
-    /// Called as the server begins to stop rather than after it has: dropping
-    /// the senders is what lets the wait for in-flight requests finish at all.
+    /// Ends every stream, and the thread. Called as the server begins to stop,
+    /// since graceful shutdown cannot finish until the streams close.
     pub fn stop(&self) {
         let mut state = self.shared.0.lock().unwrap_or_else(PoisonError::into_inner);
         state.stopping = true;
-        // Every sender goes with it, so every reader's channel closes.
         state.notes.clear();
         drop(state);
         self.shared.1.notify_all();
     }
 }
 
-/// The loop: wait a tick, look at what has readers, tell them what moved.
 fn look(shared: &Arc<(Mutex<State>, Condvar)>) {
     let (lock, wake) = &**shared;
     loop {
@@ -159,8 +121,7 @@ fn look(shared: &Arc<(Mutex<State>, Condvar)>) {
             if state.stopping {
                 return;
             }
-            // On the condvar and not `sleep`, so a stop is not made to wait out
-            // a tick it arrived at the start of.
+            // A condvar, not `sleep`, so `stop` need not wait out a tick.
             let (state, _) = wake
                 .wait_timeout(state, EVERY)
                 .unwrap_or_else(PoisonError::into_inner);
@@ -169,14 +130,11 @@ fn look(shared: &Arc<(Mutex<State>, Condvar)>) {
             }
         }
 
-        // Hashing happens with the lock down. It is file I/O, and the lock is
-        // what every connection opening and closing goes through.
+        // Hashing is file I/O, so it runs without the lock.
         let wanted: Vec<((String, String), PathBuf)> = {
             let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
-            // **The liveness check, and it is here rather than at the send.** A
-            // sender only learns its reader is gone when it tries to use it, and
-            // a note nobody edits again is never sent to — so a tab closed on a
-            // quiet note would be watched until the server stopped.
+            // Prune closed readers here, not only at a send: a quiet note is
+            // never sent to, so its closed tab would be watched forever.
             state.notes.retain(|_, watched| {
                 watched.tell.retain(|tell| !tell.is_closed());
                 !watched.tell.is_empty()
@@ -191,10 +149,7 @@ fn look(shared: &Arc<(Mutex<State>, Condvar)>) {
         let looked: Vec<((String, String), String)> = wanted
             .into_iter()
             .filter_map(|(key, path)| {
-                // A note renamed since is a note this path no longer names, and
-                // one deleted has no hash at all. Neither is what this exists to
-                // catch, and a reader told the file changed because it went
-                // missing has been told something misleading.
+                // A renamed or deleted note is skipped, not reported as changed.
                 git2::Oid::hash_file(git2::ObjectType::Blob, &path)
                     .ok()
                     .map(|oid| (key, oid.to_string()))
@@ -213,9 +168,7 @@ fn look(shared: &Arc<(Mutex<State>, Condvar)>) {
                 continue;
             }
             watched.seen.clone_from(&hash);
-            // `try_send` because the thread holding this lock must not wait on
-            // a reader. A full channel is a reader already holding more of these
-            // than it can use.
+            // `try_send`: never wait on a reader while holding the lock.
             watched.tell.retain(|tell| {
                 !matches!(
                     tell.try_send(hash.clone()),

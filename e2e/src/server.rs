@@ -1,19 +1,13 @@
-//! The server under test, and the notebook it serves.
+//! The server under test and the notebook it serves.
 //!
-//! Both are built here rather than committed. A notebook is a git repository,
-//! and a git repository inside this one is a thing to have to explain to every
-//! tool that walks the tree — so the fixture is made the way a person makes one,
-//! by running the binary: `init`, then `add` a few times. That also keeps the
-//! fixture honest, because anything that changes what `add` writes changes what
-//! these tests read.
+//! The fixture is built by running the binary (`init`, then `add`) rather than
+//! committed, since a git repository inside this one confuses every tool that
+//! walks the tree, and so a change to what `add` writes reaches these tests.
+//! **Nothing here asserts on an id**: ids are minted, so features name notes by
+//! title.
 //!
-//! **Nothing here asserts on an id.** Ids are minted, so a fixture built by
-//! running `add` cannot know them in advance; the features name notes by their
-//! titles, which is what a reader sees anyway.
-//!
-//! The binary is spawned directly rather than through `cargo run`, so the PID
-//! held here is the server's own — killing `cargo` would leave the server it
-//! spawned holding the port.
+//! The binary is spawned directly, not via `cargo run`, so killing the held PID
+//! kills the server and frees the port.
 
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -22,24 +16,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-/// Fixed, so a developer can leave a server running between runs and so the
-/// features can name URLs without asking anything at runtime.
+/// Fixed, so a server can be left running between runs and features can name URLs.
 pub const PORT: u16 = 8799;
 
-/// What every navigation is relative to.
 pub const BASE_URL: &str = "http://127.0.0.1:8799";
 
-/// The notebook the features are written against.
 pub const NOTEBOOK: &str = "default";
 
 const STARTUP_TIMEOUT: Duration = Duration::from_mins(1);
 
-/// The notebook the fixture was built in, the commit it was built to, and the
-/// bare repository standing in for a git host.
-///
-/// Set once at start-up and read by [`reset`] after every scenario. A static
-/// rather than something threaded through the world, because the hook that
-/// resets is cucumber's and takes what cucumber gives it.
+/// The fixture notebook, its starting commit, and the bare repository standing
+/// in for a git host. A static because [`reset`] runs in a cucumber hook that is
+/// not handed the world's state.
 struct Fixture {
     notebook: PathBuf,
     head: String,
@@ -48,48 +36,28 @@ struct Fixture {
 
 static FIXTURE: std::sync::OnceLock<Fixture> = std::sync::OnceLock::new();
 
-/// Puts the notebook back the way the fixture left it.
+/// Restores the fixture notebook and remote; called after every scenario.
 ///
-/// **Called after every scenario, and the suite is wrong without it.** The
-/// scenarios share one notebook and some of them now write to it: one renames a
-/// note, one takes a tag off another, one rewrites a body. Run once they happen
-/// to pass, because the features that read come before the features that write;
-/// run twice — which is what the scripted and script-less passes are — the
-/// second pass opens a notebook the first one edited and fails on notes that are
-/// no longer called what they were called.
-///
-/// Resetting is cheaper than a notebook per scenario and says the same thing: a
-/// scenario's `Given` is either true or the scenario is not testing what it
-/// says. `git` is shelled out to rather than linked, because this is a test
-/// harness restoring a fixture and `reset --hard` is exactly the sentence.
-///
-/// # Errors
-///
-/// Fails when git refuses, which means the fixture is not recoverable and every
-/// scenario after this one would be reporting on the wrong notebook.
+/// **The suite is wrong without it**: scenarios share one notebook and some write
+/// to it, so the second pass would otherwise read what the first one edited.
+/// Cheaper than a notebook per scenario.
 pub fn reset() -> Result<()> {
     let Some(fixture) = FIXTURE.get() else {
-        // No fixture was built: a server was adopted rather than started, so
-        // whatever it is serving is not ours to put back.
+        // An adopted server's notebook is not ours to put back.
         return Ok(());
     };
     let notebook = &fixture.notebook;
     for args in [
         vec!["reset", "--hard", fixture.head.as_str()],
-        // Untracked files a scenario made and did not commit — a half-written
-        // note left by a step that failed part way.
+        // Untracked files, e.g. a note left by a step that failed part way.
         vec!["clean", "-fd"],
     ] {
         git(notebook, &args)?;
     }
 
-    // **The remote is fixture too, and forgetting that is the same trap the
-    // notebook itself set.** A scenario that syncs leaves commits on the bare
-    // repository and a tracking ref behind it, and "never synced" is then a
-    // statement about the previous scenario rather than about a notebook that
-    // has not been anywhere. It passes on a single pass, because the scenario
-    // that reads comes before the scenario that syncs, and fails on the second
-    // — which is exactly why every scenario is run twice.
+    // **The remote is fixture too**: a sync leaves commits on the bare repository
+    // and tracking refs, and "never synced" would then describe the previous
+    // scenario.
     for refname in git(
         notebook,
         &["for-each-ref", "--format=%(refname)", "refs/remotes"],
@@ -104,11 +72,8 @@ pub fn reset() -> Result<()> {
     Ok(())
 }
 
-/// A bare repository standing in for a git host, made or made again.
-///
-/// libgit2's local transport is the same push and fetch machinery HTTPS and SSH
-/// use, so what the scenarios exercise is the real thing minus a network and a
-/// password.
+/// A fresh bare repository standing in for a git host. libgit2's local transport
+/// shares the push and fetch machinery of HTTPS and SSH.
 fn bare_remote(path: &Path) -> Result<()> {
     if path.exists() {
         std::fs::remove_dir_all(path).with_context(|| format!("clearing {}", path.display()))?;
@@ -128,7 +93,7 @@ fn bare_remote(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// One git command in a repository, for what it printed.
+/// Runs git in `repo`, returning stdout.
 fn git(repo: &Path, args: &[&str]) -> Result<String> {
     let done = Command::new("git")
         .arg("-C")
@@ -145,10 +110,8 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&done.stdout).into_owned())
 }
 
-/// A running server, and the temporary notebook it is reading.
-///
-/// Killed and removed when dropped — unless the port was already open before
-/// the suite started, in which case somebody else's server is left alone.
+/// A running server and its temporary notebook, killed and removed on drop —
+/// unless the port was already open, in which case that server is left alone.
 pub struct Server {
     child: Option<Child>,
     root: Option<PathBuf>,
@@ -156,11 +119,6 @@ pub struct Server {
 
 impl Server {
     /// Starts a server on a fresh notebook, or adopts one already listening.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the binary cannot be built or spawned, when the fixture
-    /// notebook cannot be written, or when the server does not start listening.
     pub fn start() -> Result<Self> {
         if port_is_open() {
             return Ok(Self {
@@ -172,8 +130,7 @@ impl Server {
         let binary = ensure_binary()?;
         let root = std::env::temp_dir().join(format!("noda-e2e-{}", std::process::id()));
         std::fs::create_dir_all(&root)?;
-        // Bound before anything else can fail, so a half-built fixture is still
-        // cleaned up when the error propagates.
+        // Bound first, so a half-built fixture is cleaned up on error.
         let mut server = Self {
             child: None,
             root: Some(root.clone()),
@@ -181,8 +138,6 @@ impl Server {
 
         write_notebook(&binary, &root)?;
 
-        // Where the fixture stands before any scenario has touched it. Every
-        // scenario is put back to exactly this.
         let notebook = root.join("data/noda/notebooks/default");
         let head = git(&notebook, &["rev-parse", "HEAD"])?.trim().to_string();
         let _ = FIXTURE.set(Fixture {
@@ -195,8 +150,7 @@ impl Server {
             Command::new(&binary)
                 .args(["web", "--listen", &format!("127.0.0.1:{PORT}")])
                 .envs(xdg(&root))
-                // Inherited, so a refusal to start is visible in the test output
-                // rather than swallowed into a pipe nobody reads.
+                // Inherited, so a refusal to start shows in the test output.
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .spawn()
@@ -220,12 +174,8 @@ impl Drop for Server {
     }
 }
 
-/// The four notebook-worth of notes the features read.
-///
-/// One of them holds markup, because `noda import tiddlywiki` deliberately
-/// leaves such bodies alone: a note that is markup is an ordinary note here and
-/// not a hypothetical. One carries a tag with a space in it, for the same
-/// reason — that shape comes out of a real import.
+/// The four notes the features read. One body holds markup and one tag has a
+/// space, because both come out of a real `noda import tiddlywiki`.
 fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
     let config = root.join("config/noda");
     std::fs::create_dir_all(&config)?;
@@ -234,10 +184,8 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
     std::fs::write(config.join("config.toml"), "sign = false\n")?;
 
     run(binary, root, &["init"])?;
-    // Two unticked boxes and a ticked one, so the todo screen has something to
-    // order and something to leave out. The dates are absurd on purpose:
-    // `due:2000-01-01` is late whenever the suite runs and `due:2999-12-31` is
-    // not, so what the scenarios read is the comparison and not the clock.
+    // Two open todos and a done one. The absurd dates keep "overdue" independent
+    // of when the suite runs.
     run(
         binary,
         root,
@@ -267,16 +215,10 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
             "24.04 Dark patterns",
         ],
     )?;
-    // One note pointing at another, which is the only way a backlink can exist.
-    // The destination is asked for rather than spelled out: an id is minted, so
-    // a fixture that wrote one down would be a fixture that could not be built
-    // twice — the standing rule about test ids, one layer up.
-    //
-    // It points at the meeting notes and not at the budget, and that is not
-    // arbitrary: a destination is a *filename*, so a note linking to
-    // `…-budget-review.md` holds the word "budget" in its body and turns up in
-    // a search for it. One scenario in `searching.feature` asks for exactly the
-    // note that would then be wrong.
+    // A link for a backlink, its filename asked for since ids are minted. It
+    // targets the meeting notes, not the budget: the filename is in the body, so
+    // `…-budget-review.md` would make this note match `searching.feature`'s
+    // search for "budget".
     let notes = capture(binary, root, &["path", "meeting-notes"])?;
     let notes = Path::new(notes.trim())
         .file_name()
@@ -293,10 +235,7 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
             &format!("a book, and [the notes]({notes})"),
         ],
     )?;
-    // A file, and a note that points at it. The files screen counts what points
-    // at each one and that count is the only door to a file's backlinks — a file
-    // has no page of its own — so a notebook with no files at all could not
-    // exercise it.
+    // A file and a note pointing at it, for the files screen's backlink count.
     let png = root.join("rack.png");
     std::fs::write(&png, b"\x89PNG\r\n\x1a\nnot really")?;
     run(binary, root, &["file", "add", &png.to_string_lossy()])?;
@@ -313,10 +252,8 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
         ],
     )?;
 
-    // A remote it has never spoken to. Set and not synced, because that is the
-    // state the chip on the listing has to be able to say — a notebook wired up
-    // this morning and not yet pushed — and because a scenario that syncs should
-    // be starting from a notebook that has not.
+    // A remote set but never synced: a state the listing's chip must show, and
+    // the starting point for the sync scenarios.
     let remote = root.join("origin.git");
     bare_remote(&remote)?;
     run(binary, root, &["remote", "set", &remote.to_string_lossy()])?;
@@ -327,12 +264,8 @@ fn run(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
     capture(binary, root, args).map(|_| ())
 }
 
-/// The same, kept for what it printed.
-///
-/// Only the fixture needs this, and only to ask noda where it just put
-/// something. Reading a command's output is otherwise a thing to avoid — what
-/// `cmd` prints is written for a person — but `noda path` exists precisely to be
-/// read by another program, and its whole answer is one path.
+/// Runs noda, returning stdout. Only for `noda path`, whose output is meant for
+/// programs; other commands' output is prose, not an interface.
 fn capture(binary: &Path, root: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new(binary)
         .args(args)
@@ -349,9 +282,8 @@ fn capture(binary: &Path, root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// All four, `XDG_STATE_HOME` included: the active-notebook pointer lives in
-/// state rather than in data, and a run that missed it would reach past this
-/// fixture and rewrite the real one.
+/// All four, `XDG_STATE_HOME` included: the active-notebook pointer lives there,
+/// and missing it would rewrite the developer's real one.
 fn xdg(root: &Path) -> [(&'static str, PathBuf); 4] {
     [
         ("XDG_CONFIG_HOME", root.join("config")),
@@ -361,12 +293,8 @@ fn xdg(root: &Path) -> [(&'static str, PathBuf); 4] {
     ]
 }
 
-/// Path to the binary, building it when it is not there.
-///
-/// The debug one on purpose. The release profile is tuned for size and cold
-/// start — fat LTO, one codegen unit — which costs minutes and answers a
-/// question no browser is asking. What is under test here is what the pages
-/// say, and both profiles say the same thing.
+/// The debug binary, built if missing: the release profile's fat LTO costs
+/// minutes and changes nothing a page says.
 fn ensure_binary() -> Result<PathBuf> {
     let binary = repo_root().join("target/debug/noda");
     if binary.is_file() {
@@ -403,7 +331,6 @@ fn port_is_open() -> bool {
     TcpStream::connect(("127.0.0.1", PORT)).is_ok()
 }
 
-/// The repository root — the parent of this crate's directory.
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

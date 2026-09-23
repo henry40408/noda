@@ -1,34 +1,22 @@
-//! Where the version `noda --version` prints comes from.
+//! Stamps the version `noda --version` prints.
 //!
-//! `version` in `Cargo.toml` is a placeholder and stays one: releases are cut as
-//! git tags through `gh release`, so the tag is the only place a real version
-//! number is written down, and Cargo has no way to read it. Hence a build
-//! script, which stamps one into the binary at compile time — a runtime `git`
-//! call would be wrong twice over, since the installed binary is nowhere near
-//! the repository it was built from and starting a process is most of what a
-//! quick `noda ls` costs.
+//! `Cargo.toml`'s version is a placeholder; releases are git tags. It is stamped
+//! at compile time because an installed binary is nowhere near its repository and
+//! spawning `git` would cost a quick `noda ls` its startup. Sources, in order:
 //!
-//! Three sources, in order:
-//!
-//! 1. `NODA_VERSION`, because the Docker build cannot use the next one —
-//!    `.dockerignore` excludes `.git`, and un-ignoring it would put the whole
-//!    history into every build context. The workflow describes the tag on the
-//!    runner and passes the answer in.
-//! 2. `git describe`, which names a tagged build after its tag and any other
-//!    after the commits since (`0.2.0-3-gabc1234`), or after the commit alone
-//!    while no tag exists yet.
-//! 3. Failing both — a source tarball with no git — the manifest's version.
+//! 1. `NODA_VERSION`, for the Docker build, whose `.dockerignore` excludes `.git`;
+//!    the workflow describes the tag and passes it in.
+//! 2. `git describe` (`0.2.0`, `0.2.0-3-gabc1234`, or a bare commit before any tag).
+//! 3. The manifest version, for a source tarball with no git.
 
 use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
     println!("cargo::rerun-if-env-changed=NODA_VERSION");
-    // A tag or a commit changes the version without changing a source file, so
-    // git's refs are an input to this script as much as its own text is. Naming
-    // any of them switches off Cargo's default "rerun when the package changes",
-    // which is why HEAD and the whole of `refs/` are listed rather than the tags
-    // alone: a commit moves a branch ref and touches nothing else.
+    // A tag or commit changes the version without touching a source file. Naming
+    // any path disables Cargo's default rerun-on-package-change, so HEAD and all
+    // of `refs/` are listed: a commit moves only a branch ref.
     for path in git_inputs() {
         println!("cargo::rerun-if-changed={}", path.display());
     }
@@ -48,18 +36,14 @@ fn version() -> String {
     std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".into())
 }
 
-/// A tag is `v0.2.0` and a version is `0.2.0`: `--version` prints a number, not
-/// the name of the ref it was cut from.
+/// `v0.2.0` -> `0.2.0`.
 fn number(tag: &str) -> String {
     tag.strip_prefix('v').unwrap_or(tag).to_string()
 }
 
-/// The files whose mtime says the answer may have changed. Only the ones that
-/// exist — Cargo treats a path that is not there as changed, which would rerun
-/// this on every build.
+/// Only paths that exist: Cargo treats a missing one as always changed.
 fn git_inputs() -> Vec<PathBuf> {
-    // A worktree's own git dir holds HEAD; the branches and tags live in the
-    // common one it shares with the checkout it was made from.
+    // In a worktree, HEAD is in its own git dir but refs are in the common one.
     let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) else {
         return Vec::new();
     };

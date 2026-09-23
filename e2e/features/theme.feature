@@ -1,9 +1,7 @@
 Feature: The notebook follows the phone
 
-  There is no theme toggle in these pages and there is not going to be one: the
-  reader has already told their phone which they want, and a notebook is not the
-  place to ask again. Which makes `prefers-color-scheme` the only way the dark
-  palette is ever reached — and the only way it can be checked.
+  No theme toggle, by design: the phone already says which the reader wants,
+  so `prefers-color-scheme` is the only way to the dark palette.
 
   Scenario: A dark phone gets the dark palette
     Given my phone prefers a dark theme

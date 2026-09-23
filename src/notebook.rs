@@ -1,9 +1,6 @@
-//! A notebook is a git repository of Markdown files. Every mutation is a commit.
-//!
-//! A note's identity is its filename, `<id>-<slug>.md`, and nothing derived is
-//! committed alongside — no bookkeeping file to conflict on, nothing to fall out
-//! of step. Two machines each adding a note write two filenames that git
-//! merges without asking anyone to resolve anything.
+//! A notebook is a git repository of Markdown files; every mutation is a commit.
+//! A note's identity is its filename, `<id>-<slug>.md`, and no bookkeeping file
+//! is committed alongside, so there is nothing to conflict on.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -18,32 +15,25 @@ use crate::remote;
 use crate::sign;
 use crate::{Error, Result};
 
-/// noda configures exactly one remote per notebook.
 const REMOTE_NAME: &str = "origin";
 
-/// Named because `cmd::path` widens exactly this case — it was asked about a
-/// file too — and passes every other failure through.
+/// Matched by `cmd::path` and `cmd::backlinks`, which widen only this failure
+/// because they were asked about a file too.
 pub const NOT_FOUND: &str = "note not found";
 
-/// Spelled exactly: a wider match would start excusing files nobody meant as a
-/// front page.
+/// Spelled exactly, so no other file is excused from being an orphan.
 pub const README_FILE: &str = "README.md";
 
 pub struct Notebook {
     pub name: String,
     pub path: PathBuf,
     repo: Repository,
-    /// Resolved on open: a notebook is opened once per command, read many
-    /// times.
     author: Option<(String, String)>,
-    /// `None` leaves the answer to git's `commit.gpgsign`. Read on open like
-    /// `author` but *resolved* at the commit, so a misconfigured `gpg.format`
-    /// stops `noda add` rather than `noda ls`.
+    /// `None` defers to git's `commit.gpgsign`. Resolved at the commit, so a
+    /// misconfigured `gpg.format` stops `noda add` rather than `noda ls`.
     sign: Option<bool>,
 }
 
-/// A note as it sits in the working tree: the identity its filename spells out,
-/// and what the file holds.
 pub struct NoteFile {
     pub id: String,
     pub slug: String,
@@ -54,39 +44,31 @@ pub struct NoteFile {
 pub struct Status {
     pub branch: String,
     pub notes: usize,
-    /// Free to count: the walk that finds the notes passes them anyway.
     pub files: usize,
     /// Files differing from `HEAD`, untracked ones included.
     pub uncommitted: usize,
     pub remote: Option<String>,
-    /// `(ahead, behind)` against the remote-tracking ref, `None` when there is
-    /// no such ref yet — which a first push builds as surely as a fetch, so the
-    /// screens call it `never synced` rather than naming either half.
+    /// `(ahead, behind)` against the remote-tracking ref; `None` (shown as
+    /// `never synced`) when there is no such ref yet.
     pub drift: Option<(usize, usize)>,
-    /// Empty is the healthy state, and the ordinary one.
     pub problems: Vec<(Problem, Vec<String>)>,
 }
 
-/// Something in the notebook that noda will not settle on its own.
-///
-/// Reported by kind, because the commonest way this goes wrong is wholesale — a
-/// directory copied in at once — and one line of how many beats two thousand
-/// naming them.
+/// Something in the notebook that noda will not settle on its own. Reported by
+/// kind, because it usually goes wrong wholesale (a directory copied in).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Problem {
-    /// One id on more than one file. Two machines can mint the same id without
-    /// meeting; the filenames differ, so git merges them and only this notices.
+    /// One id on more than one file: two machines minted the same id, and the
+    /// filenames differ, so git merged them silently.
     SharedId,
-    /// Frontmatter but no id in the name: a note waiting to be adopted, which
-    /// is what a hand-written file looks like.
+    /// Frontmatter but no id in the name: a hand-written note awaiting adoption.
     Unnamed,
-    /// An id over a file with no frontmatter — a note that lost its block or a
-    /// file that never was one, and only its author knows which.
+    /// An id over a file with no frontmatter: a note that lost its block, or
+    /// never a note.
     Suspicious,
 }
 
 impl Problem {
-    /// How to say that there are `count` of this kind.
     pub fn describe(self, count: usize) -> String {
         match (self, count == 1) {
             (Problem::SharedId, true) => "1 id is carried by more than one note".to_string(),
@@ -105,57 +87,51 @@ impl Problem {
     }
 }
 
-/// The four cases a filename and a frontmatter block produce between them: the
-/// block says "I am a note", the id prefix says "I have been adopted", and a
-/// file with neither is left alone rather than reported forever.
+/// The four cases a filename and a frontmatter block produce: the block says
+/// "a note", the id prefix says "adopted", and a file with neither is left alone.
 pub struct Scan {
-    /// Adopted notes, as `(id, slug)`.
+    /// `(id, slug)`.
     pub notes: Vec<(String, String)>,
     /// Frontmatter but no id: adoptable.
     pub unnamed: Vec<String>,
     /// An id but no frontmatter: ambiguous.
     pub suspicious: Vec<String>,
-    /// Everything else the notebook holds. Counting is free; saying which note
-    /// *uses* one means reading every body, which is `audit_links`.
+    /// Everything else. Which note uses one is `audit_links`'s question.
     pub files: Vec<String>,
 }
 
-/// Deliberately not part of `Scan`: building it parses every note's body, so
-/// `status` must never reach for it.
+/// Not part of `Scan`: it parses every body, which `status` must not pay for.
 pub struct Audit {
-    /// Files no note links to. `README_FILE` is exempt: it addresses a reader
-    /// outside the notebook rather than being linked from inside.
+    /// Files no note links to, `README_FILE` exempt.
     pub orphans: Vec<String>,
-    /// `(note filename, destination, the note it still names)`: the file is
-    /// gone but its id is still held — a note retitled after being linked to.
+    /// `(note filename, destination, current filename)`: the path is gone but
+    /// its id is held — a note retitled after being linked to.
     pub stale: Vec<(String, String, String)>,
     /// `(note filename, destination)` naming nothing the notebook holds.
     pub broken: Vec<(String, String)>,
 }
 
-/// A note the notebook used to hold. Name and title come from the commit that
-/// still had it, there being no file left to read them from.
+/// A note the notebook used to hold; name and title from the last commit that
+/// had it.
 pub struct Deleted {
     pub id: String,
     pub slug: String,
     pub title: String,
     /// The commit that removed it.
     pub removed_in: git2::Oid,
-    /// The last commit that still held it — what `restore` must be pointed at.
+    /// The last commit that still held it, for `restore`.
     pub restore_from: git2::Oid,
     pub removed_at: i64,
     pub offset_minutes: i32,
 }
 
 impl Deleted {
-    /// The revision to hand `noda restore`, abbreviated as git prints it.
     pub fn restore_from_short(&self) -> String {
         short(self.restore_from)
     }
 }
 
 impl Scan {
-    /// Everything worth reporting, gathered by kind.
     pub fn problems(&self) -> Vec<(Problem, Vec<String>)> {
         let mut found: BTreeMap<Problem, Vec<String>> = BTreeMap::new();
 
@@ -194,7 +170,7 @@ impl Scan {
 /// One commit, as `noda log` reports it.
 pub struct Entry {
     pub id: git2::Oid,
-    /// Time and offset, so a commit prints in the zone it was written in.
+    /// With the offset, so a commit prints in the zone it was written in.
     pub seconds: i64,
     pub offset_minutes: i32,
     pub summary: String,
@@ -209,9 +185,8 @@ impl Entry {
 /// One snapshot — a git tag — as `noda snapshot` lists it.
 pub struct Snapshot {
     pub name: String,
-    /// The commit, not the tag object: the notebook's state is what is cited.
+    /// The commit, not the tag object.
     pub target: git2::Oid,
-    /// As `Entry` carries them, for its reason.
     pub seconds: i64,
     pub offset_minutes: i32,
     pub message: String,
@@ -227,23 +202,22 @@ impl Snapshot {
 pub struct BlameLine {
     /// `None` for a line that is on disk but not committed.
     pub commit: Option<git2::Oid>,
-    /// As `Entry` carries them; both zero for an uncommitted line.
+    /// Both zero for an uncommitted line.
     pub seconds: i64,
     pub offset_minutes: i32,
     pub text: String,
 }
 
 impl BlameLine {
-    /// Abbreviated, or git's own spelling for an uncommitted line.
+    /// Abbreviated, or git's `0000000` for an uncommitted line.
     pub fn short_commit(&self) -> String {
         self.commit.map_or_else(|| "0".repeat(7), short)
     }
 }
 
 impl Notebook {
-    /// Empty because noda commits no bookkeeping of its own, so the first note
-    /// is the first content — but `HEAD` has to name something before a branch
-    /// can be pushed or compared against a remote.
+    /// With an empty first commit, because `HEAD` has to name something before
+    /// a branch can be pushed or compared against a remote.
     pub fn create(paths: &Paths, name: &str) -> Result<Self> {
         validate_name(name)?;
         let path = paths.notebook_dir(name);
@@ -291,13 +265,8 @@ impl Notebook {
         Notebook::open(paths, &active_name(paths)?)
     }
 
-    /// Where the notebook stands: what is uncommitted, and how far it has
-    /// drifted from the remote.
-    ///
-    /// The drift is measured against the remote-tracking ref, so it is only as
-    /// current as the last fetch. That is deliberate — a command you run to
-    /// orient yourself should not go to the network and should not fail because
-    /// you are on a train.
+    /// Drift is measured against the remote-tracking ref, so it is as current as
+    /// the last fetch: an orienting command should not need the network.
     pub fn status(&self) -> Result<Status> {
         let branch = self.branch()?;
         let scan = self.scan()?;
@@ -319,11 +288,8 @@ impl Notebook {
         })
     }
 
-    /// `(ahead, behind)` against what the last fetch left behind.
-    ///
-    /// `status`'s cheap half, split out so a caller that only wants "2 to push"
-    /// does not pay for its two walks of the working tree. Nothing goes to the
-    /// network — both refs are already on disk.
+    /// `(ahead, behind)` against the remote-tracking ref, offline. Split from
+    /// `status` so a caller wanting only this skips its working-tree walks.
     pub fn drift(&self, branch: &str) -> Result<Option<(usize, usize)>> {
         let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
         match (
@@ -337,17 +303,11 @@ impl Notebook {
         }
     }
 
-    /// [`drift`](Self::drift)'s question answered with the commits themselves
-    /// rather than a count.
-    ///
-    /// **A set, and it has to be.** After a `pull` merges, the unpushed commits
-    /// are no longer a run along the top of the log — the two histories are
-    /// interleaved below the merge, so walking down from `HEAD` would mark the
-    /// wrong ones, and only on notebooks that had ever merged. `push HEAD /
-    /// hide upstream` is what `graph_ahead_behind` counts, so this enumerates
-    /// that same answer and the two cannot disagree.
-    ///
-    /// Empty with no remote-tracking ref: `status` calls that `never synced`.
+    /// [`drift`](Self::drift)'s ahead count as the commits themselves. A set,
+    /// because after a merge the unpushed commits are interleaved with the
+    /// remote's rather than a run from `HEAD`; `push HEAD / hide upstream` is
+    /// what `graph_ahead_behind` counts, so the two agree. Empty when never
+    /// synced.
     pub fn unpushed(&self, branch: &str) -> Result<std::collections::HashSet<git2::Oid>> {
         let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
         let Ok(upstream) = self.repo.refname_to_id(&tracking) else {
@@ -356,22 +316,17 @@ impl Notebook {
         let mut walk = self.repo.revwalk()?;
         walk.push_head()?;
         walk.hide(upstream)?;
-        // A membership test; the order a set comes back in is not one.
         Ok(walk.collect::<std::result::Result<std::collections::HashSet<_>, _>>()?)
     }
 
-    /// When the notebook was last written to, as the pair `Entry` carries.
-    ///
-    /// One commit read rather than a walk, which is what makes it affordable on
-    /// a page already listing every notebook. Not part of `Status`: a field
-    /// there would either change what `noda status` prints or sit unread.
+    /// `HEAD`'s time and offset: one commit read, cheap enough for a page
+    /// listing every notebook.
     pub fn last_commit(&self) -> Result<(i64, i32)> {
         let commit = self.repo.head()?.peel_to_commit()?;
         Ok((commit.time().seconds(), commit.time().offset_minutes()))
     }
 
-    /// Sorts every `*.md` into the four cases. Tolerant where `notes` is
-    /// strict: one malformed file must not stop the notebook being described.
+    /// Sorts every file into the four cases.
     pub fn scan(&self) -> Result<Scan> {
         let mut notes = Vec::new();
         let mut unnamed = Vec::new();
@@ -384,8 +339,7 @@ impl Notebook {
                 continue;
             }
             let name = entry.file_name();
-            // A non-UTF-8 name cannot be compared against a link destination,
-            // and a dotfile is the repository's own configuration.
+            // A non-UTF-8 name cannot match a link; a dotfile is repo config.
             let Some(name) = name.to_str() else { continue };
             if name.starts_with('.') {
                 continue;
@@ -400,7 +354,6 @@ impl Notebook {
                 (Some((id, slug)), true) => notes.push((id.to_string(), slug.to_string())),
                 (Some(_), false) => suspicious.push(file),
                 (None, true) => unnamed.push(file),
-                // Neither a name nor a declaration: one more file.
                 (None, false) => files.push(file),
             }
         }
@@ -417,21 +370,12 @@ impl Notebook {
         })
     }
 
-    /// Both directions in which a link and a file can fail to meet.
+    /// Orphaned files and dangling links. Parses every body, so only on request.
     ///
-    /// The expensive walk — every note's body parsed, the cost of `search` and
-    /// not of `ls` — so nothing calls it unless asked.
-    ///
-    /// Links are checked against the filesystem, so a destination reaching into
-    /// a subdirectory resolves; orphans are only reported at the root, because
-    /// the root is the whole of the notebook noda models.
-    ///
-    /// A destination resolving to nothing splits in two, because only one half
-    /// is a question for the author: **stale** still names an id the notebook
-    /// holds, so noda knows what it should have said, while **broken** names
-    /// none and only its author knows whether it is a typo or a file not copied
-    /// in yet. `backlinks_to_note`'s distinction, reported rather than acted
-    /// on.
+    /// Links are checked against the filesystem, so one into a subdirectory
+    /// resolves; orphans are reported at the root only. A dangling link is
+    /// **stale** when it still names an id the notebook holds (noda knows the
+    /// right name) and **broken** otherwise.
     pub fn audit_links(&self) -> Result<Audit> {
         let (notes, files) = self.inventory()?;
         let mut referenced: HashSet<String> = HashSet::new();
@@ -462,8 +406,7 @@ impl Notebook {
             }
         }
 
-        // The notebook's entrance, not a resource a note should link to. The
-        // only way to clear such a finding reads backwards.
+        // The README addresses a reader outside; no note should have to link it.
         let orphans = files
             .into_iter()
             .filter(|file| file != README_FILE && !referenced.contains(file))
@@ -478,15 +421,9 @@ impl Notebook {
         })
     }
 
-    /// The notes whose bodies link to the note `id` names.
-    ///
-    /// Matched on the id in the destination, not the whole filename, which is
-    /// what makes an answer survive a retitle: `noda mv` leaves
-    /// `[the meeting](v62b8rfa-meeting-notes.md)` naming a path that is gone and
-    /// an id that is not. Matching the filename would go quiet after every
-    /// retitle — precisely when somebody is looking.
-    ///
-    /// A note linking to itself is listed: it is what the file says.
+    /// The notes whose bodies link to the note `id` names. Matched on the id,
+    /// not the filename, so a link survives `noda mv` retitling its target. A
+    /// note linking to itself is listed.
     pub fn backlinks_to_note(&self, id: &str) -> Result<Vec<NoteFile>> {
         Ok(self
             .notes()?
@@ -495,8 +432,7 @@ impl Notebook {
             .collect())
     }
 
-    /// No id to fall back on: an attachment's name is the whole of its
-    /// identity, which is why `file mv` offers `--update-links`.
+    /// Matched on the whole name: an attachment has no id.
     pub fn backlinks_to_file(&self, name: &str) -> Result<Vec<NoteFile>> {
         Ok(self
             .notes()?
@@ -505,18 +441,12 @@ impl Notebook {
             .collect())
     }
 
-    /// The hooks the repository holds that will never fire.
-    ///
-    /// libgit2 runs no hooks, so the same `pre-commit` is live under
-    /// `git commit` and dead under `noda add` with nothing on screen to say
-    /// which. That silence is the only reason this is reported.
-    ///
-    /// Exactly the set git would reach for: `core.hooksPath`, the executable
-    /// bit, and never the `*.sample` files. An unreadable directory is not a
-    /// finding — nothing here is a problem with the notebook.
+    /// The hooks git would run and noda will not: libgit2 runs none, silently.
+    /// Found as git finds them — `core.hooksPath`, the executable bit, no
+    /// `*.sample`. An unreadable directory is not a finding.
     pub fn hooks(&self) -> Result<Vec<String>> {
         let dir = match self.repo.config()?.get_path("core.hooksPath") {
-            // Relative is from the working tree, as git takes it.
+            // Relative to the working tree, as git takes it.
             Ok(configured) => self.path.join(configured),
             Err(_) => self.repo.path().join("hooks"),
         };
@@ -529,8 +459,7 @@ impl Notebook {
             let Ok(file_type) = entry.file_type() else {
                 continue;
             };
-            // A symlinked hook is a hook, and `metadata` follows where
-            // `file_type` does not.
+            // `metadata` below follows a symlinked hook; `file_type` does not.
             if file_type.is_dir() {
                 continue;
             }
@@ -539,7 +468,10 @@ impl Notebook {
             if name.ends_with(".sample") {
                 continue;
             }
-            if entry.metadata().is_ok_and(|meta| is_executable(&meta)) {
+            if entry
+                .metadata()
+                .is_ok_and(|meta| meta.is_file() && is_executable(&meta))
+            {
                 found.push(name.to_string());
             }
         }
@@ -547,14 +479,9 @@ impl Notebook {
         Ok(found)
     }
 
-    /// Every `(id, slug)` a filename spells out, readable file or not.
-    ///
-    /// The name is the whole record, so this opens nothing and does not `stat`.
-    /// Deliberately more forgiving than `scan`: `rm`, `log`, `diff` and
-    /// `restore` must keep working on exactly the file somebody is reaching for
-    /// them to fix. Public for `web`, which turns
-    /// `[the plan](k3f9m2p1-the-plan.md)` into a link without opening every
-    /// other note to do it.
+    /// Every `(id, slug)` a filename spells out, readable file or not; opens
+    /// nothing. More forgiving than `scan`, so `rm`, `log`, `diff` and `restore`
+    /// work on a broken file.
     pub fn named_files(&self) -> Result<Vec<(String, String)>> {
         let mut found = Vec::new();
         for entry in std::fs::read_dir(&self.path)? {
@@ -573,8 +500,7 @@ impl Notebook {
         Ok(found)
     }
 
-    /// Every id spoken for, folded as `resolve` folds them. From the filenames
-    /// alone: one directory listing, nothing opened.
+    /// Every id spoken for, folded, from the filenames alone.
     pub fn taken_ids(&self) -> Result<HashSet<String>> {
         Ok(self
             .named_files()?
@@ -583,7 +509,7 @@ impl Notebook {
             .collect())
     }
 
-    /// The identity git itself would use here, resolved as git resolves it.
+    /// The identity git itself would use here.
     pub fn git_author(&self) -> Option<String> {
         let signature = self.repo.signature().ok()?;
         Some(format!(
@@ -629,11 +555,8 @@ impl Notebook {
         Ok(())
     }
 
-    /// The configured remote, credentials redacted.
-    ///
-    /// Redacted here rather than at each screen, because the sixth screen added
-    /// later would be a leak nobody thinks to look for. Nothing that talks to
-    /// the network reads this — fetch and push open `remote()`.
+    /// The configured remote, credentials redacted here rather than per screen
+    /// so a new screen cannot leak them. Fetch and push use `remote()` instead.
     pub fn remote_url(&self) -> Option<String> {
         let remote = self.repo.find_remote(REMOTE_NAME).ok()?;
         remote
@@ -646,20 +569,14 @@ impl Notebook {
         self.path.join(note::file_name(id, slug))
     }
 
-    /// Every adopted note, sorted by slug, each file read once — going through
-    /// `scan` would parse the whole notebook twice, which is the dominant cost
-    /// of `ls` and `search`. A file that will not parse is skipped, as `scan`
-    /// classifies it.
+    /// Every adopted note, sorted by slug, each file read once. A file that
+    /// will not parse is skipped.
     pub fn notes(&self) -> Result<Vec<NoteFile>> {
         Ok(self.inventory()?.0)
     }
 
-    /// Notes and non-notes from a single walk, because `ls` wants both.
-    ///
-    /// `scan`'s classification, so a file counts here exactly as it is reported
-    /// there — the ones awaiting adoption or missing frontmatter are neither,
-    /// since `scan` already reports them and listing them here names them
-    /// twice.
+    /// Notes and other files from one walk, classified as `scan` does; unnamed
+    /// and suspicious files are in neither list, since `scan` reports them.
     pub fn inventory(&self) -> Result<(Vec<NoteFile>, Vec<String>)> {
         let mut notes = Vec::new();
         let mut files = Vec::new();
@@ -687,7 +604,6 @@ impl Notebook {
                     slug: slug.to_string(),
                     note,
                 }),
-                // `scan`'s to report, and not a file the notebook holds.
                 (Some(_), None) | (None, Some(_)) => {}
                 (None, None) => files.push(name.to_string()),
             }
@@ -698,29 +614,20 @@ impl Notebook {
         Ok((notes, files))
     }
 
-    /// Resolves a key to one note's `(id, slug)`.
-    ///
-    /// Exact slug first, then an id prefix — git's bargain with object ids, so
-    /// `noda show k3f9` works. An ambiguous key is an error naming the
-    /// candidates, never a guess.
-    ///
-    /// Reads no file: whether the note parses is the caller's problem. The
-    /// directory is walked once keeping only matches, because at these sizes
-    /// building a list of every name costs more than the comparison.
+    /// Resolves a key to one note's `(id, slug)`: exact slug first, then a
+    /// folded id prefix, as git abbreviates object ids. An ambiguous key is an
+    /// error naming the candidates. Reads no file.
     pub fn resolve(&self, key: &str) -> Result<(String, String)> {
         if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
             return Err(Error::msg(format!("invalid note reference: {key}")));
         }
         let wanted = note::normalize_id(key);
 
-        // An exact slug wins outright, so the two are collected separately
-        // rather than sorted out afterwards.
         let mut by_slug = Vec::new();
         let mut by_id = Vec::new();
         for entry in std::fs::read_dir(&self.path)? {
             let entry = entry?;
-            // `file_type` comes with the entry; `is_file` would `stat` once
-            // per note.
+            // `file_type` comes with the entry; `is_file` would `stat`.
             if !entry.file_type()?.is_file() {
                 continue;
             }
@@ -740,7 +647,6 @@ impl Notebook {
         }
 
         let mut matched = if by_slug.is_empty() { by_id } else { by_slug };
-        // A list somebody has to choose from is not in filesystem order.
         matched.sort();
 
         match matched.len() {
@@ -758,8 +664,7 @@ impl Notebook {
     }
 
     /// Stages `files` and commits them. A path that no longer exists is staged
-    /// as a deletion, so a rename is one commit rather than an add and a
-    /// leftover.
+    /// as a deletion, so a rename is one commit.
     pub fn commit(&self, files: &[&Path], message: &str) -> Result<()> {
         let mut index = self.repo.index()?;
         for file in files {
@@ -772,8 +677,8 @@ impl Notebook {
         self.commit_index(&mut index, message)
     }
 
-    /// Everything in the working tree, for `noda sync`, which has to deal with
-    /// notes edited outside noda. `false` when there was nothing to commit.
+    /// Everything in the working tree, for `noda sync`. `false` when there was
+    /// nothing to commit.
     pub fn commit_all(&self, message: &str) -> Result<bool> {
         if !self.is_dirty()? {
             return Ok(false);
@@ -784,7 +689,7 @@ impl Notebook {
         Ok(true)
     }
 
-    /// Whether the working tree differs from `HEAD`, untracked files included.
+    /// Untracked files included.
     pub fn is_dirty(&self) -> Result<bool> {
         let mut options = git2::StatusOptions::new();
         options.include_untracked(true).include_ignored(false);
@@ -804,10 +709,8 @@ impl Notebook {
     }
 
     /// Writes the commit, signing when configured, and moves `HEAD` onto it.
-    ///
-    /// Unsigned is libgit2's one-call `commit`. Signed cannot be: signing needs
-    /// the commit's text *before* it is an object, so it takes three steps and
-    /// the last does not move the branch — hence [`Self::move_head`].
+    /// Signing needs the commit's text before it is an object, so it takes
+    /// three steps, the last of which does not move the branch.
     fn write_commit(
         &self,
         message: &str,
@@ -824,7 +727,6 @@ impl Notebook {
         let buffer = self
             .repo
             .commit_create_buffer(&who, &who, message, tree, parents)?;
-        // UTF-8 by construction: the message and signature are Rust `&str`.
         let content = std::str::from_utf8(&buffer).map_err(|e| {
             Error::msg(format!(
                 "the commit is not valid UTF-8 and cannot be signed: {e}"
@@ -837,13 +739,9 @@ impl Notebook {
         Ok(oid)
     }
 
-    /// `commit_signed` writes an object and stops, unlike `commit`. Without
-    /// this the notebook gains a commit nothing refers to, and the next `gc`
-    /// collects the note with it.
-    ///
-    /// Symbolic with a branch, direct when detached. A new notebook's unborn
-    /// `HEAD` is symbolic too, which is what lands the root commit on the
-    /// branch `init.defaultBranch` named.
+    /// `commit_signed` does not move any ref; without this the next `gc`
+    /// collects the commit. Follows a symbolic `HEAD` (including a new
+    /// notebook's unborn one), or moves a detached one directly.
     fn move_head(&self, oid: git2::Oid, message: &str) -> Result<()> {
         let head = self.repo.find_reference("HEAD")?;
         let target = head.symbolic_target()?.map(str::to_string);
@@ -865,8 +763,7 @@ impl Notebook {
         std::fs::create_dir_all(paths.notebooks_dir())?;
 
         let mut builder = git2::build::RepoBuilder::new();
-        // No repository yet, so the global and system files are all there is —
-        // which is what `git clone` works from too.
+        // No repository yet, so global and system config, as `git clone` uses.
         builder.fetch_options(remote::fetch_options(git2::Config::open_default()?));
         let repo = builder.clone(url, &path).map_err(|e| {
             let _ = std::fs::remove_dir_all(&path);
@@ -890,10 +787,9 @@ impl Notebook {
         Ok(notebook)
     }
 
-    /// A `HEAD` naming a branch the remote does not carry checks out nothing,
-    /// so the notebook reads as empty rather than broken — two machines
-    /// disagreeing about `init.defaultBranch` is enough. One branch is taken;
-    /// otherwise say what is there rather than hand back an unusable notebook.
+    /// A `HEAD` naming a branch the remote lacks (machines disagreeing on
+    /// `init.defaultBranch`) checks out nothing. A sole remote branch is
+    /// adopted; otherwise fail naming them.
     fn adopt_remote_branch(&self) -> Result<()> {
         if self.repo.head().is_ok() {
             return Ok(());
@@ -937,12 +833,8 @@ impl Notebook {
         }
     }
 
-    /// Annotated rather than lightweight: a snapshot says somebody closed a
-    /// chapter at a moment, and a bare pointer with no author or time would list
-    /// as an empty row.
-    ///
-    /// Never moves one that exists — a snapshot whose meaning can be reassigned
-    /// cannot be cited, which is what `restore` takes a name for.
+    /// An annotated tag, so it carries an author, time and message. Never moves
+    /// an existing one: a snapshot must mean one thing to be cited.
     pub fn snapshot(&self, name: &str, message: &str) -> Result<git2::Oid> {
         let refname = format!("refs/tags/{name}");
         if !git2::Reference::is_valid_name(&refname) {
@@ -965,20 +857,21 @@ impl Notebook {
         Ok(head.id())
     }
 
-    /// Newest first by the marked commit's time, not the tagging time: that is
-    /// the moment the snapshot is *of*, and what `log` and `deleted` order by.
-    ///
-    /// A lightweight tag made outside noda is listed too — a notebook is a
-    /// normal git repository, and such a tag is still a place to restore from.
+    /// Newest first by the tagged commit's time, as `log` orders. Lightweight
+    /// tags made outside noda are listed too.
     pub fn snapshots(&self) -> Result<Vec<Snapshot>> {
         let mut found = Vec::new();
-        // Not one noda made, and one unreadable name must not take the listing
-        // down with it.
+        // A non-UTF-8 name is skipped rather than failing the listing.
         let names = self.repo.tag_names(None)?;
         for name in names.iter().filter_map(|name| name.ok().flatten()) {
-            let reference = self.repo.find_reference(&format!("refs/tags/{name}"))?;
-            let commit = reference.peel_to_commit()?;
-            // A lightweight tag is only a pointer, so its commit speaks for it.
+            // Likewise a tag that names no commit, such as one on a tree or blob.
+            let Ok(reference) = self.repo.find_reference(&format!("refs/tags/{name}")) else {
+                continue;
+            };
+            let Ok(commit) = reference.peel_to_commit() else {
+                continue;
+            };
+            // A lightweight tag has no message; its commit's summary stands in.
             let message = match reference.peel_to_tag() {
                 Ok(tag) => tag
                     .message()
@@ -1001,14 +894,12 @@ impl Notebook {
         Ok(found)
     }
 
-    /// The branch `HEAD` points at.
     pub fn branch(&self) -> Result<String> {
         let head = self.repo.head()?;
         Ok(head.shorthand()?.to_string())
     }
 
-    /// libgit2 says "remote 'origin' does not exist" — the same fact without
-    /// the way out of it.
+    /// libgit2's error, with the way out of it.
     #[allow(clippy::map_err_ignore)]
     fn remote(&self) -> Result<git2::Remote<'_>> {
         self.repo.find_remote(REMOTE_NAME).map_err(|_| {
@@ -1019,8 +910,8 @@ impl Notebook {
         })
     }
 
-    /// `None` when the remote does not carry the branch yet: pushing to an
-    /// empty repository is a normal first sync, not a failure.
+    /// `None` when the remote does not carry the branch yet, a normal first
+    /// sync.
     fn fetch(&self) -> Result<Option<git2::Oid>> {
         let branch = self.branch()?;
         let mut remote = self.remote()?;
@@ -1028,8 +919,7 @@ impl Notebook {
         let refspec = format!("+refs/heads/{branch}:refs/remotes/{REMOTE_NAME}/{branch}");
 
         let config = self.repo.config()?;
-        // Or a snapshot taken on the other machine is invisible here, and
-        // `restore <note> <snapshot>` fails on a name meant to be shared.
+        // Tags too, so a snapshot taken elsewhere can be restored from here.
         let mut options = remote::fetch_options(config);
         options.download_tags(git2::AutotagOption::All);
         match remote.fetch(&[&refspec], Some(&mut options), None) {
@@ -1047,12 +937,8 @@ impl Notebook {
     }
 
     /// Fast-forward where possible, a merge commit where the histories
-    /// diverged. A conflicting merge is rolled back rather than left
-    /// half-applied — noda has no `--continue`.
-    ///
-    /// Two notebooks each adding a note write two paths rather than two edits to
-    /// one, so what is left here is the same note edited on both sides, which
-    /// only its author can settle.
+    /// diverged. A conflict (the same note edited on both sides) is rolled back
+    /// rather than left half-applied: noda has no `--continue`.
     pub fn pull(&self) -> Result<String> {
         if self.is_dirty()? {
             return Err(Error::msg(format!(
@@ -1073,8 +959,7 @@ impl Notebook {
             return Ok("pull: already up to date".to_string());
         }
 
-        // The one moment both sides are known and neither has moved: the
-        // tracking ref carries the remote's news and the branch is untouched.
+        // Counted after the fetch and before the branch moves.
         let incoming_count = self.drift(&branch)?.map_or(0, |(_, behind)| behind);
 
         if analysis.is_fast_forward() {
@@ -1127,18 +1012,15 @@ impl Notebook {
     }
 
     /// The branch and the snapshots the remote lacks. A rejection is reported
-    /// as advice to pull, because that is always the next step.
+    /// as advice to pull.
     pub fn push(&self) -> Result<String> {
         let branch = self.branch()?;
-        // Before anything is sent: libgit2 moves the tracking ref once the push
-        // lands, so this is the only moment the count exists. A push that raced
-        // a moved remote is refused below rather than counted wrongly.
+        // Before sending: libgit2 moves the tracking ref once the push lands.
         let ahead = self.drift(&branch)?.map(|(ahead, _)| ahead);
         let mut remote = self.remote()?;
         let url = remote.url().unwrap_or_default().to_string();
-        // Snapshots go with the branch, or they cannot be cited from anywhere
-        // else. Named one by one because libgit2 refuses a wildcard on the push
-        // side — it wants references it can resolve.
+        // Snapshots go with the branch, named one by one because libgit2
+        // refuses a wildcard push refspec.
         let mut refspecs = vec![format!("refs/heads/{branch}:refs/heads/{branch}")];
         let mut held_back = Vec::new();
         let local = self.local_tags()?;
@@ -1146,12 +1028,10 @@ impl Notebook {
             let theirs = self.remote_tags(&mut remote, &url)?;
             for (name, oid) in local {
                 match theirs.get(&name) {
-                    // Already there, and meaning the same thing.
                     Some(other) if *other == oid => {}
-                    // Two machines that each made a `q3`. Sending it either
-                    // overwrites theirs or aborts the whole push — libgit2
-                    // fast-forward-checks a tag like a branch — so the name
-                    // gives way rather than the notes.
+                    // Two machines each made a `q3`. Sending it would
+                    // overwrite theirs or abort the whole push (libgit2
+                    // fast-forward-checks tags), so it is held back.
                     Some(_) => held_back.push(name),
                     None => refspecs.push(format!("refs/tags/{name}:refs/tags/{name}")),
                 }
@@ -1174,8 +1054,7 @@ impl Notebook {
             remote.push(&refspecs, Some(&mut options))
         };
         if let Err(e) = pushed {
-            // libgit2 refuses one before sending; a server refuses it through
-            // the callback below.
+            // libgit2 refuses before sending; a server refuses via the callback.
             if e.code() == git2::ErrorCode::NotFastForward
                 || e.message().contains("not present locally")
             {
@@ -1189,7 +1068,7 @@ impl Notebook {
             return Err(rejected(&rejections));
         }
 
-        // The branch is always the first refspec, so the rest are snapshots.
+        // The branch is the first refspec; the rest are snapshots.
         let snapshots = refspecs.len() - 1;
         let mut sent = Vec::new();
         if let Some(n) = ahead
@@ -1203,15 +1082,10 @@ impl Notebook {
 
         let mut out = match (sent.is_empty(), ahead) {
             (false, _) => format!("push: {branch} ({}) -> {url}", sent.join(", ")),
-            // Nothing moved, and the notebook knew before it connected. Worth
-            // saying: this used to print the same line as a push of twenty.
             (true, Some(_)) => format!("push: {branch} matches {url} — nothing to send"),
-            // Never synced: what the remote holds is unknown until something is
-            // fetched, and a local count would be a guess dressed as a fact.
+            // Never synced: no count is known.
             (true, None) => format!("push: {branch} -> {url}"),
         };
-        // The notebook now holds a name meaning one thing here and another
-        // everywhere else, and only its author can decide which keeps it.
         for name in held_back {
             let _ = write!(
                 out,
@@ -1222,8 +1096,7 @@ impl Notebook {
         Ok(out)
     }
 
-    /// Pointing at whatever object the ref names, so it compares against a
-    /// remote's advertisement without peeling either side.
+    /// Unpeeled, to compare against the remote's advertisement.
     fn local_tags(&self) -> Result<Vec<(String, git2::Oid)>> {
         let names = self.repo.tag_names(None)?;
         let mut found = Vec::new();
@@ -1235,8 +1108,8 @@ impl Notebook {
         Ok(found)
     }
 
-    /// From the reference advertisement: one extra round trip, and only when
-    /// there is a snapshot to send, so a notebook without any pushes as before.
+    /// From the reference advertisement: one extra round trip, only when there
+    /// is a snapshot to send.
     fn remote_tags(
         &self,
         remote: &mut git2::Remote<'_>,
@@ -1249,7 +1122,7 @@ impl Notebook {
 
         let mut found = HashMap::new();
         for head in connection.list()? {
-            // `refs/tags/q3^{}` is the peeled form, not a name to push to.
+            // `refs/tags/q3^{}` is the peeled form.
             let Some(name) = head.name().strip_prefix("refs/tags/") else {
                 continue;
             };
@@ -1261,16 +1134,12 @@ impl Notebook {
         Ok(found)
     }
 
-    /// Commits, newest first; with `note_id`, only those that changed it.
-    ///
-    /// Renames are followed without rename detection: the id is in the filename,
-    /// so the file a note occupied at any commit is whichever tree entry carried
-    /// that prefix.
+    /// Commits, newest first; with `note_id`, only those that changed it,
+    /// following renames by the id in the filename.
     pub fn log(&self, note_id: Option<&str>, max: Option<usize>) -> Result<Vec<Entry>> {
         let mut walk = self.repo.revwalk()?;
         walk.push_head()?;
-        // noda commits several times a second, so time alone leaves commits
-        // sharing a timestamp in arbitrary order.
+        // noda commits several times a second; time alone leaves ties.
         walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
 
         let mut entries = Vec::new();
@@ -1294,33 +1163,24 @@ impl Notebook {
         Ok(entries)
     }
 
-    /// Which commit put each line of a note where it is.
+    /// Which commit put each line of a note's body where it is.
     ///
-    /// Not libgit2's blame, which could not do it: every
-    /// `GIT_BLAME_TRACK_COPIES_*` option is "not yet implemented", so it stops
-    /// dead at a rename — and `noda mv` renames a note on every retitle, which
-    /// would credit every earlier line to the rename.
+    /// Not libgit2's blame: its `GIT_BLAME_TRACK_COPIES_*` options are
+    /// unimplemented, so it stops at a rename, and `noda mv` renames on every
+    /// retitle. Computed from diffs instead, finding the note in each commit by
+    /// id. A commit matching any parent is skipped, so a merge is not credited
+    /// with what it carried; otherwise the first parent is compared.
     ///
-    /// Computed from the diffs instead, picking the note out of each commit *by
-    /// id* as `deleted` and `last_changed` do, so a rename never comes up: what
-    /// is followed backwards is a line, not a filename.
-    ///
-    /// `log`'s walk. A commit matching any parent changed nothing and is
-    /// skipped, which keeps a `sync` merge from being credited with what it
-    /// merely carried across; where a merge did change the note, the first
-    /// parent is compared against.
-    ///
-    /// Body only: `updated` is rewritten on every edit, so the frontmatter would
-    /// open the screen with a block of noise that looks like a bug.
+    /// Body only: `updated` changes on every edit, so the frontmatter is noise.
     pub fn blame(&self, id: &str, slug: &str) -> Result<Vec<BlameLine>> {
         let text = std::fs::read_to_string(self.note_path(id, slug))?;
         let lines: Vec<&str> = text.lines().collect();
-        // Where each traced line sits in the version under examination.
+        // Where each traced line sits in the version being examined.
         let mut origin: Vec<Option<usize>> = (0..lines.len()).map(Some).collect();
         let mut found: Vec<Option<git2::Oid>> = vec![None; lines.len()];
         let mut when: HashMap<git2::Oid, (i64, i32)> = HashMap::new();
 
-        // A line on disk and in no commit is nobody's yet.
+        // Lines on disk but not in `HEAD` are nobody's yet.
         let head = self.repo.head()?.peel_to_commit()?;
         match note_blob(&head, id)? {
             Some((_, oid)) => {
@@ -1328,8 +1188,7 @@ impl Notebook {
                 let map = line_map(blob.content(), text.as_bytes())?;
                 attribute(&mut origin, &mut found, &map, None);
             }
-            // Held on disk and in no commit — hand-written, or not yet adopted.
-            // There is no history to walk.
+            // Never committed: no history to walk.
             None => origin.fill(None),
         }
 
@@ -1355,7 +1214,7 @@ impl Notebook {
             let new = self.repo.find_blob(now)?;
             let old = match parents.first().copied().flatten() {
                 Some(oid) => Some(self.repo.find_blob(oid)?),
-                // The commit that created the note: a diff against nothing.
+                // The commit that created the note.
                 None => None,
             };
             let map = line_map(
@@ -1389,14 +1248,9 @@ impl Notebook {
             .collect())
     }
 
-    /// When each note last changed according to git, by id.
-    ///
-    /// One walk for the whole notebook: `log`'s per-note filter is right for one
-    /// note and would multiply the walk by the notebook's size for all of them,
-    /// so every commit is asked what it changed on the way past.
-    ///
-    /// Newest first, so the first commit mentioning a note is the last to touch
-    /// it. A full walk of history, reached only through `doctor --times`.
+    /// When each note last changed according to git, by id, in one walk of
+    /// history rather than `log` per note. Reached only through
+    /// `doctor --times`.
     pub fn last_changed(&self) -> Result<HashMap<String, i64>> {
         let mut walk = self.repo.revwalk()?;
         walk.push_head()?;
@@ -1406,7 +1260,7 @@ impl Notebook {
         for oid in walk {
             let commit = self.repo.find_commit(oid?)?;
             let now = note_blobs(&commit)?;
-            // First parent, as `git log` and `touches` both do for a merge.
+            // First parent, as `touches` does.
             let before = match commit.parent(0) {
                 Ok(parent) => note_blobs(&parent)?,
                 Err(_) => BTreeMap::new(),
@@ -1420,20 +1274,11 @@ impl Notebook {
         Ok(last)
     }
 
-    /// Notes history holds that the notebook no longer does.
-    ///
-    /// A commit's tree is a complete list of filenames and a note's identity is
-    /// its filename, so which notes existed at a commit is read straight off it
-    /// without opening a blob: the ids in a tree, minus its parent's, against
-    /// the ids held now.
-    ///
-    /// Three things fall out of using ids rather than filenames. A rename is not
-    /// a deletion; a note deleted and later restored is not reported, the check
-    /// being against disk rather than history; and a `git rm` is found like a
-    /// `noda rm`, because nothing here reads a commit message.
-    ///
-    /// Newest first, so the first disappearance found for an id is its last. A
-    /// full walk, reached only through `noda deleted`.
+    /// Notes history holds that the notebook no longer does: ids in a parent's
+    /// tree but not the commit's, minus the ids on disk now. So a rename is not
+    /// a deletion, a restored note is not reported, and a `git rm` counts like
+    /// `noda rm`. A full walk of history; newest first, so an id's first
+    /// disappearance found is its last.
     pub fn deleted(&self) -> Result<Vec<Deleted>> {
         let present = self.taken_ids()?;
         let mut walk = self.repo.revwalk()?;
@@ -1444,8 +1289,7 @@ impl Notebook {
         let mut seen: HashSet<String> = HashSet::new();
         for oid in walk {
             let commit = self.repo.find_commit(oid?)?;
-            // First parent, as `log` and `last_changed`. A root commit deletes
-            // nothing.
+            // First parent; a root commit deletes nothing.
             let Ok(parent) = commit.parent(0) else {
                 continue;
             };
@@ -1454,7 +1298,6 @@ impl Notebook {
                 if now.contains_key(id) || present.contains(id) || !seen.insert(id.clone()) {
                     continue;
                 }
-                // The parent still had it: the name, and what `restore` wants.
                 let Some((slug, text)) = self.note_at(&parent, id)? else {
                     continue;
                 };
@@ -1472,7 +1315,6 @@ impl Notebook {
             }
         }
 
-        // The one you are looking for is nearly always the one just lost.
         found.sort_by(|a, b| {
             b.removed_at
                 .cmp(&a.removed_at)
@@ -1482,8 +1324,7 @@ impl Notebook {
     }
 
     /// Uncommitted changes, or what the last commit changed when there are
-    /// none: noda commits as it goes, so clean is the normal state and "what
-    /// just happened" is the useful answer.
+    /// none (clean being the normal state).
     pub fn diff(&self, file: Option<&str>) -> Result<git2::Diff<'_>> {
         let mut options = git2::DiffOptions::new();
         options.include_untracked(true).recurse_untracked_dirs(true);
@@ -1506,28 +1347,17 @@ impl Notebook {
                 .diff_tree_to_tree(parent.as_ref(), Some(&head), Some(&mut options))?
         };
 
-        // Without rename detection, `noda mv` reads as a note deleted and an
-        // unrelated one invented.
+        // Or `noda mv` reads as a deletion plus an unrelated new note.
         diff.find_similar(None)?;
         Ok(diff)
     }
 
-    /// What a push would carry: the third layer of what `status` counts and
-    /// `log` enumerates.
-    ///
-    /// **Measured from where the histories parted**, `origin/main...HEAD` — the
-    /// three-dot form a pull request shows. Two-dot would be wrong in a way that
-    /// is hard to see: every line the remote added comes back as a line removed,
-    /// because it is absent from your tree. Nobody removed it.
-    ///
-    /// So a notebook that is behind gets the same answer as one that is level.
-    /// Committed work only, because a push would carry nothing else. Nothing
-    /// goes to the network — the tracking ref is the one the last sync left.
+    /// What a push would carry, offline: committed work from the merge base,
+    /// `origin/<branch>...HEAD`. Two-dot would show every line the remote added
+    /// as removed.
     pub fn diff_remote(&self, branch: &str, file: Option<&str>) -> Result<git2::Diff<'_>> {
         let tracking = format!("refs/remotes/{REMOTE_NAME}/{branch}");
         let Ok(upstream) = self.repo.refname_to_id(&tracking) else {
-            // A never-synced notebook differs by everything it holds, so "no
-            // changes" would be the wrong answer that looks right.
             return Err(Error::msg(format!(
                 "notebook `{}` has never synced, so there is nothing to compare against — \
                  run `noda sync` first",
@@ -1547,18 +1377,17 @@ impl Notebook {
             Some(&head.tree()?),
             Some(&mut options),
         )?;
-        // `diff`'s reason: a renamed note is one note.
         diff.find_similar(None)?;
         Ok(diff)
     }
 
-    /// Anything git accepts, and nothing invented on top.
+    /// Any revision git accepts, peeled to a commit.
     pub fn revision(&self, rev: &str) -> Result<git2::Commit<'_>> {
         let object = self
             .repo
             .revparse_single(rev)
             .map_err(|e| Error::msg(format!("unknown revision: {rev} — {}", e.message())))?;
-        // One way to fail — a blob or a tree — and the message says it.
+        // The only failure left is a blob or a tree.
         #[allow(clippy::map_err_ignore)]
         object
             .peel_to_commit()
@@ -1579,16 +1408,9 @@ impl Notebook {
         Ok(Some((slug, text)))
     }
 
-    /// The text of a blob already in the object database.
-    ///
-    /// The web layer's optimistic lock carries a blob id, so the version an
-    /// edit began from is not merely a marker to compare — it is an address,
-    /// and this is what reads it back.
-    ///
-    /// **`None` is an ordinary answer, not a failure.** A note written by hand
-    /// and not yet committed has no blob, so a caller has to have an answer for
-    /// a version it cannot fetch. Bytes that are not UTF-8 come back `None` for
-    /// the same reason: unusable as a base, whatever the cause.
+    /// A blob's text, for the web layer's edit lock, which carries the base
+    /// version's blob id. `None` is ordinary: an uncommitted note has no blob,
+    /// and non-UTF-8 bytes are unusable as a base too.
     pub fn blob_text(&self, oid: git2::Oid) -> Result<Option<String>> {
         match self.repo.find_blob(oid) {
             Ok(blob) => Ok(String::from_utf8(blob.content().to_vec()).ok()),
@@ -1608,7 +1430,6 @@ impl Notebook {
         Ok(None)
     }
 
-    /// Undoes a conflicted merge, leaving the notebook exactly as it was.
     fn abort_merge(&self) -> Result<()> {
         let head = self.repo.head()?.peel_to_commit()?;
         self.repo
@@ -1629,9 +1450,8 @@ impl Notebook {
     }
 }
 
-/// The notebook every command acts on by default. A missing state pointer falls
-/// back to the configured default: state records where you are, config records
-/// where you belong. In one place because every command must agree.
+/// The notebook commands act on: the state pointer, else the configured
+/// default if it exists.
 pub fn active_name(paths: &Paths) -> Result<String> {
     match paths.active_notebook() {
         Ok(name) => Ok(name),
@@ -1648,9 +1468,8 @@ pub fn active_name(paths: &Paths) -> Result<String> {
     }
 }
 
-/// Who to commit as and whether to sign, read together because a notebook is
-/// opened once per command and the file should be too. A malformed author is
-/// `noda config`'s to complain about — a commit is not the place to find out.
+/// Who to commit as and whether to sign, from one config read. A malformed
+/// author is ignored here; `noda config` reports it.
 fn commit_settings(paths: &Paths) -> (Option<(String, String)>, Option<bool>) {
     let Ok(config) = Config::load(paths) else {
         return (None, None);
@@ -1659,20 +1478,18 @@ fn commit_settings(paths: &Paths) -> (Option<(String, String)>, Option<bool>) {
     (author, config.sign())
 }
 
-/// Against the first parent, as `git log` does for merges.
+/// Against the first parent only.
 fn touches(commit: &git2::Commit<'_>, id: &str) -> Result<bool> {
     let now = note_blob(commit, id)?;
     let before = match commit.parent(0) {
         Ok(parent) => note_blob(&parent, id)?,
         Err(_) => None,
     };
-    // Path as well as content, or a rename goes unnoticed.
+    // Path as well as blob, or a rename goes unnoticed.
     Ok(now != before)
 }
 
-/// The file a note occupied at `commit` and the blob it held. Every commit
-/// records the filenames, which is why following a note across a rename needs
-/// neither rename detection nor a committed map.
+/// The file a note occupied at `commit`, found by id, and its blob.
 fn note_blob(commit: &git2::Commit<'_>, id: &str) -> Result<Option<(String, git2::Oid)>> {
     let tree = commit.tree()?;
     let wanted = note::normalize_id(id);
@@ -1690,8 +1507,7 @@ fn note_blob(commit: &git2::Commit<'_>, id: &str) -> Result<Option<(String, git2
     Ok(None)
 }
 
-/// `note_blob` for a whole tree at once. The path as well as the content,
-/// because a rename moves a note without changing a byte of it.
+/// `note_blob` for a whole tree, keyed by folded id.
 fn note_blobs(commit: &git2::Commit<'_>) -> Result<BTreeMap<String, (String, git2::Oid)>> {
     let mut found = BTreeMap::new();
     for entry in &commit.tree()? {
@@ -1706,7 +1522,6 @@ fn note_blobs(commit: &git2::Commit<'_>) -> Result<BTreeMap<String, (String, git
     Ok(found)
 }
 
-/// Every `(id, slug)` a tree holds, read from its filenames.
 fn notes_in(tree: &git2::Tree<'_>) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for entry in tree {
@@ -1720,10 +1535,7 @@ fn notes_in(tree: &git2::Tree<'_>) -> Vec<(String, String)> {
     found
 }
 
-/// libgit2 hardcodes `master`, so without this a notebook disagrees with every
-/// other repository on a machine that sets `init.defaultBranch`, and pushing it
-/// leaves two branches where one was asked for. The fallback matches
-/// `git init`'s.
+/// `init.defaultBranch`, which libgit2 ignores, else `git init`'s `master`.
 fn initial_branch(config: &git2::Config) -> String {
     config
         .get_string("init.defaultBranch")
@@ -1733,7 +1545,6 @@ fn initial_branch(config: &git2::Config) -> String {
         .unwrap_or_else(|| "master".to_string())
 }
 
-/// `1 commit` / `3 commits`, for the counts `push` and `pull` report.
 fn plural(n: usize, thing: &str) -> String {
     if n == 1 {
         format!("1 {thing}")
@@ -1742,7 +1553,6 @@ fn plural(n: usize, thing: &str) -> String {
     }
 }
 
-/// A refused push, phrased as the next thing to do about it.
 fn rejected(reasons: &[String]) -> Error {
     Error::msg(format!(
         "push rejected — {}\nthe remote has commits you do not: run `noda pull` first",
@@ -1750,10 +1560,8 @@ fn rejected(reasons: &[String]) -> Error {
     ))
 }
 
-/// Moves every traced line one version back and settles the ones that go no
-/// further: a line with a counterpart carries on with the number it had there,
-/// and a line with none is answered by the commit under examination — `None` for
-/// the working tree, which belongs to nobody.
+/// Moves every traced line one version back. A line with no counterpart is
+/// credited to `commit` (`None` for the working tree).
 fn attribute(
     origin: &mut [Option<usize>],
     found: &mut [Option<git2::Oid>],
@@ -1771,14 +1579,11 @@ fn attribute(
     }
 }
 
-/// For each line of `new`, the line of `old` it came from.
-///
-/// The context is set past both lengths on purpose, making the whole file one
-/// hunk so the correspondence comes out complete rather than only near changes.
+/// For each line of `new`, the line of `old` it came from. Context spans both
+/// files, so one hunk maps every line, not only those near a change.
 fn line_map(old: &[u8], new: &[u8]) -> Result<Vec<Option<usize>>> {
     let count = line_count(new);
-    // libgit2 emits no hunks when the sides are equal, which the loop below
-    // cannot tell apart from a file created whole.
+    // Equal sides give no hunks, indistinguishable from a file created whole.
     if old == new {
         return Ok((0..count).map(Some).collect());
     }
@@ -1786,7 +1591,7 @@ fn line_map(old: &[u8], new: &[u8]) -> Result<Vec<Option<usize>>> {
     let mut options = git2::DiffOptions::new();
     options
         .context_lines(u32::try_from(count + line_count(old)).unwrap_or(u32::MAX))
-        // A stray byte calling a note binary would leave no lines to map.
+        // A stray byte must not make the note binary, with no lines to map.
         .force_text(true);
     let path = Path::new("note");
     let patch = git2::Patch::from_buffers(old, Some(path), new, Some(path), Some(&mut options))?;
@@ -1795,7 +1600,6 @@ fn line_map(old: &[u8], new: &[u8]) -> Result<Vec<Option<usize>>> {
     for hunk in 0..patch.num_hunks() {
         for index in 0..patch.num_lines_in_hunk(hunk)? {
             let line = patch.line_in_hunk(hunk, index)?;
-            // Everything else is the old side or a "\ No newline" marker.
             if !matches!(line.origin(), ' ' | '+') {
                 continue;
             }
@@ -1810,7 +1614,7 @@ fn line_map(old: &[u8], new: &[u8]) -> Result<Vec<Option<usize>>> {
     Ok(map)
 }
 
-/// Matches `str::lines`, which is what the reported text is split with.
+/// Matches `str::lines`, which splits the reported text.
 fn line_count(bytes: &[u8]) -> usize {
     bytes.split_inclusive(|byte| *byte == b'\n').count()
 }
@@ -1820,14 +1624,13 @@ fn body_start(text: &str) -> usize {
     let Some((_, body)) = note::split_frontmatter(text) else {
         return 0;
     };
-    // `Note::parse` trims the same newlines, so "the body" means one thing.
+    // As `Note::parse` trims.
     let body = body.trim_start_matches('\n');
     text[..text.len() - body.len()].lines().count()
 }
 
-/// The id out of a destination's filename, folded as `resolve` folds one. A
-/// destination into a subdirectory is some other file — only the root holds
-/// notes, the boundary `audit_links` draws for orphans.
+/// The folded id in a destination's filename. Only the root holds notes, so a
+/// destination into a subdirectory has none.
 pub fn linked_note_id(target: &str) -> Option<String> {
     if target.contains('/') {
         return None;
@@ -1836,13 +1639,9 @@ pub fn linked_note_id(target: &str) -> Option<String> {
     Some(note::normalize_id(id))
 }
 
-/// Every tag these notes carry, commonest first, with how many carry it.
-///
-/// A free function so a caller already holding the notes does not walk the
-/// directory again. **The order is here rather than in whoever draws it**:
-/// sorted by name alone, the four tags a notebook runs on are buried under every
-/// one-off ever typed, and two screens in two orders read as a bug.
-/// Alphabetical within a count, so it does not reshuffle between visits.
+/// Every tag with its note count, commonest first, then alphabetical. Decided
+/// here so the TUI and web agree; a free function so a caller holding the
+/// notes does not walk the directory again.
 pub fn tag_tally(notes: &[NoteFile]) -> Vec<(String, usize)> {
     let mut counted: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for file in notes {
@@ -1860,13 +1659,9 @@ pub fn tag_tally(notes: &[NoteFile]) -> Vec<(String, usize)> {
     tallies
 }
 
-/// Whether this note's body links to the note `id` names.
-///
-/// A free function so the browser, which already holds every note, does not walk
-/// the directory again — and so the test is not written a second time there.
-/// [`Notebook::backlinks_to_note`] is the walk that feeds it from disk.
-///
-/// `targets` is a set, so three links to one place are one backlink.
+/// Whether this note's body links to the note `id` names. A free function for
+/// the TUI, which already holds every note; [`Notebook::backlinks_to_note`]
+/// reads them from disk.
 pub fn links_to_note(note: &Note, id: &str) -> bool {
     let want = note::normalize_id(id);
     crate::link::targets(&note.body)
@@ -1881,9 +1676,7 @@ pub fn links_to_file(note: &Note, name: &str) -> bool {
         .any(|target| target == name)
 }
 
-/// The executable bit, which is the whole of what git looks at. Elsewhere there
-/// is no bit, so the name is taken at its word rather than every hook declared
-/// dead.
+/// The executable bit, all git looks at. Without one, every hook counts.
 #[cfg(unix)]
 fn is_executable(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -1896,27 +1689,19 @@ fn is_executable(_: &std::fs::Metadata) -> bool {
     true
 }
 
-/// Now, and how far the machine's clock sits from UTC.
-///
-/// Asked of libgit2 because noda has no timezone database — jiff is compiled
-/// without one, and bundling one to answer "what day is it here" is a large
-/// dependency for a small question. libgit2 takes the offset from the C library,
-/// which is the *same* source every timestamp noda prints comes from: a date
-/// compared against today has to mean the same "here" as a rendered commit.
-///
-/// The identity is thrown away; `Signature::now` needs one and the clock does
-/// not care which.
+/// Now, and the local UTC offset. Asked of libgit2 because jiff is built
+/// without a timezone database, and libgit2's offset comes from the C library,
+/// the same source as every commit time noda prints.
 pub fn local_now() -> Result<(i64, i32)> {
     let when = Signature::now("noda", "noda@localhost")?.when();
     Ok((when.seconds(), when.offset_minutes()))
 }
 
-/// An abbreviated object id, as git prints it.
 pub(crate) fn short(oid: git2::Oid) -> String {
     oid.to_string()[..7].to_string()
 }
 
-/// Notebook names become directory names, so they must not escape the data dir.
+/// Notebook names become directory names, so must not escape the data dir.
 pub fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(Error::msg(format!("invalid notebook name: {name}")));
@@ -1930,7 +1715,7 @@ mod tests {
 
     use super::*;
 
-    /// An in-memory config has no backend to write to.
+    /// A file, because an in-memory config has no backend to write to.
     struct TempConfig(PathBuf, git2::Config);
 
     impl TempConfig {
@@ -1975,7 +1760,6 @@ mod tests {
         assert!(scan_of(&[], &[], &[]).problems().is_empty());
     }
 
-    /// The filenames differ, so git merges them without a word.
     #[test]
     fn one_id_on_two_notes_is_reported_once() {
         let scan = scan_of(&[("k3f9m2p1", "alpha"), ("k3f9m2p1", "beta")], &[], &[]);
@@ -1987,7 +1771,6 @@ mod tests {
 
     #[test]
     fn ids_are_compared_the_way_they_are_addressed() {
-        // `resolve` folds case and the I/L/O confusables.
         let scan = scan_of(&[("K3F9M2P1", "alpha"), ("k3f9m2p1", "beta")], &[], &[]);
         assert_eq!(scan.problems().len(), 1, "one id, spelled two ways");
     }
@@ -2006,7 +1789,6 @@ mod tests {
 
     #[test]
     fn a_wholesale_problem_stays_one_kind() {
-        // However many, it is one kind: counted, not enumerated.
         let files: Vec<String> = (0..2_000).map(|n| format!("note-{n:04}.md")).collect();
         let scan = Scan {
             notes: Vec::new(),
@@ -2042,7 +1824,6 @@ mod tests {
         assert_eq!(initial_branch(&config.1), "trunk");
     }
 
-    /// `initial_head("")` would leave the repository naming no branch at all.
     #[test]
     fn a_blank_default_branch_falls_back_rather_than_naming_nothing() {
         let mut config = TempConfig::new();

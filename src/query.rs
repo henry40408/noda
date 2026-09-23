@@ -1,8 +1,4 @@
-//! The query `noda search` takes: a few `field:value` terms, `OR` between the
-//! alternatives, `-` in front of what must not match.
-//!
-//! Deliberately small: a query language compounds, so the grammar is fixed at
-//! one shape and the shape is written down.
+//! The query `noda search` takes, deliberately fixed at one small shape:
 //!
 //! ```text
 //! query := group (' ' group)*        every group must match
@@ -11,40 +7,24 @@
 //! field := tag | title | id | pinned | text
 //! ```
 //!
-//! An AND of ORs — every query in conjunctive normal form, so parentheses buy
-//! nothing. `(a AND b) OR (c AND d)` is unsayable; that is two searches, and
-//! rare enough to be worth a grammar that fits in four lines.
+//! An AND of ORs, so there are no parentheses; `(a AND b) OR (c AND d)` is two
+//! searches. `OR` binds tighter than the space: `budget tag:x OR tag:y` is
+//! `budget AND (tag:x OR tag:y)`, what someone listing alternatives expects.
 //!
-//! `OR` binds tighter than the space, so `budget tag:x OR tag:y` is
-//! `budget AND (tag:x OR tag:y)` — what somebody listing alternatives for one
-//! field expects, not what boolean algebra would give.
+//! A leading `-` is always a negation; the field prefix is the escape
+//! (`text:--flag`). One token is one term, so the grammar has no quoting.
 //!
-//! A leading `-` is always a negation, so `text:--flag` is how a term starting
-//! with one is written. The field prefix is the escape, which is why there is no
-//! quoting: the shell already quotes and one token is one term.
-//!
-//! Every field matches the way noda already matches that thing — a tag whole, an
-//! id by folded prefix, text and titles by case-insensitive substring, because
-//! splitting on spaces finds nothing in a language that does not use them.
-//! `pinned:` is the exception and reads as one: it takes `true` or `false` and
-//! compares rather than searches.
+//! A tag matches whole, an id by folded prefix, text and titles by
+//! case-insensitive substring (splitting on spaces finds nothing in CJK).
+//! `pinned:` takes only `true` or `false`.
 
 use crate::note::{self, Note};
 use crate::{Error, Result};
 
-/// One line of typing split as a shell would split it: on whitespace, but not
-/// inside quotes.
-///
-/// "The shell's quoting is the only quoting" holds at a command line and nowhere
-/// else — the browser's `/`, its `:` prompt and the listing's search box are
-/// single fields with no shell in front. Doing it here keeps the three from
-/// doing it three ways; they already grew this bug once.
-///
-/// Concretely: a tag may contain a space, so `tag:"24.04 Dark patterns"` has to
-/// survive as one token or the tag is unreachable from the screen showing it.
-///
-/// Either quote character. An unclosed one runs to the end rather than failing —
-/// the line is still being typed.
+/// One line split as a shell would: on whitespace, not inside `"` or `'`. For
+/// the TUI and web inputs with no shell in front, in one place so they cannot
+/// diverge. A tag may contain a space, so `tag:"24.04 Dark patterns"` must stay
+/// one token. An unclosed quote runs to the end: the line is still being typed.
 pub fn split(text: &str) -> Vec<String> {
     let mut pieces = Vec::new();
     let mut piece = String::new();
@@ -53,7 +33,6 @@ pub fn split(text: &str) -> Vec<String> {
         match quote {
             Some(open) if c == open => quote = None,
             None if c == '"' || c == '\'' => quote = Some(c),
-            // Inside the quotes a space is part of the value.
             None if c.is_whitespace() => {
                 if !piece.is_empty() {
                     pieces.push(std::mem::take(&mut piece));
@@ -68,10 +47,8 @@ pub fn split(text: &str) -> Vec<String> {
     pieces
 }
 
-/// The query narrowing a listing to one tag, written so `split` gives it back
-/// whole. Unquoted, `tag:24.04 Dark patterns` is three and-ed terms that find
-/// nothing — and every screen listing tags offers to filter by one, so the
-/// answer lives here rather than in each of them.
+/// The query narrowing a listing to one tag, quoted when needed so `split`
+/// gives it back as one term.
 pub fn scoped(tag: &str) -> String {
     if tag.contains(char::is_whitespace) {
         format!("tag:\"{tag}\"")
@@ -80,23 +57,16 @@ pub fn scoped(tag: &str) -> String {
     }
 }
 
-/// A parsed query: groups that must all match, each satisfied by any one of its
-/// terms.
 pub struct Query {
     groups: Vec<Vec<Term>>,
-    /// The same grouping in the words it was typed in, because a `Term` cannot
-    /// be shown — it has already thrown away the `tag:`, the quotes and the `-`
-    /// that have to go back on the screen.
-    ///
-    /// A second copy, so it is filled by the one loop that does the grouping:
-    /// two functions splitting on `OR` is how they come to disagree.
+    /// The same grouping as typed, for display (a `Term` has dropped the field
+    /// and the `-`). Filled by the same loop so the two cannot disagree.
     said: Vec<Vec<String>>,
 }
 
 struct Term {
     field: Field,
     value: String,
-    /// Whether the term must *not* match — a leading `-`.
     negated: bool,
 }
 
@@ -105,21 +75,17 @@ enum Field {
     Tag,
     Title,
     Id,
-    /// `pinned:true` or `pinned:false`. The one field whose value is not looked
-    /// for but compared, so it is the one field that can be misspelled — hence
-    /// the two words and nothing else.
+    /// `true` or `false` only: compared rather than searched.
     Pinned,
-    /// The title, the tags and the body together: what a bare word searches.
+    /// Title, tags and body: what a bare word searches.
     Text,
 }
 
-/// The word that joins alternatives. Uppercase only, so that searching for the
-/// English word `or` stays possible.
+/// Uppercase only, so the English word `or` stays searchable.
 const OR: &str = "OR";
 
 impl Query {
-    /// One token per argument, so `noda search "title:Q3 budget" tag:work`
-    /// arrives as two terms and no escape syntax has to be invented.
+    /// One token per term: `noda search "title:Q3 budget" tag:work` is two.
     pub fn parse(tokens: &[String]) -> Result<Query> {
         let mut groups: Vec<Vec<Term>> = Vec::new();
         let mut said: Vec<Vec<String>> = Vec::new();
@@ -157,26 +123,19 @@ impl Query {
         Ok(Query { groups, said })
     }
 
-    /// The grouping, said back in the tokens it was written with: the outer list
-    /// is and-ed, each inner list or-ed.
-    ///
-    /// `OR` binding tighter than a space is the opposite of what most search
-    /// boxes do, and a caller that can draw the grouping answers that without a
-    /// manual. Tokens come back exactly as given, so what is shown is the
-    /// reader's own text.
+    /// The grouping in the tokens as given: the outer list and-ed, each inner
+    /// list or-ed. Shown because `OR` binding tighter than a space surprises.
     pub fn grouping(&self) -> &[Vec<String>] {
         &self.said
     }
 
-    /// Whether a note satisfies every group.
     pub fn matches(&self, id: &str, note: &Note) -> bool {
         self.groups
             .iter()
             .all(|group| group.iter().any(|term| term.matches(id, note)))
     }
 
-    /// For quoting the line a hit was on. A `tag:` or `id:` matched something
-    /// outside the body, so there is nothing there to point at.
+    /// The terms worth quoting a matching line for: positive `text` and `title`.
     pub fn excerpt_terms(&self) -> Vec<String> {
         self.groups
             .iter()
@@ -201,8 +160,7 @@ impl Term {
         let (field, value) = match rest.split_once(':') {
             Some((name, value)) => match Field::parse(name) {
                 Some(field) => (field, value),
-                // `https://example.com` searches for a URL, so only the known
-                // names count as fields.
+                // Only known names are fields, so `https://…` is text.
                 None => (Field::Text, rest),
             },
             None => (Field::Text, rest),
@@ -210,9 +168,8 @@ impl Term {
         if value.is_empty() {
             return Err(Error::msg(format!("`{token}` has nothing to look for")));
         }
-        // Every other field finds nothing when it is asked for nothing, which is
-        // an answer. `pinned:ture` would find every note instead, so it is
-        // refused where it was typed.
+        // Other fields find nothing on nonsense; `pinned:ture` would silently
+        // read as `pinned:false`, so it is refused.
         if field == Field::Pinned && !matches!(value, "true" | "false") {
             return Err(Error::msg(format!(
                 "`pinned:` takes `true` or `false`, not `{value}`"
@@ -265,20 +222,15 @@ fn contains_ignoring_case(haystack: &str, needle: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Three fields stand in for argv, and this is the one account of them.
     #[test]
     fn a_field_splits_the_way_a_shell_does() {
         assert_eq!(split("+work -q3"), vec!["+work", "-q3"]);
         assert_eq!(split("  +work   "), vec!["+work"]);
         assert!(split("   ").is_empty());
-        // Quotes around the name, not the whole piece: the `-` says remove.
         assert_eq!(split("-'a b' +c"), vec!["-a b", "+c"]);
         assert_eq!(split("-\"a b\""), vec!["-a b"]);
-        // Quoted whole, which is what a hand used to a shell may well type.
         assert_eq!(split("\"-a b\""), vec!["-a b"]);
-        // Still being typed, so an unclosed quote takes the rest.
         assert_eq!(split("-\"a b"), vec!["-a b"]);
-        // A tag with a space survives as one term.
         assert_eq!(
             split("tag:\"24.04 Dark patterns\" budget"),
             vec!["tag:24.04 Dark patterns", "budget"]
@@ -321,19 +273,14 @@ mod tests {
         assert!(!query("pinned:true").matches("k3f9m2p1", &loose));
         assert!(query("pinned:false").matches("k3f9m2p1", &loose));
         assert!(!query("pinned:false").matches("k3f9m2p1", &pinned));
-        // The two spellings of the same question.
         assert!(query("-pinned:true").matches("k3f9m2p1", &loose));
 
-        // A field noda reads, on a value it does not: `is_pinned`'s answer and
-        // not the field's presence is what the query compares.
+        // `is_pinned`'s answer is compared, not the field's presence.
         let mut odd = a_note("Gamma", &[], "x\n");
         odd.pinned = Some("yes".to_string());
         assert!(query("pinned:false").matches("k3f9m2p1", &odd));
     }
 
-    /// **The one term that can be misspelled.** Every other field asked for
-    /// nonsense finds nothing, which is an answer; `pinned:ture` would find
-    /// every note in the notebook.
     #[test]
     fn pinned_refuses_a_value_that_is_not_one_of_the_two() {
         let tokens = |text: &str| vec![text.to_string()];
@@ -341,7 +288,6 @@ mod tests {
         assert!(Query::parse(&tokens("pinned:yes")).is_err());
         assert!(Query::parse(&tokens("-pinned:1")).is_err());
         assert!(Query::parse(&tokens("pinned:true")).is_ok());
-        // Not the field at all: a bare word that happens to start with it.
         assert!(Query::parse(&tokens("pinnedness")).is_ok());
     }
 
@@ -363,7 +309,6 @@ mod tests {
         assert!(!q.matches("k3f9m2p1", &other));
     }
 
-    /// Groups are and-ed and `OR` never reaches across a space.
     #[test]
     fn or_binds_tighter_than_the_space_between_groups() {
         let both = a_note("Alpha", &["work", "q3"], "budget\n");
@@ -379,8 +324,6 @@ mod tests {
         assert!(!q.matches("k3f9m2p1", &wrong_body));
     }
 
-    /// `grouping` has to hand back the shape `matches` applies, or a page draws
-    /// one grouping while the notes were narrowed by another.
     #[test]
     fn the_grouping_shown_is_the_grouping_applied() {
         assert_eq!(
@@ -399,11 +342,8 @@ mod tests {
         );
     }
 
-    /// Tokens come back as written, `-` and quotes and all — `Term` has thrown
-    /// away everything needed to write them again.
     #[test]
     fn the_grouping_keeps_the_words_that_were_typed() {
-        // Through `split`, the road a browser's query takes.
         let typed = split("-tag:archived title:\"Q3 budget\"");
         assert_eq!(
             Query::parse(&typed).unwrap().grouping(),
@@ -432,22 +372,18 @@ mod tests {
     #[test]
     fn each_field_matches_the_way_noda_matches_that_thing() {
         let note = a_note("Meeting Notes", &["work"], "body\n");
-        // A tag whole, the way `ls --tag` compares one.
         assert!(query("tag:work").matches("k3f9m2p1", &note));
         assert!(!query("tag:wor").matches("k3f9m2p1", &note));
-        // A title by substring, and case does not matter.
         assert!(query("title:meeting").matches("k3f9m2p1", &note));
         assert!(
             !query("title:body").matches("k3f9m2p1", &note),
             "not the body"
         );
-        // An id by prefix, folded, the way `noda show k3f9` finds a note.
         assert!(query("id:k3f9").matches("k3f9m2p1", &note));
         assert!(query("id:K3F9").matches("k3f9m2p1", &note));
         assert!(!query("id:q7x2").matches("k3f9m2p1", &note));
     }
 
-    /// A language without spaces is searched by substring or not at all.
     #[test]
     fn cjk_is_matched_by_substring() {
         let note = a_note("會議記錄", &["工作"], "討論第三季預算\n");
@@ -456,7 +392,6 @@ mod tests {
         assert!(query("tag:工作").matches("k3f9m2p1", &note));
     }
 
-    /// Lowercase `or` is the English word, or it would be unsearchable.
     #[test]
     fn only_an_uppercase_or_is_the_operator() {
         let note = a_note("x", &[], "this or that\n");
@@ -464,7 +399,6 @@ mod tests {
         assert!(!query("or").matches("k3f9m2p1", &a_note("x", &[], "neither\n")));
     }
 
-    /// A leading `-` is always a negation, so the field prefix is the escape.
     #[test]
     fn text_is_the_way_to_look_for_something_starting_with_a_hyphen() {
         let note = a_note("x", &[], "a --flag in the body\n");
@@ -477,7 +411,6 @@ mod tests {
         );
     }
 
-    /// A colon is ordinary punctuation until it follows a field's name.
     #[test]
     fn an_unknown_prefix_is_text_rather_than_a_field() {
         let note = a_note("x", &[], "see https://example.com/x\n");
@@ -505,7 +438,6 @@ mod tests {
         }
     }
 
-    /// A `tag:` match points at nothing in the body to quote.
     #[test]
     fn only_text_terms_are_worth_quoting_a_line_for() {
         let q = query("budget title:meeting tag:work -hiring");

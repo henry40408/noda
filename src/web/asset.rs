@@ -1,29 +1,17 @@
-//! The two things every page needs, and no page carries.
+//! The stylesheet and scripts, linked and cached rather than inlined, which
+//! re-sent tens of KB the browser already had with every full page.
 //!
-//! **A correction to a decision, not an addition to one.** These used to be
-//! written into every answer, on the argument that one request draws a whole
-//! page and nothing here was big enough to be worth a round trip. Both halves
-//! of that changed: the stylesheet is 39,598 bytes and the four scripts 28,458,
-//! and once the enhancement layer started asking for fragments, what was left
-//! carrying them — a second notebook, a link in from outside, every form page,
-//! every screen on a phone — was re-sending 46 KB the browser already had.
+//! **The name is the content**: `/a/style.<hash>.css` cannot go stale, so it is
+//! served `immutable`. The ways to get it wrong are serving a hash nobody wrote
+//! (so a miss is a 404) and caching the page that links it (`no-cache`).
 //!
-//! **Invalidation answers itself when the name is the content.**
-//! `/a/style.<hash>.css` cannot go stale, so there is nothing to expire. The two
-//! ways to get it wrong are serving a hash nobody wrote, which is a 404, and
-//! caching a page that links one, which `no-cache` prevents.
-//!
-//! The hash is git's `hash_object` — not for any property of SHA-1, but because
-//! a notebook is a git repository and this is its name for "these exact bytes".
-//!
-//! No bundle: a page links only the scripts it uses, as the inline version did.
-//! One file would send a note page 8,765 bytes to run none of.
+//! The hash is git's blob id, git's name for "these exact bytes". There is no
+//! bundle: a page links only the scripts it uses.
 
 use std::sync::OnceLock;
 
 use crate::web::{page, script};
 
-/// One thing a page links to rather than carries.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Asset {
     /// The whole of the layout, both themes included.
@@ -43,7 +31,6 @@ pub enum Asset {
 }
 
 impl Asset {
-    /// What the addresses are built from, and what a request is answered out of.
     const ALL: [Asset; 7] = [
         Asset::Style,
         Asset::Listing,
@@ -54,7 +41,7 @@ impl Asset {
         Asset::Watching,
     ];
 
-    /// The stem of its address — the half a person reads.
+    /// The readable stem of its address.
     fn name(self) -> &'static str {
         match self {
             Asset::Style => "style",
@@ -71,7 +58,7 @@ impl Asset {
         self == Asset::Style
     }
 
-    /// The only thing the browser will treat it as: `nosniff` goes out beside.
+    /// Sent with `nosniff`, so it is all the browser will treat it as.
     fn kind(self) -> &'static str {
         if self.css() {
             "text/css; charset=utf-8"
@@ -80,8 +67,7 @@ impl Asset {
         }
     }
 
-    /// The same string every time it is asked for, which is what makes hashing
-    /// it once honest.
+    /// Deterministic, which is what makes hashing it once honest.
     fn body(self) -> String {
         match self {
             Asset::Style => format!("{}{}", crate::web::theme::stylesheet(), page::stylesheet()),
@@ -94,14 +80,12 @@ impl Asset {
         }
     }
 
-    /// Where it is served, hash and all.
     pub fn href(self) -> &'static str {
         &self.held().at
     }
 
-    /// `defer` and not the end of the body: the scripts read the rows so they
-    /// must run after parsing, and a deferred script in the head downloads while
-    /// parsing is still going. They run in the order the page lists them.
+    /// `defer` in the head: runs after parsing (the scripts read the rows), in
+    /// the listed order, but downloads during it.
     pub fn tag(self) -> String {
         if self.css() {
             format!("<link rel=\"stylesheet\" href=\"{}\">", self.href())
@@ -121,16 +105,15 @@ impl Asset {
 
 /// An asset with its address worked out.
 pub struct Held {
-    /// The path it answers at: `/a/<name>.<hash>.<ext>`.
+    /// `/a/<name>.<hash>.<ext>`.
     at: String,
-    /// The last segment of that path, which is what the route matches.
+    /// The last segment of `at`, which the route matches.
     file: String,
     pub body: String,
     pub kind: &'static str,
 }
 
-/// All of them, hashed at first use rather than at startup — `noda ls` will
-/// never serve a page, and the release profile is tuned for a quick start.
+/// Hashed at first use, so commands that serve no page never pay for it.
 fn held() -> &'static Vec<Held> {
     static HELD: OnceLock<Vec<Held>> = OnceLock::new();
     HELD.get_or_init(|| {
@@ -155,8 +138,8 @@ fn held() -> &'static Vec<Held> {
     })
 }
 
-/// Twelve hex digits of the git blob id these bytes would have. Short on
-/// purpose: a cache key over five strings, not an identity.
+/// Twelve hex digits of the git blob id: a cache key over a handful of
+/// strings, not an identity.
 fn fingerprint(body: &str) -> String {
     git2::Oid::hash_object(git2::ObjectType::Blob, body.as_bytes()).map_or_else(
         |_| "0000".to_string(),
@@ -164,9 +147,8 @@ fn fingerprint(body: &str) -> String {
     )
 }
 
-/// A miss is a miss, never the current version of the same name: a hashed
-/// address is a promise about the bytes behind it, and answering one nobody
-/// wrote is the single way this scheme can lie.
+/// Exact match only: answering a stale hash with current bytes would break
+/// the promise the address makes.
 pub fn find(file: &str) -> Option<&'static Held> {
     held().iter().find(|held| held.file == file)
 }
@@ -175,8 +157,8 @@ pub fn find(file: &str) -> Option<&'static Held> {
 mod tests {
     use super::*;
 
-    /// Nothing else keeps the link and the route in step, and a page pointing at
-    /// an unserved hash has no stylesheet — which every layout test would pass.
+    /// Nothing else keeps link and route in step, and layout tests would pass
+    /// a page without its stylesheet.
     #[test]
     fn what_a_page_links_is_what_the_route_answers() {
         for asset in Asset::ALL {
@@ -188,8 +170,6 @@ mod tests {
         }
     }
 
-    /// Two assets that differ must differ in the address, or one is served under
-    /// the other's cache entry for the year `immutable` asks for.
     #[test]
     fn a_changed_asset_would_be_a_changed_address() {
         let sheet = fingerprint(&Asset::Style.body());
@@ -198,7 +178,6 @@ mod tests {
         assert_eq!(sheet.len(), 12);
     }
 
-    /// The hash alone does not promise this: equal bytes would collide.
     #[test]
     fn no_two_assets_answer_at_one_address() {
         let mut seen = std::collections::BTreeSet::new();
@@ -211,7 +190,6 @@ mod tests {
         }
     }
 
-    /// A hash nobody wrote is nothing, not the current bytes under it.
     #[test]
     fn an_address_this_build_did_not_write_is_not_answered() {
         assert!(find("style.000000000000.css").is_none());
@@ -219,7 +197,6 @@ mod tests {
         assert!(find("../../etc/passwd").is_none());
     }
 
-    /// The two kinds are linked the two ways a browser knows.
     #[test]
     fn a_stylesheet_is_linked_and_a_script_is_deferred() {
         assert!(Asset::Style.tag().starts_with("<link rel=\"stylesheet\""));

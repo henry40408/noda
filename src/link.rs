@@ -1,25 +1,18 @@
-//! The files a note's body points at.
-//!
-//! Read as Markdown rather than as text, because a link is not a string that
-//! looks like a filename: a reference-style destination sits at the bottom of
-//! the file, a link inside a fence is not a link, and `%20` is a space. Each of
-//! those, got wrong, reports a referenced file as an orphan.
-//!
-//! Only local destinations come back — a URL scheme is somebody else's file, and
-//! a path that climbs out is not the notebook's business.
+//! The files a note's body points at. Parsed as Markdown, not grepped: a
+//! reference-style destination sits at the bottom, a link inside a fence is not
+//! a link, and `%20` is a space — each, got wrong, reports a referenced file as
+//! an orphan. Only local destinations inside the notebook come back.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
 
 use pulldown_cmark::{Event, Parser, Tag};
 
-/// Every notebook-relative path the body links to or embeds, normalised so it
-/// compares against a directory listing directly.
+/// Every notebook-relative path the body links to or embeds, normalised to
+/// compare against a directory listing.
 pub fn targets(body: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     for event in Parser::new(body) {
-        // Displayed or followed is a difference to the reader and none to the
-        // file: both mean "this note uses that one".
         let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event else {
             continue;
         };
@@ -30,22 +23,18 @@ pub fn targets(body: &str) -> BTreeSet<String> {
     found
 }
 
-/// Repoints every destination resolving to `old` at `new`. `None` when the body
+/// Repoints every destination (inline or reference definition) resolving to
+/// `old` at `new`, touching only the destination's bytes. `None` when the body
 /// names `old` nowhere.
 ///
-/// Only the destination's own bytes move, so link text and prose are untouched,
-/// and both spellings are covered — inline and reference definition.
-///
-/// Not a promise to have caught everything: a destination written with backslash
-/// escapes does not appear literally in the source and cannot be located, so the
-/// caller re-checks with `targets` — see `cmd::file_mv`.
+/// A destination written with backslash escapes cannot be located in the
+/// source, so the caller re-checks with `targets` — see `cmd::file_mv`.
 pub fn rewrite(body: &str, old: &str, new: &str) -> Option<String> {
     let encoded = encode_destination(new);
     let mut edits: Vec<(Range<usize>, &str)> = Vec::new();
 
     let parser = Parser::new(body);
-    // Before the iterator is consumed: this borrows the table the definitions
-    // land in as the document is parsed.
+    // Read before the iterator is consumed.
     let definitions: Vec<(String, Range<usize>)> = parser
         .reference_definitions()
         .iter()
@@ -59,8 +48,7 @@ pub fn rewrite(body: &str, old: &str, new: &str) -> Option<String> {
         if target(&dest_url).as_deref() != Some(old) {
             continue;
         }
-        // A reference-style usage carries what it resolved to, but the bytes are
-        // in the definition — which is what gets rewritten.
+        // A reference-style usage's bytes are in the definition, handled below.
         if let Some(span) = locate(body, &range, &dest_url) {
             edits.push((span, encoded.as_str()));
         }
@@ -88,8 +76,8 @@ pub fn rewrite(body: &str, old: &str, new: &str) -> Option<String> {
     Some(out)
 }
 
-/// Where inside `range` the destination's *path* was written. A `#page=2` or
-/// `?v=2` says how to open the file rather than which, so it stays put.
+/// Where inside `range` the destination's *path* was written; a `#page=2` or
+/// `?v=2` suffix stays put.
 fn locate(body: &str, range: &Range<usize>, dest: &str) -> Option<Range<usize>> {
     let source = body.get(range.clone())?;
     let at = written_at(source, dest)?;
@@ -97,9 +85,8 @@ fn locate(body: &str, range: &Range<usize>, dest: &str) -> Option<Range<usize>> 
     Some(range.start + at..range.start + at + path)
 }
 
-/// `[diagram.png](diagram.png)` writes it twice and only the second counts, so
-/// an occurrence where a destination opens wins. Nothing to tell them apart
-/// means giving up rather than guessing; `targets` notices the miss.
+/// `[diagram.png](diagram.png)` writes it twice, so the occurrence where a
+/// destination opens wins. If that is ambiguous, give up rather than guess.
 fn written_at(source: &str, dest: &str) -> Option<usize> {
     let mut all = Vec::new();
     let mut from = 0;
@@ -140,35 +127,26 @@ fn encode_destination(name: &str) -> String {
     out
 }
 
-/// The notebook-relative file a destination names.
-///
-/// Public because `web` asks this one destination at a time, and what comes back
-/// is the only thing the server will open for a reader. A second implementation
-/// of "is this path inside the notebook" is how the network-facing one ends up
-/// being the wrong one.
+/// The notebook-relative file a destination names. Also what `web` uses to
+/// decide which file it will serve, so there is one "inside the notebook" check.
 pub fn target(dest: &str) -> Option<String> {
-    // A bare fragment points inside this document; a scheme points elsewhere.
     if dest.is_empty() || dest.starts_with('#') || has_scheme(dest) {
         return None;
     }
-    // It may exist, but not as a file the notebook holds.
     if dest.starts_with('/') {
         return None;
     }
 
-    // Both name `diagram.png`. Either character is legal in a filename here, but
-    // not in one that syncs to Windows, so reading them as punctuation is safer.
+    // `diagram.png#x` and `diagram.png?x` both name `diagram.png`: neither
+    // character survives in a filename synced to Windows.
     let path = dest.split_once('#').map_or(dest, |(before, _)| before);
     let path = path.split_once('?').map_or(path, |(before, _)| before);
     normalize(&percent_decode(path))
 }
 
-/// The URL scheme a destination carries. Read out rather than matched as `://`,
-/// because `mailto:` and `tel:` carry no slashes.
-///
-/// The name and not merely its presence, because that is the question the web
-/// pages ask: `https:` is a link to follow and `javascript:` is a script to run,
-/// and telling them apart is what stops a note executing anything.
+/// The URL scheme a destination carries (not matched as `://`: `mailto:` has
+/// none). The name matters to `web`, which follows `https:` but must never run
+/// `javascript:`.
 pub fn scheme(dest: &str) -> Option<&str> {
     let mut chars = dest.char_indices();
     match chars.next() {
@@ -189,7 +167,6 @@ fn has_scheme(dest: &str) -> bool {
     scheme(dest).is_some()
 }
 
-/// Decodes `%XX`, so a filename with a space in it matches something on disk.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -206,7 +183,6 @@ fn percent_decode(text: &str) -> String {
         out.push(bytes[index]);
         index += 1;
     }
-    // Not UTF-8 is not a name to compare against a listing.
     String::from_utf8(out).unwrap_or_else(|_| text.to_string())
 }
 
@@ -219,15 +195,13 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-/// Collapses `.` and `..` so two spellings of one file compare equal, and
-/// refuses a path that climbs out of the notebook.
+/// Collapses `.` and `..`; `None` for a path that climbs out of the notebook.
 fn normalize(path: &str) -> Option<String> {
     let mut parts: Vec<&str> = Vec::new();
     for part in path.split('/') {
         match part {
             "" | "." => {}
             ".." => {
-                // Nothing to pop means the path has left the notebook.
                 parts.pop()?;
             }
             other => parts.push(other),
@@ -255,14 +229,12 @@ mod tests {
         );
     }
 
-    /// A regex cannot reach this: the paragraph never contains the name.
     #[test]
     fn a_reference_style_link_is_resolved() {
         let body = "See ![the diagram][d] for the shape.\n\n[d]: diagram.png\n";
         assert_eq!(targets_of(body), ["diagram.png"]);
     }
 
-    /// The case that would invent orphans: prose about a link is not a link.
     #[test]
     fn a_link_inside_a_code_fence_is_not_a_link() {
         let body = "```markdown\n![diagram](diagram.png)\n```\n\nand `[x](y.png)` inline\n";
@@ -288,7 +260,6 @@ mod tests {
         assert_eq!(targets_of("[a](sub/./dir/../f.png)\n"), ["sub/f.png"]);
     }
 
-    /// Two spellings of one file are not one referenced and one orphaned.
     #[test]
     fn two_spellings_of_one_file_collapse_to_one_target() {
         assert_eq!(
@@ -333,7 +304,6 @@ mod tests {
         );
     }
 
-    /// A name needing escapes gets them, so the link still resolves.
     #[test]
     fn rewrite_encodes_a_new_name_that_would_not_survive_verbatim() {
         let out = rewrite("![a](diagram.png)\n", "diagram.png", "my shape (v2).png").unwrap();
@@ -344,21 +314,17 @@ mod tests {
         );
     }
 
-    /// Only the occurrence where a destination opens is the destination.
     #[test]
     fn the_link_text_is_not_mistaken_for_the_destination() {
         let out = rewrite("[diagram.png](diagram.png)\n", "diagram.png", "shape.png").unwrap();
         assert_eq!(out, "[diagram.png](shape.png)\n");
     }
 
-    /// Not literally in the source, so `rewrite` leaves it and `targets` says
-    /// it was missed.
     #[test]
     fn a_destination_that_cannot_be_located_is_left_for_the_caller_to_notice() {
         let body = "[a](my\\(file\\).png)\n";
         assert_eq!(targets(body).into_iter().next().unwrap(), "my(file).png");
         assert!(rewrite(body, "my(file).png", "shape.png").is_none());
-        // Which is why the caller re-reads the body instead of trusting it.
         assert!(targets(body).contains("my(file).png"));
     }
 

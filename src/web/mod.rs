@@ -1,23 +1,14 @@
 //! `noda web` — the notebook over HTTP, for reading and writing it from a phone.
 //!
-//! **Read through `notebook`, write through `cmd`**: a third renderer over the
-//! data the other two agree about, not a wrapper around either.
+//! Reads through `notebook`, writes through `cmd`.
 //!
-//! Three things not obvious from the code:
-//!
-//! - **A notebook is named in the URL, never taken from the active pointer.**
-//!   That pointer belongs to a shell session, and a tab that changed which
-//!   notebook it showed because of something in a terminal is worse than a
-//!   longer URL.
-//!
-//! - **A note is addressed by id, and everything else redirects to it.** The
-//!   slug follows the title, so a bookmark written against it dies at the next
-//!   rename. One page, one address.
-//!
-//! - **Every handler opens the notebook itself, inside `spawn_blocking`.**
-//!   `git2::Repository` is `!Send`, which reads like a restriction and is the
-//!   design: one request, one handle, and a slow walk on one is not a stall on
-//!   the others.
+//! - **A notebook is named in the URL**, never taken from the active pointer,
+//!   which belongs to a shell session.
+//! - **A note is addressed by id**, and a slug or prefix redirects to it: the
+//!   slug follows the title, so a bookmark to it dies at the next rename.
+//! - **Every handler opens its own notebook inside `spawn_blocking`**, since
+//!   `git2::Repository` is `!Send`: one request, one handle, and a slow walk on
+//!   one does not stall the others.
 
 pub mod asset;
 pub mod guard;
@@ -46,43 +37,28 @@ use crate::notebook::Notebook;
 use crate::query::{self, Query};
 use crate::{Error, Paths, Result, cmd};
 
-/// What every handler is given.
 struct Server {
     paths: Paths,
     guard: guard::Guard,
-    /// Held for any request that writes, by the notebook it writes to.
-    ///
-    /// Reads happen at once; writes to one notebook cannot. Two commits racing
-    /// meet at `index.lock`, and what comes back is libgit2 saying a file
-    /// exists — no help at all to somebody who pressed Save.
-    ///
-    /// `std::sync::Mutex` and not tokio's, because it is only taken off the
-    /// async threads: a lock held across an await is a lock held while a request
-    /// does nothing.
-    ///
-    /// It does **not** lock the notebook against the world — a terminal in
-    /// another window always could be writing, which the fingerprint is for.
+    /// Held by every write, so two commits do not race to `index.lock` and fail
+    /// with libgit2's unhelpful "file exists". `std::sync::Mutex`, as it is only
+    /// taken off the async threads. It does not guard against a terminal writing
+    /// at the same time; the fingerprint does.
     writing: Locks,
-    /// The one piece of state outliving a request, because the errand does.
+    /// Outlives a request, because an errand does.
     errands: work::Errands,
-    /// Which notes have an editor open on them, and the thread watching those
-    /// files. The other piece of state outliving a request — an SSE stream
-    /// outlives every request there is.
+    /// Which notes have an editor open, and the thread watching those files.
     watching: watch::Watch,
 }
 
-/// One write lock per notebook.
-///
-/// A single lock over everything froze Save on every *other* notebook whenever
-/// one notebook's remote went quiet. `index.lock` is a file inside one
-/// repository, so the lock belongs where the collision is.
+/// One write lock per notebook: a single lock froze Save on every notebook
+/// whenever one notebook's remote went quiet.
 #[derive(Default)]
 struct Locks(std::sync::Mutex<std::collections::BTreeMap<String, Arc<std::sync::Mutex<()>>>>);
 
 impl Locks {
-    /// An `Arc` out rather than a guard: a guard borrows the map, and the map
-    /// has to be free the moment this returns, or one notebook's slow push holds
-    /// what every other notebook goes through to find its own lock.
+    /// An `Arc` rather than a guard, so the map is free again at once and one
+    /// notebook's slow push does not block finding another's lock.
     fn of(&self, book: &str) -> Arc<std::sync::Mutex<()>> {
         Arc::clone(
             self.0
@@ -94,53 +70,34 @@ impl Locks {
     }
 }
 
-/// The optimistic lock: a form carries the fingerprint the note had when the
-/// page was drawn, so an edit begun on a phone cannot flatten one made at a
-/// terminal since.
+/// The optimistic lock: a form carries the note's fingerprint from when the page
+/// was drawn, so an edit begun on a phone cannot flatten one made since.
 ///
-/// **The blob id and not the `updated` stamp**, because `--no-touch` exists so
-/// content can change without `updated` moving — a marker that fails during a
-/// session of small corrections fails in the situation it exists for.
+/// The blob id, not the `updated` stamp, which `--no-touch` leaves unmoved.
 fn fingerprint(path: &std::path::Path) -> Result<String> {
     Ok(git2::Oid::hash_file(git2::ObjectType::Blob, path)?.to_string())
 }
 
-/// What a three-way merge came to.
 enum Merged {
-    /// The two sets of changes touched different parts of the note, and this is
-    /// both of them.
     Clean(String),
-    /// They touched the same part. The text carries git's conflict markers,
-    /// which is the point at which only a person can say what was meant.
+    /// Carrying git's conflict markers.
     Conflicted(String),
 }
 
-/// Merges what the reader wrote with what was saved since, against the version
-/// the edit began from.
+/// Three-way merge of what the reader wrote with what was saved since, against
+/// the version the edit began from.
 ///
-/// **Bodies, not whole files.** Merging the frontmatter would turn somebody
-/// else's tag change into a conflict over a line the reader never saw, and
-/// `cmd::rewrite_in` puts the body back under whatever frontmatter is on disk
-/// by then, so the other change survives without ever being merged.
+/// Bodies only: merging frontmatter would make somebody else's tag change a
+/// conflict over a line the reader never saw, and `cmd::rewrite_in` keeps
+/// whatever frontmatter is on disk anyway. The labels are for a person, so they
+/// name the versions as the page does.
 ///
-/// The labels are read by a person inside the markers rather than by git, so
-/// they name the two versions the way the page does.
-///
-/// What it costs, release profile, against the commit this branched from:
-///
-///     main              7,690,896 bytes
-///     with the merge   +    16,608   (+0.22%)
-///
-/// No new dependency — libgit2 is already vendored — but `git_merge_file` was
-/// not reached before, so the xdiff merge it sits on comes in with it. A
-/// quarter of what gzip was accepted at.
+/// Cost: +16,608 bytes (+0.22%) on the release binary, for libgit2's xdiff
+/// merge; no new dependency.
 fn merge(base: &str, mine: &str, theirs: &str) -> Result<Merged> {
-    // git2 initialises libgit2 from its own entry points, and `merge_file` is
-    // not one of them: reached first in a process, it traps inside C rather
-    // than returning an error. Every caller here has opened a notebook long
-    // since, so this buys nothing at run time — it is here so that a function
-    // taking three strings and returning a fourth does not depend on what ran
-    // before it.
+    // `merge_file` does not initialise libgit2 and traps inside C if reached
+    // first in a process. Callers have always opened a notebook already; this
+    // keeps the function independent of that.
     git2::Oid::hash_object(git2::ObjectType::Blob, &[])?;
 
     let mut ancestor = git2::MergeFileInput::new();
@@ -168,17 +125,14 @@ type Shared = Arc<Server>;
 
 /// Serves until it is asked to stop.
 ///
-/// The address is printed rather than returned, unlike every other command: this
-/// one does not finish while anybody is using it, and the URL is needed now. The
-/// `String` it answers with is always empty.
+/// Unlike every other command it prints the address rather than returning it,
+/// since it does not finish while in use; the `String` is always empty.
 ///
-/// **Stopping is three steps and the order is the whole of it.** A signal closes
-/// the listener; the requests in flight are answered, which finishes a commit a
-/// browser is waiting on; then `settle` waits for the work that outlives a
-/// request. Only then does the process end, with a `0` — a supervisor is
-/// entitled to tell a clean stop from a crash.
+/// Stopping, in order: a signal closes the listener, in-flight requests are
+/// answered (finishing any commit), then `settle` waits for errands. Only then
+/// does it exit `0`, so a supervisor can tell a clean stop from a crash.
 pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format) -> Result<String> {
-    // Before the bind, or a failure to listen is what the log misses first.
+    // Before the bind, so a failure to listen is logged.
     log::start(format);
     let server = Arc::new(Server {
         paths: paths.clone(),
@@ -188,10 +142,8 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
         watching: watch::Watch::new(),
     });
 
-    // By hand rather than `#[tokio::main]`, because every other clap arm is
-    // ordinary blocking code. I/O only — which is also what makes the signals
-    // arrive, tokio's signal driver being part of its I/O driver. No timers:
-    // nothing here waits for a length of time, the shutdown included.
+    // By hand rather than `#[tokio::main]`, every other command being blocking
+    // code. I/O only, which also drives signals; nothing here needs timers.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .build()?;
@@ -199,15 +151,13 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
     runtime.block_on({
         let server = Arc::clone(&server);
         async move {
-            // So a signal in the first millisecond has somewhere to go.
+            // First, so an early signal has somewhere to go.
             let stop = Stop::listen()?;
             let listener = tokio::net::TcpListener::bind(listen)
                 .await
                 .map_err(|e| Error::msg(format!("could not listen on {listen}: {e}")))?;
             let at = listener.local_addr()?;
             println!("noda is at http://{at}");
-            // The difference between a notebook on one machine and one on the
-            // network is not something to find out about afterwards.
             if !at.ip().is_loopback() {
                 println!("reachable from the network — there is no password on it");
             }
@@ -218,9 +168,7 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
         }
     })?;
 
-    // Nothing is listening and every in-flight request is answered. What can
-    // still run is an errand, which never was a request — see
-    // `work::Errands::settle`.
+    // Requests are done; only errands can still be running.
     for (book, errand) in server.errands.running() {
         println!(
             "waiting for {} in {book} — signal again to leave it unfinished",
@@ -231,8 +179,7 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
     if left.is_empty() {
         return Ok(String::new());
     }
-    // Signalled twice: the process ends with an errand halfway through, which
-    // is what the wait exists to avoid, so this is a failure rather than a `0`.
+    // Signalled twice: an errand was cut off, so this is a failure, not `0`.
     Err(Error::msg(format!(
         "left {} unfinished",
         left.iter()
@@ -242,25 +189,16 @@ pub fn serve(paths: &Paths, listen: &str, allow: &[String], format: log::Format)
     )))
 }
 
-/// Resolves on the first signal that means stop, and arms the second.
+/// Resolves on the first stop signal and immediately hands the same streams to a
+/// task awaiting the second, so no signal falls in a gap.
 ///
-/// What it does *after* resolving is easy to miss: it hands the same streams to
-/// a task waiting for the next one. Arming that any later leaves a window where
-/// a signal reaches nobody — exactly when somebody presses again because nothing
-/// seems to be happening.
-///
-/// **A second signal cuts short the wait, not the shutdown.** It ends `settle`,
-/// which is unbounded because a push to a host that stopped answering is minutes
-/// of libgit2 on a socket. The requests in flight are bounded by what a request
-/// does.
-///
-/// Its line goes to stdout beside the startup's: this is the command talking
-/// about itself rather than an event about a request.
+/// The second signal cuts short `settle`, which is unbounded (a push to a dead
+/// host is minutes of libgit2 on a socket), not the requests in flight. Printed
+/// to stdout beside the startup line, not logged: it is not about a request.
 async fn asked_to_stop(mut stop: Stop, server: Shared) {
     println!("{} — finishing what is in flight", stop.next().await);
-    // Before the wait and not after it. A watch is a request that by design
-    // never finishes, so "finish what is in flight" would be a wait on the one
-    // thing that never does. Ending them is part of stopping accepting.
+    // Before the wait: a watch never finishes by itself, so graceful shutdown
+    // would wait on it forever.
     server.watching.stop();
     tokio::spawn(async move {
         println!("{} again — not waiting", stop.next().await);
@@ -268,14 +206,9 @@ async fn asked_to_stop(mut stop: Stop, server: Shared) {
     });
 }
 
-/// The signals that mean stop, listened for once and consumed twice.
-///
-/// **Both, and the pair is the point.** `SIGINT` is Ctrl-C; `SIGTERM` is every
-/// supervisor, and the one that arrives when nobody is watching — so handling
-/// only the first is being careful exactly when a person could see it.
-///
-/// Each is named in what is printed, because `SIGTERM` in a container's log is
-/// the difference between "the orchestrator stopped it" and "it fell over".
+/// `SIGINT` (Ctrl-C) and `SIGTERM` (every supervisor), listened for once and
+/// consumed twice. Each is named when printed, so a container log shows the
+/// orchestrator stopped it rather than that it fell over.
 #[cfg(unix)]
 struct Stop {
     interrupt: tokio::signal::unix::Signal,
@@ -293,9 +226,8 @@ impl Stop {
         })
     }
 
-    /// Streams and not `tokio::signal::ctrl_c()`, because this is awaited twice
-    /// and a `Signal` holds its registration across both — so one landing
-    /// between them is remembered rather than delivered to nobody.
+    /// Streams, not `ctrl_c()`: a `Signal` keeps its registration between the
+    /// two awaits, so one landing in between is remembered.
     async fn next(&mut self) -> &'static str {
         tokio::select! {
             _ = self.interrupt.recv() => "SIGINT",
@@ -304,7 +236,7 @@ impl Stop {
     }
 }
 
-/// Ctrl-C alone, where there is no `SIGTERM` to have an opinion about.
+/// Ctrl-C alone, where there is no `SIGTERM`.
 #[cfg(not(unix))]
 struct Stop;
 
@@ -323,30 +255,23 @@ impl Stop {
 fn router(server: Shared) -> Router {
     Router::new()
         .route("/", get(front))
-        // Inside the guard: a page the guard refuses should not be able to draw
-        // itself either.
+        // Inside the guard, so a refused page cannot load its assets either.
         .route("/a/{file}", get(held_asset))
         .route("/nb/{book}", get(listing))
         .route("/nb/{book}/files", get(files))
-        // The three screens about the notebook rather than one note. Each walks
-        // every body, which is why none is a column on the listing.
         .route("/nb/{book}/tags", get(tags))
         .route("/nb/{book}/todo", get(todo))
-        // Where the notebook stands, and one segment down the three things that
-        // change it: a `GET` for the screen, a `POST` each for the errands, so a
-        // reload is a question rather than a second push.
+        // `POST` for the errands, so a reload is a question, not a second push.
         .route("/nb/{book}/status", get(status))
         .route("/nb/{book}/status/{errand}", post(errand))
-        // One segment, not a wildcard: a route matching `a/b` invites a path
-        // assembled out of pieces nobody checked.
+        // One segment, not a wildcard, so no path is assembled from pieces.
         .route("/nb/{book}/f/{name}", get(held))
         .route("/nb/{book}/f/{name}/backlinks", get(file_backlinks))
         .route("/nb/{book}/new", get(new_form).post(new_note))
         .route("/nb/{book}/n/{key}", get(reading))
         .route("/nb/{book}/n/{key}/backlinks", get(note_backlinks))
-        // One shape: `GET` shows the form, `POST` does the thing, both at the
-        // address of the thing. A `GET` that changed something would be a link a
-        // prefetcher could press.
+        // `GET` shows the form, `POST` does it, at one address: a `GET` that
+        // changed something would be a link a prefetcher could press.
         .route("/nb/{book}/n/{key}/edit", get(edit_form).post(edit_note))
         .route("/nb/{book}/n/{key}/watch", get(watching))
         .route(
@@ -354,9 +279,7 @@ fn router(server: Shared) -> Router {
             get(rename_form).post(rename_note),
         )
         .route("/nb/{book}/n/{key}/tags", get(tags_form).post(tag_note))
-        // Two routes rather than one that toggles: a POST is retried by a
-        // browser that lost the answer, and a toggle retried lands where it
-        // started. Naming the state asked for makes the second press a no-op.
+        // Two routes, not a toggle: a retried POST must be a no-op.
         .route("/nb/{book}/n/{key}/pin", post(pin_note))
         .route("/nb/{book}/n/{key}/unpin", post(unpin_note))
         .route(
@@ -367,28 +290,13 @@ fn router(server: Shared) -> Router {
             Arc::clone(&server),
             admitted,
         ))
-        // Outside the guard: an axum layer covers the routes declared before
-        // it, and this one is meant not to be covered. See `health`.
+        // Outside the guard, being declared after its layer. See `health`.
         .route("/health", get(health))
-        // **Compression, and the two content types it is kept away from.**
-        //
-        // Inside the log's layer, so what the log times is what the reader waits
-        // for: an answer is not finished until it is compressed.
-        //
-        // `DefaultPredicate` already declines a body under 32 bytes and anything
-        // `image/`. The two added here are the rest of what a notebook holds: a
-        // PDF is a container of already-deflated streams, and `octet-stream` is
-        // `holding`'s fallback, which here is most often a zip or a video.
-        //
-        // The risk runs the cheap way round: a `.json` attachment also lands on
-        // `octet-stream` and costs one bigger download, where guessing the other
-        // way costs a phone re-deflating a video that was already deflated.
-        //
-        // **`text/event-stream` is not named here, and it matters that it is
-        // excluded anyway**: `DefaultPredicate` already declines it. A deflater
-        // holds bytes back until it has enough to be worth emitting, which for a
-        // watch — a stream that ends when the server does — means holding a
-        // message for hours. Nothing above states that, so a test does.
+        // Inside the log's layer, so the log times compression too.
+        // `DefaultPredicate` already skips bodies under 32 bytes, `image/*` and
+        // `text/event-stream` (a deflater would hold a watch's messages back for
+        // hours; `tests/web.rs` checks it). PDFs are already deflated, and
+        // `octet-stream` is `holding`'s fallback, most often a zip or video.
         .layer(
             CompressionLayer::new().compress_when(
                 DefaultPredicate::new()
@@ -400,15 +308,11 @@ fn router(server: Shared) -> Router {
         .with_state(server)
 }
 
-/// The stylesheet, or one of the scripts.
+/// The stylesheet, or one of the scripts. `asset::find` matches the name against
+/// what this build embedded, so no path is ever joined or read.
 ///
-/// **A lookup and two headers.** Nothing is read from disk and the path is never
-/// joined to anything — `asset::find` compares it against the names this build
-/// wrote, so the traversal question cannot be asked here.
-///
-/// `immutable`, for a year: the address carries a hash of the bytes, so a
-/// different answer has a different address. The other half is on the pages,
-/// which are `no-cache`.
+/// `immutable` for a year: the address carries a hash of the bytes. Pages are
+/// `no-cache` to match.
 async fn held_asset(Path(file): Path<String>) -> Response {
     let Some(held) = asset::find(&file) else {
         return (StatusCode::NOT_FOUND, plain("no such asset\n")).into_response();
@@ -420,7 +324,6 @@ async fn held_asset(Path(file): Path<String>) -> Response {
                 header::CACHE_CONTROL,
                 "public, max-age=31536000, immutable".to_string(),
             ),
-            // What noda said it is, is what it is.
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
         ],
         held.body.clone(),
@@ -428,34 +331,23 @@ async fn held_asset(Path(file): Path<String>) -> Response {
         .into_response()
 }
 
-/// Whether this process is still able to answer.
+/// Whether this process can still answer.
 ///
-/// **Outside the guard**, because a probe's `Host` is whatever the thing running
-/// it decided on, and a 403 for want of `--allow-host` would report a healthy
-/// server as dead. Nothing here needs protecting: the only thing disclosed is
-/// that something is listening, which the caller established by connecting.
-///
-/// **Through `spawn_blocking`, which is the whole of what it tests.** Every page
-/// works on the blocking pool, so a check answering from the async side would
-/// return 200 with every reader hanging — a health check that cannot fail is not
-/// being run.
-///
-/// **It does not open a notebook**: one that will not open is a repository to
-/// repair, not a process to restart. What this reports is what a restart can
-/// mend.
+/// Outside the guard: a probe's `Host` is arbitrary, and a 403 would report a
+/// healthy server dead; it discloses only that something is listening. It goes
+/// through `spawn_blocking` because every page does, so a stuck pool fails the
+/// check. It opens no notebook: a broken repository is not what a restart fixes.
 async fn health() -> Response {
     let alive = tokio::task::spawn_blocking(|| ()).await.is_ok();
     if !alive {
-        // The pool lost a task, as during a shutdown — and a probe already
-        // knows how to read this status code.
+        // The pool lost a task, as during a shutdown.
         log::lost();
         return (StatusCode::SERVICE_UNAVAILABLE, plain("unavailable\n")).into_response();
     }
     (StatusCode::OK, plain("ok\n")).into_response()
 }
 
-/// `no-store`, because a health check behind a cache can report a stopped
-/// server as running. `nosniff`, for every other answer's reason.
+/// `no-store`, so a cache cannot report a stopped server as running.
 fn plain(body: &'static str) -> impl IntoResponse {
     (
         [
@@ -476,8 +368,7 @@ fn plain(body: &'static str) -> impl IntoResponse {
     )
 }
 
-/// A layer and not a check inside each handler, so a route added later is
-/// covered by having been added rather than by somebody remembering.
+/// A layer, so a route added later is covered without anybody remembering.
 async fn admitted(State(server): State<Shared>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     let host = text(headers, header::HOST);
@@ -503,43 +394,34 @@ fn text(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
-/// Its own name rather than a shape of `Accept`: this is not content
-/// negotiation — the type is `text/html` either way and the header settles how
-/// much of it.
+/// Its own header rather than an `Accept` variant: the type is `text/html`
+/// either way, and this only says how much of it.
 pub(crate) const PART: &str = "x-noda-fragment";
 
-/// How much of a page a request will use.
-///
-/// **A page is one screen's worth of chrome around one changing region**, and
-/// the enhancement layer only keeps the region — measured at 48 of the 52 KB a
-/// note page weighs, thrown away on the round trip a reader waits through.
-///
-/// Three rules keep this from becoming a second interface:
+/// How much of a page a script's fetch will use; it keeps only one region, 48
+/// of a note page's 52 KB being chrome.
 ///
 /// * **The part is a substring of the page**, both built from one string in
-///   `page.rs`, so there is no shorter rendering to drift. Tested by
-///   containment.
-/// * **The whole page is always a correct answer.** An unknown name is a request
-///   with nothing to shorten; every such fetch queries what arrives for the
-///   region it wants, so ignoring the header answers later, never differently.
-/// * **Nobody but the script asks.** A reader, a bookmark and a crawler all send
-///   no such header. Hence `Vary` on every HTML answer.
+///   `page.rs`, so there is no second rendering to drift.
+/// * **The whole page is always a correct answer**: every script looks up its
+///   region in what arrives, so an unknown name just gets the page.
+/// * **Only the script asks**, hence `Vary` on every HTML answer.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Part {
-    /// The note being read: `.pane.read`, and the name of the tab it is in.
+    /// `.pane.read`, and the page title.
     Read,
-    /// The listing's own column, rows and count.
+    /// The listing's column, rows and count.
     Index,
-    /// Both of the listing's panes — what going back has to put right.
+    /// Both of the listing's panes, for going back.
     Screen,
-    /// The rows of a backlinks answer, without the page around them.
+    /// A backlinks answer's rows.
     Rows,
-    /// The network screen's news, and whether it is still moving.
+    /// The network screen's `<main>`, and whether it still refreshes.
     News,
 }
 
 impl Part {
-    /// One vocabulary, written here and read by `script.rs`.
+    /// Read by `script.rs`.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Part::Read => "read",
@@ -550,8 +432,7 @@ impl Part {
         }
     }
 
-    /// Each route knows the one part it can send, so this is asked rather than
-    /// parsed — a note route needs no opinion about the network screen's news.
+    /// Asked per part, since each route can send only its own.
     fn wanted(self, headers: &HeaderMap) -> bool {
         headers
             .get(PART)
@@ -560,29 +441,26 @@ impl Part {
     }
 }
 
-/// What a handler decided, before it is an HTTP anything.
+/// What a handler decided, before it is HTTP.
 enum Answer {
     Page(String),
-    /// One address per page: an id prefix and a slug both land on the id.
+    /// A `303`.
     Elsewhere(String),
     Missing(String, String),
-    /// The only answer here that is not a page noda wrote.
+    /// An attachment.
     Held(Held),
 }
 
-/// A file on its way out, and the two decisions that go with it.
 struct Held {
     bytes: Vec<u8>,
-    /// What it is, as far as noda is willing to say.
     kind: &'static str,
-    /// Only the formats that cannot carry a script may — see `holding`.
+    /// See `holding`.
     inline: bool,
     name: String,
 }
 
-/// Everything a handler does blocks, libgit2 offering no other kind — and
-/// `spawn_blocking` is the only place a `!Send` `Repository` can be created and
-/// dropped without crossing an await.
+/// Runs the handler on the blocking pool: libgit2 only blocks, and there a
+/// `!Send` `Repository` lives and dies without crossing an await.
 async fn answer<F>(work: F) -> Response
 where
     F: FnOnce() -> Result<Answer> + Send + 'static,
@@ -606,8 +484,7 @@ where
             )
                 .into_response()
         }
-        // A panic, or a shutdown under way. Nothing the reader can do, which is
-        // why it is worth saying somewhere they are not.
+        // A panic, or a shutdown under way.
         Err(_) => {
             log::lost();
             (
@@ -633,12 +510,10 @@ impl IntoResponse for Held {
         (
             [
                 (header::CONTENT_TYPE, self.kind.to_string()),
-                // Everything below rests on the type noda declared.
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
                 (header::CONTENT_DISPOSITION, disposition),
-                // An attachment loads nothing, runs nothing, frames nothing.
-                // Said out loud so a format that turns out able to — SVG is the
-                // one everybody finds out about — cannot.
+                // Belt and braces for any format that turns out able to run a
+                // script, as SVG does.
                 (
                     header::CONTENT_SECURITY_POLICY,
                     "default-src 'none'; sandbox".to_string(),
@@ -650,12 +525,9 @@ impl IntoResponse for Held {
     }
 }
 
-/// Percent-encoded, every byte not plainly safe spelled out.
-///
-/// The wider of two callers decides the rule: `filename*` needs `réunion.pdf` to
-/// survive a header, and a query string needs `tag:"24.04 Dark patterns"` to
-/// survive a link — quotes, colon and spaces. The unreserved set is correct in
-/// both places.
+/// Percent-encodes everything outside the unreserved set, which is right both
+/// for `filename*` (`réunion.pdf`) and a query string (`tag:"24.04 Dark
+/// patterns"`).
 pub(crate) fn encoded(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for byte in name.bytes() {
@@ -671,13 +543,11 @@ pub(crate) fn encoded(name: &str) -> String {
     out
 }
 
-/// What noda is willing to say a file is, and whether it may be shown in place.
+/// A file's content type, and whether it may be shown inline.
 ///
-/// **A list of what may be shown, never of what may not.** An attachment is
-/// served from the same origin as every page, so anything inline that can carry
-/// a script is a script running on this page — SVG is the one that catches
-/// people out. Anything unnamed is `octet-stream` and a download, which is the
-/// direction an unknown format should fall in.
+/// An allow-list: attachments share the pages' origin, so anything inline that
+/// can carry a script (SVG) runs as this site. Anything unlisted is an
+/// `octet-stream` download.
 fn holding(name: &str) -> (&'static str, bool) {
     let extension = name
         .rsplit_once('.')
@@ -689,8 +559,6 @@ fn holding(name: &str) -> (&'static str, bool) {
         "gif" => ("image/gif", true),
         "webp" => ("image/webp", true),
         "avif" => ("image/avif", true),
-        // Text cannot execute, and is the one attachment worth reading in
-        // place.
         "txt" | "md" | "csv" | "log" => ("text/plain; charset=utf-8", true),
         "pdf" => ("application/pdf", false),
         "svg" => ("image/svg+xml", false),
@@ -705,28 +573,18 @@ fn html(body: String) -> impl IntoResponse {
                 header::CONTENT_TYPE,
                 header::HeaderValue::from_static("text/html; charset=utf-8"),
             ),
-            // On every HTML answer: a cache holding a fragment would hand it to
-            // the next reader who typed the address, and saying it once here
-            // means a route added later cannot forget.
+            // Or a cache could hand a fragment to the next reader.
             (header::VARY, header::HeaderValue::from_static(PART)),
-            // **An address here is somebody's note id** — the same fact
-            // `web::log` acts on, said to the network: without this, following a
-            // link out of a note hands `/nb/<book>/n/<id>` to whoever is on the
-            // other end. On the answer as well as in the page, because a reverse
-            // proxy may strip one and not the other.
-            //
-            // **`same-origin` and not `no-referrer`.** Both send nothing to
-            // another site, but Fetch nulls a form's `Origin` under
-            // `no-referrer` exactly as it nulls the referrer — and `guard`
-            // refuses an opaque origin, so every write would be turned away by
-            // noda's own defence, logged as the attack the check is for.
+            // An address here carries a note id, so a link out must not leak it.
+            // Also in the page, as a proxy may strip one. Not `no-referrer`:
+            // under it Fetch nulls a form's `Origin`, which `guard` refuses, so
+            // every write would be turned away.
             (
                 header::REFERRER_POLICY,
                 header::HeaderValue::from_static("same-origin"),
             ),
-            // The other half of `asset.rs`'s year: a kept page could ask for
-            // bytes this build does not have. `no-cache` is "ask first", not
-            // "do not keep" — going back still comes out of the browser.
+            // A kept page could name assets this build no longer has.
+            // `no-cache` means "revalidate", so back still uses the cache.
             (
                 header::CACHE_CONTROL,
                 header::HeaderValue::from_static("no-cache"),
@@ -738,8 +596,7 @@ fn html(body: String) -> impl IntoResponse {
 
 async fn front(State(server): State<Shared>) -> Response {
     answer(move || {
-        // Not an error here: this page names every notebook and is worth
-        // reading on a machine that has never chosen one.
+        // Not an error: this page is useful before any notebook is chosen.
         let active = server.paths.active_notebook().ok();
         let mut books = Vec::new();
         for name in Notebook::list(&server.paths)? {
@@ -752,8 +609,7 @@ async fn front(State(server): State<Shared>) -> Response {
                 notes: status.notes,
                 files: status.files,
                 uncommitted: status.uncommitted,
-                // `None` has nowhere to sync to, and is the row that is not a
-                // link. Said in the type rather than read back out of a string.
+                // `None`: no remote, and the chip is not a link.
                 drift: status.remote.as_ref().map(|_| cmd::drifted(status.drift)),
                 last: cmd::format_time(seconds, offset)[..cmd::DATE_WIDTH].to_string(),
             });
@@ -763,13 +619,9 @@ async fn front(State(server): State<Shared>) -> Response {
     .await
 }
 
-/// The notebook's `README.md`, rendered, for the pane beside the listing — the
-/// page it already has about itself, where a wide screen has room. A notebook
-/// without one gets the invitation.
-///
-/// Sent on every listing view and drawn only above 1024px, which is the layout's
-/// standing bargain and a small one here: a couple of kilobytes against hundreds
-/// of rows.
+/// The notebook's `README.md`, rendered for the pane beside the listing; `None`
+/// gets the invitation. Sent on every listing but drawn only above 1024px — a
+/// couple of kilobytes against hundreds of rows.
 fn front_page(notebook: &Notebook, book: &str) -> Result<Option<String>> {
     let path = notebook.path.join(crate::notebook::README_FILE);
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -785,17 +637,14 @@ async fn listing(
     request: Request,
 ) -> Response {
     let typed = parameter(request.uri().query(), "q");
-    // `--sort` and `-r` over HTTP. An unknown order is the default rather than
-    // a complaint: `q` is typed, so half of one is a thought in progress, while
-    // `?sort=` is written by a link and anything else is a hand-edited address.
-    // `r` is a checkbox's bargain: sent means yes.
+    // `--sort` and `-r`. An unknown `sort` is the default rather than an error:
+    // links write it, so anything else is a hand-edited address. `r` is a
+    // checkbox: present means yes.
     let order = page::Order {
         sort: cmd::Sort::named(&parameter(request.uri().query(), "sort")).unwrap_or_default(),
         reversed: !parameter(request.uri().query(), "r").is_empty(),
     };
-    // Two parts off one route: narrowing a search leaves the note pane alone,
-    // and backing out of a note has to put it back. Only the second needs the
-    // front page, which is a file read.
+    // A search swaps just the column; going back needs the front page too.
     let column = Part::Index.wanted(request.headers());
     let screen = Part::Screen.wanted(request.headers());
     answer(move || {
@@ -803,38 +652,25 @@ async fn listing(
             return Ok(missing_notebook(&book));
         };
         let mut notes = notebook.notes()?;
-        // `ls`'s function: an order differing by where you asked would be two
-        // features wearing one name.
+        // `ls`'s own sort and reversal, so the orders cannot drift apart.
         cmd::sort_notes(&mut notes, order.sort);
-        // After it, as `ls` applies `-r`: every order gets one for free.
         if order.reversed {
             notes.reverse();
         }
-        // `drift` and not `status`, whose two extra walks of the working tree
-        // put nothing on the chip. Two refs compared is what a listing can
-        // afford on every visit.
+        // `drift`, not `status`: two refs compared, without `status`'s two walks
+        // of the working tree.
         let drift = cmd::standing(
             notebook.remote_url().as_deref(),
             notebook.drift(&notebook.branch()?)?,
         );
 
-        // Half a query is what every query looks like on the way to being one,
-        // so one that does not parse says why and leaves the notes alone rather
-        // than emptying the screen to punish an unfinished thought.
-        //
-        // Nothing typed is not half a query, though: `Query::parse` rightly
-        // refuses an empty token list at a command line, and here that is the
-        // state every listing starts in.
-        //
-        // The query decides which rows the page *shows*, not which it *has* —
-        // the excluded ones ride along `hidden`, which is what lets the
-        // enhancement layer widen a query as well as narrow one.
+        // A query that does not parse says why and leaves every row shown. An
+        // empty one is handled first, as `Query::parse` refuses it. Excluded
+        // rows are still sent, `hidden`, so the script can widen a query too.
         let mut rows = notes
             .iter()
             .map(|file| page::Row::of(file, order.sort))
             .collect::<Vec<_>>();
-        // Only when that pane is going out: the column alone lands in a page
-        // whose other half is a note.
         let front = if column {
             None
         } else {
@@ -859,8 +695,7 @@ async fn listing(
                 },
             )));
         }
-        // Bound rather than matched into pieces: `grouping` hands back a slice
-        // of the query's own words, and the page is drawn while it stands.
+        // Bound, because `grouping` borrows from the query.
         let parsed = Query::parse(&tokens);
         let (grouping, terms, problem) = match &parsed {
             Ok(query) => {
@@ -901,8 +736,6 @@ async fn reading(
                 format!("Nothing in {book} is called {key}."),
             ));
         };
-        // One address per page: a slug is a way of reaching this note, not a
-        // place it lives, and a bookmark against one dies at the next retitle.
         if key != id {
             return Ok(Answer::Elsewhere(format!("/nb/{book}/n/{id}")));
         }
@@ -921,13 +754,10 @@ async fn reading(
             rendered: render::body(&note.body, &around),
             pinned,
         };
-        // A swap leaves the index pane where it is, so this request is not
-        // asking about the notebook and nothing on screen will change.
         if part {
             return Ok(Answer::Page(page::note_pane(&book, &reading)));
         }
-        // For the chip in the index pane's bar, which is the notebook's. Two
-        // refs, and no notes read — the point of sending this pane empty.
+        // For the chip on the index pane, which is sent empty.
         let drift = cmd::standing(
             notebook.remote_url().as_deref(),
             notebook.drift(&notebook.branch()?)?,
@@ -937,11 +767,8 @@ async fn reading(
     .await
 }
 
-/// Everything the notebook holds that is not a note.
-///
-/// The count of notes pointing at each is `doctor --links`' orphan judgement,
-/// made with the same `link::targets` — saying it twice in two ways would be
-/// worse than not saying it.
+/// Everything the notebook holds that is not a note, with how many notes link to
+/// each — counted by `link::targets`, as `doctor --links` counts orphans.
 async fn files(State(server): State<Shared>, Path(book): Path<String>) -> Response {
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
@@ -965,8 +792,7 @@ async fn files(State(server): State<Shared>, Path(book): Path<String>) -> Respon
                 used: used.get(&name).copied().unwrap_or_default(),
                 name,
                 size,
-                // The browser needs the encoding; a reader reading the row
-                // does not.
+                // Without the `charset`.
                 kind: kind.split(';').next().unwrap_or(kind).to_string(),
             });
         }
@@ -975,8 +801,7 @@ async fn files(State(server): State<Shared>, Path(book): Path<String>) -> Respon
     .await
 }
 
-/// `notebook::tag_tally` counts and orders it, which is where the browser's tag
-/// screen gets the same list. Nothing is decided here.
+/// `notebook::tag_tally`, the TUI's tag list too.
 async fn tags(State(server): State<Shared>, Path(book): Path<String>) -> Response {
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
@@ -991,13 +816,8 @@ async fn tags(State(server): State<Shared>, Path(book): Path<String>) -> Respons
     .await
 }
 
-/// `noda todo`'s list, from the same two functions. What this adds is the note's
-/// title beside each item: a phone has room for the words a terminal spends on a
-/// filename.
-///
-/// **`cmd::today` decides what is late, and it is the local date.** East of UTC
-/// an item that went overdue at midnight would otherwise stay unmarked until
-/// morning, which is exactly when a todo list is read.
+/// `noda todo`'s list, with each note's title. Overdue is judged against
+/// `cmd::today`, the local date, as the CLI does.
 async fn todo(State(server): State<Shared>, Path(book): Path<String>) -> Response {
     answer(move || {
         let Some(notebook) = open(&server.paths, &book)? else {
@@ -1034,10 +854,8 @@ async fn todo(State(server): State<Shared>, Path(book): Path<String>) -> Respons
     .await
 }
 
-/// **Nothing here touches the network**, as in `noda status`: the drift is
-/// measured against the last fetch, so the screen answers instantly and the
-/// three buttons are the only things that go out. A page that fetched before
-/// drawing itself would hang, and would make Pull a lie about what it does.
+/// Touches no network, as `noda status` does not: drift is against the last
+/// fetch, and only the three errand buttons go out.
 async fn status(
     State(server): State<Shared>,
     Path(book): Path<String>,
@@ -1091,12 +909,9 @@ async fn status(
     .await
 }
 
-/// Starts one of the three and answers before it finishes, sending the reader to
-/// the screen that says what is happening — so what they hold afterwards is a
-/// `GET`, and the reload a slow network invites cannot start a second push.
-///
-/// Pressing again is not an error: it is somebody who could not tell whether the
-/// first press landed, and that screen is the answer.
+/// Starts an errand and redirects to the status screen at once, so a reload is a
+/// `GET` and cannot start a second push. Pressing while one runs is not an
+/// error: the status screen answers it.
 async fn errand(
     State(server): State<Shared>,
     Path((book, which)): Path<(String, String)>,
@@ -1114,10 +929,8 @@ async fn errand(
         if server.errands.begin(&book, errand) {
             let server = Arc::clone(&server);
             let book = book.clone();
-            // Its own thread, not the blocking pool: that pool is for work a
-            // request waits on, and nothing waits on this. It opens the notebook
-            // itself because a `Repository` cannot cross a thread, and takes the
-            // write lock because a fetch landing mid-commit is the collision.
+            // Its own thread, as no request waits on it. It opens its own
+            // `Repository` and takes the write lock against a mid-commit fetch.
             std::thread::spawn(move || {
                 let outcome = {
                     let writing = server.writing.of(&book);
@@ -1132,10 +945,8 @@ async fn errand(
     .await
 }
 
-/// `backlinks_to_note`, as `noda backlinks` asks it: matched on the id, so the
-/// answer survives a retitle. Which is why it is worth a screen — after `mv`,
-/// every Markdown renderer sees a broken link where noda sees an unambiguous
-/// one.
+/// `backlinks_to_note`, as `noda backlinks`: matched on the id, so it survives a
+/// retitle.
 async fn note_backlinks(
     State(server): State<Shared>,
     Path((book, key)): Path<(String, String)>,
@@ -1152,7 +963,6 @@ async fn note_backlinks(
         let rows = notebook
             .backlinks_to_note(&id)?
             .iter()
-            // Not a listing, so no order to choose: `Sort::default()`.
             .map(|file| page::Row::of(file, cmd::Sort::default()))
             .collect::<Vec<_>>();
         let subject = page::Subject {
@@ -1169,13 +979,9 @@ async fn note_backlinks(
     .await
 }
 
-/// The question above asked of a different kind of thing. A file has no id to
-/// fall back on — its name is its whole identity — so this shows what a
-/// `file mv` without `--update-links` would leave pointing at nothing.
-///
-/// The name goes through `link::target` as the download does: the same
-/// reader-supplied path, and counting notes rather than opening a file is not a
-/// reason to check it less.
+/// Notes linking to a file, which has no id: what a `file mv` without
+/// `--update-links` would break. The name is checked by `link::target`, as in
+/// `held`.
 async fn file_backlinks(
     State(server): State<Shared>,
     Path((book, name)): Path<(String, String)>,
@@ -1195,7 +1001,7 @@ async fn file_backlinks(
         let Some(path) = crate::link::target(&name) else {
             return nothing();
         };
-        // A note is not a file here, as at `/f/`: it has a page of its own.
+        // As at `/f/`, a note is not a file.
         if note::names_a_note(&path) || !notebook.path.join(&path).is_file() {
             return nothing();
         }
@@ -1219,9 +1025,9 @@ async fn file_backlinks(
     .await
 }
 
-/// **The only place noda opens a path a reader named**, which is why it goes
-/// through `link::target` before anything touches the disk: that is what decides
-/// `../../.ssh/id_rsa` names nothing here. A note is never served from here.
+/// The only place noda opens a path a reader named, so it goes through
+/// `link::target` first: that is what makes `../../.ssh/id_rsa` name nothing.
+/// Never serves a note.
 async fn held(
     State(server): State<Shared>,
     Path((book, name)): Path<(String, String)>,
@@ -1236,15 +1042,12 @@ async fn held(
                 format!("{book} holds no file called {name}."),
             ))
         };
-        // The page that sent the reader here wrote this URL from a destination
-        // in a note's body, so the same rules have to answer both.
+        // The same rules the renderer used to write this URL.
         let Some(path) = crate::link::target(&name) else {
             return nothing();
         };
         let on_disk = notebook.path.join(&path);
-        // As the notebook decides it: a stem splitting into an id and a slug,
-        // case and all. The suffix alone is not the test — `README.md` is listed
-        // and offered, and `NOTES.MD` is an attachment.
+        // Not by suffix: `README.md` is served, and `NOTES.MD` is an attachment.
         if note::names_a_note(&path) || !on_disk.is_file() {
             return nothing();
         }
@@ -1294,9 +1097,7 @@ async fn new_note(
 
         let writing = server.writing.of(&book);
         let _writing = writing.lock();
-        // Not by reading the id out of what `add` printed: that answer is
-        // written for a person, and parsing it makes a message into an
-        // interface.
+        // Diffed rather than parsed out of `add`'s prose.
         let before = notebook.taken_ids()?;
         if let Err(e) = cmd::add_in(&notebook, title, &draft.body, &tags) {
             return Ok(Answer::Page(page::composing(
@@ -1308,8 +1109,7 @@ async fn new_note(
         let after = notebook.taken_ids()?;
         match after.difference(&before).next() {
             Some(id) => Ok(back_to_note(&book, id)),
-            // Added, then taken away between the two reads: nowhere to send
-            // you.
+            // Removed again between the two reads.
             None => Ok(Answer::Elsewhere(format!("/nb/{book}"))),
         }
     })
@@ -1339,16 +1139,11 @@ async fn edit_form(
     .await
 }
 
-/// The stream behind a watch: one message per change, each the note's new
-/// fingerprint.
+/// A watch's stream: one message per change, each the note's new fingerprint.
 ///
-/// Written out rather than taken from `tokio-stream`, whose `ReceiverStream` is
-/// this and a crate: `mpsc::Receiver::poll_recv` is already the shape
-/// `poll_next` wants, which is the whole of the wrapper.
-///
-/// The channel closing ends the stream, and that is the only way it ends —
-/// which is what `watch::Watch::stop` reaches for when the server is asked to
-/// stop.
+/// By hand rather than `tokio-stream`'s `ReceiverStream`, which is this plus a
+/// crate. It ends only when the channel closes, which is how
+/// `watch::Watch::stop` ends it.
 struct Changes(tokio::sync::mpsc::Receiver<String>);
 
 impl futures_core::Stream for Changes {
@@ -1364,23 +1159,16 @@ impl futures_core::Stream for Changes {
     }
 }
 
-/// Says the note's new fingerprint, each time it gets one.
+/// Sends the note's fingerprint each time it changes — never the content, which
+/// is somebody's prose; the page compares it with its form's.
 ///
-/// **It says what the file is now, never what changed.** An address here
-/// carries somebody's note id and a body would carry their prose; the reader's
-/// own page decides what a new fingerprint means, by comparing it against the
-/// one its form is holding.
-///
-/// No keep-alive comments. A proxy that times an idle stream out is a proxy
-/// this has to survive, and `EventSource` reconnects by itself — the cost of
-/// that is one request, and what it re-reads is a fingerprint it then compares
-/// exactly as before.
+/// No keep-alives: a proxy timing out an idle stream costs one reconnect, which
+/// `EventSource` makes by itself.
 async fn watching(
     State(server): State<Shared>,
     Path((book, key)): Path<(String, String)>,
 ) -> Response {
-    // Resolving the note needs a `Notebook`, which is `!Send`. Only the
-    // subscription crosses back.
+    // Only the subscription crosses back; the `Notebook` is `!Send`.
     let opened = tokio::task::spawn_blocking({
         let server = Arc::clone(&server);
         move || -> Result<Option<tokio::sync::mpsc::Receiver<String>>> {
@@ -1396,9 +1184,7 @@ async fn watching(
 
     match opened {
         Ok(Ok(Some(hear))) => axum::response::Sse::new(Changes(hear)).into_response(),
-        // A notebook or a note that is not there. The page that opened this is
-        // looking at one, so this is a race with a delete rather than a reader
-        // to explain anything to: the stream simply is not offered.
+        // Most likely a race with a delete; nobody reads this page.
         Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
         Ok(Err(e)) => {
             log::failed(&e.to_string());
@@ -1432,10 +1218,7 @@ async fn edit_note(
             let theirs = Note::parse(&std::fs::read_to_string(&path)?)
                 .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
             let about = page::About::of(&id, &slug, &theirs.title);
-            // The fingerprint is a blob id, so the version this edit began from
-            // is an address and not only a marker. Two people writing in one
-            // note are usually writing in different parts of it, which git can
-            // settle without troubling either of them.
+            // The fingerprint is a blob id, so it also finds the merge base.
             let base = git2::Oid::from_str(&was)
                 .ok()
                 .and_then(|oid| notebook.blob_text(oid).transpose())
@@ -1443,20 +1226,15 @@ async fn edit_note(
                 .and_then(|text| Note::parse(&text).ok())
                 .map(|note| note.body);
             match base {
-                // Saved rather than shown for confirmation: the reader pressed
-                // Save, and a merge that changed nothing they wrote is not a
-                // question to put to them. The note they land on is the merge,
-                // and git holds both versions it was made from.
+                // A clean merge is saved without asking; git keeps both sides.
                 Some(base) => match merge(&base, &body, &theirs.body)? {
                     Merged::Clean(text) => body = text,
                     Merged::Conflicted(text) => {
                         return Ok(Answer::Page(page::conflicted(&book, &about, &text, &now)));
                     }
                 },
-                // No base to merge against — a note written by hand and never
-                // committed. Nothing written: worse than overwriting somebody's
-                // work is losing the work of the person standing in front of
-                // you to avoid it.
+                // No base (the note was never committed): write nothing, and
+                // show both versions so neither is lost.
                 None => {
                     return Ok(Answer::Page(page::clashed(
                         &book,
@@ -1516,8 +1294,8 @@ async fn rename_note(
         let title = parameter(Some(&form), "title");
         let writing = server.writing.of(&book);
         let _writing = writing.lock();
-        // As the browser's `m` calls it. Rewriting the prose of notes nobody
-        // pointed at has to be asked for out loud, and there is no way to here.
+        // As the TUI's `m` calls it: `--update-links` must be asked for, and
+        // this form has no way to.
         match cmd::mv_in(&notebook, &id, &title, false, cmd::Touch::Stamp) {
             Ok(_) => Ok(back_to_note(&book, &id)),
             Err(e) => Ok(Answer::Page(page::renaming(
@@ -1565,17 +1343,9 @@ async fn tag_note(
         let note = Note::parse(&std::fs::read_to_string(notebook.note_path(&id, &slug))?)
             .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
 
-        // An unticked box is not sent, so the form says which tags survived and
-        // the change is the difference. Worked out here rather than asked for:
-        // `+work -q3` is for somebody with a keyboard.
-        //
-        // **The difference is against what the page offered, not against the
-        // file.** They part company when a tag is added while somebody has this
-        // page open: it is on the file, it was never on the page, so measured
-        // against the file it reads as a box they unticked and is removed —
-        // silently, from a screen that never showed it. A tag missing from
-        // `saw` was never theirs to remove. Removing one that has already gone
-        // is a no-op, so nothing has to be checked against the file at all.
+        // Removed = offered (`saw`) minus still ticked (`keep`). Against what
+        // the page offered, not the file, so a tag added elsewhere since the
+        // page was drawn is not removed as if unticked.
         let kept = parameters(&form, "keep");
         let mut changes: Vec<String> = parameters(&form, "saw")
             .iter()
@@ -1618,9 +1388,7 @@ async fn unpin_note(
     pinning(server, book, key, false).await
 }
 
-/// No form page in between, unlike every other write here: there is nothing to
-/// fill in and nothing to confirm — the answer is the note with the bar now
-/// offering the other word.
+/// Unlike other writes, no form in between: there is nothing to fill in.
 async fn pinning(server: Shared, book: String, key: String, pinned: bool) -> Response {
     answer(move || {
         let tail = if pinned { "/pin" } else { "/unpin" };
@@ -1667,15 +1435,13 @@ async fn delete_note(
         let writing = server.writing.of(&book);
         let _writing = writing.lock();
         cmd::rm_in(&notebook, &id)?;
-        // Not to the note: it is gone.
         Ok(Answer::Elsewhere(format!("/nb/{book}")))
     })
     .await
 }
 
-/// The notebook open and the note located. Every write handler needs the same
-/// three refusals first — no such notebook, no such note, an address that is not
-/// the note's own — so a route added later cannot get two of the three right.
+/// The notebook open and the note located, or one of the three refusals every
+/// note route needs: no notebook, no note, or a redirect to the id's address.
 enum Aimed {
     At(Notebook, String, String),
     Missing(Answer),
@@ -1699,14 +1465,13 @@ fn aim(paths: &Paths, book: &str, key: &str, tail: &str) -> Result<Aimed> {
     Ok(Aimed::At(notebook, id, slug))
 }
 
-/// `303` and not `200`, so a reload does not offer to send the form again —
-/// which is why a write is a `POST` and a redirect rather than a page.
+/// A `303`, so a reload does not resend the form.
 fn back_to_note(book: &str, id: &str) -> Answer {
     Answer::Elsewhere(format!("/nb/{book}/n/{id}"))
 }
 
-/// Told apart from a notebook that exists and will not open: 404 for the second
-/// would send somebody looking for a typo.
+/// `None` only when the notebook does not exist: one that fails to open is an
+/// error, not a 404 that sends somebody looking for a typo.
 fn open(paths: &Paths, book: &str) -> Result<Option<Notebook>> {
     if !Notebook::exists(paths, book) {
         return Ok(None);
@@ -1721,9 +1486,7 @@ fn missing_notebook(book: &str) -> Answer {
     )
 }
 
-/// Hand-written: serde's derive for a single `q=` is a proc macro for twenty
-/// lines. The decoding builds bytes and converts once at the end, which keeps a
-/// character spread over three `%xx` escapes from being cut in half.
+/// By hand rather than a serde derive, for twenty lines.
 fn parameter(query: Option<&str>, name: &str) -> String {
     let Some(query) = query else {
         return String::new();
@@ -1737,9 +1500,7 @@ fn parameter(query: Option<&str>, name: &str) -> String {
     String::new()
 }
 
-/// A form sends the name once per ticked box, which is how the tags screen says
-/// which tags are still wanted: an unticked box is not sent at all, so what
-/// arrives is a list of survivors rather than of changes.
+/// Every value of a repeated name, as a form sends one per ticked box.
 fn parameters(body: &str, name: &str) -> Vec<String> {
     body.split('&')
         .filter_map(|pair| {
@@ -1749,6 +1510,8 @@ fn parameters(body: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Decodes to bytes and converts once, so a character spread over several
+/// `%xx` escapes is not cut apart.
 fn decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -1765,7 +1528,7 @@ fn decode(value: &str) -> String {
                     out.push(byte);
                     at += 3;
                 } else {
-                    // A stray `%` is what somebody typed.
+                    // A stray `%` stays as typed.
                     out.push(b'%');
                     at += 1;
                 }
@@ -1803,7 +1566,6 @@ mod tests {
         assert_eq!(parameter(Some("q="), "q"), "");
     }
 
-    /// A phone sends the quotes and colon escaped and the space as `+`.
     #[test]
     fn a_quoted_tag_survives_the_trip() {
         assert_eq!(
@@ -1812,8 +1574,6 @@ mod tests {
         );
     }
 
-    /// A CJK character arrives as three escapes, and converting each alone
-    /// would produce three replacement characters.
     #[test]
     fn a_multi_byte_character_arrives_whole() {
         assert_eq!(parameter(Some("q=%E7%AD%86%E8%A8%98"), "q"), "筆記");
@@ -1839,8 +1599,6 @@ mod tests {
         assert!(!text.contains("<<<"), "{text}");
     }
 
-    /// Nobody is asked about a change they did not make: one side editing while
-    /// the other leaves the note alone is the other side's edit, unmarked.
     #[test]
     fn a_change_against_an_untouched_note_is_that_change() {
         let mine = BASE.replace("five\n", "FIVE\n");
@@ -1850,8 +1608,6 @@ mod tests {
         assert_eq!(text, mine);
     }
 
-    /// The labels are read by a person, so they are checked like anything else
-    /// the page says.
     #[test]
     fn changes_to_one_line_are_marked_and_named() {
         let mine = BASE.replace("five\n", "mine\n");

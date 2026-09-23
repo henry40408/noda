@@ -1,27 +1,23 @@
-//! The palette. Colour marks what a line *is*, never what it means, and noda
-//! never colours a note's own text — that is the user's file.
+//! The palette. Colour marks what a line *is*, never what it means, and never a
+//! note's own text.
 //!
-//! Nothing here decides whether colour is wanted: `anstream` strips the escapes
-//! off a terminal, so commands style unconditionally and a piped `noda show`
-//! emits exactly the bytes on disk.
+//! Whether colour is wanted is not decided here: `anstream` strips it off a
+//! terminal, so a piped `noda show` emits exactly the bytes on disk.
 
 use anstyle::{AnsiColor, Style};
 
 pub const COMMIT: Style = AnsiColor::Yellow.on_default();
-/// Deliberately [`COMMIT`]'s yellow: both are the short string you copy out of
-/// a listing and hand to the next command.
+/// [`COMMIT`]'s yellow: both are the short string you copy into the next
+/// command.
 pub const ID: Style = COMMIT;
-/// [`ID`] a step down, because the two columns side by side are the note's
-/// filename — `<id>-<slug>.md` — and reading them as one thing is the point.
+/// [`ID`] a step down: side by side they are the filename `<id>-<slug>.md`.
 pub const SLUG: Style = AnsiColor::Yellow.on_default().dimmed();
 pub const TAGS: Style = AnsiColor::Cyan.on_default();
 /// The `[`, `,` and `]` around and between the tags.
 ///
-/// Grey rather than [`TAGS`] dimmed, which is what this was first: `dim` is a
-/// request a terminal may answer with nothing at all, and where it does, a
-/// dimmed cyan *is* cyan — the distinction disappears on exactly the terminals
-/// that cannot show it. [`SLUG`] survives the same loss because it sits beside
-/// the id it belongs to; here the two halves are interleaved.
+/// Grey, not [`TAGS`] dimmed: a terminal may ignore `dim`, and interleaved with
+/// the tags the difference would vanish. ([`SLUG`] can risk it, being beside
+/// the id rather than mixed in.)
 pub const TAGS_PUNCT: Style = AnsiColor::BrightBlack.on_default();
 /// Timestamps and other supporting detail.
 pub const MUTED: Style = Style::new().dimmed();
@@ -33,48 +29,29 @@ pub const HUNK: Style = AnsiColor::Cyan.on_default();
 pub const HEADING: Style = Style::new().bold();
 /// The part of a search result that matched.
 pub const MATCH: Style = AnsiColor::Yellow.on_default().bold();
-/// Why what has been typed is not a query yet, in `noda tui`'s search line.
-///
-/// No command needs this — a query the CLI cannot parse ends the command. But
-/// half a query is what every query looks like on the way to being one, so
-/// filtering as you type has to put the reason somewhere on the screen.
+/// Why what has been typed is not a query yet, in `noda tui`'s search line
+/// (the CLI just fails on a bad query).
 pub const INVALID: Style = AnsiColor::Red.on_default();
 /// A due date that has passed, in `todo`.
 ///
-/// The one exception to the rule above, and worth naming as one: it colours a
-/// row for what it *means*. It earns that by being the only thing anybody scans
-/// a todo list for. Nothing else may follow without the same argument.
+/// An exception to the rule above — it colours what a row *means* — because it
+/// is what anybody scans a todo list for.
 pub const OVERDUE: Style = AnsiColor::Red.on_default();
-/// The names along the top of a table, in `noda tui`.
+/// The names along the top of a table, in `noda tui` only: a TUI is sat in
+/// front of, and `-l`'s two timestamps look alike without a heading.
 ///
-/// [`INVALID`]'s shape of reason: a piped listing is read once by somebody who
-/// named those columns a moment earlier, but a browser is sat in front of, and
-/// `-l`'s two timestamps are the same twenty characters twice.
-///
-/// Grey and bold is [`TAGS_PUNCT`]'s argument one band up — it steps back by
-/// hue rather than by an effect a terminal may decline, and the bold keeps it
-/// from reading as another row of dimmed data.
+/// Grey steps back by hue, as [`TAGS_PUNCT`] does; bold keeps it from reading
+/// as another row of data.
 pub const COLUMN: Style = AnsiColor::BrightBlack.on_default().bold();
-/// The mark on a pinned row.
-///
-/// [`OVERDUE`]'s exception again, and it has to be argued the same way: this
-/// colours a row for what it means. It earns it by being the whole point of the
-/// field — a pin exists to be seen from across the listing.
+/// The mark on a pinned row. [`OVERDUE`]'s exception again: a pin exists to be
+/// seen from across the listing.
 pub const PIN: Style = AnsiColor::Magenta.on_default();
-/// What that mark says. A word rather than a glyph: the listing is read in a
-/// terminal whose font noda does not choose, and a pin glyph is emoji — double
-/// width where it renders, one column wide where it does not, and the row after
-/// it is off by one either way.
-///
-/// Here beside [`PIN`] because `ls` and `tui` both draw this column, and a mark
-/// spelled two ways is two marks.
+/// What that mark says, shared by `ls`, `tui` and `web`. A word, not an emoji,
+/// whose width depends on the terminal's font and would misalign the row.
 pub const PIN_MARK: &str = "pinned";
-/// The bar down the left of the row the cursor is on, in `noda tui`.
-///
-/// [`ID`]'s yellow, because the row it marks is a note. The row itself is only
-/// emboldened: reversing it — which is what this replaced — inverts the id's
-/// yellow and the tags' cyan too, so the one row you are looking at is the one
-/// row whose columns have stopped being told apart by colour.
+/// The bar down the left of the row the cursor is on, in `noda tui`, in
+/// [`ID`]'s yellow. The row is only emboldened: reverse video would invert the
+/// columns' colours on the one row being looked at.
 pub const CURSOR: Style = AnsiColor::Yellow.on_default();
 
 /// Wraps `text` in `style`. The `:#` form writes the reset sequence.
@@ -82,12 +59,8 @@ pub fn paint(style: Style, text: &str) -> String {
     format!("{style}{text}{style:#}")
 }
 
-/// A tag list cut into the pieces that are coloured differently. Empty tags give
-/// no pieces at all — a note without tags writes nothing, not `[]`.
-///
-/// Here rather than in either caller because two writers emit this column — `ls`
-/// emits escape sequences, `tui` builds ratatui spans — and what they must agree
-/// on is *where the cuts fall*.
+/// A tag list cut into differently coloured pieces, so `ls` (escapes) and `tui`
+/// (spans) cut it the same way. No tags give no pieces, not `[]`.
 pub fn tag_pieces(tags: &[String]) -> Vec<(Style, String)> {
     if tags.is_empty() {
         return Vec::new();
@@ -131,7 +104,6 @@ mod tests {
             ]
         );
 
-        // The colouring changed, the text did not.
         let plain: String = pieces.into_iter().map(|(_, text)| text).collect();
         assert_eq!(plain, "[work, q3]");
     }

@@ -1,12 +1,6 @@
-//! Retrying assertions.
-//!
-//! A `find` that runs before the browser has finished loading the next document
-//! reports the old page. `WebDriver` has no layer that waits for a condition to
-//! settle, so these two are it.
-//!
-//! On timeout they name the last value seen, not merely that a wait expired.
-//! That is the difference between "the listing never came down to one row" and a
-//! message you have to reproduce by hand to understand.
+//! Retrying assertions: a `find` before the next document loads reports the old
+//! page, and `WebDriver` has no wait-for-condition layer. On timeout they name
+//! the last value seen, not just that the wait expired.
 
 use std::fmt::Debug;
 use std::future::Future;

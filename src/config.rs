@@ -1,7 +1,7 @@
 //! `config.toml`: the four settings noda keeps, and where each value comes from.
 //!
-//! Edited by hand at least as often as by `noda config`, so it is written back
-//! through the same TOML document — comments and layout survive.
+//! Often edited by hand, so it is written back through the TOML document and
+//! keeps comments and layout.
 
 use std::path::PathBuf;
 
@@ -15,8 +15,7 @@ pub const KEYS: [&str; 4] = ["editor", "author", "notebook", "sign"];
 
 pub const DEFAULT_NOTEBOOK: &str = "default";
 
-/// Entirely commented out, so the defaults still apply — it exists to show what
-/// can be set.
+/// Entirely commented out, so the defaults still apply.
 const TEMPLATE: &str = "\
 # noda configuration. Every setting is optional; the defaults are shown.
 
@@ -63,8 +62,8 @@ impl Config {
         self.document.get(key).and_then(|item| item.as_str())
     }
 
-    /// `None` leaves it to git's `commit.gpgsign`. A hand-edited `sign = "true"`
-    /// is read too — the quotes are a slip, not a different answer.
+    /// `None` leaves it to git's `commit.gpgsign`. A quoted `sign = "true"` is
+    /// accepted too.
     pub fn sign(&self) -> Option<bool> {
         let item = self.document.get("sign")?;
         item.as_bool().or_else(|| parse_bool(item.as_str()?))
@@ -95,9 +94,8 @@ impl Config {
         self.save()
     }
 
-    /// The starter config holds all its text as the document's trailer, and a
-    /// new key is written before that — so the first added key has to take the
-    /// header with it or the file reads back to front.
+    /// The starter config is all trailer, and a new key is written before it,
+    /// so the first key added takes the header with it.
     fn keep_the_header_on_top(&mut self, key: &str) {
         let existing_keys = self
             .document
@@ -180,8 +178,7 @@ impl Source {
     }
 }
 
-/// Config wins over the environment, as git's `core.editor` does: `$EDITOR` is
-/// a blanket default, the config file a decision about this program.
+/// Config wins over `$VISUAL`/`$EDITOR`, as git's `core.editor` does.
 pub fn editor(
     configured: Option<&str>,
     visual: Option<String>,
@@ -201,8 +198,7 @@ pub fn editor(
     ("vi".to_string(), Source::Default)
 }
 
-/// `yes`/`on`/`1` are git's spellings, not TOML's; accepting them would make
-/// `config.toml` a file two parsers read differently.
+/// Not git's `yes`/`on`/`1`, which TOML would read differently.
 fn parse_bool(text: &str) -> Option<bool> {
     match text.trim() {
         "true" => Some(true),
@@ -211,8 +207,7 @@ fn parse_bool(text: &str) -> Option<bool> {
     }
 }
 
-/// Both halves must be non-empty, rather than quietly committing under half an
-/// identity.
+/// `Name <email>`, both halves non-empty.
 pub fn author_parts(text: &str) -> Option<(String, String)> {
     let (name, rest) = text.trim().split_once('<')?;
     let email = rest.strip_suffix('>')?.trim();
@@ -247,7 +242,6 @@ mod tests {
 
     #[test]
     fn a_setting_that_is_present_but_blank_does_not_count() {
-        // An empty $EDITOR is the shell's leftover, not a choice.
         let (chosen, source) = editor(Some("  "), Some("   ".into()), None);
         assert_eq!((chosen.as_str(), source), ("vi", Source::Default));
     }
@@ -271,7 +265,6 @@ mod tests {
     fn sign_is_a_boolean_however_it_was_written() {
         assert_eq!(parse_bool("true"), Some(true));
         assert_eq!(parse_bool(" false "), Some(false));
-        // git's spellings are not TOML's.
         assert_eq!(parse_bool("yes"), None);
         assert_eq!(parse_bool("1"), None);
 
@@ -284,9 +277,8 @@ mod tests {
         };
         assert_eq!(read("sign = true"), Some(true));
         assert_eq!(read("sign = false"), Some(false));
-        // Quoted by a hand that meant the boolean.
         assert_eq!(read("sign = \"true\""), Some(true));
-        // Unset is not "off": it is "ask git".
+        // Unset means "ask git", not "off".
         assert_eq!(read("editor = \"vi\""), None);
         assert_eq!(read("sign = 3"), None);
     }
