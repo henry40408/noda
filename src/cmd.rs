@@ -1908,9 +1908,10 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
         None
     };
     let mut report = audit.as_ref().map(describe_audit).unwrap_or_default();
+    let notes = notebook.notes()?;
 
     if times {
-        let found = describe_times(&notebook.notes()?, &notebook.last_changed()?);
+        let found = describe_times(&notes, &notebook.last_changed()?);
         if !found.is_empty() {
             if !report.is_empty() {
                 report.push('\n');
@@ -1920,7 +1921,7 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
     }
 
     // Always on: it parses no links and walks no history.
-    let unconverted = describe_unconverted(&notebook.notes()?);
+    let unconverted = describe_unconverted(&notes);
     if !unconverted.is_empty() {
         if !report.is_empty() {
             report.push('\n');
