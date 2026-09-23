@@ -177,7 +177,7 @@ enum Command {
     /// Search the active notebook: `noda search tag:work OR tag:q3 budget`.
     Search {
         /// Terms, all of which must match. `field:value` narrows one to `tag`,
-        /// `title`, `id` or `text`; `OR` between two terms takes either; `-` in
+        /// `title`, `id`, `pinned` or `text`; `OR` between two terms takes either; `-` in
         /// front of one rules it out.
         ///
         /// Hyphen values are allowed through so `-tag:archived` reaches the

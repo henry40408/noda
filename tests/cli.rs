@@ -1690,7 +1690,6 @@ fn sync_commits_pending_changes_before_pushing() {
     assert!(out.contains("already up to date"), "{out}");
 }
 
-#[cfg(unix)]
 #[test]
 fn sync_fast_forwards_a_notebook_that_only_received() {
     let (root, paths) = initialized();
@@ -2534,6 +2533,18 @@ fn doctor_says_nothing_about_hooks_when_there_are_none() {
     let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
     assert!(out.contains("in order"), "{out}");
     assert!(!out.contains("hook"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_ignores_a_symlink_to_a_directory_among_the_hooks() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    plant_hook(&notebook, "post-commit", false);
+    std::os::unix::fs::symlink(&notebook, notebook.join(".git/hooks/pre-commit.d")).unwrap();
+
+    let out = plain(&cmd::doctor(&paths, false, false, false).unwrap());
+    assert!(out.contains("in order"), "{out}");
 }
 
 /// A hook is not a problem with the notes, so it stays out of the summary.
@@ -5188,6 +5199,23 @@ fn snapshot_refuses_a_name_git_cannot_hold() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("invalid snapshot name"), "{err}");
+}
+
+#[test]
+fn a_tag_on_a_blob_does_not_break_the_snapshot_listing() {
+    let (_root, paths) = initialized();
+    let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
+    cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
+    cmd::snapshot(&paths, "kept", None).unwrap();
+
+    let repo = git2::Repository::open(&notebook).unwrap();
+    let blob = repo.blob(b"not a commit").unwrap();
+    repo.reference("refs/tags/on-a-blob", blob, false, "test")
+        .unwrap();
+
+    let listed = plain(&cmd::snapshot_ls(&paths).unwrap());
+    assert!(listed.contains("kept"), "{listed}");
+    assert!(!listed.contains("on-a-blob"), "{listed}");
 }
 
 #[test]

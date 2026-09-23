@@ -468,7 +468,10 @@ impl Notebook {
             if name.ends_with(".sample") {
                 continue;
             }
-            if entry.metadata().is_ok_and(|meta| is_executable(&meta)) {
+            if entry
+                .metadata()
+                .is_ok_and(|meta| meta.is_file() && is_executable(&meta))
+            {
                 found.push(name.to_string());
             }
         }
@@ -861,8 +864,13 @@ impl Notebook {
         // A non-UTF-8 name is skipped rather than failing the listing.
         let names = self.repo.tag_names(None)?;
         for name in names.iter().filter_map(|name| name.ok().flatten()) {
-            let reference = self.repo.find_reference(&format!("refs/tags/{name}"))?;
-            let commit = reference.peel_to_commit()?;
+            // Likewise a tag that names no commit, such as one on a tree or blob.
+            let Ok(reference) = self.repo.find_reference(&format!("refs/tags/{name}")) else {
+                continue;
+            };
+            let Ok(commit) = reference.peel_to_commit() else {
+                continue;
+            };
             // A lightweight tag has no message; its commit's summary stands in.
             let message = match reference.peel_to_tag() {
                 Ok(tag) => tag

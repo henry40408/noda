@@ -1193,8 +1193,8 @@ updated: 2024-11-02T16:40:12Z
 ---
 ```
 
-`created` is set once and never moves; `updated` follows every change. `tags` is optional.
-noda reads those four fields and leaves everything else in the block alone, so any other
+`created` is set once and never moves; `updated` follows every change. `tags` is optional,
+and `pinned: true` pins a note to the top of the listing. noda reads those five fields and leaves everything else in the block alone, so any other
 field is yours to use.
 
 ## Working on it with noda
