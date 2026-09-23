@@ -1,11 +1,9 @@
-//! noda's palette, said in CSS terms. No colour is chosen here, exactly as none
-//! is chosen in `tui/theme.rs`.
+//! noda's palette in CSS. No colour is chosen here, as none is in
+//! `tui/theme.rs`: which colour an id is remains `style.rs`'s answer.
 //!
-//! **The difficulty: a terminal brings its own theme and a browser does not.**
-//! `AnsiColor::Yellow` is a slot the terminal fills, which is why `tui/theme.rs`
-//! can hand ratatui the slot and stop. CSS has no slots, so this file carries
-//! what a terminal would have — two themes, because ANSI yellow on white is not
-//! readable. Which colour an id *is* remains `style.rs`'s answer.
+//! A terminal fills `AnsiColor::Yellow` from its own theme; CSS has no such
+//! slots, so this file supplies what a terminal would — in two themes, because
+//! ANSI yellow on white is unreadable.
 
 use std::fmt::Write;
 
@@ -13,36 +11,32 @@ use anstyle::{AnsiColor, Effects};
 
 use crate::style;
 
-/// Only the slots noda's palette reaches for. A colour added to `style.rs` and
-/// forgotten here falls through `fill` to the default foreground — visible, and
-/// not a crash on a page somebody is reading.
+/// Only the slots noda's palette uses. One added to `style.rs` and forgotten
+/// here falls through `fill` to the default foreground.
 struct Terminal {
-    /// The default foreground: what an unstyled character is.
+    /// The default foreground.
     text: &'static str,
-    /// A colour and not an opacity, for `TAGS_PUNCT`'s reason: an effect is a
-    /// request, a colour is an answer.
+    /// A colour, not an opacity, for `TAGS_PUNCT`'s reason.
     dim: &'static str,
     yellow: &'static str,
-    /// `style::SLUG`. Must stay recognisably the same hue — id and slug side by
-    /// side are the note's filename.
+    /// `style::SLUG`: must stay recognisably the id's hue.
     yellow_dim: &'static str,
     cyan: &'static str,
-    /// `BrightBlack`, which is grey everywhere anyone has ever set up.
+    /// `BrightBlack`.
     grey: &'static str,
     red: &'static str,
-    /// `style::PIN`. The one hue not already spoken for, which is what a mark
-    /// meant to be found from across a listing needs.
+    /// `style::PIN`: the one hue not otherwise used.
     magenta: &'static str,
-    /// Not a slot — a terminal never asks the program about its background.
+    /// Not a slot: a terminal never tells the program its background.
     background: &'static str,
-    /// A sunk panel. Half a step from `background`, never a second hue.
+    /// A sunk panel: half a step from `background`, not a second hue.
     sunk: &'static str,
-    /// The line between two rows. The quietest thing that can still be seen.
+    /// The line between two rows.
     rule: &'static str,
-    /// What a row looks like on the way down under a thumb.
+    /// A row being pressed.
     press: &'static str,
-    /// `style::MATCH`. The one background colour, because that is what marking
-    /// a run of text inside a line means.
+    /// `style::MATCH`, as a background, which is how a run inside a line is
+    /// marked.
     mark: &'static str,
 }
 
@@ -81,8 +75,7 @@ const DARK: Terminal = Terminal {
 };
 
 /// An `anstyle` style as this theme draws it. Only foreground and `dim` cross
-/// over; `bold` is left to the markup, because saying it twice is how the two
-/// answers start to disagree.
+/// over; `bold` is left to the markup, so it is said in one place.
 fn fill(style: anstyle::Style, terminal: &Terminal) -> &'static str {
     let dimmed = style.get_effects().contains(Effects::DIMMED);
     match style.get_fg_color() {
@@ -92,15 +85,14 @@ fn fill(style: anstyle::Style, terminal: &Terminal) -> &'static str {
         Some(anstyle::Color::Ansi(AnsiColor::BrightBlack)) => terminal.grey,
         Some(anstyle::Color::Ansi(AnsiColor::Red)) => terminal.red,
         Some(anstyle::Color::Ansi(AnsiColor::Magenta)) => terminal.magenta,
-        // `style::MUTED`: how a timestamp steps back without becoming a hue.
+        // `style::MUTED`.
         None if dimmed => terminal.dim,
         _ => terminal.text,
     }
 }
 
-/// Named after `style.rs`'s constants, not after what they look like: `--tag`
-/// and not `--cyan`, because a variable called `--cyan` invites being used for
-/// anything that merely wants to be cyan.
+/// Named after `style.rs`'s constants (`--tag`, not `--cyan`), so a property
+/// is not reused for anything that merely wants its colour.
 fn properties(terminal: &Terminal) -> String {
     let mut css = String::new();
     for (name, value) in [
@@ -116,9 +108,7 @@ fn properties(terminal: &Terminal) -> String {
         ("--tag", fill(style::TAGS, terminal)),
         ("--punct", fill(style::TAGS_PUNCT, terminal)),
         ("--alert", fill(style::INVALID, terminal)),
-        // The same red as `--alert` today, and its own property anyway:
-        // `OVERDUE` is the one colour marking what a thing *means*, and spelling
-        // it `--alert` would quietly drop that argument.
+        // Its own property though it is `--alert`'s red: it marks meaning.
         ("--overdue", fill(style::OVERDUE, terminal)),
         ("--pin", fill(style::PIN, terminal)),
     ] {
@@ -127,11 +117,8 @@ fn properties(terminal: &Terminal) -> String {
     css
 }
 
-/// Light on the bare selector, dark inside the query — not as a fallback (no
-/// engine reports `no-preference` any more) but because it is shorter: the query
-/// then holds only what differs.
-///
-/// No toggle and no stored preference: the reader already told their phone.
+/// Light on `:root`, dark inside the media query. No toggle and no stored
+/// preference: the reader already told their device.
 pub fn stylesheet() -> String {
     format!(
         ":root{{{}}}@media (prefers-color-scheme:dark){{:root{{{}}}}}",
@@ -148,12 +135,9 @@ mod tests {
     fn an_id_is_the_same_thing_in_both_themes_and_a_commit_is_an_id() {
         assert_eq!(fill(style::ID, &LIGHT), LIGHT.yellow);
         assert_eq!(fill(style::ID, &DARK), DARK.yellow);
-        // Deliberately the same colour — see `style.rs`.
         assert_eq!(fill(style::COMMIT, &DARK), fill(style::ID, &DARK));
     }
 
-    /// The web is the first interface drawing id and slug as one string; lose
-    /// the step down and it reads as two.
     #[test]
     fn the_slug_stays_the_ids_hue_a_step_down() {
         for terminal in [&LIGHT, &DARK] {
@@ -164,17 +148,13 @@ mod tests {
         }
     }
 
-    /// `style.rs`'s argument, for the browser: a different colour, never the
-    /// tags' colour weakened.
     #[test]
     fn tag_punctuation_steps_back_by_hue() {
         assert_eq!(fill(style::TAGS_PUNCT, &DARK), DARK.grey);
         assert_ne!(fill(style::TAGS_PUNCT, &DARK), fill(style::TAGS, &DARK));
     }
 
-    /// A colour `style.rs` reaches for and this file has not heard of falls
-    /// through to the default foreground — visible, and indistinguishable from
-    /// the title beside it, which is what a mark must never be.
+    /// A colour missing here would fall through to the text colour.
     #[test]
     fn the_pin_has_a_hue_of_its_own_in_both_themes() {
         for terminal in [&LIGHT, &DARK] {
@@ -197,7 +177,7 @@ mod tests {
         assert!(css.contains("prefers-color-scheme:dark"), "{css}");
         assert!(css.contains(LIGHT.yellow), "{css}");
         assert!(css.contains(DARK.yellow), "{css}");
-        // Light is what a browser saying nothing gets.
+        // Light is what a browser with no preference gets.
         assert!(
             css.find(LIGHT.background) < css.find(DARK.background),
             "{css}"

@@ -1,20 +1,15 @@
 Feature: Answering without asking
 
-  The listing carries every note it has and hides the ones the query excludes.
-  That is true of the page the server sends, so it is true with the scripts off
-  — and it is what lets the script widen a query as well as narrow one, because
-  a row it needs to put back is already there.
+  The listing carries every note and hides the ones the query excludes, even
+  with scripts off, so the script can widen a query as well as narrow it.
 
-  What the script may do with that is bounded: it may answer sooner, or not at
-  all, but never differently. A bare word reads the body on the server and this
-  page has no bodies, so the script's answer is a subset — right, and possibly
-  short, which is what the remark under the field is for. A *negated* bare word
-  inverts that, and there the filter stands aside altogether.
+  The script may answer sooner or not at all, never differently. A bare word
+  matches bodies on the server and the page has none, so the script's answer
+  may be short, which the remark under the field says. For a *negated* bare
+  word the filter stands aside.
 
-  A tagged case below describes the shortcut itself and runs only in the pass
-  where scripts run. Everything else runs both ways, including every claim
-  about what an answer *is* — the tag buys the right to be about the shortcut,
-  never the right to be the only account of the result.
+  `@scripted` cases describe the shortcut and run only with scripts on; every
+  claim about what an answer *is* also runs both ways.
 
   Scenario: The rows a query excludes are still on the page
     Given I open the notebook
@@ -77,29 +72,28 @@ Feature: Answering without asking
     And I see a row for "Reading list"
     And the page says nothing is wrong
 
-  # The grouping is redrawn on every keystroke, from the same parse the filter
-  # runs on. Not a third implementation — the one the filter already needed,
-  # used for a second thing.
+  # Redrawn per keystroke from the parse the filter already uses.
   @scripted
+  # Redrawn per keystroke from the parse the filter already uses.
   Scenario: The grouping follows what is being typed
     Given I open the notebook on a tablet
     When I type "tag:work OR tag:ops budget" into the search field
     Then the field groups it as "(tag:work or tag:ops) and (budget)"
 
-  # The case that separates the two. A negated bare word makes the filter stand
-  # aside — it would have to widen the answer, which is the one thing the
-  # script may never do — but a grouping is a fact about the words and not
-  # about the notes, so it is still drawn.
+  # The filter stands aside (it would have to widen the answer), but grouping
+  # is about the words, not the notes, so it is still drawn.
   @scripted
+  # The filter stands aside (it would have to widen the answer), but grouping
+  # is about the words, not the notes, so it is still drawn.
   Scenario: A query the filter stands aside for is still grouped
     Given I open the notebook on a tablet
     When I type "-budget tag:work" into the search field
     Then I see a row for "Reading list"
     And the field groups it as "(-budget) and (tag:work)"
 
-  # Half a query has no grouping yet, and the last complete one is not an
-  # answer to a line that no longer says it.
+  # The last complete grouping would describe a line no longer typed.
   @scripted
+  # The last complete grouping would describe a line no longer typed.
   Scenario: Half a query has no grouping to show
     Given I open the notebook on a tablet
     When I type "tag:work OR" into the search field

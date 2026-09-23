@@ -1,13 +1,8 @@
-# The PRFAQ claims noda cross-compiles to musl on x86_64 and aarch64, and that
-# claim had nothing guarding it. The cross job exists to keep it honest: the
-# vendored libgit2 and OpenSSL are compiled from source for every target, which
-# is exactly the part that breaks silently.
+# The cross job guards the PRFAQ's claim that noda builds for musl on x86_64 and
+# aarch64: the vendored C libraries are what break silently there.
 #
-# Actions are pinned to commit SHAs, not tags. A tag is a movable pointer: whoever
-# controls the repository can repoint it at different code, and every workflow
-# that trusts the tag runs that code on its next build. A SHA cannot be repointed,
-# so what runs here only changes when a commit here says so. The trailing comment
-# records which release each SHA is, for humans and for update tooling.
+# Actions are pinned to commit SHAs, which cannot be repointed the way a tag can;
+# the trailing comment names the release.
 name: CI
 
 on:
@@ -15,9 +10,7 @@ on:
     branches: [main]
   pull_request:
 
-# One run per ref at a time. A newer push supersedes the run it interrupted;
-# a tag does not — a tagged build publishes one specific version and nothing
-# should quietly cancel it.
+# A newer push cancels the older run on the same ref, except for tags.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -52,17 +45,14 @@ jobs:
           workspaces: |
             .
             e2e
-      # `e2e/` is its own workspace, so its lints are its own job as well —
-      # sharing this one's build is what keeps that from costing a second
-      # compile of thirtyfour.
+      # `e2e/` is its own workspace, so it is linted here, sharing this job's
+      # build of thirtyfour.
       - run: cargo fmt --check --manifest-path e2e/Cargo.toml
       - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
-      # Built here rather than left to the suite, so a compile error in noda
-      # itself is reported as a compile error rather than as a browser that
-      # found nothing listening.
+      # Built first so a compile error in noda reads as one, not as a browser
+      # finding nothing listening.
       - run: cargo build
-      # The runner image carries Google Chrome; the driver manager downloads
-      # only the matching chromedriver, never a browser.
+      # The runner has Chrome; only the matching chromedriver is downloaded.
       - run: cargo test --manifest-path e2e/Cargo.toml --test e2e
 
   deny:
@@ -73,9 +63,7 @@ jobs:
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         with:
           tool: cargo-deny
-      # Advisories, licences, banned crates and sources in one pass. This one
-      # can fail without anything here changing — an advisory is published
-      # against a dependency and the graph is suddenly not what it was.
+      # Can fail with no change here, when a new advisory is published.
       - run: cargo deny check
 
   cross:
@@ -97,9 +85,7 @@ jobs:
         with:
           tool: cargo-zigbuild
       - run: cargo zigbuild --release --target ${{ matrix.target }}
-      # The whole point of vendoring is one file that needs nothing installed.
-      # A dynamically linked binary here would be a regression nobody notices
-      # until it fails on someone else's machine.
+      # Vendoring exists to ship one file that needs nothing installed.
       - name: the binary must be self-contained
         run: |
           binary=target/${{ matrix.target }}/release/noda

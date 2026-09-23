@@ -1,12 +1,10 @@
 Feature: Syncing from a phone
 
-  The one thing here that does not finish while the browser waits. A sync is a
-  fetch over somebody's tailnet, so the press answers straight away and the
-  screen it lands on says what is happening — which means these scenarios are
-  the only ones that watch a page change without anybody touching it.
+  The one action that does not finish while the browser waits: the press
+  answers at once and the screen it lands on reports progress by itself.
 
-  The notebook has a remote it has never spoken to, so what the chip says at the
-  start is a fact about the fixture and not about the scenario before it.
+  The fixture's remote has never been synced, and is reset after each
+  scenario, so the starting chip is a fact about the fixture.
 
   Scenario: The listing says where the notebook stands
     Given I open the notebook

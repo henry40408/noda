@@ -1,44 +1,37 @@
 //! Signing a commit with GPG.
 //!
-//! libgit2 shells out to nothing, so a `commit.gpgsign = true` that `git commit`
-//! honours does nothing here unless noda calls gpg itself. It does: build the
-//! commit object, hand it to gpg as text, write it back with the signature.
+//! libgit2 ignores `commit.gpgsign`, so noda builds the commit object, has gpg
+//! sign it, and writes it back with the signature.
 //!
-//! Only `OpenPGP` — a notebook configured for `ssh` or `x509` is told so rather
-//! than quietly committed unsigned, because nothing downstream can tell an
-//! unsigned commit from one nobody asked about.
+//! `OpenPGP` only: `ssh` or `x509` is an error rather than a silently unsigned
+//! commit, which nothing downstream could tell apart.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 use crate::{Error, Result};
 
-/// gpg exiting 0 is not evidence it signed anything — a `gpg.program` that is
-/// not gpg exits 0 too.
+/// Checked for because a `gpg.program` that is not gpg may exit 0 too.
 const ARMOR_HEADER: &str = "-----BEGIN PGP SIGNATURE-----";
 
-/// Its existence is the decision: resolving to `None` means unsigned.
+/// Resolving to `None` means unsigned.
 #[derive(Debug)]
 pub struct Signer {
-    /// `gpg.openpgp.program`, `gpg.program`, then `gpg` — git's own order, so a
-    /// notebook signs with whatever `git commit` here would have used.
+    /// `gpg.openpgp.program`, `gpg.program`, then `gpg`: git's order.
     program: String,
-    /// `user.signingkey`. Absent lets gpg pick its default, as `git commit -S`
-    /// without a configured key does.
+    /// `user.signingkey`; absent lets gpg pick its default, as git does.
     key: Option<String>,
 }
 
-/// `configured` is noda's own `sign`, outranking `commit.gpgsign` the way
-/// `config.toml`'s `author` outranks `user.name`: a notebook is one program's
-/// worth of decision and `commit.gpgsign` is a blanket one.
+/// `configured` is noda's own `sign`, which outranks `commit.gpgsign` as
+/// `author` outranks `user.name`.
 pub fn resolve(configured: Option<bool>, git: &git2::Config) -> Result<Option<Signer>> {
     let wanted = configured.unwrap_or_else(|| git.get_bool("commit.gpgsign").unwrap_or(false));
     if !wanted {
         return Ok(None);
     }
 
-    // Unset is git's default of `openpgp`. Anything else is refused by name: a
-    // user told "noda cannot do ssh" can act on it, one silently unsigned cannot.
+    // Unset means git's default, `openpgp`.
     let format = git
         .get_string("gpg.format")
         .unwrap_or_else(|_| "openpgp".to_string());
@@ -61,11 +54,11 @@ pub fn resolve(configured: Option<bool>, git: &git2::Config) -> Result<Option<Si
 }
 
 impl Signer {
-    /// stderr is inherited, not captured: gpg talks to its agent through it, and
-    /// capturing turns a pinentry prompt into a hang with nothing on screen.
+    /// stderr is inherited, not captured, or a pinentry prompt becomes a silent
+    /// hang.
     pub fn sign(&self, content: &str) -> Result<String> {
         let mut command = Command::new(&self.program);
-        // `-b` detached, `-s` sign, `-a` armored: the three git passes too.
+        // Detached, sign, armored: what git passes.
         command.args(["-bsa"]);
         if let Some(key) = &self.key {
             command.args(["-u", key]);
@@ -84,8 +77,7 @@ impl Signer {
                 _ => Error::msg(format!("could not run `{}`: {e}", self.program)),
             })?;
 
-        // A few hundred bytes fits the pipe buffer, so this cannot deadlock
-        // against a reader that has not started.
+        // A commit object fits the pipe buffer, so this cannot deadlock.
         child
             .stdin
             .take()
@@ -122,7 +114,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// libgit2's in-memory config is read-only, so one to write into is on disk.
+    /// On disk, because libgit2's in-memory config is read-only.
     struct Scratch(PathBuf);
 
     impl Drop for Scratch {
@@ -131,7 +123,6 @@ mod tests {
         }
     }
 
-    /// Every lookup misses — a machine with no git configuration.
     fn empty() -> git2::Config {
         git2::Config::new().expect("empty config")
     }
@@ -175,7 +166,7 @@ mod tests {
         assert!(err.contains("ssh"), "{err}");
         assert!(err.contains("OpenPGP only"), "{err}");
 
-        // Only when it would have signed.
+        // Only checked when it would have signed.
         assert!(resolve(Some(false), &config).unwrap().is_none());
     }
 

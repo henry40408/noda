@@ -1,13 +1,10 @@
-//! noda's palette, said in ratatui's terms. No colour is chosen here — this
-//! translates `style.rs`'s decision from escape sequences to buffer cells, so an
-//! id is the same yellow in `noda ls` and `noda tui`.
+//! `style.rs`'s palette translated to ratatui cells; no colour is chosen here.
 
 use anstyle::{AnsiColor, Effects};
 use ratatui::style::{Color, Modifier, Style};
 
-/// An `anstyle` style as ratatui would write it. Only foreground, bold and dim
-/// cross over — a background or an underline would silently do nothing, so
-/// `style.rs` is the place to look before adding one.
+/// Only foreground, bold and dim cross over; a background or underline added in
+/// `style.rs` would silently do nothing here.
 pub fn from(style: anstyle::Style) -> Style {
     let mut out = Style::default();
     if let Some(anstyle::Color::Ansi(colour)) = style.get_fg_color() {
@@ -23,8 +20,7 @@ pub fn from(style: anstyle::Style) -> Style {
     out
 }
 
-/// Both enums name the same sixteen palette slots, so the terminal's own theme
-/// keeps deciding what each looks like.
+/// Palette slots, not RGB, so the terminal's theme still decides the colours.
 fn ansi(colour: AnsiColor) -> Color {
     match colour {
         AnsiColor::Black => Color::Black,
@@ -61,8 +57,7 @@ mod tests {
     fn effects_survive_the_crossing() {
         assert!(from(style::MUTED).add_modifier.contains(Modifier::DIM));
         assert!(from(style::MATCH).add_modifier.contains(Modifier::BOLD));
-        // Both halves have to arrive or the two columns stop reading as one
-        // filename.
+        // The id's yellow, dimmed, so id and slug read as one filename.
         let slug = from(style::SLUG);
         assert_eq!(slug.fg, Some(Color::Yellow));
         assert!(slug.add_modifier.contains(Modifier::DIM));

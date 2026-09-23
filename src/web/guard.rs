@@ -1,22 +1,16 @@
 //! Who is allowed to be talking to this server.
 //!
-//! There are no accounts, deliberately — this is meant to sit on a tailnet or
-//! behind something that already authenticates. That does not cover the two
-//! attacks needing no account, because they borrow a browser you already have
-//! open, and these checks are the whole defence against them.
+//! There are no accounts: the server is meant for a tailnet or behind an
+//! authenticating proxy. These checks are the whole defence against the two
+//! attacks that borrow a browser you already have open:
 //!
-//! **Cross-site requests.** Every write is a git commit, and a form on any other
-//! site posts to `localhost:8080` with your browser's reach. No session means no
-//! cookie to be missing, so only `Origin` stops it.
+//! **Cross-site requests.** A form on any site can post to `localhost:8080`,
+//! and with no session cookie to be missing, only `Origin` stops it.
 //!
-//! **DNS rebinding**, which `Origin` alone does not stop: point `evil.example`
-//! at `127.0.0.1` and both headers agree. What gives it away is that the trick
-//! needs a *name* to control the resolution of — so a bare address always
-//! passes, and a name must be one that was asked for.
-//!
-//! Hence `--allow-host`: behind a proxy or on a tailnet the name in the URL bar
-//! is a name, and refusing it silently would break both recommended
-//! deployments. It fails closed and says what to add.
+//! **DNS rebinding**, where `evil.example` resolves to `127.0.0.1` and both
+//! headers agree. The attack needs a *name*, so a bare address always passes
+//! and a name must be one given with `--allow-host` (needed behind a proxy or on
+//! a tailnet). It fails closed and says what to add.
 
 use std::net::IpAddr;
 
@@ -29,25 +23,23 @@ pub struct Guard {
 }
 
 impl Guard {
-    /// `extra` is `--allow-host`: names that are not addresses and are wanted.
+    /// `extra` is `--allow-host`.
     pub fn new(extra: &[String]) -> Self {
         Guard {
             allowed: extra.iter().map(|name| name.to_lowercase()).collect(),
         }
     }
 
-    /// Both headers as the client sent them. A missing `Host` is a refusal —
-    /// HTTP/1.1 requires it — but a missing `Origin` cannot be, because every
-    /// ordinary navigation omits it.
+    /// A missing `Host` is refused (HTTP/1.1 requires it); a missing `Origin`
+    /// is not, as ordinary navigation omits it.
     pub fn admits(&self, host: Option<&str>, origin: Option<&str>) -> Result<(), Refusal> {
         let Some(host) = host else {
             return Err(Refusal("the request carried no Host header".into()));
         };
         self.admits_host(host)?;
 
-        // A sandboxed frame and a `file://` page send `null`, which the
-        // comparison below would refuse anyway. Named separately because it is a
-        // different thing to be told than "some other site".
+        // A sandboxed frame or `file://` page sends `null`; it would fail the
+        // comparison anyway, but deserves its own message.
         match origin {
             None => Ok(()),
             Some("null") => Err(Refusal(
@@ -69,9 +61,7 @@ impl Guard {
 
     fn admits_host(&self, host: &str) -> Result<(), Refusal> {
         let name = hostname(host);
-        // An address cannot be rebound. `localhost` joins it because every
-        // resolver pins it, and refusing the one name people actually type would
-        // be a guard nobody gets past.
+        // An address cannot be rebound, and resolvers pin `localhost`.
         if name.parse::<IpAddr>().is_ok() || name.eq_ignore_ascii_case("localhost") {
             return Ok(());
         }
@@ -89,8 +79,8 @@ impl Guard {
     }
 }
 
-/// The `host:port` out of an origin. Only the scheme is dropped: `:8080` and
-/// `:8081` are different origins to a browser, so they must differ here too.
+/// The `host:port` out of an origin; the port is kept, since it is part of
+/// the origin.
 fn authority(origin: &str) -> &str {
     origin
         .split_once("://")
@@ -98,8 +88,7 @@ fn authority(origin: &str) -> &str {
         .trim_end_matches('/')
 }
 
-/// The name out of a `host:port`. `[::1]:8080` is one colon too many for the
-/// obvious split, so the bracketed form is handled first.
+/// The name out of a `host:port`, including a bracketed `[::1]:8080`.
 fn hostname(host: &str) -> &str {
     if let Some(rest) = host.strip_prefix('[') {
         return rest.split_once(']').map_or(rest, |(inside, _)| inside);
@@ -131,8 +120,7 @@ mod tests {
         }
     }
 
-    /// The rebinding case: nothing in the request says otherwise, which is why
-    /// the name itself has to be checked.
+    /// DNS rebinding: only the name gives it away.
     #[test]
     fn a_name_nobody_asked_for_is_refused_even_when_the_origin_agrees() {
         let refusal = plain()
@@ -166,7 +154,6 @@ mod tests {
         assert!(refusal.0.contains("elsewhere.example"), "{}", refusal.0);
     }
 
-    /// Two servers on one machine are two sites.
     #[test]
     fn a_different_port_is_a_different_site() {
         assert!(
@@ -176,7 +163,6 @@ mod tests {
         );
     }
 
-    /// If a missing `Origin` were a refusal, the server would answer nobody.
     #[test]
     fn an_ordinary_navigation_carries_no_origin_and_is_fine() {
         assert!(plain().admits(Some("127.0.0.1:8080"), None).is_ok());

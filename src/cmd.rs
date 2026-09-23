@@ -1,5 +1,5 @@
-//! Command implementations. Each one takes `Paths` explicitly so tests can run
-//! against a throwaway root without touching the real environment.
+//! Command implementations. Each takes `Paths` (or, for the `_in` half, an open
+//! `Notebook`) explicitly, so tests run against a throwaway root.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
@@ -28,8 +28,7 @@ pub fn init(paths: &Paths) -> Result<String> {
     paths.create_dirs()?;
     let mut lines = Vec::new();
 
-    // Commented-out defaults change nothing, but they are the only way anyone
-    // finds out what can be set.
+    // Commented-out defaults change nothing but show what can be set.
     if Config::write_template(paths)? {
         lines.push(format!(
             "wrote {}",
@@ -57,8 +56,7 @@ pub fn init(paths: &Paths) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-/// Where a value came from is the question people have when the editor is not
-/// the one they expected.
+/// Every setting with where its value came from.
 pub fn config_show(paths: &Paths) -> Result<String> {
     let config = Config::load(paths)?;
     let rows = effective(paths, &config);
@@ -78,7 +76,7 @@ pub fn config_show(paths: &Paths) -> Result<String> {
     Ok(out)
 }
 
-/// One setting's effective value, unadorned so it can be read by a script.
+/// One setting's effective value, unadorned for a script.
 pub fn config_get(paths: &Paths, key: &str) -> Result<String> {
     config::validate_key(key)?;
     let config = Config::load(paths)?;
@@ -109,19 +107,16 @@ pub fn config_unset(paths: &Paths, key: &str) -> Result<String> {
     }
 }
 
-/// Writes the starter template first if the file is missing — nobody wants to
-/// be dropped into an empty buffer.
+/// Writes the starter template first if the file is missing.
 pub fn config_edit(paths: &Paths) -> Result<String> {
     Config::write_template(paths)?;
     let path = paths.config_dir().join("config.toml");
     run_editor(&configured_editor(paths), &path)?;
-    // A typo becomes an error now rather than at the next command, when the
-    // connection to this edit would be lost.
+    // Surface a typo now, not at the next unrelated command.
     Config::load(paths)?;
     Ok(format!("{}", path.display()))
 }
 
-/// Every setting as it currently resolves.
 fn effective(paths: &Paths, config: &Config) -> Vec<(String, String, config::Source)> {
     let (editor, editor_source) = config::editor(
         config.get("editor"),
@@ -142,8 +137,8 @@ fn effective(paths: &Paths, config: &Config) -> Vec<(String, String, config::Sou
     ]
 }
 
-/// The git side comes from the user's own configuration, not a notebook's: this
-/// answers for the next notebook as much as the current one.
+/// Falls back to the user's git config, not a notebook's: this answers for every
+/// notebook.
 fn sign(config: &Config) -> (bool, config::Source) {
     if let Some(on) = config.sign() {
         return (on, config::Source::File);
@@ -159,7 +154,7 @@ fn author(paths: &Paths, config: &Config) -> (String, config::Source) {
     if let Some(author) = config.get("author") {
         return (author.to_string(), config::Source::File);
     }
-    // Whatever git itself would use, asked in the same order.
+    // In the order git itself would ask.
     let from_git = Notebook::open_active(paths)
         .ok()
         .and_then(|notebook| notebook.git_author())
@@ -184,9 +179,8 @@ pub fn add(
 ) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
 
-    // Before the editor opens: nobody should compose a note only to be told
-    // its title cannot be written. `add_in` checks again, being reachable
-    // on its own.
+    // Before the editor opens, so a bad title is not found after composing.
+    // `add_in` checks again, being reachable on its own.
     if let Some(title) = title {
         note::validate_title(title)?;
     }
@@ -199,12 +193,8 @@ pub fn add(
     add_in(&notebook, title, &body, tags)
 }
 
-/// `add`, in a notebook the caller already has open and with the body written.
-///
-/// The notebook is passed because `noda web` opens one per request, and a second
-/// handle on the same repository defeats the point. No editor either: a browser
-/// arrives with the body in hand, and a command that might open one is not
-/// something a request can call.
+/// `add` in an already-open notebook with the body written — never opens an
+/// editor, so `noda web` can call it.
 pub fn add_in(
     notebook: &Notebook,
     title: Option<&str>,
@@ -222,11 +212,9 @@ pub fn add_in(
             .ok_or_else(|| Error::msg("aborted: the note is empty, so it has no title"))?,
     };
 
-    // Two notes may share a slug; the id in front keeps the filenames apart.
     let slug = note::slugify(&title);
     let id = note::mint_id(&notebook.taken_ids()?);
-    // Both, same value: a note never changed was changed as recently as it was
-    // made, and writing one would make every reader infer the other.
+    // Both stamps, so no reader has to infer `updated` from `created`.
     let now = note::now();
     let note = Note {
         title,
@@ -245,46 +233,31 @@ pub fn add_in(
     Ok(summary(&id, &slug, &note.tags))
 }
 
-/// A struct rather than a row of arguments: three formats times three subsets,
-/// and every caller cares about two at most.
+/// A struct rather than a row of arguments: every caller sets two fields at most.
 #[derive(Default)]
 pub struct List<'a> {
-    /// List another notebook instead of the active one.
+    /// Another notebook instead of the active one.
     pub notebook: Option<&'a str>,
     /// Anything more selective than one tag is `search`'s job.
     pub tag: Option<&'a str>,
     pub format: Format,
     pub only: Only,
-    /// NUL rather than newline, which is what makes `noda ls -q0 | xargs -0`
-    /// correct rather than nearly correct for a name with a space in it.
+    /// NUL-separate `Quiet` output, for `xargs -0` and names with spaces.
     pub null: bool,
     pub sort: Sort,
-    /// Applied after `sort`, so it reverses whichever order was asked for and,
-    /// alone, the default one — `ls(1)`'s bargain with `-r`.
-    ///
-    /// The files turn with the notes: one listing whose halves ran different
-    /// ways is not an order anyone asked for.
+    /// Applied after `sort`, as `ls -r` is; the files turn with the notes.
     pub reverse: bool,
-    /// The slug and both timestamps as well as the title.
-    ///
-    /// Off by default: the slug is the title with the spaces taken out, so the
-    /// pair says everything twice, and the stamps are forty columns nobody
-    /// asked for. Neither costs anything to read.
-    ///
-    /// One flag rather than one per column — `ls(1)` settled that a long format
-    /// is a density, not a selection. `--json` carries every field either way,
-    /// because what a program reads should not depend on a terminal's width.
+    /// Add the slug and both timestamps. Off by default because the slug
+    /// repeats the title; one flag rather than one per column, as `ls -l` is.
     pub long: bool,
 }
 
-/// What order the notes come out in.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
     /// What a notebook walk already produces.
     #[default]
     Slug,
-    /// Newest first: the question put to a time is nearly always "what is
-    /// recent", so it runs the opposite way to `Title`.
+    /// Newest first, as is `Updated`.
     Created,
     Updated,
     /// Alphabetical.
@@ -292,11 +265,10 @@ pub enum Sort {
 }
 
 impl Sort {
-    /// For a screen with room to draw all four at once. Written here so a page's
-    /// list and the ring [`Sort::next`] walks cannot come apart.
+    /// Defined once so a page's list and the ring [`Sort::next`] walks agree.
     pub const ALL: [Sort; 4] = [Sort::Slug, Sort::Created, Sort::Updated, Sort::Title];
 
-    /// What `--sort` is spelled with, and what a screen should call it.
+    /// How `--sort` spells it, and what a screen calls it.
     pub fn name(self) -> &'static str {
         match self {
             Sort::Slug => "slug",
@@ -306,14 +278,12 @@ impl Sort {
         }
     }
 
-    /// [`Sort::name`]'s inverse, for the one caller receiving an order as text:
-    /// a browser, where it rides in the address.
+    /// [`Sort::name`]'s inverse, for an order carried in a URL.
     pub fn named(said: &str) -> Option<Sort> {
         Sort::ALL.into_iter().find(|sort| sort.name() == said)
     }
 
-    /// For a key with one press and four orders to reach, walking the list
-    /// `--sort` lists.
+    /// The next order in [`Sort::ALL`], for a key that cycles through them.
     pub fn next(self) -> Sort {
         match self {
             Sort::Slug => Sort::Created,
@@ -324,36 +294,29 @@ impl Sort {
     }
 }
 
-/// How a listing is written out.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// Aligned columns for a person to read.
+    /// Aligned columns for a person.
     #[default]
     Table,
-    /// One object, for a program to read.
+    /// One object, for a program.
     Json,
     /// One identifier per line and nothing else.
     Quiet,
 }
 
-/// Whether a command that changes a note moves its `updated`.
-///
-/// `Stamp` is the honest reading of what happened. `Keep` is `--no-touch`, and
-/// exists because `updated` is a field you are allowed to own: a typo fixed or
-/// a tag added is not the note being rewritten, and an imported note keeps the
-/// dates its old system gave it.
-///
-/// `add` has no say — both fields are written the moment a note is made.
+/// Whether a command that changes a note moves its `updated`. `Keep` is
+/// `--no-touch`: a fixed typo or an added tag is not a rewrite, and the user
+/// may own the field.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Touch {
     /// Set `updated` to now.
     #[default]
     Stamp,
-    /// Leave `updated` exactly as it was found.
+    /// Leave `updated` as it was found.
     Keep,
 }
 
-/// Which half of the notebook to list.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Only {
     #[default]
@@ -362,16 +325,11 @@ pub enum Only {
     Files,
 }
 
-/// Reads a `TiddlyWiki` 5 export and writes it into the active notebook.
+/// Reads a `TiddlyWiki` 5 export into the active notebook.
 ///
-/// The reading and the writing are separate on purpose: `import::tiddlywiki`
-/// knows what a tiddler is, `import::write` knows what a notebook is, and the
-/// next source noda learns is the first of those and none of the second.
-/// Several files are one import rather than several. A wiki exported in pieces
-/// has links running between the pieces, and a link can only be rewritten
-/// against notes that exist by the time it is — so every file is read before
-/// anything is written, and one that cannot be read stops the import before it
-/// has touched the notebook.
+/// Several files are one import, so links between the pieces resolve: every
+/// file is read before anything is written, and an unreadable one stops the
+/// import before it touches the notebook.
 pub fn import_tiddlywiki(paths: &Paths, files: &[PathBuf], convert: bool) -> Result<String> {
     let mut notes = Vec::new();
     let mut skipped = Vec::new();
@@ -394,8 +352,7 @@ pub fn import_tiddlywiki(paths: &Paths, files: &[PathBuf], convert: bool) -> Res
     )
 }
 
-/// One note's row, with every column already the string it prints as — so the
-/// widths are measured over the same values the row is written from.
+/// One note's row as printed strings, so widths are measured over what is written.
 struct Listed {
     id: String,
     slug: String,
@@ -434,7 +391,6 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         files
     };
 
-    // After the sort, so every order gets a reverse for free.
     if options.reverse {
         notes.reverse();
         files.reverse();
@@ -446,7 +402,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         Format::Table => {}
     }
 
-    // Nothing invents a time, so the column says so rather than leaving a hole.
+    // A missing stamp prints as `-` rather than a hole.
     let stamp = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
     let rows: Vec<Listed> = notes
         .into_iter()
@@ -487,15 +443,9 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         pinned,
     } in rows
     {
-        // `-l` extends the default row rather than rearranging it: id and title
-        // stay the first two columns, so a script cutting fields off the front
-        // reads the same thing either way.
-        //
-        // Tags are last in both, being the one thing a note may not have —
-        // anywhere else, their absence would shift every column behind them.
-        //
-        // The title is the one uncoloured column, which is what makes it the one
-        // the eye lands on, and it is the note's own words.
+        // `-l` extends the row rather than rearranging it, so a script cutting
+        // id and title off the front reads the same either way. The optional
+        // columns (tags, pin) go last so their absence shifts nothing.
         let mut line = column(style::ID, &id, id_width);
         if options.long {
             let _ = write!(
@@ -512,10 +462,6 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         if !tags.is_empty() {
             let _ = write!(line, "  {}", style::tags(&tags));
         }
-        // Behind the tags, for their reason turned around: the mark is the other
-        // thing a note may not have, and a row is easier to read with the two
-        // optional columns together at the end than with one of them in front of
-        // the id, where it would displace the column every script cuts.
         if pinned {
             let _ = write!(line, "  {}", style::paint(style::PIN, style::PIN_MARK));
         }
@@ -523,8 +469,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         out.push('\n');
     }
 
-    // Under a heading rather than mixed in: with no id, title or tags, a row of
-    // theirs would be three empty columns.
+    // Under a heading: a file has no id, title or tags to fill a row with.
     if !files.is_empty() {
         if !out.is_empty() {
             out.push('\n');
@@ -537,21 +482,17 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
     Ok(out)
 }
 
-/// The instant a stamp names, `None` when absent or unreadable; both sort last.
-///
-/// Parsed rather than compared as text: noda's own stamps would sort as strings,
-/// but an imported note carries its old offset, and
-/// `2019-03-14T16:21:00+08:00` sorts after `2019-03-14T09:00:00Z` as text while
-/// coming before it in fact.
+/// The instant a stamp names, `None` when absent or unreadable. Parsed rather
+/// than compared as text because an imported note keeps its old offset:
+/// `2019-03-14T16:21:00+08:00` sorts after `2019-03-14T09:00:00Z` as text but
+/// is earlier.
 fn instant(stamp: Option<&String>) -> Option<jiff::Timestamp> {
     stamp?.parse().ok()
 }
 
-/// Public because the browser offers the same orders, and an order that came out
-/// differently by route would be two features wearing one name. The reverse is
-/// the caller's, applied afterwards — which is what puts the pinned notes at the
-/// bottom under `-r`: a pin is part of the order, and an order half-reversed is
-/// not one anybody asked for.
+/// Public so the browser sorts the same way. Reversing is the caller's, applied
+/// afterwards — so under `-r` pinned notes go to the bottom: the pin is part of
+/// the order.
 pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
     match sort {
         // The walk already sorts by slug.
@@ -560,7 +501,6 @@ pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
             a.note
                 .title
                 .cmp(&b.note.title)
-                // Two notes may share a title; the id keeps the order stable.
                 .then_with(|| a.id.cmp(&b.id))
         }),
         Sort::Created | Sort::Updated => notes.sort_by_cached_key(|file| {
@@ -575,18 +515,14 @@ pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
             )
         }),
     }
-    // Last, and stable, so the pinned notes float to the top of whichever order
-    // was just applied while keeping their places within it. `false` sorts
-    // first, so the negation is what puts a pin above everything else.
+    // Last and stable: pins float to the top, keeping their order among
+    // themselves. `false` sorts first, hence the negation.
     notes.sort_by_key(|file| !file.note.is_pinned());
 }
 
-/// Hand-written rather than derived: five string fields do not justify the
-/// supply-chain surface of a serialization crate. The escaping is the part that
-/// has to be right, and it is tested.
-///
-/// Each note carries its filename, because that is what a script needs next and
-/// deriving it means knowing noda's naming rule.
+/// Hand-written: a few string fields do not justify a serialization crate's
+/// supply-chain surface; the escaping is tested. Each note carries its filename
+/// so a script need not know the naming rule.
 fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> String {
     let mut out = String::from("{\"notebook\":");
     out.push_str(&json_string(notebook));
@@ -595,8 +531,7 @@ fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> St
         if index > 0 {
             out.push(',');
         }
-        // Always present: a key that came and went would make every reader
-        // test for it.
+        // Always present, `null` when absent, so no reader tests for the key.
         let stamp = |value: Option<&String>| match value {
             Some(text) => json_string(text),
             None => "null".to_string(),
@@ -610,8 +545,7 @@ fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> St
             json_string(&file.note.title),
             stamp(file.note.created.as_ref()),
             stamp(file.note.updated.as_ref()),
-            // The judgement, not the field: a reader should not have to know
-            // that `pinned: yes` is not a pin.
+            // The judgement, not the raw field (`pinned: yes` is not a pin).
             file.note.is_pinned(),
         );
         for (n, tag) in file.note.tags.iter().enumerate() {
@@ -633,8 +567,7 @@ fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> St
     out
 }
 
-/// A note's id, a file's name — the one listing addressing its two halves
-/// differently, because a file's name is its identity.
+/// A note's id, a file's name: each half's identity.
 fn as_identifiers(notes: &[notebook::NoteFile], files: &[String], null: bool) -> String {
     let separator = if null { '\0' } else { '\n' };
     let mut out = String::new();
@@ -662,7 +595,6 @@ fn json_string(text: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            // No shorthand, and cannot be written literally.
             c if (c as u32) < 0x20 => {
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
@@ -682,7 +614,7 @@ pub fn show(paths: &Paths, key: &str) -> Result<String> {
     )?))
 }
 
-/// Only the block between the `---` lines: the body is the user's prose.
+/// Dims only the frontmatter; the body is the user's prose.
 fn dim_frontmatter(text: &str) -> String {
     let Some(rest) = text.strip_prefix("---\n") else {
         return text.to_string();
@@ -697,8 +629,7 @@ fn dim_frontmatter(text: &str) -> String {
     )
 }
 
-/// Adding a tag a note carries, or removing one it lacks, is not an error — it
-/// leaves nothing to commit.
+/// Adding a tag a note carries, or removing one it lacks, is a no-op, not an error.
 pub fn tag(paths: &Paths, key: &str, changes: &[String], touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     tag_in(&notebook, key, changes, touch)
@@ -714,8 +645,8 @@ pub fn tag_in(notebook: &Notebook, key: &str, changes: &[String], touch: Touch) 
     Ok(done.summary)
 }
 
-/// Parsed away from the notes it applies to, so a run aimed at forty is refused
-/// before the first is opened rather than halfway through.
+/// Parsed before any note is opened, so a bad change is refused before the
+/// first write rather than halfway through a set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TagEdit {
     Add(String),
@@ -726,10 +657,8 @@ fn parse_tags(changes: &[String], key: Option<&str>) -> Result<Vec<TagEdit>> {
     changes
         .iter()
         .map(|change| {
-            // The list takes hyphen values so `-q3` is a tag, which means a
-            // flag written after them arrives as one more change: `--no-touch`
-            // would strip to `-no-touch` and remove a tag nobody has, looking
-            // like it worked.
+            // The list takes hyphen values, so a flag after it arrives here:
+            // `--no-touch` would silently remove a tag `-no-touch` nobody has.
             if change.starts_with("--") {
                 let goes = match key {
                     Some(key) => format!(" — `noda tag {key} {change} +tag`"),
@@ -761,17 +690,13 @@ fn parse_tags(changes: &[String], key: Option<&str>) -> Result<Vec<TagEdit>> {
         .collect()
 }
 
-/// What a change did to one note, with nothing committed.
-///
-/// The commit is the caller's: one command is one commit, but a queue from the
-/// browser is one commit for the lot, and that difference must not become a
-/// second account of what a change *means*.
+/// What a change did to one note, uncommitted: one command is one commit, but a
+/// browser queue is one commit for the lot, and both share this code.
 struct Applied {
     id: String,
     slug: String,
-    /// What git has to be told about, relative to the notebook.
+    /// Relative to the notebook.
     files: Vec<String>,
-    /// The line the command prints for this note.
     summary: String,
     /// False when the note already said what it was asked to say.
     changed: bool,
@@ -783,7 +708,6 @@ impl Applied {
     }
 }
 
-/// Writes the tag changes into one note's file. Nothing is committed.
 fn apply_tags(notebook: &Notebook, key: &str, edits: &[TagEdit], touch: Touch) -> Result<Applied> {
     let located = locate(notebook, key)?;
     let mut note = located.note;
@@ -843,14 +767,13 @@ pub fn pin_in(notebook: &Notebook, key: &str, pinned: bool, touch: Touch) -> Res
     Ok(done.summary)
 }
 
-/// Writes the pin into one note's file. Nothing is committed.
 fn apply_pin(notebook: &Notebook, key: &str, pinned: bool, touch: Touch) -> Result<Applied> {
     let located = locate(notebook, key)?;
     let mut note = located.note;
     let before = note.pinned.clone();
 
-    // Unpinning drops the line rather than writing `false`, so a note that has
-    // been pinned and unpinned is the file it was before either happened.
+    // Unpinning drops the line rather than writing `false`, so pin + unpin
+    // round-trips to the original file.
     note.pinned = pinned.then(|| note::PINNED.to_string());
 
     let file = note::file_name(&located.id, &located.slug);
@@ -901,13 +824,8 @@ pub fn edit_with(paths: &Paths, key: &str, editor: &str, touch: Touch) -> Result
     settle(&notebook, &located, &before, touch)
 }
 
-/// `edit` for a caller with no editor to hand — a browser arrives with the text
-/// typed. Everything after the write is `edit`'s own, because what a change
-/// *means* has one implementation.
-///
-/// Only the body: the frontmatter is left exactly as found, so a note from
-/// another program keeps its arrangement, and the title and tags have their own
-/// commands rather than a `<textarea>` full of YAML.
+/// `edit` with the new body in hand, for the browser. Only the body: the
+/// frontmatter is left as found, and title and tags have their own commands.
 pub fn rewrite_in(notebook: &Notebook, key: &str, body: &str, touch: Touch) -> Result<String> {
     let located = locate(notebook, key)?;
     let before = std::fs::read_to_string(&located.path)?;
@@ -917,19 +835,16 @@ pub fn rewrite_in(notebook: &Notebook, key: &str, body: &str, touch: Touch) -> R
     settle(notebook, &located, &before, touch)
 }
 
-/// Read it back, refuse it if it is no longer a note, stamp it, commit it.
-///
-/// Shared because after the write there is nothing to tell `edit` and
-/// `rewrite_in` apart.
+/// Read it back, refuse it if it is no longer a note, stamp it, commit it —
+/// shared by `edit` and `rewrite_in`.
 fn settle(notebook: &Notebook, located: &Located, before: &str, touch: Touch) -> Result<String> {
     let after = std::fs::read_to_string(&located.path)?;
     if after == *before {
         return Ok(format!("{}  (unchanged)", located.slug));
     }
 
-    // A rejected edit stays on disk to be fixed or thrown away, never silently
-    // discarded. No id to guard: it is in the filename, which an editor never
-    // touches.
+    // A rejected edit stays on disk, never silently discarded. The id needs no
+    // guard: it lives in the filename.
     let edited = Note::parse(&after).map_err(|e| {
         Error::msg(format!(
             "{}: {e}\nthe file was left as you saved it and was not committed",
@@ -937,10 +852,8 @@ fn settle(notebook: &Notebook, located: &Located, before: &str, touch: Touch) ->
         ))
     })?;
 
-    // One field set in place; everything else is committed exactly as saved,
-    // including the order the block was just arranged in. Under `--no-touch`
-    // nothing is written back over what the editor left, an `updated` it changed
-    // itself included.
+    // Only `updated` is set in place; the rest is committed as saved. Under
+    // `--no-touch` nothing is written back, even an `updated` the user edited.
     if touch == Touch::Stamp {
         let stamped = note::set_field(&after, "updated", &note::now())
             .expect("the note parsed, so it has a frontmatter block");
@@ -956,15 +869,10 @@ fn settle(notebook: &Notebook, located: &Located, before: &str, touch: Touch) ->
     Ok(summary(&located.id, &located.slug, &edited.tags))
 }
 
-/// Retitles a note. The slug follows the new title; the id never moves.
-///
-/// Which is why links to it go stale rather than broken — the destination names
-/// a dead path and a live id, so `backlinks` still answers. Every reader outside
-/// noda sees only the dead path, so a retitle says which notes are in that
-/// position and `update_links` rewrites them.
-///
-/// Opt-in for `file mv --update-links`'s reason: it edits the prose of notes the
-/// command was not pointed at. The walk is skipped when the slug does not move.
+/// Retitles a note. The slug follows the title; the id never moves, so links to
+/// it go stale rather than broken (`backlinks` still finds them by id). A retitle
+/// reports them; `update_links` rewrites them — opt-in, because it edits notes
+/// the command was not pointed at.
 pub fn mv(
     paths: &Paths,
     key: &str,
@@ -999,7 +907,6 @@ pub fn mv_in(
         note.updated = Some(note::now());
     }
 
-    // Only the slug moves, so identity and history survive untold.
     let was = note::file_name(&located.id, &located.slug);
     let file = note::file_name(&located.id, &slug);
     std::fs::write(notebook.path.join(&file), note.render())?;
@@ -1010,12 +917,10 @@ pub fn mv_in(
         changed.push(was.clone());
     }
 
-    // Finding out costs a read of every note, so the walk is skipped unless the
-    // rename moved something or the flag asked outright — which is how links
-    // left stale by an earlier rename get repaired.
+    // Reads every note, so only when the slug moved or the flag asks — the
+    // latter repairs links left stale by an earlier rename.
     if slug != located.slug || update_links {
-        // Taken after the rename, so a self-link is read under the name it has
-        // now rather than the one it had a moment ago.
+        // After the rename, so a self-link is read under its new name.
         let (notes, _) = notebook.inventory()?;
         let id = note::normalize_id(&located.id);
         let found = retarget_links(
@@ -1047,8 +952,7 @@ pub fn mv_in(
     Ok(out)
 }
 
-/// The commit that removed it stays, so `git revert` brings the note back with
-/// its id intact.
+/// A commit, so `git revert` brings the note back with its id intact.
 pub fn rm(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     rm_in(&notebook, key)
@@ -1061,10 +965,8 @@ pub fn rm_in(notebook: &Notebook, key: &str) -> Result<String> {
     Ok(done.summary)
 }
 
-/// Removes one note's file. Nothing is committed.
 fn apply_remove(notebook: &Notebook, key: &str) -> Result<Applied> {
-    // Deleting a file does not require understanding it, and refusing would
-    // disable the one command that clears up a broken note.
+    // `find`, not `locate`: a note that no longer parses must still be removable.
     let found = find(notebook, key)?;
 
     std::fs::remove_file(&found.path)?;
@@ -1083,8 +985,8 @@ fn apply_remove(notebook: &Notebook, key: &str) -> Result<Applied> {
     })
 }
 
-/// The two changes that mean something said about a *set* of notes. A retitle
-/// needs one title per note and `add` has no set, so neither is here.
+/// The changes that make sense over a set of notes (a retitle needs one title
+/// per note).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Tag { changes: Vec<String>, touch: Touch },
@@ -1099,9 +1001,8 @@ pub struct Step {
 }
 
 impl Step {
-    /// The line this step contributes to the commit message, and the line the
-    /// browser shows for it in the queue. One wording, so what you read before
-    /// sending is what the history says afterwards.
+    /// The line for both the commit message and the browser's queue, so what
+    /// you read before sending is what the history says.
     pub fn describe(&self) -> String {
         let notes = count(self.keys.len(), "note");
         match &self.change {
@@ -1118,7 +1019,7 @@ impl Step {
     }
 }
 
-/// `1 note` / `3 notes`, for the several places that have to say how many.
+/// `1 note` / `3 notes`.
 fn count(n: usize, thing: &str) -> String {
     if n == 1 {
         format!("1 {thing}")
@@ -1127,11 +1028,8 @@ fn count(n: usize, thing: &str) -> String {
     }
 }
 
-/// Whether a change could be carried out at all, without opening anything.
-///
-/// What the browser asks before it will put one in its queue: a tag that cannot
-/// be written down should be refused where it was typed, not at the end of a
-/// sitting when the whole queue is sent.
+/// Whether a change could be carried out at all, without opening anything — so
+/// the browser refuses a bad tag when it is queued, not when the queue is sent.
 pub fn check(change: &Change) -> Result<()> {
     match change {
         Change::Tag { changes, .. } => parse_tags(changes, None).map(|_| ()),
@@ -1139,16 +1037,12 @@ pub fn check(change: &Change) -> Result<()> {
     }
 }
 
-/// Several changes across several notes, committed at once.
+/// Several changes across several notes, in one commit because a queue is one
+/// intention. Writes through the same code as `tag` and `rm`.
 ///
-/// One commit, because a queue is one intention: twelve commits saying "these
-/// twelve notes are no longer q3" bury the fact under the work of carrying it
-/// out. The same code writes the same files as `tag` and `rm`, with the commit
-/// boundary moved out one level.
-///
-/// What can be refused is refused before anything is written. What cannot be
-/// known in advance — a note deleted from another window mid-queue — is reported
-/// without stopping the rest, the earlier changes being on disk by then.
+/// What can be refused is refused before anything is written; what cannot be
+/// known in advance (a note deleted mid-queue) is reported without stopping the
+/// rest.
 pub fn bulk(paths: &Paths, steps: &[Step]) -> Result<String> {
     if steps.is_empty() {
         return Err(Error::msg("there is nothing to send"));
@@ -1180,8 +1074,6 @@ pub fn bulk(paths: &Paths, steps: &[Step]) -> Result<String> {
                     files.extend(done.files);
                     touched.insert(done.id);
                 }
-                // Neither a failure nor a change — one of the reasons a set is
-                // worth acting on at all.
                 Ok(_) => {}
                 Err(e) => problems.push(format!("{key}: {e}")),
             }
@@ -1215,8 +1107,7 @@ enum Planned {
     Remove,
 }
 
-/// One step is its own subject; several get a count and a body listing them,
-/// which is what `git log --oneline` wants either way.
+/// One step is its own subject; several get a count and a body listing them.
 fn commit_message(steps: &[Step]) -> String {
     if let [only] = steps {
         return only.describe();
@@ -1237,25 +1128,13 @@ fn commit_message(steps: &[Step]) -> String {
     message
 }
 
-/// Writes the notebook's `README.md` and commits it.
-///
-/// For the reader outside noda: a git host renders it above the file list, so
-/// the first thing anyone meets of a pushed notebook is this or a wall of
-/// `k3f9m2p1-*.md`.
-///
-/// Its own command rather than a flag on `notebook add`, because a notebook
-/// wants a README the day it is pushed somewhere people can see, not the day it
-/// is created.
-///
-/// Fixed prose on purpose: every line stays true however many notes arrive. An
-/// index would not, and it is the one thing this storage model refuses — nothing
-/// in the repository restates the filenames, so a generated list would go stale
-/// from the next `noda add` onward.
+/// Writes and commits the notebook's `README.md`, which a git host shows above
+/// the file list. Fixed prose rather than an index of notes, which would go
+/// stale from the next `noda add`.
 pub fn readme(paths: &Paths, force: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let path = notebook.path.join(notebook::README_FILE);
 
-    // Prose someone wrote, and the template is not worth losing it for.
     let existed = path.exists();
     if existed && !force {
         return Err(Error::msg(format!(
@@ -1279,7 +1158,6 @@ pub fn readme(paths: &Paths, force: bool) -> Result<String> {
     ))
 }
 
-/// With the notebook's name where a reader would otherwise have to guess it.
 fn readme_template(name: &str) -> String {
     format!(
         r"# {name}
@@ -1339,13 +1217,8 @@ $ noda ls
     )
 }
 
-/// Copies files into the active notebook and commits them.
-///
-/// A wrapped copy, but into a directory only noda can name — the command exists
-/// so nothing about a notebook requires knowing where it is.
-///
-/// It says nothing about notes: which note uses a file is written in that note's
-/// prose, and a command taking a note here would say it in two places.
+/// Copies files into the active notebook and commits them. Takes no note: which
+/// note uses a file is said in that note's prose, not twice.
 pub fn file_add(paths: &Paths, sources: &[PathBuf], rename: Option<&str>) -> Result<String> {
     if rename.is_some() && sources.len() > 1 {
         return Err(Error::msg(
@@ -1374,8 +1247,6 @@ pub fn file_add(paths: &Paths, sources: &[PathBuf], rename: Option<&str>) -> Res
                 .to_string(),
         };
         validate_file_name(&name)?;
-        // Only where a name is chosen: manufacturing one that reads as a note
-        // is a different question from removing an existing file.
         refuse_a_notes_name(&name)?;
         if notebook.path.join(&name).exists() {
             return Err(Error::msg(format!(
@@ -1404,9 +1275,8 @@ pub fn file_add(paths: &Paths, sources: &[PathBuf], rename: Option<&str>) -> Res
     Ok(out)
 }
 
-/// A commit like any other, so `git revert` brings it back. A note is refused
-/// rather than deleted: `rm` is where a note goes, one of them having an
-/// identity to lose.
+/// A commit, so `git revert` brings it back. A note is refused: `noda rm` is
+/// for those.
 pub fn file_rm(paths: &Paths, name: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     validate_file_name(name)?;
@@ -1421,16 +1291,9 @@ pub fn file_rm(paths: &Paths, name: &str) -> Result<String> {
     Ok(format!("removed  {name}"))
 }
 
-/// Renames one of the notebook's files.
-///
-/// Every link that named the old file now names nothing, so this always says
-/// which — `doctor --links`' walk, paid because a rename is rare and the damage
-/// is otherwise silent.
-///
-/// `update_links` rewrites them instead, opt-in because it edits the prose of
-/// notes the command was not pointed at. Even then they are re-read: a
-/// destination written with backslash escapes cannot be located, and one that
-/// was not rewritten is reported rather than assumed fixed.
+/// Renames one of the notebook's files and always reports the links it broke —
+/// a full walk, paid because a rename is rare and the damage otherwise silent.
+/// `update_links` rewrites them instead (see `retarget_links`).
 pub fn file_mv(paths: &Paths, old: &str, new: &str, update_links: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     validate_file_name(old)?;
@@ -1469,14 +1332,14 @@ pub fn file_mv(paths: &Paths, old: &str, new: &str, update_links: bool) -> Resul
 
 /// What a rename did to the links that named the thing renamed.
 struct Retarget {
-    /// The notes whose bodies were rewritten, by filename.
+    /// Filenames of the notes whose bodies were rewritten.
     rewritten: Vec<String>,
     /// Still naming the old name: not asked for, or out of reach.
     stranded: Vec<String>,
 }
 
 impl Retarget {
-    /// Nothing when no note ever named the old name.
+    /// Empty when no note named the old name.
     fn describe(&self, subject: &str, update_links: bool) -> String {
         let mut out = String::new();
         if !self.rewritten.is_empty() {
@@ -1505,15 +1368,10 @@ impl Retarget {
 }
 
 /// Rewrites the links `names` accepts when `update_links` says so, and reports
-/// them either way.
+/// them either way. `file mv` matches the old name; `mv` matches the note's id,
+/// catching a link written two renames ago.
 ///
-/// The predicate is what the two renames disagree about: an attachment's name is
-/// its whole identity, so `file mv` matches the name it just left, while a note
-/// keeps its id, so `mv` matches that and catches a destination written two
-/// renames ago.
-///
-/// Every note is read whichever it is — `doctor --links`' cost. Nothing is
-/// assumed fixed: a note that was touched is read back, because `link::rewrite`
+/// A rewritten note is re-checked rather than assumed fixed: `link::rewrite`
 /// cannot locate a destination written with backslash escapes.
 fn retarget_links(
     notebook: &Notebook,
@@ -1544,8 +1402,7 @@ fn retarget_links(
         }
         let path = notebook.path.join(&name);
         let text = std::fs::read_to_string(&path)?;
-        // The frontmatter is carried byte for byte, so a rename cannot reformat
-        // what somebody wrote by hand nor move `updated` on unchanged prose.
+        // The frontmatter is carried byte for byte, `updated` included.
         let Some((_, body)) = note::split_frontmatter(&text) else {
             stranded.push(name);
             continue;
@@ -1575,15 +1432,14 @@ fn retarget_links(
     })
 }
 
-/// So the tools noda does not wrap can be pointed at it:
-/// `pandoc "$(noda path meeting-notes)"`, `cd "$(noda path)"`.
+/// For the tools noda does not wrap: `pandoc "$(noda path meeting-notes)"`.
 pub fn path(paths: &Paths, key: Option<&str>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let Some(key) = key else {
         return Ok(format!("{}\n", notebook.path.display()));
     };
 
-    // One key can mean both, and asking twice is a resolve and a `stat`.
+    // One key can name both.
     let as_note = notebook.resolve(key);
     let as_file = notebook.path.join(key);
     let is_file = !key.contains('/') && !key.contains('\\') && as_file.is_file();
@@ -1596,8 +1452,7 @@ pub fn path(paths: &Paths, key: Option<&str>) -> Result<String> {
             note::file_name(&id, &slug),
             key
         ))),
-        // `resolve` already names the candidates for an ambiguous key; only
-        // "no such note" needs widening, this command having been asked both.
+        // Only "no such note" needs widening; an ambiguous key's error stands.
         (Err(Error::Msg(said)), false) if said.starts_with(notebook::NOT_FOUND) => Err(Error::msg(
             format!("nothing called `{key}` — the notebook holds no note and no file by that name"),
         )),
@@ -1605,8 +1460,7 @@ pub fn path(paths: &Paths, key: Option<&str>) -> Result<String> {
     }
 }
 
-/// When the name is a note's, say so and name the right command: "no such file"
-/// about a file plainly sitting there is the unhelpful version.
+/// When the name is a note's, say so and name the right command.
 fn missing_file(notes: &[notebook::NoteFile], name: &str, instead: &str) -> Error {
     let is_note = notes
         .iter()
@@ -1618,8 +1472,7 @@ fn missing_file(notes: &[notebook::NoteFile], name: &str, instead: &str) -> Erro
     }
 }
 
-/// Such a name reads as a note that lost its frontmatter, and `doctor` would
-/// report it broken from the moment it appeared.
+/// Such a name reads as a note without frontmatter, which `doctor` reports broken.
 fn refuse_a_notes_name(name: &str) -> Result<()> {
     if note::names_a_note(name) {
         return Err(Error::msg(format!(
@@ -1629,9 +1482,8 @@ fn refuse_a_notes_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// One flat directory, so a name is a name and never a path. A leading `.` is
-/// refused because noda's walk skips dotfiles: such a file would be committed
-/// and then never mentioned by anything that lists what the notebook holds.
+/// One flat directory, so a name is never a path. A leading `.` is refused
+/// because the walk skips dotfiles: nothing would ever list it.
 fn validate_file_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(Error::msg("a file needs a name"));
@@ -1646,9 +1498,7 @@ fn validate_file_name(name: &str) -> Result<()> {
             "noda does not list dotfiles, so it will not add one: {name}"
         )));
     }
-    // Said here rather than left to the write, which reports it as an errno. A
-    // note's slug is cut to fit instead, but an attachment's name is what links
-    // point at, so cutting it would break them silently.
+    // Refused rather than cut to fit like a slug: links point at this name.
     if name.len() > note::MAX_FILE_NAME_LEN {
         return Err(Error::msg(format!(
             "a filename has to fit in {} bytes, and this one is {}: {name}",
@@ -1672,26 +1522,16 @@ pub fn notebook_add(paths: &Paths, name: &str, remote: Option<&str>) -> Result<S
     ))
 }
 
-/// One notebook as `notebook_ls` lays it out, read before any of it is measured.
 struct Row {
     name: String,
-    /// `None` has nowhere to sync to, which is not the same as having somewhere
-    /// and never using it: the column is skipped for the first, padded for the
-    /// second.
+    /// `None` omits the column; a remote never synced pads it.
     remote: Option<String>,
     drift: Option<(usize, usize)>,
 }
 
-/// Notebooks, the active one marked `*`, each with where it stands.
-///
-/// `noda status` speaks only about the active notebook, so one you have not
-/// opened in a fortnight can be thirty commits behind with nothing saying so.
-/// The browser's shelf has said it all along.
-///
-/// [`Notebook::drift`] rather than [`Notebook::status`] is what makes it
-/// affordable per row — two refs compared, against two walks of the working
-/// tree — and nothing goes to the network, so an unreachable remote costs no
-/// more than any other.
+/// Notebooks, the active one marked `*`, each with its drift from its remote.
+/// [`Notebook::drift`] rather than [`Notebook::status`] keeps it cheap per row
+/// (two refs compared, no working-tree walk), and nothing touches the network.
 pub fn notebook_ls(paths: &Paths) -> Result<String> {
     let names = Notebook::list(paths)?;
     if names.is_empty() {
@@ -1699,8 +1539,6 @@ pub fn notebook_ls(paths: &Paths) -> Result<String> {
     }
     let active = notebook::active_name(paths).ok();
 
-    // Gathered whole first: no column's width is known until every notebook
-    // has been asked.
     let rows: Vec<Row> = names
         .into_iter()
         .map(|name| {
@@ -1741,15 +1579,12 @@ pub fn notebook_ls(paths: &Paths) -> Result<String> {
         } else {
             ' '
         };
-        // Muted unless there is something to do: on a dozen rows of facts,
-        // `2 to push` is the one the eye must find without reading.
+        // Muted unless there is something to push or pull.
         let words = standing(remote.as_deref(), drift);
         let painted = match drift {
             Some((ahead, behind)) if remote.is_some() && (ahead > 0 || behind > 0) => words,
             _ => style::paint(style::MUTED, &words),
         };
-        // The column is absent for such a row, not empty: a `no remote` parked
-        // under a heading of URLs reads as a value that went missing.
         let line = match remote.as_deref() {
             Some(remote) => format!(
                 "{marker} {}  {}  {painted}",
@@ -1764,8 +1599,8 @@ pub fn notebook_ls(paths: &Paths) -> Result<String> {
     Ok(out)
 }
 
-/// Not a commit, and so cannot be undone: the active notebook is refused
-/// outright and everything else is confirmed first.
+/// Not a commit and cannot be undone, so the active notebook is refused and any
+/// other is confirmed first.
 pub fn notebook_rm(paths: &Paths, name: &str, force: bool) -> Result<String> {
     notebook_rm_confirmed(paths, name, force, ask_at_the_terminal)
 }
@@ -1809,8 +1644,8 @@ pub fn notebook_rm_confirmed(
     ))
 }
 
-/// Silence is no. Piped there is nobody to ask, so it is refused rather than
-/// assumed — `--force` is how a script says it meant it.
+/// Anything but `y`/`yes` is no. With no terminal it refuses; a script passes
+/// `--force`.
 fn ask_at_the_terminal(question: &str) -> Result<bool> {
     use std::io::IsTerminal;
 
@@ -1819,7 +1654,7 @@ fn ask_at_the_terminal(question: &str) -> Result<bool> {
             "there is no terminal to confirm at — pass `--force` if you mean it",
         ));
     }
-    // The question goes to stderr so that stdout carries only the outcome.
+    // stderr, so stdout carries only the outcome.
     let mut stderr = std::io::stderr();
     stderr.write_all(question.as_bytes())?;
     stderr.flush()?;
@@ -1849,22 +1684,21 @@ pub fn notebook_rename(paths: &Paths, old: &str, new: &str) -> Result<String> {
     Ok(format!("renamed notebook `{old}` to `{new}`"))
 }
 
-/// How much of a matching line to show around the match.
+/// Characters of a matching line to show.
 const EXCERPT_WIDTH: usize = 72;
-/// How much of it may sit before the match, so the match itself stays visible.
+/// At most this many before the match, so the match stays visible.
 const EXCERPT_LEAD: usize = 28;
 
-/// Case-insensitive substring, not word: a notebook of Chinese or Japanese
-/// notes has no spaces to tokenise on. Several terms mean all of them.
+/// Case-insensitive substring, not word: Chinese or Japanese notes have no
+/// spaces to tokenise on. Several terms mean all of them.
 pub fn search(paths: &Paths, tokens: &[String]) -> Result<String> {
     let query = Query::parse(tokens)?;
-    // Only text terms can point at a line.
     let terms = query.excerpt_terms();
 
     let notebook = Notebook::open_active(paths)?;
     let mut rows = Vec::new();
     for file in notebook.notes()? {
-        // Not the raw file, or `---` and the keys would be searchable text.
+        // The parsed note, so frontmatter keys are not searchable text.
         if !query.matches(&file.id, &file.note) {
             continue;
         }
@@ -1882,7 +1716,7 @@ pub fn search(paths: &Paths, tokens: &[String]) -> Result<String> {
         return Ok(String::new());
     }
 
-    // `ls`'s row: a hit is a note, and `ls` settled what a note looks like.
+    // `ls`'s row shape.
     let id_width = rows.iter().map(|r| display_width(&r.0)).max().unwrap_or(0);
     let mut out = String::new();
     for (id, _slug, title, tags, excerpt) in rows {
@@ -1894,8 +1728,7 @@ pub fn search(paths: &Paths, tokens: &[String]) -> Result<String> {
         }
         out.push_str(line.trim_end());
         out.push('\n');
-        // A hit in the title or the tags is already visible above; only a hit in
-        // the body needs to be quoted back.
+        // Only a body hit needs quoting; title and tags are on the row.
         if let Some(excerpt) = excerpt {
             out.push_str(&" ".repeat(id_width + 2));
             out.push_str(&excerpt);
@@ -1905,8 +1738,7 @@ pub fn search(paths: &Paths, tokens: &[String]) -> Result<String> {
     Ok(out)
 }
 
-/// The first body line holding a term, cut down to something that fits a
-/// terminal, with the match itself picked out.
+/// The first body line holding a term, cut to fit, with the match highlighted.
 fn excerpt(body: &str, terms: &[String]) -> Option<String> {
     let (line, start, end) = body.lines().find_map(|line| {
         terms
@@ -1925,11 +1757,8 @@ fn excerpt(body: &str, terms: &[String]) -> Option<String> {
 }
 
 /// Case-insensitive `find`, as byte offsets into `haystack`. Lowercasing can
-/// change how many bytes a character takes, so the way back to the original is
-/// recorded rather than assumed — every offset returned is a char boundary.
-///
-/// Shared with the browser, which picks the same match out of the same prose:
-/// what `search` quotes back on one line, `tui` highlights where it sits.
+/// change a character's byte length, so offsets are mapped back and always land
+/// on char boundaries. Shared with the TUI, which highlights the same match.
 pub(crate) fn find_ignoring_case(haystack: &str, needle: &str) -> Option<(usize, usize)> {
     let mut lowered = String::with_capacity(haystack.len());
     let mut origin = Vec::with_capacity(haystack.len());
@@ -1966,8 +1795,7 @@ fn first_chars(text: &str, max: usize) -> String {
     format!("{}…", head.trim_end())
 }
 
-/// Nothing touches the network — the drift is measured against the last fetch.
-/// A command for orienting yourself has to work on a train.
+/// Offline: drift is measured against the last fetch.
 pub fn status(paths: &Paths) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let status = notebook.status()?;
@@ -1989,13 +1817,12 @@ pub fn status(paths: &Paths) -> Result<String> {
         ("notes", status.notes.to_string()),
     ];
 
-    // Rows that never say anything are how the ones that do get skipped.
+    // Rows that would always say "0" are left out, so the others get read.
     if status.files > 0 {
         rows.push(("files", status.files.to_string()));
     }
     rows.push(("changes", changes));
 
-    // "0 problems" on every healthy notebook teaches people to skip the line.
     if !status.problems.is_empty() {
         rows.push(("problems", describe_problems(&status.problems)));
     }
@@ -2018,8 +1845,7 @@ pub fn status(paths: &Paths) -> Result<String> {
         .unwrap_or(0);
     let mut out = String::new();
     for (key, value) in rows {
-        // Continuation lines sit under the first, so it still reads as two
-        // columns.
+        // Continuation lines align under the value column.
         let mut lines = value.lines();
         let _ = writeln!(out, "{}  {}", pad(key, width), lines.next().unwrap_or(""));
         for line in lines {
@@ -2029,8 +1855,7 @@ pub fn status(paths: &Paths) -> Result<String> {
     Ok(out)
 }
 
-/// One kind gets one line, which already says how many. Several get a total
-/// first, so the size is legible before the breakdown.
+/// One kind gets one line; several get a total first, then the breakdown.
 fn describe_problems(problems: &[(Problem, Vec<String>)]) -> String {
     let mut out = String::new();
     if problems.len() > 1 {
@@ -2046,7 +1871,7 @@ fn describe_problems(problems: &[(Problem, Vec<String>)]) -> String {
             style::paint(style::MUTED, &format!("  ({})", elide(subjects)))
         );
     }
-    // Detection without a remedy is a trap, so name the command.
+    // Name the remedy.
     let _ = write!(
         out,
         "{}",
@@ -2055,9 +1880,8 @@ fn describe_problems(problems: &[(Problem, Vec<String>)]) -> String {
     out.trim_end().to_string()
 }
 
-/// Naming every one is how a wholesale problem puts a line per note on screen.
+/// The first few subjects, so a wholesale problem stays on one line.
 fn elide(subjects: &[String]) -> String {
-    /// Enough to recognise, few enough for one line.
     const SHOWN: usize = 3;
 
     let mut shown: Vec<&str> = subjects.iter().take(SHOWN).map(String::as_str).collect();
@@ -2067,24 +1891,12 @@ fn elide(subjects: &[String]) -> String {
     shown.join("; ")
 }
 
-/// Diagnoses what noda cannot simply act on, and adopts the notes only waiting
-/// for an id.
+/// Diagnoses what noda cannot act on, and adopts notes that only lack an id —
+/// the one repair that loses nothing. A shared id or a note-named file without
+/// frontmatter is reported and left to its author.
 ///
-/// Nothing derived is left to rebuild — the files *are* the record. What arrives
-/// from outside is: a note written by hand, a file copied in, two machines that
-/// minted one id without meeting.
-///
-/// Exactly one of those has a repair that loses nothing: frontmatter without an
-/// id is a note that has said what it is and only lacks a name. The other two
-/// are reported and left alone, because only their author knows whether to
-/// discard an identity or whether a file was ever a note.
-///
-/// `links` and `times` are flags because they cost a full read of the notebook
-/// and a full walk of history. The hooks check needs neither and is here because
-/// a hook is the purest thing noda cannot act on: it can neither run nor delete
-/// it.
-///
-/// Where `status` elides, this names every file.
+/// `links` and `times` are flags because they cost a read of every body and a
+/// walk of history. Unlike `status`, this names every file.
 pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let scan = notebook.scan()?;
@@ -2107,7 +1919,7 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
         }
     }
 
-    // Free: `scan` already parsed the frontmatter this reads one field of.
+    // Always on: it parses no links and walks no history.
     let unconverted = describe_unconverted(&notebook.notes()?);
     if !unconverted.is_empty() {
         if !report.is_empty() {
@@ -2165,7 +1977,7 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
         return Ok(out.trim_end().to_string());
     }
 
-    // A commit like any other, so an unwanted repair is revertible.
+    // A commit, so an unwanted repair is revertible.
     let mut taken = notebook.taken_ids()?;
     let mut changed = Vec::new();
     for file in &scan.unnamed {
@@ -2183,15 +1995,9 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
     Ok(out.trim_end().to_string())
 }
 
-/// The ways a link and a file can fail to meet.
-///
-/// Nothing is repaired: an orphan may be an attachment whose note went or a file
-/// parked on purpose, and the only repair is deleting something noda cannot
-/// regenerate; a broken link may be a typo or a file not copied in yet.
-///
-/// A stale link is the one case noda does know the answer to, and is reported
-/// anyway — acting on it edits the prose of notes this command was not pointed
-/// at, which noda does only when asked in so many words.
+/// Orphaned files, stale links and broken links. Nothing is repaired: only the
+/// author knows whether an orphan or a broken link is intended, and fixing a
+/// stale link edits notes this command was not pointed at.
 fn describe_audit(audit: &notebook::Audit) -> String {
     let mut out = String::new();
 
@@ -2212,7 +2018,6 @@ fn describe_audit(audit: &notebook::Audit) -> String {
         for (note, target, now) in &audit.stale {
             let arrow = style::paint(style::MUTED, "->");
             let _ = writeln!(out, "  {note} {arrow} {target}");
-            // Indented under it: the answer, not another line of the report.
             let _ = writeln!(
                 out,
                 "    {}",
@@ -2237,16 +2042,12 @@ fn describe_audit(audit: &notebook::Audit) -> String {
     out.trim_end().to_string()
 }
 
-/// noda writes and commits in the same breath, so the honest gap is under a
-/// second. The allowance covers a slow commit, not a judgement call — an edit
-/// made outside noda is discovered minutes or days later, never inside one.
+/// Seconds a commit may trail the `updated` noda wrote. noda writes and commits
+/// together, so this only covers a slow commit; an outside edit shows up far later.
 const COMMIT_LAG: i64 = 60;
 
-/// Checked against themselves and against git. The walk of history is what puts
-/// this behind a flag.
-///
-/// Nothing is repaired: a stale `updated` means the note was edited outside
-/// noda, and the only fix is overwriting somebody's record with a guess.
+/// Timestamps checked against themselves and against git. Nothing is repaired:
+/// the only fix would overwrite somebody's record with a guess.
 fn describe_times(notes: &[notebook::NoteFile], last: &HashMap<String, i64>) -> String {
     let mut unreadable = Vec::new();
     let mut reversed = Vec::new();
@@ -2273,8 +2074,7 @@ fn describe_times(notes: &[notebook::NoteFile], last: &HashMap<String, i64>) -> 
             reversed.push(name.clone());
         }
 
-        // The only witness to a change noda did not make, and it can only say
-        // that the file changed — which is all that is claimed here.
+        // git can only say the file changed later — which is all that is claimed.
         if let (Some(updated), Some(committed)) = (updated, last.get(&note::normalize_id(&file.id)))
             && *committed - updated.as_second() > COMMIT_LAG
         {
@@ -2322,15 +2122,9 @@ fn describe_times(notes: &[notebook::NoteFile], last: &HashMap<String, i64>) -> 
     out.trim_end().to_string()
 }
 
-/// The notes an importer could not finish translating.
-///
-/// `unconverted:` is the record and this is the handle — `search` reads title,
-/// tags and body, so a field it does not know would be written where nothing
-/// could find it. A tag would have been findable, but tags belong to whoever
-/// writes the notes.
-///
-/// Nothing is repaired: what the remaining `WikiText` should say is a question
-/// only its author can answer.
+/// The notes whose `unconverted:` field says an importer could not finish them —
+/// the one place that field is surfaced, since `search` does not read it.
+/// Nothing is repaired: only the author knows what the `WikiText` should say.
 fn describe_unconverted(notes: &[notebook::NoteFile]) -> String {
     let prefix = format!("{}: ", import::UNCONVERTED);
     let mut found: Vec<(String, String)> = notes
@@ -2362,8 +2156,8 @@ fn describe_unconverted(notes: &[notebook::NoteFile]) -> String {
         if found.len() == 1 { "carries" } else { "carry" }
     );
 
-    // What is left, not which notes have it: after an import that can be most
-    // of the notebook, burying every other check.
+    // Counted by kind rather than listed by note: after an import that can be
+    // most of the notebook.
     let mut kinds: HashMap<&str, usize> = HashMap::new();
     for (_, what) in &found {
         for kind in what.split(',') {
@@ -2376,7 +2170,7 @@ fn describe_unconverted(notes: &[notebook::NoteFile]) -> String {
         let _ = writeln!(out, "  {count} {} {kind}", noun(*count));
     }
 
-    // A cap nobody is told about reads as a complete list.
+    // The cap is announced, or the list reads as complete.
     const NAMED: usize = 5;
     let _ = writeln!(out, "  {}", style::paint(style::MUTED, "for example:"));
     for (file, _) in found.iter().take(NAMED) {
@@ -2398,12 +2192,8 @@ fn describe_unconverted(notes: &[notebook::NoteFile]) -> String {
     out
 }
 
-/// The hooks that will never fire.
-///
-/// Not behind a flag: what makes a check opt-in is its cost, and this reads one
-/// directory `doctor` was walking anyway. Out of `Problem` and so out of
-/// `status`, because a script left in `.git` is not something the notebook
-/// holds.
+/// The hooks that will never fire. Not behind a flag, being one directory read;
+/// not a `Problem` (so not in `status`), since `.git` is not the notebook.
 fn describe_hooks(hooks: &[String]) -> String {
     if hooks.is_empty() {
         return String::new();
@@ -2415,7 +2205,6 @@ fn describe_hooks(hooks: &[String]) -> String {
     for hook in hooks {
         let _ = writeln!(out, "  {hook}");
     }
-    // Knowing *why* they are dead is what says git would have fired them.
     let _ = write!(
         out,
         "{}",
@@ -2427,8 +2216,7 @@ fn describe_hooks(hooks: &[String]) -> String {
     out
 }
 
-/// Detection without a remedy is a trap, and the two noda refuses to settle are
-/// where saying nothing leaves someone stuck.
+/// How to settle the two problems noda leaves to the user.
 fn advice(scan: &notebook::Scan) -> Vec<String> {
     let mut out = Vec::new();
     if !scan.notes.is_empty() {
@@ -2458,15 +2246,9 @@ fn advice(scan: &notebook::Scan) -> Vec<String> {
     out
 }
 
-/// The drift phrased as what there is left to do.
-///
-/// One wording, here because three screens say it — and they had already grown
-/// two spellings, `never synced` and `never fetched`. The first is accurate: a
-/// first push clears that state as readily as a fetch, so a fetch is not what it
-/// waits for.
-///
-/// Plain text, because one of the three renders into HTML; see
-/// [`describe_drift`].
+/// The drift phrased as what is left to do — one wording for every screen.
+/// `never synced`, not `never fetched`: a first push clears it as well as a
+/// fetch. Plain text, because one caller renders HTML.
 pub fn drifted(drift: Option<(usize, usize)>) -> String {
     match drift {
         None => "never synced".to_string(),
@@ -2477,8 +2259,7 @@ pub fn drifted(drift: Option<(usize, usize)>) -> String {
     }
 }
 
-/// The same, for a notebook that may have no remote at all — which has not
-/// drifted from anything, and for which `never synced` would name a state it can
+/// [`drifted`], or `no remote` where `never synced` would be a state it can
 /// never leave.
 pub fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
     match remote {
@@ -2487,8 +2268,7 @@ pub fn standing(remote: Option<&str>, drift: Option<(usize, usize)>) -> String {
     }
 }
 
-/// [`drifted`], painted for the one screen with room for the caveat — which is
-/// the whole reason `status` is instant: it reports the last sync's news.
+/// [`drifted`], painted, with the caveat that `status` reports the last sync.
 fn describe_drift(drift: Option<(usize, usize)>) -> String {
     let words = drifted(drift);
     match drift {
@@ -2500,28 +2280,21 @@ fn describe_drift(drift: Option<(usize, usize)>) -> String {
     }
 }
 
-/// The arrow `status` and the TUI already use for this direction. A margin and
-/// not a column: one character on a few rows, where a column would cost a
-/// heading and a width on every row to say nothing on most.
-///
-/// Shared with the TUI's log screen, which draws it through different machinery
-/// — the one thing the two must not differ on is the character.
+/// Marks an unpushed commit in `noda log` and the TUI's log screen — the arrow
+/// the TUI header uses for commits ahead. A margin, not a column.
 pub const UNPUSHED: &str = "↑";
 
-/// The notebook's history, or one note's.
-///
-/// **The rows the remote has not seen carry a mark.** `noda status` says how
-/// many there are to push, and the question straight after is *which*.
+/// The notebook's history, or one note's, with unpushed commits marked.
 pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    // A note whose frontmatter has gone is precisely the one whose past you
-    // want, and the id is in the filename either way.
+    // `find`, not `locate`: a note with broken frontmatter is the one whose past
+    // you want.
     let id = match key {
         Some(key) => Some(find(&notebook, key)?.id),
         None => None,
     };
 
-    // Once for the listing, and free with no remote: see `Notebook::unpushed`.
+    // Empty, at no cost, when there is no remote.
     let unpushed = notebook.unpushed(&notebook.branch()?)?;
 
     let entries = notebook.log(id.as_deref(), max)?;
@@ -2532,7 +2305,6 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
             shown += 1;
             style::paint(style::MUTED, UNPUSHED)
         } else {
-            // So the ids stay in one column either way.
             " ".to_string()
         };
         let line = format!(
@@ -2548,11 +2320,8 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
         out.push('\n');
     }
 
-    // `-n` can cut above the oldest unpushed commit, leaving the marks on
-    // screen a subset presenting itself as the whole.
-    //
-    // Whole-notebook only: against one note's log, `unpushed` counts a different
-    // set of commits, so the subtraction would produce a number about nothing.
+    // `-n` can hide unpushed commits, so say how many. Whole-notebook only:
+    // against one note's log the subtraction would mean nothing.
     let hidden = if id.is_none() {
         unpushed.len().saturating_sub(shown)
     } else {
@@ -2571,18 +2340,12 @@ pub fn log(paths: &Paths, key: Option<&str>, max: Option<usize>) -> Result<Strin
     Ok(out)
 }
 
-/// The notes that link to something — a note, or one of the notebook's files.
-///
-/// Inbound only, which is why it is not called `links`: what a note points at is
-/// in the note, and what points at it is the half nothing could tell you.
-///
-/// Its own command rather than a flag on `ls`, because `ls` reads a directory
-/// and this parses every body. It takes a file as readily as a note, as
-/// `noda path` does — the walk that answers either answers both.
+/// The notes that link to a note or one of the notebook's files. Its own
+/// command rather than an `ls` flag, because it parses every body.
 pub fn backlinks(paths: &Paths, key: &str, format: Format) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
 
-    // As `path` resolves it, and for its reason: one key can name both.
+    // Resolved as `path` does: one key can name both.
     let as_note = notebook.resolve(key);
     let as_file = notebook.path.join(key);
     let is_file = !key.contains('/') && !key.contains('\\') && as_file.is_file();
@@ -2629,7 +2392,7 @@ pub fn backlinks(paths: &Paths, key: &str, format: Format) -> Result<String> {
         ));
     }
 
-    // `ls`'s row: there is one shape for naming a note.
+    // `ls`'s row shape.
     let ids = found
         .iter()
         .map(|f| display_width(&f.id))
@@ -2644,8 +2407,8 @@ pub fn backlinks(paths: &Paths, key: &str, format: Format) -> Result<String> {
     Ok(out)
 }
 
-/// It names its subject, so a script that asked about `meeting-notes` gets the
-/// filename actually resolved — the thing a retitle moves.
+/// Carries the resolved filename as `target`, so a script asking by slug learns
+/// what it resolved to.
 fn backlinks_json(notebook: &str, subject: &str, found: &[notebook::NoteFile]) -> String {
     let mut out = String::from("{\"notebook\":");
     out.push_str(&json_string(notebook));
@@ -2671,33 +2434,21 @@ fn backlinks_json(notebook: &str, subject: &str, found: &[notebook::NoteFile]) -
 
 /// Every unticked checkbox in the notebook, soonest due first.
 ///
-/// Its own command rather than a flag on `ls`, on `deleted`'s precedent: `ls`
-/// reads a directory and this parses every body, and one command must not carry
-/// two costs that far apart.
-///
-/// There is no `noda done`. Ticking a box needs an address noda does not have —
-/// line numbers move, text prefixes collide, and giving each item an id would
-/// make the file a noda-only format, which is what GFM checkboxes avoided.
-/// `noda edit <note>` types one `x`.
+/// There is no `noda done`: an item has no stable address (line numbers move,
+/// text collides), and ids would make the file noda-only. `noda edit` it.
 pub fn todo(paths: &Paths, json: bool) -> Result<String> {
     todo_on(paths, json, &today()?)
 }
 
-/// The *local* date, the only kind a due date can be compared against: nobody
-/// writes `due:2026-08-10` meaning UTC. Public because the browser decides what
-/// is overdue the same way or not at all.
+/// The *local* date: nobody writes `due:2026-08-10` meaning UTC, and east of UTC
+/// an item would otherwise go overdue hours late. Public so the browser agrees.
 pub fn today() -> Result<String> {
     let (seconds, offset_minutes) = notebook::local_now()?;
-    // The date half of a `YYYY-MM-DD HH:MM`, which is ASCII throughout.
+    // The date half of `YYYY-MM-DD HH:MM`, ASCII throughout.
     Ok(format_time(seconds, offset_minutes)[..DATE_WIDTH].to_string())
 }
 
-/// `todo` with today given explicitly, so a test can say what "overdue" means
-/// without freezing the clock — `edit_with`'s shape.
-///
-/// Getting the zone wrong is not a rounding error: east of UTC an item that went
-/// overdue at midnight would stay unmarked until morning, which is exactly when
-/// a todo list is read.
+/// `todo` with today given explicitly, so a test need not freeze the clock.
 pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let mut items = Vec::new();
@@ -2711,7 +2462,7 @@ pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
         todo::order((left_slug, left), (right_slug, right))
     });
 
-    // Before the empty check: an empty list is an answer.
+    // Before the empty check: JSON always gets a document.
     if json {
         return Ok(todo_json(&notebook.name, &items));
     }
@@ -2731,7 +2482,7 @@ pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
 
     let mut out = String::new();
     for (id, slug, item) in &items {
-        // Never truncated: a cut-off action item has to be opened to read.
+        // Never truncated: a cut-off item would have to be opened to read.
         let due = match &item.due {
             Some(due) if item.overdue(today) => style::paint(style::OVERDUE, due),
             Some(due) => style::paint(style::MUTED, due),
@@ -2749,8 +2500,7 @@ pub fn todo_on(paths: &Paths, json: bool, today: &str) -> Result<String> {
     Ok(out)
 }
 
-/// `due` is carried and `overdue` is not: a program has its own clock and its
-/// own idea of which day it is in.
+/// `due` but not `overdue`: a program has its own clock and time zone.
 fn todo_json(notebook: &str, items: &[(String, String, todo::Item)]) -> String {
     let mut out = String::from("{\"notebook\":");
     out.push_str(&json_string(notebook));
@@ -2776,12 +2526,10 @@ fn todo_json(notebook: &str, items: &[(String, String, todo::Item)]) -> String {
     out
 }
 
-/// `log`'s columns in `log`'s order. No line numbers — in prose the unit
-/// somebody is looking for is a paragraph, not a row. Body only; `blame` says
-/// why.
+/// `log`'s columns in `log`'s order, body only (see `Notebook::blame`). No line
+/// numbers: in prose one looks for a paragraph, not a row.
 pub fn blame(paths: &Paths, key: &str) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    // The filename is enough, as for `log` and `diff`.
     let found = find(&notebook, key)?;
     let lines = notebook.blame(&found.id, &found.slug)?;
 
@@ -2793,7 +2541,6 @@ pub fn blame(paths: &Paths, key: &str) -> Result<String> {
                 &format_time(line.seconds, line.offset_minutes),
             )
         } else {
-            // Padded to the width of a time so the prose stays in one column.
             style::paint(style::MUTED, &pad("not committed", TIME_WIDTH))
         };
         let rendered = format!(
@@ -2807,15 +2554,10 @@ pub fn blame(paths: &Paths, key: &str) -> Result<String> {
     Ok(out)
 }
 
-/// The notes history holds that the notebook no longer does, newest loss first.
-///
-/// Its own command rather than a flag on `ls`: `ls` reads a directory and this
-/// walks all of history, and every column `ls` prints describes something that
-/// exists — a deleted note's title is a different claim under the same heading.
-///
-/// The revision printed is the deleting commit's *parent*, because that is what
-/// `restore` needs. Leaving the `~1` to be worked out would be a problem
-/// reported without its remedy.
+/// Notes in history but no longer in the notebook, newest loss first. Its own
+/// command rather than an `ls` flag because it walks all of history. The
+/// revision printed is the deleting commit's *parent*, which is what `restore`
+/// needs.
 pub fn deleted(paths: &Paths, notebook_name: Option<&str>, json: bool) -> Result<String> {
     let name = match notebook_name {
         Some(name) => name.to_string(),
@@ -2824,7 +2566,7 @@ pub fn deleted(paths: &Paths, notebook_name: Option<&str>, json: bool) -> Result
     let notebook = Notebook::open(paths, &name)?;
     let gone = notebook.deleted()?;
 
-    // Before the empty check: an empty list is an answer.
+    // Before the empty check: JSON always gets a document.
     if json {
         return Ok(deleted_as_json(&name, &gone));
     }
@@ -2867,10 +2609,8 @@ pub fn deleted(paths: &Paths, notebook_name: Option<&str>, json: bool) -> Result
     Ok(out)
 }
 
-/// Hand-written, for `as_json`'s reason.
-///
-/// Ids in full, because an abbreviation can one day stop being unique. Times in
-/// UTC, so a program does not have to take a position on whose clock it was.
+/// Hand-written, as `as_json` is. Commit ids in full, since an abbreviation can
+/// stop being unique; times in UTC.
 fn deleted_as_json(notebook: &str, gone: &[notebook::Deleted]) -> String {
     let mut out = String::from("{\"notebook\":");
     out.push_str(&json_string(notebook));
@@ -2895,23 +2635,19 @@ fn deleted_as_json(notebook: &str, gone: &[notebook::Deleted]) -> String {
     out
 }
 
-/// The spelling noda writes everywhere, so a script never meets two.
+/// The spelling noda writes everywhere.
 fn rfc3339(seconds: i64) -> String {
     jiff::Timestamp::from_second(seconds)
         .map(|time| time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
         .unwrap_or_default()
 }
 
-/// Uncommitted changes, or what the last commit changed. A plain unified diff
-/// with nothing wrapped around it, so `git apply` will take it.
-///
-/// `remote` asks **what a push would carry** instead — see
-/// [`Notebook::diff_remote`] — the third layer after `status`'s count and
-/// `log`'s margin. A flag rather than its own command, because what comes back
-/// is a patch either way.
+/// Uncommitted changes, or what the last commit changed, as a plain unified diff
+/// `git apply` will take. `remote` shows what a push would carry instead (see
+/// [`Notebook::diff_remote`]).
 pub fn diff(paths: &Paths, key: Option<&str>, remote: bool) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    // Seeing what changed is how you find out why it will not parse.
+    // `find`: the diff is how you find out why a note will not parse.
     let file = match key {
         Some(key) => {
             let found = find(&notebook, key)?;
@@ -2943,17 +2679,14 @@ pub fn diff(paths: &Paths, key: Option<&str>, remote: bool) -> Result<String> {
     Ok(out)
 }
 
-/// As a new commit: the restore moves history forward like every other
-/// change.
+/// Restores a note's contents from `rev`, as a new commit.
 pub fn restore(paths: &Paths, key: &str, rev: &str, touch: Touch) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let commit = notebook.revision(rev)?;
 
-    // Found without being read: `restore` is about to write over the file, and
-    // refusing on a broken one makes the command for undoing damage another
-    // casualty of it.
+    // `find`: a broken note is about to be overwritten, not read.
     let current = find(&notebook, key).ok();
-    // From the filename, or from history — which is how this undoes `noda rm`.
+    // From history when the note is gone — which is how this undoes `noda rm`.
     let id = match current.as_ref() {
         Some(found) => found.id.clone(),
         None => notebook
@@ -2967,8 +2700,8 @@ pub fn restore(paths: &Paths, key: &str, rev: &str, touch: Touch) -> Result<Stri
         )));
     };
 
-    // Only the contents travel back; a note still here keeps today's name, and
-    // a note that is gone returns under the one it had.
+    // Only contents travel back: a present note keeps today's name, a gone one
+    // returns under its old one.
     let slug = match &current {
         Some(found) => found.slug.clone(),
         None => slug_then,
@@ -2977,9 +2710,8 @@ pub fn restore(paths: &Paths, key: &str, rev: &str, touch: Touch) -> Result<Stri
 
     let restored = Note::parse(&text)
         .map_err(|e| Error::msg(format!("the copy of `{key}` at {rev} cannot be read: {e}")))?;
-    // Held aside, or restoring the same revision twice would never say "no
-    // change": the first restore writes a timestamp history cannot have.
-    // `--no-touch` removes the reason and the exception together.
+    // `updated` is ignored, or restoring the same revision twice would never
+    // say "no change" — the first restore stamped it.
     let ignoring_updated =
         |text: &str| note::set_field(text, "updated", "").unwrap_or_else(|| text.to_string());
     if current
@@ -2996,8 +2728,7 @@ pub fn restore(paths: &Paths, key: &str, rev: &str, touch: Touch) -> Result<Stri
         ));
     }
 
-    // The file changed just now, whatever history says about itself. `created`
-    // is left alone: the note is the same one it always was.
+    // The file changed now; `created` stays, it is the same note.
     let text = match touch {
         Touch::Stamp => note::set_field(&text, "updated", &note::now())
             .expect("the copy at this revision parsed, so it has a frontmatter block"),
@@ -3020,8 +2751,7 @@ pub fn remote_set(paths: &Paths, url: &str) -> Result<String> {
     }
     let notebook = Notebook::open_active(paths)?;
     notebook.set_remote(url)?;
-    // Redacted even though it was just typed: this is the line that stays in
-    // the scrollback.
+    // Redacted even though just typed: this line stays in the scrollback.
     Ok(format!("{}  {}", notebook.name, remote::redact(url)))
 }
 
@@ -3056,17 +2786,13 @@ pub fn push_in(notebook: &Notebook) -> Result<String> {
     notebook.push()
 }
 
-/// Commit, pull, push — in that order, so local work is never left behind by a
-/// merge and the push always carries it.
+/// Commit, pull, push — in that order: a pull before the commit merges into a
+/// tree missing local work, and a push before the pull is refused.
 pub fn sync(paths: &Paths) -> Result<String> {
     sync_in(&Notebook::open_active(paths)?)
 }
 
 /// `sync`, in a notebook the caller already has open.
-///
-/// The order is the whole of it, and why the browser calls this rather than the
-/// three steps: a pull before the commit merges into a tree missing what
-/// somebody just typed, and a push before the pull is refused.
 pub fn sync_in(notebook: &Notebook) -> Result<String> {
     let mut lines = Vec::new();
     if notebook.commit_all("sync: local changes")? {
@@ -3077,12 +2803,8 @@ pub fn sync_in(notebook: &Notebook) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-/// Marks the notebook as it stands, so that moment can be named later.
-///
-/// Commits the working tree first, on `sync`'s terms: a snapshot that quietly
-/// left out what is on disk would be a snapshot of something nobody has. The
-/// message defaults to the name, because inventing prose on somebody's behalf is
-/// worse than repeating what they said.
+/// Marks the notebook as it stands, committing the working tree first so the
+/// snapshot includes what is on disk. The message defaults to the name.
 pub fn snapshot(paths: &Paths, name: &str, message: Option<&str>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let mut lines = Vec::new();
@@ -3094,8 +2816,7 @@ pub fn snapshot(paths: &Paths, name: &str, message: Option<&str>) -> Result<Stri
     Ok(lines.join("\n"))
 }
 
-/// `deleted`'s three leading columns in its order, answering the same question
-/// about a different kind of thing.
+/// Name, time, commit, message: time before commit, as `deleted` has them.
 pub fn snapshot_ls(paths: &Paths) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
     let snapshots = notebook.snapshots()?;
@@ -3164,16 +2885,13 @@ pub fn notebook_current(paths: &Paths) -> Result<String> {
     notebook::active_name(paths)
 }
 
-/// A note reference resolved to a file, the reading kept separate: a command
-/// that only needs to know *which* note has no business failing on a file it is
-/// not going to read.
+/// A note reference resolved to a file, with the parse result kept rather than
+/// thrown: a command that only needs *which* note must not fail on a broken one.
 struct Found {
-    /// From the filename, so an unparseable file still says which note it is.
+    /// From the filename.
     id: String,
     slug: String,
     path: PathBuf,
-    /// Kept rather than thrown, so a command that needs the note fails with the
-    /// parse error itself.
     note: Result<Note>,
 }
 
@@ -3190,7 +2908,7 @@ fn find(notebook: &Notebook, key: &str) -> Result<Found> {
     })
 }
 
-/// A note reference resolved to everything the commands that read a note need.
+/// [`Found`] with the note parsed.
 struct Located {
     id: String,
     slug: String,
@@ -3217,15 +2935,14 @@ fn summary(id: &str, slug: &str, tags: &[String]) -> String {
     }
 }
 
-/// For the callers lining something else up against it.
+/// Width of [`format_time`]'s output.
 pub const TIME_WIDTH: usize = "0000-00-00 00:00".len();
 
-/// How wide a `due:` date prints, for the rows that have none.
+/// Width of a `due:` date, for padding rows that have none.
 pub const DATE_WIDTH: usize = "0000-00-00".len();
 
-/// In the zone the commit was made in, as git does. Absolute rather than "3
-/// days ago": testable without freezing the clock, and it sorts. Public because
-/// the browser prints the same commits down the same columns.
+/// In the commit's own zone, as git does. Absolute rather than "3 days ago": it
+/// sorts and needs no frozen clock to test. Public so the TUI and web match.
 pub fn format_time(seconds: i64, offset_minutes: i32) -> String {
     let local = seconds + i64::from(offset_minutes) * 60;
     let (year, month, day) = civil_from_days(local.div_euclid(86_400));
@@ -3237,10 +2954,8 @@ pub fn format_time(seconds: i64, offset_minutes: i32) -> String {
     )
 }
 
-/// Howard Hinnant's `civil_from_days`. Fifteen lines beats a date dependency.
-///
-/// The casts drop a sign that cannot be there — the algorithm yields a month in
-/// `1..=12` and a day in `1..=31`, which
+/// Howard Hinnant's `civil_from_days`; fifteen lines beats a date dependency.
+/// The casts are sign-safe: month and day are always positive, as
 /// `every_day_lands_on_a_real_calendar_date` checks across four centuries.
 #[allow(clippy::cast_sign_loss)]
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
@@ -3293,9 +3008,8 @@ fn pad(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(spaces))
 }
 
-/// The padding goes *outside* the escape sequences: [`display_width`] would
-/// otherwise measure them, and the caller's tail trim cannot reach spaces parked
-/// before a reset.
+/// Pads *outside* the escape sequences, so the width ignores them and the
+/// caller's trailing trim can reach the spaces.
 fn column(style: anstyle::Style, text: &str, width: usize) -> String {
     let spaces = width.saturating_sub(display_width(text));
     format!("{}{}", style::paint(style, text), " ".repeat(spaces))
@@ -3309,8 +3023,7 @@ fn derive_title(body: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Trimmed, because the frontmatter reads back trimmed, and refused when they
-/// carry something it cannot round-trip.
+/// Trimmed, as the frontmatter reads back, and refused if they cannot round-trip.
 fn clean_tags(tags: &[String]) -> Result<Vec<String>> {
     tags.iter()
         .map(|tag| {
@@ -3352,9 +3065,8 @@ fn run_editor(editor: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Opens `$EDITOR` on a scratch file and returns what was written. The buffer
-/// lives in the cache dir, never in the notebook, so an abandoned edit can't
-/// leave a stray file in the repo.
+/// Opens `$EDITOR` on a scratch file in the cache dir — never the notebook, so an
+/// abandoned edit leaves nothing in the repo — and returns what was written.
 fn compose_in_editor(paths: &Paths, title: Option<&str>) -> Result<String> {
     std::fs::create_dir_all(paths.cache_dir())?;
     let scratch = paths.cache_dir().join(EDIT_FILE);
@@ -3400,9 +3112,7 @@ pub fn print(output: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// **The list a screen draws and the ring a key walks are one list.** An
-    /// order added to one and not the other is not a compile error — it is a
-    /// browser quietly offering three of the four.
+    /// An order added to `ALL` but not `next` would not fail to compile.
     #[test]
     fn every_order_is_on_the_ring_the_key_walks() {
         let mut at = Sort::default();
@@ -3413,8 +3123,7 @@ mod tests {
         assert_eq!(at, Sort::default(), "the ring stopped coming round");
     }
 
-    /// A note with fixed everything, so what a sort did is the only thing that
-    /// can move — see `noda-test-ids-must-be-fixed`.
+    /// Fixed ids and stamps, so only the sort can move anything.
     fn a_note(id: &str, title: &str, updated: &str, pinned: bool) -> notebook::NoteFile {
         notebook::NoteFile {
             id: id.to_string(),
@@ -3431,9 +3140,7 @@ mod tests {
         }
     }
 
-    /// **A pin is above everything in every order, and inside the pins the order
-    /// is still the order asked for.** All four, because the pin is applied
-    /// after the sort and `Slug` is the one that does no sorting at all.
+    /// All four orders, `Slug` included, which does no sorting of its own.
     #[test]
     fn a_pin_floats_to_the_top_of_whichever_order_was_asked_for() {
         for sort in Sort::ALL {
@@ -3450,8 +3157,6 @@ mod tests {
                 "{} let a loose note above a pinned one: {ids:?}",
                 sort.name()
             );
-            // Newest first for a stamp, alphabetical otherwise: the pinned two
-            // came out in the order the sort would have put them in anyway.
             let want = match sort {
                 Sort::Created | Sort::Updated => ["dddd4444", "bbbb2222"],
                 Sort::Slug | Sort::Title => ["bbbb2222", "dddd4444"],
@@ -3465,8 +3170,6 @@ mod tests {
         }
     }
 
-    /// The browser receives an order as text, under the name `--sort` accepts.
-    /// Anything else is a hand-edited address.
     #[test]
     fn an_order_is_read_back_out_of_the_name_it_is_written_with() {
         for sort in Sort::ALL {
@@ -3476,16 +3179,12 @@ mod tests {
         assert_eq!(Sort::named(""), None);
     }
 
-    /// What `todo` gets wrong asking UTC what day it is: already the 3rd in
-    /// Taipei, still the 2nd in London, and the eight hours between the two
-    /// answers are the morning.
     #[test]
     fn a_local_date_is_not_the_utc_one() {
-        // 2026-08-02T23:00:00Z.
+        // 2026-08-02T23:00:00Z: already the 3rd in Taipei.
         let instant = 1_785_711_600;
         assert_eq!(&format_time(instant, 480)[..10], "2026-08-03");
         assert_eq!(&format_time(instant, 0)[..10], "2026-08-02");
-        // And west of UTC the error runs the other way: still the 2nd there.
         assert_eq!(&format_time(instant, -300)[..10], "2026-08-02");
     }
 
@@ -3500,12 +3199,10 @@ mod tests {
         let width = 11;
         assert_eq!(display_width(&pad("會議-筆記", width)), width);
         assert_eq!(display_width(&pad("reading-log", width)), width);
-        // Already at or past the target width: never truncate, never panic.
+        // Past the target width: never truncate, never panic.
         assert_eq!(pad("reading-log", 4), "reading-log");
     }
 
-    /// Three callers say this sentence, and one of them saying `never fetched`
-    /// while another said `never synced` is what this stops happening again.
     #[test]
     fn a_notebook_says_where_it_stands_in_gits_own_words() {
         assert_eq!(standing(None, None), "no remote");
@@ -3519,14 +3216,11 @@ mod tests {
         );
     }
 
-    /// `never synced` would name a state a remoteless notebook can never leave.
-    /// The two answers come apart only here.
     #[test]
     fn a_notebook_with_no_remote_is_not_merely_unsynced() {
         assert_eq!(drifted(None), "never synced");
         assert_eq!(standing(None, None), "no remote");
-        // No remote outranks the drift: nowhere to push to is nowhere to be
-        // two commits from.
+        // No remote outranks the drift.
         assert_eq!(standing(None, Some((2, 0))), "no remote");
     }
 
@@ -3545,8 +3239,7 @@ mod tests {
         let (start, end) = find_ignoring_case(line, "q3 budget").unwrap();
         assert_eq!(&line[start..end], "Q3 Budget");
 
-        // İ is one char and two lowered, so the byte length changes; the offsets
-        // must still land on the original's char boundaries.
+        // İ lowercases to two chars, changing the byte length.
         let turkish = "aİb";
         let (start, end) = find_ignoring_case(turkish, "b").unwrap();
         assert_eq!(&turkish[start..end], "b");
@@ -3564,7 +3257,6 @@ mod tests {
         assert!(shown.ends_with('…'), "the tail is cut: {shown}");
         assert!(shown.chars().count() <= EXCERPT_WIDTH + 2, "{shown}");
 
-        // A short line is quoted whole, with nothing to elide.
         let shown = strip(&excerpt("just the needle here", &["needle".to_string()]).unwrap());
         assert_eq!(shown, "just the needle here");
         assert_eq!(excerpt("no hit", &["needle".to_string()]), None);
@@ -3577,7 +3269,6 @@ mod tests {
         assert_ne!(shown, note, "the frontmatter is styled");
         assert_eq!(strip(&shown), note, "and nothing else moves");
 
-        // A file that is not a note is passed through rather than mangled.
         assert_eq!(dim_frontmatter("no frontmatter\n"), "no frontmatter\n");
         assert_eq!(
             dim_frontmatter("---\nunterminated\n"),
@@ -3585,7 +3276,6 @@ mod tests {
         );
     }
 
-    /// The text under the escape sequences.
     fn strip(text: &str) -> String {
         let mut out = String::new();
         let mut chars = text.chars();
@@ -3605,21 +3295,19 @@ mod tests {
 
     #[test]
     fn timestamps_print_in_the_timezone_the_commit_was_made_in() {
-        // The same instant, written in London and in Taipei.
+        // The same instant in UTC and in Taipei.
         assert_eq!(format_time(1_785_073_605, 0), "2026-07-26 13:46");
         assert_eq!(format_time(1_785_073_605, 480), "2026-07-26 21:46");
     }
 
     #[test]
     fn every_day_lands_on_a_real_calendar_date() {
-        // The unsigned casts in `civil_from_days` are safe only because a
-        // negative month or day is impossible. Four centuries say so out loud.
+        // Backs the unsigned casts in `civil_from_days`.
         let mut previous = None;
         for days in -73_000..=73_000 {
             let (year, month, day) = civil_from_days(days);
             assert!((1..=12).contains(&month), "day {days} gave month {month}");
             assert!((1..=31).contains(&day), "day {days} gave day {day}");
-            // And the calendar only ever moves forwards.
             let now = (year, month, day);
             if let Some(previous) = previous {
                 assert!(previous < now, "{previous:?} then {now:?}");
@@ -3631,7 +3319,7 @@ mod tests {
     #[test]
     fn the_calendar_holds_at_the_awkward_dates() {
         assert_eq!(format_time(0, 0), "1970-01-01 00:00");
-        // A leap day in a year divisible by 400, and the second before the epoch.
+        // A 400-year leap day, and the second before the epoch.
         assert_eq!(format_time(951_782_400, 0), "2000-02-29 00:00");
         assert_eq!(format_time(-1, 0), "1969-12-31 23:59");
         // A negative offset can push a commit back across midnight.

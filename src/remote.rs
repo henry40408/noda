@@ -1,8 +1,7 @@
 //! Credentials for the network commands.
 //!
-//! The binary carries its own libgit2, so it cannot lean on the system `git` to
-//! authenticate. libgit2 calls back repeatedly until one succeeds, so every
-//! method is offered at most once and the callback then gives up.
+//! The bundled libgit2 cannot lean on the system `git` to authenticate. libgit2
+//! calls back until one method succeeds, so each is offered at most once.
 
 use std::borrow::Cow;
 
@@ -10,8 +9,8 @@ use git2::{Config, Cred, CredentialType, FetchOptions, RemoteCallbacks};
 
 use crate::Error;
 
-/// The order the methods are offered in. `USERNAME` comes after the key because
-/// libgit2 asks for it before the key itself when the URL carries no username.
+/// The order methods are offered in. `USERNAME` may come after the key: libgit2
+/// asks for it alone first when the URL carries none.
 const METHODS: [CredentialType; 4] = [
     CredentialType::SSH_KEY,
     CredentialType::USER_PASS_PLAINTEXT,
@@ -19,9 +18,8 @@ const METHODS: [CredentialType; 4] = [
     CredentialType::DEFAULT,
 ];
 
-/// The caller supplies `config` because opening the default one here leaves out
-/// the repository's own `.git/config` — which made a helper set for a single
-/// notebook invisible to the commands that needed it.
+/// `config` comes from the caller, since the default config would leave out
+/// the repository's own `.git/config` and any helper set there.
 fn credential(
     config: &Config,
     url: &str,
@@ -62,9 +60,8 @@ pub fn fetch_options<'a>(config: Config) -> FetchOptions<'a> {
     options
 }
 
-/// Only SSH gets its own error class. An empty HTTPS credential lookup — the
-/// commonest failure, and the one the hint is for — surfaces as an untyped
-/// generic error, so its wording is all there is to go on.
+/// Only SSH gets its own error class; an empty HTTPS credential lookup, the
+/// commonest failure, is a generic error recognisable only by its wording.
 fn is_authentication(error: &git2::Error) -> bool {
     if error.class() == git2::ErrorClass::Ssh || error.code() == git2::ErrorCode::Auth {
         return true;
@@ -75,7 +72,7 @@ fn is_authentication(error: &git2::Error) -> bool {
         .any(|needle| message.contains(needle))
 }
 
-/// Everything else passes through untouched — libgit2's message is better.
+/// Adds a hint to an authentication failure; anything else passes through.
 pub fn explain(error: git2::Error, url: &str) -> Error {
     if !is_authentication(&error) {
         return Error::Git(error);
@@ -92,29 +89,25 @@ pub fn explain(error: git2::Error, url: &str) -> Error {
 }
 
 /// A remote URL with its credentials taken out, for anything a person reads.
+/// A token in the URL is the usual setup where no credential helper can run
+/// (the container image has no shell); `.git/config` keeps it as configured.
 ///
-/// A token in the URL is the ordinary setup wherever the credential helper
-/// cannot be reached — the container image carries no shell — so every screen
-/// showing a remote goes through here.
-///
-/// The whole userinfo goes, not the password alone: Gitea and Forgejo take the
-/// token as the *username*, so keeping it would leak the secret on exactly the
-/// hosts that ask for it there. `.git/config` keeps the URL as configured.
+/// The whole userinfo goes, since Gitea and Forgejo take the token as the
+/// *username*.
 pub fn redact(url: &str) -> Cow<'_, str> {
-    // scp syntax, not a URL: no scheme, and `git@` hides nothing.
+    // scp syntax: `git@` hides nothing.
     let Some(mark) = url.find("://") else {
         return Cow::Borrowed(url);
     };
     let (scheme, rest) = url.split_at(mark);
     let rest = &rest["://".len()..];
     let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
-    // A password may hold an `@`, so the userinfo ends at the last one — and the
-    // search stops at the authority, because `https://host/a@b.git` is a path.
+    // The last `@` within the authority: a password may hold one, and a path
+    // may too.
     let Some(at) = authority.rfind('@') else {
         return Cow::Borrowed(url);
     };
-    // Over SSH a bare username is no secret — the key never travels in the URL.
-    // Over HTTPS anything in there is, because that is where a token goes.
+    // Over SSH a bare username is no secret; over HTTP(S) it may be a token.
     let secret = authority[..at].contains(':') || matches!(scheme, "http" | "https");
     if !secret {
         return Cow::Borrowed(url);
@@ -142,7 +135,6 @@ mod tests {
 
     use super::*;
 
-    /// On disk, because an in-memory config has no `.git/config` to layer over.
     struct TempRepo(PathBuf, git2::Repository);
 
     impl TempRepo {
@@ -162,8 +154,7 @@ mod tests {
         }
     }
 
-    /// A helper set for one notebook alone has to count. Scoped to a URL so the
-    /// machine's own configuration cannot answer in its place.
+    /// Scoped to a URL so the machine's own configuration cannot answer.
     #[test]
     fn a_helper_in_the_repositorys_own_config_is_reached() {
         const URL: &str = "https://example.invalid/notes.git";
@@ -180,7 +171,6 @@ mod tests {
         let found = credential(&config, URL, None, CredentialType::USER_PASS_PLAINTEXT);
         assert!(found.is_ok(), "{:?}", found.err());
 
-        // Nothing configured anywhere — the failure `explain`'s hint is for.
         let bare = git2::Config::new().expect("config");
         let missing = credential(&bare, URL, None, CredentialType::USER_PASS_PLAINTEXT);
         assert!(missing.is_err(), "a config with no helper produced one");
@@ -203,48 +193,39 @@ mod tests {
         assert_eq!(name_from_url("/"), None);
     }
 
-    /// What a remote may be carrying, and what is safe to leave on a screen.
     #[test]
     fn credentials_come_out_of_a_url_before_anyone_reads_it() {
-        // GitHub and GitLab put the token where the password goes.
         assert_eq!(
             redact("https://x-access-token:ghp_secret@github.com/me/notes.git"),
             "https://***@github.com/me/notes.git"
         );
-        // Gitea and Forgejo take it as the username, so the username goes too.
+        // Gitea and Forgejo take the token as the username.
         assert_eq!(
             redact("https://tok_secret@codeberg.org/me/notes.git"),
             "https://***@codeberg.org/me/notes.git"
         );
-        // A password may hold an `@`, so the userinfo ends at the last one.
         assert_eq!(
             redact("https://me:p@ssw0rd@git.example.com/notes.git"),
             "https://***@git.example.com/notes.git"
         );
 
-        // Nothing to hide, so these come back exactly as they went in.
         for url in [
             "https://github.com/me/notes.git",
-            // scp syntax: `git@` is a username, the key authenticates.
             "git@github.com:me/notes.git",
             "ssh://git@github.com/me/notes.git",
-            // The `@` is in the path here — the authority ended before it.
             "https://git.example.com/me/a@b.git",
-            // A remote is allowed to be a directory.
             "/srv/backups/notes.git",
         ] {
             assert_eq!(redact(url), url);
         }
 
-        // ...but a password travels whatever the scheme is, so it still goes.
+        // A password goes whatever the scheme.
         assert_eq!(
             redact("ssh://me:pw@git.example.com/notes.git"),
             "ssh://***@git.example.com/notes.git"
         );
     }
 
-    /// A sync that failed to authenticate is when the URL most likely carries
-    /// a token, and the URL goes into the message.
     #[test]
     fn a_failure_does_not_print_the_token_it_failed_with() {
         let explained = explain(
@@ -256,8 +237,6 @@ mod tests {
         assert!(explained.contains("***@github.com"), "{explained}");
     }
 
-    /// libgit2 gives this no error class and no `Auth` code, so matching on the
-    /// class alone left the commonest HTTPS failure without its hint.
     #[test]
     fn an_empty_credential_lookup_counts_as_authentication() {
         let error =
@@ -283,19 +262,17 @@ mod tests {
         .to_string();
         assert!(ssh.contains("ssh-agent"), "{ssh}");
 
-        // noda's own callback error, when every method has been offered once.
+        // noda's own callback error.
         let https = explain(
             git2::Error::from_str("no usable credentials"),
             "https://example.com/notes.git",
         )
         .to_string();
         assert!(https.contains("credential helper"), "{https}");
-        // A helper only `git` can see looks identical to no helper from here,
-        // so the hint has to name the files noda actually reads.
+        // A helper only `git` can see looks like none, so name the files read.
         assert!(https.contains("/etc/gitconfig"), "{https}");
     }
 
-    /// A credentials hint on an unrelated error misdirects the reader.
     #[test]
     fn unrelated_failures_keep_libgit2s_own_message() {
         let error = git2::Error::from_str("the remote hung up unexpectedly");

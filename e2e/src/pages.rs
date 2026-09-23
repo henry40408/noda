@@ -1,13 +1,8 @@
-//! What the pages are made of, as the steps talk about them.
+//! The pages, as the steps talk about them. One object, since noda's pages share
+//! a shape (a bar, maybe a search field, a column of rows).
 //!
-//! One object rather than one per page: noda's three pages are the same shape —
-//! a bar with a way back, sometimes a search field, and a column of rows — and
-//! three objects for that would be three copies of `rows()`.
-//!
-//! Everything is found by class, and the classes are the ones the markup
-//! already carries for the stylesheet. Nothing is added to the pages for the
-//! benefit of the tests: a hook that only a test uses is a hook nobody notices
-//! breaking.
+//! Everything is found by the classes the stylesheet already uses; nothing is
+//! added to the markup for tests, since a test-only hook breaks unnoticed.
 
 use anyhow::{Context, Result};
 use thirtyfour::prelude::*;
@@ -15,11 +10,8 @@ use thirtyfour::prelude::*;
 use crate::browser::{Browser, WAIT_INTERVAL, WAIT_TIMEOUT};
 use crate::server::BASE_URL;
 
-/// A string literal `XPath` 1.0 will accept.
-///
-/// `XPath` has no escape character at all, so a value holding an apostrophe has to be
-/// assembled out of pieces — which is exactly the shape a note title takes the
-/// first time somebody writes "don't".
+/// A string literal for `XPath` 1.0, which has no escape character: a value with
+/// an apostrophe (a title like "don't") is assembled with `concat`.
 fn xpath_string(value: &str) -> String {
     if !value.contains('\'') {
         return format!("'{value}'");
@@ -28,12 +20,9 @@ fn xpath_string(value: &str) -> String {
         .split('\'')
         .map(|piece| format!("'{piece}'"))
         .collect();
-    // The apostrophes themselves come back as double-quoted literals between
-    // the pieces they separated.
     format!("concat({})", pieces.join(", \"'\", "))
 }
 
-/// The page in front of us.
 pub struct Page<'a>(pub &'a Browser);
 
 impl Page<'_> {
@@ -41,43 +30,23 @@ impl Page<'_> {
         self.0.driver()
     }
 
-    /// # Errors
-    ///
-    /// Fails when the navigation does not complete.
     pub async fn go(&self, path: &str) -> Result<()> {
         self.driver().goto(format!("{BASE_URL}{path}")).await?;
         Ok(())
     }
 
-    /// The path currently in the address bar.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the driver cannot report a URL.
+    /// The address bar's path, without the query string.
     pub async fn path(&self) -> Result<String> {
         Ok(self.driver().current_url().await?.path().to_string())
     }
 
-    /// Every row a reader can see, as the text they see.
+    /// Every visible row's text.
     ///
-    /// **One round trip, not one per row.** Finding the rows and then asking
-    /// each for its text is two visits to a page that may navigate between them,
-    /// and the second visit then fails with `stale element reference` — which is
-    /// not a fact about the notebook, it is a fact about having looked twice.
-    /// Reading them in a single script removes the window rather than retrying
-    /// around it.
-    ///
-    /// **The visibility filter is not tidiness, it is correctness.** A listing
-    /// now carries every note whatever the query says and hides the excluded
-    /// ones, and `innerText` falls back to `textContent` on an element that is
-    /// not being rendered — so without the filter every step asking whether a
-    /// row is on the screen would answer yes for all of them, forever, in both
-    /// passes. `offsetParent` is the cheap form of the question and it is the
-    /// right one here: nothing in this interface is `position: fixed`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// **One round trip**, so a navigation between finding and reading cannot
+    /// cause a `stale element reference`. **The visibility filter is required**:
+    /// the listing carries every note and hides the excluded ones, and `innerText`
+    /// falls back to `textContent` on an unrendered element. `offsetParent` is
+    /// enough because nothing here is `position: fixed`.
     pub async fn rows(&self) -> Result<Vec<String>> {
         let rows = self
             .0
@@ -94,15 +63,8 @@ impl Page<'_> {
             .collect())
     }
 
-    /// Every row the query excluded: on the page, not on the screen.
-    ///
-    /// `textContent` and not `innerText` — the whole question is about elements
-    /// that are not being rendered, and `innerText` is defined in terms of what
-    /// rendering produced.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// Rows the query excluded: on the page, not on the screen. `textContent`,
+    /// since `innerText` is defined by rendering.
     pub async fn hidden_rows(&self) -> Result<Vec<String>> {
         let rows = self
             .0
@@ -119,41 +81,17 @@ impl Page<'_> {
             .collect())
     }
 
-    /// Presses whatever on the page names `what`.
-    ///
-    /// Every link, not only the rows: a row is an `<a>` and so is the way out of
-    /// an empty search, and a step that could only press one of them would need
-    /// the feature to know which kind of thing it was pressing.
-    ///
-    /// Found by `XPath` so the search and the answer are one round trip — walking
-    /// every anchor and asking each for its text is the same
-    /// `stale element reference` waiting to happen as reading the rows one at a
-    /// time. A real click and not a scripted one: what is under test includes
-    /// that the thing is reachable, and the script-less pass would be proving
-    /// nothing if the press went through `Execute Script` anyway.
-    ///
-    /// # Errors
-    ///
-    /// Fails when nothing names it.
+    /// Presses any link naming `what`, rows included. Found by `XPath` in one
+    /// round trip, and clicked for real so reachability is tested and the
+    /// script-less pass is not bypassed through `Execute Script`.
     pub async fn press(&self, what: &str) -> Result<()> {
-        // Quoted for XPath rather than interpolated: a title may hold an
-        // apostrophe, and `concat` is the only way XPath 1.0 escapes one.
         let target = format!("//a[contains(., {})]", xpath_string(what));
         self.click(By::XPath(&target), &format!("a link naming {what:?}"))
             .await
     }
 
-    /// The same press, aimed at the margin note.
-    ///
-    /// A title in the margin is usually a title in the listing as well — the
-    /// column is a list of notes in this notebook — so `press` would find the
-    /// index row first and prove nothing about the margin. This is the one
-    /// place a region has to be named to say which of two identical links is
-    /// meant.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the margin note holds no such link.
+    /// [`Self::press`] within the margin note, whose titles usually also appear
+    /// in the listing, where `press` would find them first.
     pub async fn press_in_margin(&self, what: &str) -> Result<()> {
         let target = format!(
             "//aside[contains(@class, 'beside')]//a[contains(., {})]",
@@ -166,24 +104,12 @@ impl Page<'_> {
         .await
     }
 
-    /// Finds a thing and presses it, treating a page that moved underneath as
-    /// "not yet".
+    /// Presses the first *displayed* match, retrying until [`WAIT_TIMEOUT`].
     ///
-    /// **A stale element is the same kind of answer as an element that is not
-    /// there.** The network screen brings itself back for news while an errand
-    /// is running, so a handle taken a moment ago can belong to a document that
-    /// has since been replaced — and a press that failed for that reason has not
-    /// failed, it has arrived between two versions of a page. The rule the rest
-    /// of this harness follows applies here too: one round trip, an answer that
-    /// can say "not yet", and a loop that can see it.
-    ///
-    /// **And a match that is on the page but not on the screen is a third
-    /// answer of the same kind.** A layout of panes can hold two of something —
-    /// a note page carries the index pane's way back as well as its own, and
-    /// below 1024px the first of those is `display: none`. Taking the first
-    /// match got the hidden one and a `WebDriver` "element not interactable",
-    /// which is the browser being right. A reader presses the one they can see,
-    /// so the first *displayed* match is the one this presses.
+    /// A stale element counts as "not yet": the network screen reloads itself
+    /// during an errand. Hidden matches are skipped because panes can hold two of
+    /// a control — below 1024px the index pane's way back is `display: none`, and
+    /// clicking it fails as "element not interactable".
     async fn click(&self, target: By, what: &str) -> Result<()> {
         let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
         let mut last;
@@ -192,8 +118,7 @@ impl Page<'_> {
                 Ok(found) => {
                     last = format!("nothing matching {target:?} is on the screen");
                     for element in found {
-                        // `is_displayed` can fail on an element whose document
-                        // has just been replaced. That is "not yet" as well.
+                        // Fails on a replaced document: also "not yet".
                         if element.is_displayed().await.unwrap_or(false) {
                             match element.click().await {
                                 Ok(()) => return Ok(()),
@@ -212,15 +137,8 @@ impl Page<'_> {
         }
     }
 
-    /// Types into the field with this `name`.
-    ///
-    /// By `name` and not by label: the name is what the form sends, so it is the
-    /// thing the server and the test are actually agreeing about. A label is
-    /// prose and gets rewritten.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page has no such field.
+    /// Types into the field with this `name`: what the form sends, unlike a
+    /// label, which is prose and gets rewritten.
     pub async fn fill(&self, name: &str, value: &str) -> Result<()> {
         let field = self
             .driver()
@@ -232,11 +150,7 @@ impl Page<'_> {
         Ok(())
     }
 
-    /// Presses the button whose words are `what`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no button says it.
+    /// Presses the button containing `what`.
     pub async fn submit(&self, what: &str) -> Result<()> {
         let target = format!("//button[contains(., {})]", xpath_string(what));
         self.click(By::XPath(&target), &format!("a button saying {what:?}"))
@@ -244,10 +158,6 @@ impl Page<'_> {
     }
 
     /// Unticks the box for a tag.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the note does not carry that tag.
     pub async fn untick(&self, tag: &str) -> Result<()> {
         let box_for = format!("input[name='keep'][value='{tag}']");
         self.driver()
@@ -259,16 +169,8 @@ impl Page<'_> {
         Ok(())
     }
 
-    /// Presses the round button that writes a new note.
-    ///
-    /// By its label and not its words, because it has none: it is one icon, and
-    /// what says what it is for is the `aria-label` a screen reader reads. A
-    /// test that reached for it by class would be agreeing with the stylesheet
-    /// instead of with the reader.
-    ///
-    /// # Errors
-    ///
-    /// Fails when this screen offers no way to write.
+    /// Presses the new-note button, an icon, by the `aria-label` a screen reader
+    /// reads.
     pub async fn tap_write(&self) -> Result<()> {
         self.driver()
             .find(By::Css("[aria-label='New note']"))
@@ -279,20 +181,9 @@ impl Page<'_> {
         Ok(())
     }
 
-    /// What the bar says you are standing on, if anything.
-    ///
-    /// `aria-current` is the whole answer — the marked item is marked with the
-    /// attribute a screen reader reads for the same fact, and the colour hangs
-    /// off it. Asking for the attribute is asking the same question the reader's
-    /// software asks.
-    ///
-    /// **One round trip, absent as `None`.** A screen with nothing marked is the
-    /// ordinary case on the listing, not an error, and "not there yet" must
-    /// never be thrown at the retry loop as a failure.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried at all.
+    /// The bar item marked `aria-current`, the attribute the colour also hangs
+    /// off. `None` rather than an error, since the listing marks nothing and the
+    /// retry loop must see "not yet".
     pub async fn marked_place(&self) -> Result<Option<String>> {
         let found = self
             .0
@@ -304,25 +195,12 @@ impl Page<'_> {
         Ok(found.as_str().map(std::string::ToString::to_string))
     }
 
-    /// The words of the first row, or `None` when there are none yet.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
     pub async fn first_row(&self) -> Result<Option<String>> {
         Ok(self.rows().await?.into_iter().next())
     }
 
-    /// Whether the page draws this text as a date that has gone by.
-    ///
-    /// The class and not the colour: what the palette resolves to is
-    /// `web/theme.rs`'s answer and reading a computed colour here would be a
-    /// second copy of it. What this screen has to get right is which of the two
-    /// a date is, and that is the class it is given.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// Whether this text is drawn as overdue — by class, not colour, which is
+    /// `web/theme.rs`'s business.
     pub async fn is_overdue(&self, text: &str) -> Result<bool> {
         let found = self
             .0
@@ -335,23 +213,11 @@ impl Page<'_> {
         Ok(found.as_bool().unwrap_or(false))
     }
 
-    /// Presses the way back.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page has no back control.
     pub async fn tap_back(&self) -> Result<()> {
         self.click(By::Css(".back"), "the way back").await
     }
 
-    /// Types a query into the search field and sends it.
-    ///
-    /// `Enter` rather than a submit button, because that is what a form with one
-    /// field does and what a phone's keyboard offers.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page has no search field.
+    /// Types a query and presses `Enter`, as a phone keyboard would.
     pub async fn search(&self, query: &str) -> Result<()> {
         let field = self
             .driver()
@@ -364,27 +230,11 @@ impl Page<'_> {
         Ok(())
     }
 
-    /// Types a query into the search field and stops there.
+    /// Types a query without submitting, for filter-as-you-type.
     ///
-    /// The whole of what the enhancement layer is for: with the page's scripts
-    /// on, the listing has already answered by the time this returns, and the
-    /// server has not been asked anything. With them off nothing happens at
-    /// all, which is the other half of the same contract.
-    ///
-    /// Real keystrokes rather than setting `value` and firing an event: what is
-    /// under test includes that the field is reachable and that the listener is
-    /// on the thing a person actually types into.
-    ///
-    /// **And real backspaces rather than `clear()`, which is the whole reason
-    /// this is not two lines.** `clear()` empties the field without delivering
-    /// an `input` event, so a listener hears nothing — which made "delete what
-    /// you typed and watch the rows come back" pass against a script that never
-    /// ran. Erasing the way a person erases is the only version that tests
-    /// what the scenario says it tests.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page has no search field.
+    /// Real keystrokes, and **real backspaces rather than `clear()`**, which
+    /// fires no `input` event and so let "delete what you typed" pass against a
+    /// script that never ran.
     pub async fn type_search(&self, query: &str) -> Result<()> {
         let field = self
             .driver()
@@ -401,15 +251,7 @@ impl Page<'_> {
         Ok(())
     }
 
-    /// What the address carries as the search, if anything.
-    ///
-    /// Separate from `path`, which deliberately drops the query string: most
-    /// scenarios are about where they landed, and only these are about whether
-    /// anything was sent at all.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the browser cannot be asked where it is.
+    /// The address's `q` parameter, if any.
     pub async fn searched(&self) -> Result<Option<String>> {
         Ok(self
             .driver()
@@ -420,16 +262,7 @@ impl Page<'_> {
             .map(|(_, value)| value.to_string()))
     }
 
-    /// What the listing says about whose answer is on the screen, or nothing
-    /// when it is not saying anything.
-    ///
-    /// Absent and hidden are one answer, because they are one fact: the remark
-    /// does not apply. Which of the two it is on any given page is the server's
-    /// business and not a feature file's.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The search bar's hint; absent and hidden are both `None`.
     pub async fn hint(&self) -> Result<Option<String>> {
         let said = self
             .0
@@ -441,17 +274,8 @@ impl Page<'_> {
         Ok(said.as_str().map(str::to_string))
     }
 
-    /// The id on the first row, or nothing where the width has no column to
-    /// print it in.
-    ///
-    /// Written on every row and shown by the stylesheet, so what is asked here
-    /// is whether it was *drawn* — `offsetParent` is null for anything a
-    /// `display:none` is hiding, at any depth. A markup assertion would pass on
-    /// the phone the id is deliberately absent from.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The first row's id if drawn. Every row carries it and the stylesheet
+    /// hides it on a phone, so this asks `offsetParent`, not the markup.
     pub async fn shown_id(&self) -> Result<Option<String>> {
         let said = self
             .0
@@ -463,17 +287,9 @@ impl Page<'_> {
         Ok(said.as_str().map(str::to_string))
     }
 
-    /// The grouping the search field is showing, flattened into one line:
-    /// `(tag:work or tag:q3) and (budget)`.
-    ///
-    /// The brackets are this function's — on the screen a group is a pill, and
-    /// a pill is not a thing a feature file can quote. What is being checked is
-    /// that the boundaries fall where noda put them, so they are read off the
-    /// elements and written the way the manual writes them.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The search field's parsed grouping, flattened as
+    /// `(tag:work or tag:q3) and (budget)`: the brackets stand for the on-screen
+    /// pills, which a feature file cannot quote.
     pub async fn grouping(&self) -> Result<Option<String>> {
         let said = self
             .0
@@ -488,16 +304,8 @@ impl Page<'_> {
         Ok(said.as_str().map(str::to_string))
     }
 
-    /// Whether the page is asking the browser to reload it.
-    ///
-    /// The scriptless network screen steers by `<meta refresh>`; the script's
-    /// first act is to take it off and poll instead. So this is the one
-    /// observable difference between the two ways of waiting, and it is the
-    /// difference the feature file names.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// Whether a `<meta refresh>` is present: the script-less network screen
+    /// reloads by it, and the script removes it to poll instead.
     pub async fn reloads_itself(&self) -> Result<bool> {
         let meta = self
             .0
@@ -506,17 +314,10 @@ impl Page<'_> {
         Ok(meta.as_bool().unwrap_or(false))
     }
 
-    /// What the element matching `selector` reads as, or nothing when the page
-    /// has no such element.
-    ///
-    /// **Absent is a value here, not an error.** A step that has just submitted
-    /// a form is asking a page that may still be the previous one, and a `find`
-    /// that fails with "no such element" turns "not yet" into a failure the
-    /// retry loop cannot see past. One round trip, and `null` for missing.
-    ///
-    /// `innerText` and not `textContent`, because it is the rendered form —
-    /// which is what makes a body holding `<b>bold</b>` read back with its angle
-    /// brackets exactly when the page escaped them.
+    /// The rendered text (`innerText`) of `selector`, or `""` when absent — not
+    /// an error, because after a submit the page may still be the previous one
+    /// and the retry loop must see "not yet". Rendered text is what shows
+    /// whether `<b>bold</b>` was escaped.
     async fn reads(&self, selector: &str) -> Result<String> {
         let text = self
             .0
@@ -528,106 +329,51 @@ impl Page<'_> {
         Ok(text.as_str().unwrap_or_default().to_string())
     }
 
-    /// The heading of a note.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
     pub async fn heading(&self) -> Result<String> {
         self.reads("h1").await
     }
 
-    /// Goes back the way the browser's own button does.
-    ///
-    /// Not the chevron on the page — that is a link to somewhere, and a link is
-    /// a navigation whatever the script does. This is the history entry a press
-    /// pushed, which is the only way to ask whether going back is answered or
-    /// reloaded.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the browser cannot be driven.
+    /// The browser's own back button, not the page's chevron (a plain link):
+    /// it pops the history entry a press pushed.
     pub async fn go_back(&self) -> Result<()> {
         self.driver().back().await?;
         Ok(())
     }
 
-    /// Puts a mark on the window, and reads it back.
-    ///
-    /// **The only way a scenario can tell a swap from a navigation.** Both end
-    /// with the right thing on the screen; the difference is whether the
-    /// document survived, and a value hung off `window` survives exactly as
-    /// long as it does.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// Marks the window, to tell a pane swap from a navigation: the mark
+    /// survives exactly as long as the document.
     pub async fn remember(&self) -> Result<()> {
         self.0.measure("window.__noda_here = 1; return 1;").await?;
         Ok(())
     }
 
-    /// Whether the page marked by [`Self::remember`] is still the one on screen.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// Whether the document marked by [`Self::remember`] is still loaded.
     pub async fn remembered(&self) -> Result<bool> {
         let held = self.0.measure("return !!window.__noda_here;").await?;
         Ok(held.as_bool().unwrap_or(false))
     }
 
-    /// The name of the tab.
-    ///
-    /// The one thing a pane swap changes that is not in the pane. It arrives as
-    /// a `<title>` at the head of the fragment, which the parser puts where a
-    /// whole page would have had one — so this asserts the server's own string
-    /// reached the tab, rather than the script having composed one.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The tab's title. A pane swap delivers it as a `<title>` in the fragment,
+    /// so this checks the server's string reached the tab.
     pub async fn tab(&self) -> Result<String> {
         let text = self.0.measure("return document.title;").await?;
         Ok(text.as_str().unwrap_or_default().to_string())
     }
 
-    /// The filename line under the heading.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
     pub async fn filename(&self) -> Result<String> {
         self.reads(".filename").await
     }
 
-    /// A note's body, as text.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
     pub async fn body(&self) -> Result<String> {
         self.reads(".body").await
     }
 
-    /// A note's stamps and tags, as one run of text.
-    ///
-    /// The whole line rather than one stamp, because what the scenarios ask of
-    /// it is about the shape of the two together — which words are there, and
-    /// whether they are still the file's spelling or the reader's.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// A note's stamps and tags as one line of text.
     pub async fn stamps(&self) -> Result<String> {
         self.reads(".note-meta").await
     }
 
-    /// Whatever the page is saying went wrong, if anything.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The page's error message, if any.
     pub async fn problem(&self) -> Result<Option<String>> {
         let found = self.driver().find_all(By::Css(".problem")).await?;
         match found.first() {
@@ -636,20 +382,9 @@ impl Page<'_> {
         }
     }
 
-    /// Every control that falls short of a thumb, with its measurements.
-    ///
-    /// **This is the assertion no other layer can make.** The markup says
-    /// `min-height: var(--tap)`; whether a control ends up that big depends on
-    /// the box it is in, what is beside it, and how the text wrapped. Only a
-    /// laid-out page knows.
-    ///
-    /// Measured as the hit area rather than the ink: a back control draws a
-    /// 24-pixel chevron inside a 48-pixel target, and it is the target that the
-    /// thumb has to find.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the measuring script does not run.
+    /// Every control smaller than a thumb, with its measurements — only a
+    /// laid-out page knows whether `min-height: var(--tap)` held. Measures the
+    /// hit area, not the ink (a 24px chevron in a 48px target).
     pub async fn controls_smaller_than(&self, wide: u32, tall: u32) -> Result<Vec<String>> {
         let measured = self
             .0
@@ -658,22 +393,13 @@ impl Page<'_> {
                 const wide = {wide}, tall = {tall};
                 const short = [];
                 for (const el of document.querySelectorAll('a, input, button')) {{
-                    // A thing that cannot be pressed is not a control. The
-                    // checkboxes a rendered note draws are the case: `noda todo`
-                    // reads those boxes across the whole notebook, and ticking
-                    // one here would have to be a commit — so they arrive
-                    // disabled, exactly as the CLI has no `todo done`. They are
-                    // 16 pixels of typography inside a sentence, and a rule
-                    // about thumbs has nothing to say about them.
+                    // A note's rendered checkboxes are disabled (ticking one
+                    // would be a commit), so they are text, not controls.
                     if (el.disabled) {{ continue; }}
-                    // What a thumb actually presses. A checkbox inside a label
-                    // is 22 pixels of ink inside whatever the label is, and the
-                    // label is the target: pressing it toggles the box. Measuring
-                    // the input would report a control nobody aims at.
+                    // A checkbox's target is its label.
                     const target = el.closest('label') || el;
                     const r = target.getBoundingClientRect();
-                    // Nothing is measured that nobody can reach: a control laid
-                    // out to nothing is not a small target, it is no target.
+                    // Laid out to nothing: no target at all.
                     if (r.width === 0 && r.height === 0) {{ continue; }}
                     if (r.width < wide || r.height < tall) {{
                         const what = (target.textContent || el.getAttribute('aria-label')
@@ -693,25 +419,13 @@ impl Page<'_> {
             .collect())
     }
 
-    /// Everything on the page, as a reader would read it.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The whole page's rendered text.
     pub async fn text(&self) -> Result<String> {
         let text = self.0.measure("return document.body.innerText;").await?;
         Ok(text.as_str().unwrap_or_default().to_string())
     }
 
-    /// Every field a phone would zoom in on, with the size it is set at.
-    ///
-    /// Generalises the search field's rule to the forms: any field below sixteen
-    /// pixels makes iOS Safari scale the page up on focus, and a reader who has
-    /// just started typing then has to pinch their way back out.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the measuring script does not run.
+    /// Every field below `least` px, which iOS Safari zooms into on focus.
     pub async fn fields_under(&self, least: f64) -> Result<Vec<String>> {
         let measured = self
             .0
@@ -738,16 +452,8 @@ impl Page<'_> {
             .collect())
     }
 
-    /// The computed font size of the search field, in CSS pixels.
-    ///
-    /// Below 16, iOS Safari zooms the whole page when the field takes focus and
-    /// leaves the reader pinching their way back out. It is a rule about a
-    /// browser nobody here is running, which is exactly why it needs a test that
-    /// reads the computed value rather than a promise in a stylesheet.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run or there is no search field.
+    /// The search field's computed font size in CSS pixels; below 16, iOS
+    /// Safari zooms the page on focus.
     pub async fn search_field_font_size(&self) -> Result<f64> {
         let size = self
             .0
@@ -762,11 +468,7 @@ impl Page<'_> {
         size.as_f64().context("no search field on this page")
     }
 
-    /// The page's background, as the browser computed it.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run.
+    /// The body's computed background colour.
     pub async fn background(&self) -> Result<String> {
         let colour = self
             .0
@@ -775,17 +477,8 @@ impl Page<'_> {
         Ok(colour.as_str().unwrap_or_default().to_string())
     }
 
-    /// Where something sits in the viewport: its left edge, its width, and how
-    /// wide the viewport is.
-    ///
-    /// All three, because every question worth asking about a wide layout is
-    /// about a relationship — is the column narrower than the window, is it
-    /// centred in what is left over, does this piece start to the right of that
-    /// one. A width on its own answers none of them.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run or nothing matches.
+    /// `(left, width, viewport width)` of `selector`: layout questions are about
+    /// relationships, which a width alone cannot answer.
     pub async fn box_of(&self, selector: &str) -> Result<(f64, f64, f64)> {
         let measured = self
             .0
@@ -808,16 +501,8 @@ impl Page<'_> {
         Ok((at(0), at(1), at(2)))
     }
 
-    /// The same three numbers, but against a container rather than the window.
-    ///
-    /// A layout made of panes moves the question: the reading column is not
-    /// centred in the *window*, it is centred in the pane it lives in, and the
-    /// window has a rail and an index in it as well. Measuring against the
-    /// window would ask about a relationship the design never claimed.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run or either selector matches nothing.
+    /// [`Self::box_of`] relative to a container: the reading column is centred
+    /// in its pane, not the window.
     pub async fn box_in(&self, child: &str, parent: &str) -> Result<(f64, f64, f64)> {
         let measured = self
             .0
@@ -842,19 +527,9 @@ impl Page<'_> {
         Ok((at(0), at(1), at(2)))
     }
 
-    /// How many lines a bar's children fall on.
-    ///
-    /// A wrap leaves no trace anywhere else: the markup is identical either
-    /// way, the text is all still there, and every character-level assertion
-    /// passes over it. Only the boxes say which line a child landed on.
-    ///
-    /// The question is whether a child starts below where the ones before it
-    /// end, rather than how many distinct tops there are — chips sharing a
-    /// baseline have several tops and are still one line.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run or nothing matches.
+    /// How many lines a bar's children wrap onto, which only the boxes reveal.
+    /// Counts children starting below the previous ones' bottom, not distinct
+    /// tops: chips sharing a baseline have several tops but are one line.
     pub async fn lines_of(&self, selector: &str) -> Result<u64> {
         let measured = self
             .0
@@ -879,15 +554,8 @@ impl Page<'_> {
             .with_context(|| format!("nothing matches {selector}"))
     }
 
-    /// Whether the listing is on the screen with notes in it.
-    ///
-    /// Both halves, because either alone is satisfiable by an accident: a pane
-    /// with no width is not on screen, and a pane on screen with nothing in it
-    /// is the frame waiting for rows that never came.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run.
+    /// Whether the listing pane has width and holds rows; either alone can be
+    /// true by accident.
     pub async fn listing_on_screen(&self) -> Result<bool> {
         let seen = self
             .0
@@ -901,11 +569,7 @@ impl Page<'_> {
         Ok(seen.as_bool().unwrap_or(false))
     }
 
-    /// The title of the row the listing has marked as the one being read.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run.
+    /// The title of the listing row marked as being read.
     pub async fn marked_row(&self) -> Result<Option<String>> {
         let title = self
             .0
@@ -917,21 +581,10 @@ impl Page<'_> {
         Ok(title.as_str().map(str::to_string))
     }
 
-    /// What the margin note beside a note is saying, a line per link, or the
-    /// one line it says when nothing points here. `None` when the column is not
-    /// drawn at all, which is every width under 1440 and every width without a
-    /// script.
-    ///
-    /// `offsetParent` rather than a look at the markup, for the reason the id
-    /// column needs it too: the box is in the page from the start and closed,
-    /// so what is being asked is whether it was ever opened. The line it shows
-    /// while the notebook is being walked is deliberately not filtered out —
-    /// a caller waiting for a title will keep waiting, and one asserting the
-    /// column is absent must not pass because it happens to still be loading.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the page cannot be queried.
+    /// The margin note's lines, one per link, or its single "nothing points
+    /// here" line. `None` when not drawn (under 1440px, or without scripts) —
+    /// asked via `offsetParent`, since the box is always in the markup. The
+    /// loading line is not filtered out, so "absent" cannot pass while loading.
     pub async fn margin_note(&self) -> Result<Option<Vec<String>>> {
         let said = self
             .0
@@ -957,14 +610,7 @@ impl Page<'_> {
         ))
     }
 
-    /// Whether the page scrolls sideways.
-    ///
-    /// A phone with a horizontal scrollbar is a layout that did not fit, and it
-    /// is invisible to every assertion made about the markup.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script does not run.
+    /// Whether the page scrolls sideways, i.e. a layout that did not fit.
     pub async fn scrolls_sideways(&self) -> Result<bool> {
         let over = self
             .0

@@ -1,12 +1,6 @@
-//! The action items a note's body carries.
-//!
-//! A todo is a GFM checkbox in a note, not a note and not a file of its own —
-//! chosen so anything else reading Markdown renders it as a checkbox, the same
-//! bargain attachments make.
-//!
-//! Parsed rather than grepped, for `link.rs`'s reason: `- [ ]` inside a fence is
-//! prose *about* a checkbox, and getting that wrong puts something on a todo
-//! list its author never put there.
+//! The action items in a note's body: GFM checkboxes, so any other Markdown
+//! reader renders them too. Parsed rather than grepped — `- [ ]` inside a fence
+//! is not a todo.
 
 use std::cmp::Ordering;
 
@@ -21,21 +15,15 @@ pub struct Item {
 }
 
 impl Item {
-    /// A string comparison, correct only because `YYYY-MM-DD` sorts as text the
-    /// way it sorts as a date — the reason `split_due` accepts one spelling.
-    ///
-    /// `today` is passed in because whose today it is matters: nobody writes
-    /// `due:2026-08-10` meaning UTC. All three screens get it from `cmd::today`.
+    /// A string comparison, valid because `YYYY-MM-DD` sorts as text the way it
+    /// sorts as a date. `today` is the local date from `cmd::today`, not UTC.
     pub fn overdue(&self, today: &str) -> bool {
         self.due.as_deref().is_some_and(|due| due < today)
     }
 }
 
-/// Every unticked checkbox in `body`, in the order they are written. A finished
-/// item stays exactly where its author wrote it.
-///
-/// The text stops at the end of the first paragraph — where a list item stops
-/// being a line and starts being a section — and inline markup is flattened, so
+/// Every unticked checkbox in `body`, in order. The text stops at the end of
+/// the item's first paragraph and inline markup is flattened, so
 /// `[the spec](spec.md)` reads as `the spec`.
 pub fn items(body: &str) -> Vec<Item> {
     let mut options = Options::empty();
@@ -48,8 +36,7 @@ pub fn items(body: &str) -> Vec<Item> {
 
     for event in Parser::new_ext(body, options) {
         match event {
-            // Always first in its item, so it closes whatever came before —
-            // which is how a nested box ends the text it is nested inside.
+            // Always first in its item, so it ends the text of any enclosing item.
             Event::TaskListMarker(ticked) => {
                 flush(&mut found, &mut collecting);
                 depth = 0;
@@ -62,7 +49,6 @@ pub fn items(body: &str) -> Vec<Item> {
                     item.push_str(&text);
                 }
             }
-            // The text is one line by the time it is printed.
             Event::SoftBreak | Event::HardBreak => {
                 if let Some(item) = &mut collecting {
                     item.push(' ');
@@ -70,15 +56,13 @@ pub fn items(body: &str) -> Vec<Item> {
             }
             Event::Start(tag) => {
                 if is_inline(&tag) {
-                    // Depth, so inline markup does not end the item at its own
-                    // closing tag.
+                    // Depth, so inline markup's closing tag does not end the item.
                     if collecting.is_some() {
                         depth += 1;
                     }
                 } else if !matches!(tag, Tag::Paragraph) {
-                    // Any other opening is a new block, and the item's text
-                    // stopped before it. A paragraph is exempt because a loose
-                    // list wraps the item's own text in one.
+                    // Any other block ends the item's text. A paragraph is
+                    // exempt because a loose list wraps the item's text in one.
                     flush(&mut found, &mut collecting);
                     depth = 0;
                 }
@@ -102,12 +86,8 @@ pub fn items(body: &str) -> Vec<Item> {
     found
 }
 
-/// Soonest first, undated last: an item without a date has made no claim about
-/// when it happens. Ties fall back to the slug so a listing does not reshuffle.
-///
-/// Written once because `noda todo` and the browser's todo screen both print
-/// this list, and disagreeing would look like a bug in whichever you asked
-/// second.
+/// Soonest first, undated last, ties by slug so a listing does not reshuffle.
+/// Shared so `noda todo` and the browser's todo screen agree.
 pub fn order((left_slug, left): (&str, &Item), (right_slug, right): (&str, &Item)) -> Ordering {
     match (&left.due, &right.due) {
         (Some(left), Some(right)) => left.cmp(right),
@@ -118,7 +98,6 @@ pub fn order((left_slug, left): (&str, &Item), (right_slug, right): (&str, &Item
     .then_with(|| left_slug.cmp(right_slug))
 }
 
-/// Markup that lives inside a paragraph rather than replacing it.
 fn is_inline(tag: &Tag<'_>) -> bool {
     matches!(
         tag,
@@ -132,7 +111,7 @@ fn flush(found: &mut Vec<Item>, collecting: &mut Option<String>) {
     }
 }
 
-/// `- [ ]` on its own is a box nobody has written the task into yet.
+/// An empty `- [ ]` is not an item.
 fn push(found: &mut Vec<Item>, text: String) {
     let (text, due) = split_due(text.trim());
     if text.is_empty() {
@@ -141,27 +120,23 @@ fn push(found: &mut Vec<Item>, text: String) {
     found.push(Item { text, due });
 }
 
-/// Lifts a `due:YYYY-MM-DD` term out of the text — todo.txt's `key:value`
-/// shape, which stays prose to every other renderer. Only what gets printed is
-/// affected; the file is never touched.
-///
-/// The last one wins: two due dates is somebody editing rather than declaring.
+/// Lifts a todo.txt-style `due:YYYY-MM-DD` term out of the printed text (the
+/// file is untouched). The last one wins: two dates means the author moved it.
 fn split_due(text: &str) -> (String, Option<String>) {
     let mut due = None;
     let mut kept: Vec<&str> = Vec::new();
     for word in text.split_whitespace() {
         match word.strip_prefix("due:").filter(|rest| is_date(rest)) {
             Some(date) => due = Some(date.to_string()),
-            // `due:tomorrow` included — a term noda cannot read is prose.
+            // Includes `due:tomorrow`: a term noda cannot read stays prose.
             None => kept.push(word),
         }
     }
     (kept.join(" "), due)
 }
 
-/// Deliberately not a full date parse: the shape is what makes the column sort
-/// as text, and `2026-13-99` is still the author's word about their own
-/// deadline. `doctor --times` is where noda argues with a date.
+/// Shape only, not a date parse: the shape is what makes it sort as text, and
+/// `2026-13-99` is still the author's word.
 fn is_date(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() == 10
@@ -191,7 +166,6 @@ mod tests {
         assert!(texts("- just a bullet\n\nand a paragraph\n").is_empty());
     }
 
-    /// The reason this parses rather than greps, exactly as in `link.rs`.
     #[test]
     fn a_box_inside_a_code_block_is_prose_about_a_box() {
         assert!(texts("```\n- [ ] not mine\n```\n").is_empty());

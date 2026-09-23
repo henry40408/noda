@@ -4,9 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use noda::{Paths, cmd, tui, web};
 
-/// What `noda ls --sort` accepts. `cmd::Sort` has a fourth variant for the
-/// order a listing comes in when the flag is absent, which is not something to
-/// ask for by name.
+/// What `noda ls --sort` accepts: `cmd::Sort` minus the default order, which
+/// is not asked for by name.
 #[derive(Clone, Copy, ValueEnum)]
 enum SortField {
     Created,
@@ -17,8 +16,7 @@ enum SortField {
 #[derive(Parser)]
 #[command(
     name = "noda",
-    // Not clap's bare `version`, which is `Cargo.toml`'s placeholder. build.rs
-    // stamps the tag the build came from.
+    // Not clap's bare `version`, which is `Cargo.toml`'s placeholder.
     version = noda::VERSION,
     about = "A git-native notebook for your terminal"
 )]
@@ -386,7 +384,6 @@ enum Command {
     },
 }
 
-/// `--no-touch` on the commands that change a note, as `cmd` wants it.
 fn touch(no_touch: bool) -> cmd::Touch {
     if no_touch {
         cmd::Touch::Keep
@@ -395,9 +392,8 @@ fn touch(no_touch: bool) -> cmd::Touch {
     }
 }
 
-/// One subcommand per source. A format is named rather than sniffed: guessing
-/// wrong would import somebody's notes as the wrong thing, quietly, which is
-/// the one failure an import must not have.
+/// One subcommand per source: a format is named rather than sniffed, because a
+/// wrong guess would quietly import notes as the wrong thing.
 #[derive(Subcommand)]
 enum ImportCommand {
     /// Import a `TiddlyWiki` 5 export: the JSON `export all` writes, or a saved
@@ -488,12 +484,10 @@ enum RemoteCommand {
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
-        // `noda log | head` closing the pipe is the pipeline working, so leave
-        // quietly rather than shout at a reader who has already gone.
         Err(e) if e.is_broken_pipe() => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            // Through `anstream` like every other stream: an error may quote a
-            // command's output, and a pipe must not receive escape sequences.
+            // Through `anstream`: an error may quote coloured output, and a pipe
+            // must not receive escape sequences.
             anstream::eprintln!("noda: {e}");
             std::process::ExitCode::FAILURE
         }

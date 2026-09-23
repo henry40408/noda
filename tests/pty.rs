@@ -1,18 +1,11 @@
-//! The browser in a real terminal: a real pty, the real binary, real bytes.
+//! The browser in a real terminal: the built binary on a `portable-pty`, read
+//! back through a `vt100` emulator.
 //!
-//! `tests/tui.rs` draws into a buffer of characters, which is right for "which
-//! notes are on the screen" and blind to the bugs where the *layout* is wrong
-//! rather than the content: a padding on the wrong side, a blank cell skipped so
-//! every column after slid left, a card that outgrew twenty-four rows, a key
-//! dropped at eighty columns. Each passed every assertion there and was found by
-//! driving the built binary through a pty.
+//! `tests/tui.rs` draws into a character buffer, which is blind to *layout* bugs —
+//! a cell skipped so later columns slide left, a card taller than twenty-four
+//! rows, a key dropped at eighty columns. Each of those passed there.
 //!
-//! `portable-pty` opens the terminal and `vt100` is the emulator on the other
-//! end, so what is asserted on is the screen the bytes leave behind.
-//!
-//! The harness is restated rather than shared: an integration test is its own
-//! crate. `sign = false` is not optional — libgit2 reads the developer's real
-//! git config, so a machine that signs would send every commit here to gpg.
+//! `sign = false` is required: libgit2 reads the developer's real git config.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -24,8 +17,7 @@ use noda::cmd;
 use noda::paths::Paths;
 use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 
-/// Generous on purpose — a process starting, a repository opening and a frame
-/// crossing a pty — because a test flaky on a loaded machine gets deleted.
+/// Generous, because a test flaky on a loaded machine gets deleted.
 const PATIENCE: Duration = Duration::from_secs(20);
 
 struct TempRoot(PathBuf);
@@ -46,11 +38,8 @@ impl Drop for TempRoot {
     }
 }
 
-/// Three notes, in the order the listing puts them.
-///
-/// Built in this process: what is under test is the browser, and a notebook
-/// assembled by `cmd::` is the same notebook. `Paths::rooted` lays the four XDG
-/// roots under one directory, which is what the child's four variables name.
+/// Three notes, in listing order. `Paths::rooted` lays out the same four XDG
+/// roots that `Browser::open` hands the child.
 fn a_notebook() -> (TempRoot, Paths) {
     let root = TempRoot::new();
     let paths = Paths::rooted(&root.0);
@@ -76,12 +65,10 @@ fn a_notebook() -> (TempRoot, Paths) {
     (root, paths)
 }
 
-/// Appends a line and exits, which is all the round trip needs.
+/// An editor that appends a line and exits.
 ///
-/// A script on disk, because `run_editor` splits on whitespace and a quoted
-/// argument cannot survive. In the notebook's config because that is what wins —
-/// a run that set only the environment once opened the developer's vim and hung
-/// there.
+/// A script, because `run_editor` splits on whitespace. Set in config, which wins
+/// over the environment — setting only `$EDITOR` once opened the developer's vim.
 fn an_editor_that_edits(root: &TempRoot, paths: &Paths) {
     let script = root.0.join("editor.sh");
     std::fs::write(
@@ -104,17 +91,15 @@ fn an_editor_that_edits(root: &TempRoot, paths: &Paths) {
     .expect("write config");
 }
 
-/// The browser, running in a terminal of a stated size.
 struct Browser {
     writer: Box<dyn Write + Send>,
     screen: Arc<Mutex<vt100::Parser>>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    // Where the reader and writer came from; dropping it closes the terminal.
+    // Dropping it closes the terminal.
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
 impl Browser {
-    /// The size is the point of most of these tests, so it is always stated.
     fn open(root: &TempRoot, cols: u16, rows: u16) -> Self {
         let PtyPair { master, slave } = native_pty_system()
             .openpty(PtySize {
@@ -127,8 +112,8 @@ impl Browser {
 
         let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_noda"));
         command.arg("tui");
-        // All four, `XDG_STATE_HOME` above all: the active pointer lives in
-        // state, so overriding only config and data rewrites the real one.
+        // All four: the active pointer lives in state, so missing that one
+        // rewrites the developer's real pointer.
         command.env("XDG_CONFIG_HOME", root.0.join("config"));
         command.env("XDG_DATA_HOME", root.0.join("data"));
         command.env("XDG_STATE_HOME", root.0.join("state"));
@@ -136,7 +121,7 @@ impl Browser {
         command.env("TERM", "xterm-256color");
 
         let child = slave.spawn_command(command).expect("spawn noda tui");
-        // Ours has to go, or the reader never sees the end of the stream.
+        // Our copy must close, or the reader never sees end of stream.
         drop(slave);
 
         let mut reader = master.try_clone_reader().expect("clone the reader");
@@ -162,7 +147,6 @@ impl Browser {
         }
     }
 
-    /// Types, as a person would.
     fn send(&mut self, keys: &str) {
         self.writer
             .write_all(keys.as_bytes())
@@ -170,20 +154,16 @@ impl Browser {
         self.writer.flush().expect("flush");
     }
 
-    /// What is on the screen right now.
     fn now(&self) -> String {
         self.screen.lock().expect("screen").screen().contents()
     }
 
-    /// Row by row, so an assertion can be about *where* something is. Leading
-    /// blanks survive, which is what makes a column measurable.
+    /// Leading blanks survive, so a column is measurable.
     fn rows(&self) -> Vec<String> {
         let parser = self.screen.lock().expect("screen");
         parser.screen().rows(0, u16::MAX).collect()
     }
 
-    /// Polled rather than slept against: a fixed sleep is either slower than it
-    /// needs to be or shorter than a loaded machine needs.
     fn wait_for(&self, needle: &str) -> String {
         let deadline = Instant::now() + PATIENCE;
         loop {
@@ -199,7 +179,6 @@ impl Browser {
         }
     }
 
-    /// Waits until the screen has stopped saying `needle`.
     fn wait_until_gone(&self, needle: &str) -> String {
         let deadline = Instant::now() + PATIENCE;
         loop {
@@ -215,9 +194,7 @@ impl Browser {
         }
     }
 
-    /// `q` first and `ctrl-c` after, because a card swallows whatever dismisses
-    /// it: `q` alone under the help card dismissed the help and then waited
-    /// forever for a process that was perfectly happy.
+    /// `q`, then `ctrl-c`: an open card swallows the `q` that dismisses it.
     fn quit(mut self) {
         self.send("q");
         if self.wait_for_exit(Duration::from_secs(2)).is_none() {
@@ -246,13 +223,12 @@ impl Browser {
 
 impl Drop for Browser {
     fn drop(&mut self) {
-        // Or a failure mid-screen leaves a browser nobody is reading.
+        // A failed assertion must not leave the child running.
         let _ = self.child.kill();
     }
 }
 
-/// By slug: the id in front of it is minted, so the name cannot be spelled out
-/// in a test.
+/// By slug, because the id is minted.
 fn note_file(paths: &Paths, slug: &str) -> PathBuf {
     let ending = format!("-{slug}.md");
     let notebooks = std::fs::read_dir(paths.notebooks_dir()).expect("read the notebooks dir");
@@ -269,7 +245,6 @@ fn note_file(paths: &Paths, slug: &str) -> PathBuf {
     panic!("no note called {slug}");
 }
 
-/// Waits until a file on disk says `needle`.
 fn wait_for_file(path: &std::path::Path, needle: &str) {
     let deadline = Instant::now() + PATIENCE;
     loop {
@@ -286,31 +261,24 @@ fn wait_for_file(path: &std::path::Path, needle: &str) {
     }
 }
 
-/// Why a column is measured at all: the grid's cells are padded into place, and
-/// the bugs worth catching are the ones where a cell was skipped rather than
-/// padded, so everything after it moved left.
 fn column_of(rows: &[String], needle: &str) -> usize {
     rows.iter()
         .find_map(|row| row.find(needle))
         .unwrap_or_else(|| panic!("{needle:?} is not on the screen:\n{}", rows.join("\n")))
 }
 
-/// Where the count beside a tag starts, in columns of the terminal.
+/// Terminal column of the count beside a tag.
 ///
-/// Measured from the box rather than from the left of the row: a card lies over
-/// the listing rather than replacing it, so what is to the left of the card on
-/// that row is still a note — and `Meeting notes` holds the very word being
-/// looked for. And measured in columns rather than in bytes, because `find`
-/// answers in bytes and a tag in Chinese is three of them a character.
+/// Searched from the checkbox, because the listing shows beside the card and
+/// `Meeting notes` contains ` note`; converted to columns, because `find` answers
+/// in bytes.
 fn count_column(row: &str) -> Option<usize> {
     let boxed = row.find("[x] ").or_else(|| row.find("[ ] "))?;
     let at = boxed + row[boxed..].find(" note")?;
     Some(cmd::display_width(&row[..at]))
 }
 
-/// Padding counted in characters lines up in a buffer and not on a terminal:
-/// `專案管理` is four characters and eight columns, and `tests/tui.rs` would go
-/// on passing.
+/// `專案管理` is four characters but eight columns; `tests/tui.rs` cannot tell.
 #[test]
 fn the_tag_picker_lines_its_counts_up_in_columns_and_not_characters() {
     let (root, paths) = a_notebook();
@@ -325,8 +293,7 @@ fn the_tag_picker_lines_its_counts_up_in_columns_and_not_characters() {
     let mut browser = Browser::open(&root, 90, 28);
     browser.wait_for("Budget review");
 
-    // On the card's footer: the tag is on the listing underneath too, so
-    // waiting on that returns before the card is drawn.
+    // Wait on the card's footer; the tag is on the listing too.
     browser.send("#");
     let screen = browser.wait_for("tab  choose");
     assert!(screen.contains("專案管理"), "{screen}");
@@ -345,23 +312,21 @@ fn the_tag_picker_lines_its_counts_up_in_columns_and_not_characters() {
         rows.join("\n")
     );
 
-    // Out of the card first: the filter takes every letter, `q` included.
+    // The filter takes every letter, `q` included.
     browser.send("\x1b");
     browser.wait_until_gone("tab  choose");
     browser.quit();
 }
 
-/// Every test below this layer hands `KeyCode::Tab` to the state machine. What a
-/// terminal sends is `\t`, and that it arrives as `Tab` rather than as a
-/// character in the filter is a link only a real terminal can test — and the
-/// design rests on it, the filter taking every character there is.
+/// Other layers hand the state machine `KeyCode::Tab`; only a real terminal shows
+/// that `\t` arrives as `Tab` and not as a filter character.
 #[test]
 fn the_tab_that_chooses_arrives_as_tab_and_not_as_a_character() {
     let (root, _paths) = a_notebook();
     let mut browser = Browser::open(&root, 90, 28);
     browser.wait_for("Budget review");
 
-    // The note carries `work`, so the only state left is taking it off.
+    // The note carries `work`, so tab takes it off.
     browser.send("#");
     let screen = browser.wait_for("tab  choose");
     assert!(screen.contains("[x] work"), "{screen}");
@@ -386,33 +351,29 @@ fn the_listing_arrives_through_a_real_terminal() {
     let screen = browser.wait_for("Budget review");
     assert!(screen.contains("Meeting notes"), "{screen}");
     assert!(screen.contains("Reading list"), "{screen}");
-    // The one thing on screen about the screen rather than about a note.
+    // The screen's own title.
     assert!(screen.contains("Notes"), "{screen}");
 
     browser.quit();
 }
 
-/// The card has outgrown twenty-four rows three times, and each fix was to
-/// consolidate rows rather than assume a taller terminal. The test backend only
-/// sees it if somebody asks at exactly the wrong height.
+/// The card has outgrown twenty-four rows three times.
 #[test]
 fn the_help_card_fits_a_twenty_four_row_terminal() {
     let (root, _paths) = a_notebook();
     let mut browser = Browser::open(&root, 90, 24);
     browser.wait_for("Budget review");
 
-    // Not `keys`, which is on the grid underneath — waiting on it returns
-    // before the card is drawn at all.
+    // Not `keys`, which is also on the grid underneath.
     browser.send("?");
     let screen = browser.wait_for("half a screen");
 
-    // The one thing on the card that cannot be guessed from its key, and what
-    // a card that measured itself wrong cut.
+    // What a card that measured itself wrong cut.
     assert!(
         screen.contains("tag:work OR tag:q3 budget"),
         "the search example was cut:\n{screen}"
     );
-    // The last row: what goes if the card runs off the bottom.
+    // The last row.
     assert!(
         screen.contains("readline: ctrl-a/e/w/u/k/y"),
         "the card lost its last row:\n{screen}"
@@ -421,44 +382,35 @@ fn the_help_card_fits_a_twenty_four_row_terminal() {
     browser.quit();
 }
 
-/// Eighty columns is where the grid starts dropping from the right, and `:` is
-/// the key that cannot be looked up when it is not shown.
+/// At eighty columns the grid drops keys from the right; `:` must survive.
 #[test]
 fn the_command_key_survives_eighty_columns() {
     let (root, _paths) = a_notebook();
     let browser = Browser::open(&root, 80, 28);
     let screen = browser.wait_for("Budget review");
 
-    // `<:>` and not `command`: the column beside holds `ctrl-a  commands`, so
-    // the word alone passes while the key is gone.
+    // `<:>`, not `command`: `ctrl-a  commands` would pass without it.
     assert!(screen.contains("<:>"), "the prompt key went:\n{screen}");
     assert!(screen.contains("<?>"), "the help key went:\n{screen}");
 
     browser.quit();
 }
 
-/// A blank cell has to be padded rather than skipped: a skipped one slides every
-/// cell after it left, and a key ends up under the wrong heading.
-///
-/// The note screen is where that bug lived — its third column runs out after two
-/// entries, so three of five rows are blank mid-grid.
+/// A skipped blank cell slides every later cell left. The note screen has
+/// blanks mid-grid.
 #[test]
 fn a_blank_cell_holds_its_column_open() {
     let (root, _paths) = a_notebook();
-    // Wide enough for the column to be drawn at all: at ninety the note's
-    // fourth is already gone.
+    // At ninety columns the note screen's fourth column is gone.
     let mut browser = Browser::open(&root, 110, 28);
     browser.wait_for("Budget review");
 
-    // Into the note, where the blanks are. `scroll` marks it as the note: every
-    // other word on the grid is on both.
+    // `scroll` is the only grid word the listing lacks.
     browser.send("\r");
     browser.wait_for("scroll");
     let rows = browser.rows();
 
-    // One column, so their keys start in one place — and three sit on rows whose
-    // left-hand column is blank, which is the point. Measured on the key, being
-    // what a slid column takes with it.
+    // One column; three of these sit on rows with a blank cell to their left.
     let todo = column_of(&rows, "<t>");
     for key in ["<l>", "<b>", "<B>"] {
         assert_eq!(
@@ -472,8 +424,6 @@ fn a_blank_cell_holds_its_column_open() {
     browser.quit();
 }
 
-/// Every intermediate keystroke is itself a query, so this asserts across the
-/// whole word.
 #[test]
 fn typing_a_query_narrows_the_listing() {
     let (root, _paths) = a_notebook();
@@ -487,13 +437,8 @@ fn typing_a_query_narrows_the_listing() {
     browser.quit();
 }
 
-/// The one thing the browser does that leaves its own screen, and where a
-/// `Terminal::clear()` once asked the terminal for its cursor and waited for an
-/// answer a pty had nobody to give — fatal, and invisible to every test that
-/// never left the process.
-///
-/// The edit arriving is the proof: the editor ran, the browser came back, the
-/// reload saw the change, and the note screen drew it.
+/// A `Terminal::clear()` here once waited forever for a cursor-position reply,
+/// which no in-process test could see.
 #[test]
 fn coming_back_from_the_editor_redraws_the_screen() {
     let (root, paths) = a_notebook();
@@ -501,9 +446,8 @@ fn coming_back_from_the_editor_redraws_the_screen() {
     let mut browser = Browser::open(&root, 90, 28);
     browser.wait_for("Budget review");
 
-    // Three waits: the file says the editor has been and gone, and the slug on
-    // the status line says the browser is back and can take a keystroke.
-    // Sending into the gap between them races the editor for the terminal.
+    // Wait for the file and for the browser to be back; a key sent between them
+    // races the editor for the terminal.
     browser.send("e");
     wait_for_file(&note_file(&paths, "budget-review"), "edited by the test");
     browser.wait_for("budget-review");

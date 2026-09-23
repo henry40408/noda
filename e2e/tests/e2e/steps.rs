@@ -1,9 +1,6 @@
-//! What the Gherkin means.
-//!
-//! The steps talk about pressing things and reading things, never about
-//! selectors — a feature that names a CSS class is a feature that has to be
-//! rewritten when the stylesheet is. Where a selector is needed it lives in the
-//! page object.
+//! Step definitions. Steps speak of pressing and reading, never of selectors,
+//! which live in the page object so a stylesheet change does not reach the
+//! features.
 
 use anyhow::Result;
 use cucumber::{given, then, when};
@@ -12,16 +9,11 @@ use noda_e2e::server::NOTEBOOK;
 use noda_e2e::wait::eventually;
 use noda_e2e::world::NodaWorld;
 
-/// A phone narrow enough to be the worst case anybody still carries.
+/// The narrowest phone still in use.
 const NARROW: (u32, u32) = (320, 568);
 
-/// How bright a background has to be to be the light one, averaged over its
-/// channels.
-///
-/// A threshold rather than the exact colours: what is being asked is whether the
-/// media query was reached and the palette flipped, and writing the hex values
-/// down here would be a second copy of `web/theme.rs` that has to be kept in
-/// step with the first.
+/// Mean-channel brightness thresholds, rather than exact colours that would copy
+/// `web/theme.rs`.
 const LIGHT_ENOUGH: f64 = 200.0;
 const DARK_ENOUGH: f64 = 60.0;
 
@@ -152,11 +144,8 @@ async fn type_search(world: &mut NodaWorld, query: String) -> Result<()> {
     world.page()?.type_search(&query).await
 }
 
-/// A row the query excluded: on the page, and not on the screen.
-///
-/// The two halves are the point. `I do not see a row for` above already says
-/// the second, and on its own it would pass just as well against a listing that
-/// had left the note out — which is the design this replaced.
+/// On the page but not on the screen: `I do not see a row for` alone would also
+/// pass if the listing had left the note out.
 #[then(expr = "the page holds a hidden row for {string}")]
 async fn hidden_row(world: &mut NodaWorld, what: String) -> Result<()> {
     let hidden = world.page()?.hidden_rows().await?;
@@ -300,9 +289,7 @@ async fn field_is_big_enough(world: &mut NodaWorld, least: f64) -> Result<()> {
     Ok(())
 }
 
-/// The rule the CLI already follows, one medium over: given room, a row
-/// *extends*. The tags and the day leave the second line and go to the right of
-/// the title — same information, same order.
+/// As in the CLI, a row given room extends: tags and day move right of the title.
 #[then("the row's tags sit beside the title")]
 async fn tags_beside(world: &mut NodaWorld) -> Result<()> {
     let (title, _, _) = world.page()?.box_of(".row .title").await?;
@@ -325,9 +312,7 @@ async fn tags_under(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The four orders are the search's vocabulary, and they are on the screen so
-/// that reading them is how you learn it. Wrapped, the fourth sits alone under
-/// the other three and reads as a different kind of thing from the row it left.
+/// Wrapped, the fourth order sits alone and reads as something different.
 #[then("the order chips are on one line")]
 async fn order_on_one_line(world: &mut NodaWorld) -> Result<()> {
     let lines = world.page()?.lines_of(".sortbar").await?;
@@ -335,17 +320,14 @@ async fn order_on_one_line(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The id is the note's name in the notebook's own vocabulary: what `noda show`
-/// takes and the first half of the filename in the repository. It is on every
-/// row and drawn where there is a column for it.
 #[then("the row shows the note's id")]
 async fn row_shows_an_id(world: &mut NodaWorld) -> Result<()> {
     let shown = world.page()?.shown_id().await?;
     let Some(id) = shown else {
         anyhow::bail!("no id is drawn on the row at this width");
     };
-    // Eight characters of Crockford base32 — `note::mint_id`. Not a particular
-    // id, because a fixture that names one is a fixture that has to mint one.
+    // `note::ID_LEN` characters of Crockford base32; ids are minted, so no
+    // particular one.
     anyhow::ensure!(
         id.len() == 8 && id.chars().all(|c| c.is_ascii_alphanumeric()),
         "the id column says {id:?}, which is not an id"
@@ -353,8 +335,7 @@ async fn row_shows_an_id(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// And the other half of the same decision. A phone has one column, and it
-/// belongs to the title.
+/// A phone's one column belongs to the title.
 #[then("the row shows no id")]
 async fn row_shows_no_id(world: &mut NodaWorld) -> Result<()> {
     let shown = world.page()?.shown_id().await?;
@@ -365,8 +346,8 @@ async fn row_shows_no_id(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// `a OR b c` is `(a OR b) AND c`, which is the one thing about this grammar
-/// people read backwards — so the field says what it did with what was typed.
+/// `a OR b c` is `(a OR b) AND c`, which people read backwards, so the field
+/// shows its grouping.
 #[then(expr = "the field groups it as {string}")]
 async fn field_groups_it(world: &mut NodaWorld, expected: String) -> Result<()> {
     eventually(
@@ -394,12 +375,8 @@ async fn content_is_narrow(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The front page has no rail, so it must not be laid out around one.
-///
-/// Only a laid-out page can answer this. The rail is a grid column, and a page
-/// that never draws one still gets the column: what was on screen was 76px of
-/// nothing down the left of every notebook. The markup gives nothing away —
-/// there is no rail in it either way.
+/// The front page has no rail, but the rail's grid column once left 76px of
+/// nothing down the left — invisible in the markup.
 #[then("the notebooks fill the window")]
 async fn notebooks_fill_the_window(world: &mut NodaWorld) -> Result<()> {
     let (left, width, window) = world.page()?.box_of("main.books").await?;
@@ -410,10 +387,6 @@ async fn notebooks_fill_the_window(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The margin left over has to fall on both sides.
-///
-/// A column that stops short of the right edge and hugs the left is not a
-/// narrower page, it is a lopsided one.
 #[then("the content is centred")]
 async fn content_is_centred(world: &mut NodaWorld) -> Result<()> {
     let (left, width, window) = world.page()?.box_of("main").await?;
@@ -425,12 +398,7 @@ async fn content_is_centred(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The same two questions, asked of the pane instead of the window.
-///
-/// On a screen holding two panes the reading column is not centred in the
-/// window and should not be: the window also has a rail and an index in it.
-/// What has to be true is that the prose stops short of its own pane's edges
-/// and sits evenly between them.
+/// Against the pane, not the window, which also holds a rail and an index.
 #[then("the reading column is narrower than its pane")]
 async fn reading_is_narrow(world: &mut NodaWorld) -> Result<()> {
     let (_, width, pane) = world
@@ -458,18 +426,9 @@ async fn reading_is_centred(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// A form page says its piece in a strip above the form, and the strip is a
-/// strip *across a pane*: its own padding, and a rule under it that reaches
-/// both edges. The delete page had a copy of it inside the form instead, where
-/// the form's padding applied to it a second time — so the words stood 16px to
-/// the right of the button they were about, under a rule that stopped short at
-/// either end.
-///
-/// Nothing above this layer can see it. The markup was valid either way and
-/// every string was where it belonged; what was wrong was two boxes, and only a
-/// laid-out page knows where a box ended up. Measured on the first bold run
-/// rather than on the paragraph, because the paragraph is full-bleed by design
-/// and it is the *words* that have to line up.
+/// A form page's strip spans the pane; placed inside the form, it got the
+/// form's padding twice and stood 16px right of its buttons. Measured on the
+/// first bold run, since the paragraph itself is full-bleed.
 #[then("the words line up with the buttons under them")]
 async fn words_line_up(world: &mut NodaWorld) -> Result<()> {
     let (words, _, _) = world.page()?.box_in(".said b", "main").await?;
@@ -481,8 +440,7 @@ async fn words_line_up(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// Both stamps are on a note's page, whichever pass this is. What they *read
-/// as* differs between the two, which is the next step's business.
+/// Both stamps are present in either pass; how they read is the next step's.
 #[then("the note says when it was made and when it changed")]
 async fn stamps_are_labelled(world: &mut NodaWorld) -> Result<()> {
     let said = world.page()?.stamps().await?;
@@ -497,17 +455,10 @@ async fn stamps_are_labelled(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// **The one thing in this suite that is about a fact the server cannot state.**
-///
-/// A stamp in the frontmatter is an instant, and nothing in a request says
-/// where the reader is standing, so the page arrives spelled the way the file
-/// spells it — `2026-08-15T09:54:23Z`. The script says the same instant again
-/// in the browser's own zone.
-///
-/// Asserted by shape rather than by value, because the machine running this has
-/// a zone of its own and the answer is different in each of them. What is true
-/// everywhere is that the file's spelling has gone: a `Z` is not in a converted
-/// stamp, and a comma is not in an unconverted one.
+/// The server cannot know the reader's zone, so it sends the file's
+/// `2026-08-15T09:54:23Z` and the script restates it locally. Asserted by shape,
+/// since the answer depends on the machine's zone: a converted stamp has a comma
+/// and no `Z`.
 #[then("the stamps are said in the reader's own words")]
 async fn stamps_are_local(world: &mut NodaWorld) -> Result<()> {
     let said = world.page()?.stamps().await?;
@@ -522,8 +473,6 @@ async fn stamps_are_local(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The whole point of a screen wide enough for two panes: the listing does not
-/// go away when a note is opened.
 #[then("the listing is still on screen")]
 async fn listing_still_there(world: &mut NodaWorld) -> Result<()> {
     eventually("the listing to stay on screen", || async {
@@ -552,7 +501,7 @@ async fn margin_lists(world: &mut NodaWorld, what: String) -> Result<()> {
     .await
 }
 
-/// An answer of none is an answer, and the column says it rather than closing.
+/// "Nothing points here" is said, not shown as a closed column.
 #[then(expr = "the margin note says {string}")]
 async fn margin_says(world: &mut NodaWorld, what: String) -> Result<()> {
     eventually(&format!("the margin note to say {what:?}"), || async {
@@ -561,8 +510,7 @@ async fn margin_says(world: &mut NodaWorld, what: String) -> Result<()> {
     .await
 }
 
-/// Not "it is empty" — not drawn at all. A column reserved and never filled is
-/// the thing the width is supposed to prevent.
+/// Not drawn at all, not merely empty.
 #[then("the margin note is not on screen")]
 async fn margin_not_there(world: &mut NodaWorld) -> Result<()> {
     anyhow::ensure!(
@@ -572,7 +520,6 @@ async fn margin_not_there(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// And the other half of the same fact, which is what a phone does instead.
 #[then("the listing is not on screen")]
 async fn listing_not_there(world: &mut NodaWorld) -> Result<()> {
     anyhow::ensure!(
@@ -587,9 +534,7 @@ async fn write_title(world: &mut NodaWorld, text: String) -> Result<()> {
     world.page()?.fill("title", &text).await
 }
 
-/// `\n` in the feature means a new line in the box. Gherkin has no way to write
-/// one inside a quoted string, and what is being checked in the scenario that
-/// uses it is precisely that several lines survive the trip.
+/// `\n` in the feature is a newline: Gherkin cannot write one inside a string.
 #[when(expr = "I write {string} as the body")]
 async fn write_body(world: &mut NodaWorld, text: String) -> Result<()> {
     world.page()?.fill("body", &text.replace("\\n", "\n")).await
@@ -626,9 +571,7 @@ async fn bar_does_not_mark(world: &mut NodaWorld, place: String) -> Result<()> {
     .await
 }
 
-/// The network screen, which is the one notebook screen the bar does not hold:
-/// it is about the notebook rather than about anything inside it, and the chip
-/// in the corner is what reaches it.
+/// The network screen is reached by the corner chip, not the bar.
 #[then("the bar marks nothing")]
 async fn bar_marks_nothing(world: &mut NodaWorld) -> Result<()> {
     eventually("the bar to mark nothing", || async {
@@ -673,9 +616,7 @@ async fn page_does_not_say(world: &mut NodaWorld, text: String) -> Result<()> {
     .await
 }
 
-/// Below sixteen pixels, iOS Safari zooms the whole page the moment a field
-/// takes focus. It is a rule about a browser nobody here is running, which is
-/// exactly why it needs a test that reads the computed value.
+/// Below 16px, iOS Safari zooms the page when a field takes focus.
 #[then(expr = "no field is smaller than {int} pixels")]
 async fn fields_are_big_enough(world: &mut NodaWorld, least: f64) -> Result<()> {
     let small = world.page()?.fields_under(least).await?;
@@ -716,10 +657,8 @@ async fn is_light(world: &mut NodaWorld) -> Result<()> {
     Ok(())
 }
 
-/// The page's background, and how bright it is.
-///
-/// `getComputedStyle` answers in `rgb(r, g, b)` whatever the stylesheet was
-/// written in, which is what makes this comparable at all.
+/// The background and its mean-channel brightness; `getComputedStyle` always
+/// answers in `rgb(…)`.
 async fn background(world: &mut NodaWorld) -> Result<(String, f64)> {
     let colour = world.page()?.background().await?;
     let channels: Vec<f64> = colour

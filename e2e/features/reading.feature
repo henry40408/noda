@@ -1,7 +1,7 @@
 Feature: Reading a notebook from a phone
 
-  The whole reason `noda web` exists. Three pages and the way between them,
-  driven by pressing what is on the screen rather than by typing addresses.
+  Why `noda web` exists: three pages and the way between them, driven by
+  pressing what is on screen.
 
   Scenario: The front page leads to a notebook, and a notebook to a note
     Given I open the front page
@@ -23,13 +23,13 @@ Feature: Reading a notebook from a phone
     When I press "Budget review"
     Then the note says when it was made and when it changed
 
-  # The exception to the rule the rest of this layer is built on. Everywhere
-  # else the script only removes a wait; here it states a fact the server has
-  # no way of knowing, because nothing in a request says what time it is where
-  # the reader is. Without a script the page keeps the file's own spelling,
-  # which is the one that cannot be misread — that half is asserted in Rust,
-  # where the bytes can be looked at directly.
+  # The exception: here the script states a fact the server cannot know, the
+  # reader's zone. Without it the page keeps the file's spelling, asserted in
+  # the root crate's tests/web.rs.
   @scripted
+  # The exception: here the script states a fact the server cannot know, the
+  # reader's zone. Without it the page keeps the file's spelling, asserted in
+  # the root crate's tests/web.rs.
   Scenario: The stamps arrive in the reader's own zone
     Given I open the notebook
     When I press "Budget review"

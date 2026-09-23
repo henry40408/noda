@@ -1,55 +1,40 @@
-# cargo-deny configuration — supply-chain checks for the dependency graph.
-# Run locally with `cargo deny check`; CI runs the same on every push and PR.
+# Supply-chain checks: `cargo deny check`, run by CI on every push and PR.
 
 [graph]
-# Check the dependency graph for all targets, not just the host's, so a
-# platform-specific dependency can't smuggle in a bad license or advisory.
-# It matters more here than in most crates: the vendored libgit2, libssh2 and
-# OpenSSL are compiled from source for whatever target is being built.
+# All features, and (no `targets` list) every target rather than the host's:
+# the vendored libgit2, libssh2 and OpenSSL are compiled for whatever is built.
 all-features = true
 
 [advisories]
 version = 2
-# Deny crates with a known security advisory (RUSTSEC) or that have been yanked.
 yanked = "deny"
-# Advisory IDs reviewed and consciously accepted go here, each with a note
-# saying why. An entry is a debt, not a dismissal: it says the graph is knowingly
-# carrying something, and it is expected to be removed rather than to settle in.
-# Empty is the honest state: nothing is being carried.
+# Accepted advisory IDs, each with a note saying why. An entry is a debt to be
+# removed, not a dismissal.
 ignore = []
 
 [licenses]
 version = 2
-# Permissive / public-domain-equivalent licenses only, trimmed to the ones this
-# graph actually contains rather than every licence we would be willing to
-# accept. A dependency that introduces a new one fails the check on purpose:
-# review it, then add it here. `cargo deny list` shows what is in use.
+# Only the permissive licences this graph actually contains, so a new one fails
+# the check until reviewed. `cargo deny list` shows what is in use.
 allow = [
     "Apache-2.0",
     "MIT",
-    # foldhash, which arrives under hashbrown when ratatui's layout solver pulls
-    # it in. Permissive in the same way the three above are — attribution, no
-    # conditions on distributing a binary — and OSI approved.
+    # foldhash, via hashbrown under ratatui's layout solver.
     "Zlib",
     "Unicode-3.0",
-    # matchit, which is axum's router. Its licence is `MIT AND BSD-3-Clause`:
-    # the crate is MIT, and the routing algorithm it is a port of came from a Go
-    # library that is BSD-3-Clause, so both travel with it. Permissive in the
-    # same way the rest of this list is — attribution, and a clause saying the
-    # authors' names may not be used to endorse what is built on it — with no
-    # condition on distributing a binary.
+    # matchit (axum's router): `MIT AND BSD-3-Clause`, as a port of a BSD Go
+    # library. No condition on distributing a binary.
     "BSD-3-Clause",
 ]
 confidence-threshold = 0.8
 
 [bans]
-# Duplicate transitive versions are common; surface them as a warning, not a
-# hard failure.
+# Duplicate transitive versions are common: a warning, not a failure.
 multiple-versions = "warn"
 wildcards = "deny"
 
 [sources]
-# Only crates.io is trusted; an unknown registry or any git source is rejected.
+# Only crates.io; any other registry or git source is rejected.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
