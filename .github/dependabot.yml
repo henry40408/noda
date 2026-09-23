@@ -11,8 +11,11 @@ updates:
         patterns:
           - "*"
 
+  # `e2e/` is its own workspace with its own lockfile.
   - package-ecosystem: "cargo"
-    directory: "/"
+    directories:
+      - "/"
+      - "/e2e"
     schedule:
       interval: "weekly"
     cooldown:

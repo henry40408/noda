@@ -13,9 +13,7 @@ description = "Browser end-to-end tests for `noda web`"
 anyhow = "1.0.104"
 cucumber = "0.23.0"
 serde_json = "1.0.151"
-# Pinned exactly: 0.37.5 (2026-08-12) was inside the seven-day cooldown for new
-# releases. Relax to a caret once it has aged out.
-thirtyfour = "=0.37.4"
+thirtyfour = "0.37.5"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
 
 [[test]]
