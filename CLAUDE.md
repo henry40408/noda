@@ -51,7 +51,8 @@ link · query · todo              read from the CommonMark event stream, never 
 paths · config · error · style · sign · remote
 ```
 
-`tui/`, `web/` and `import/` sit on top, and no front end reaches past `cmd` to write a note.
+`tui/`, `web/` and `import/` sit on top; neither front end reaches past `cmd` to write a note, and
+`import/` writes only when `cmd` calls it.
 
 ## Invariants
 
@@ -71,7 +72,9 @@ ends drift apart; `docs/ARCHITECTURE.md` explains each in context.
    editor and a second handle on one repository defeats the point.
 
 4. **Nothing outside `cmd` writes a note.** Validating a title, stamping `updated` and committing
-   happen in one place, so a change means the same thing however it was asked for.
+   happen in one place, so a change means the same thing however it was asked for. The one
+   exception is `import::write`, reached only through `cmd::import_*`: it validates the same way
+   and commits through `Notebook::commit`, but keeps the source's times instead of stamping.
 
 5. **The layer that produces a screen touches nothing.** `tui/app.rs` returns `Action`s and opens
    no file, repository or terminal; `web/page.rs` returns strings and knows nothing about requests.
