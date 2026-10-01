@@ -121,7 +121,7 @@ fn properties(terminal: &Terminal) -> String {
 /// preference: the reader already told their device.
 pub fn stylesheet() -> String {
     format!(
-        ":root{{{}}}@media (prefers-color-scheme:dark){{:root{{{}}}}}",
+        ":root{{color-scheme:light;{}}}@media (prefers-color-scheme:dark){{:root{{color-scheme:dark;{}}}}}",
         properties(&LIGHT),
         properties(&DARK)
     )
@@ -169,6 +169,14 @@ mod tests {
     fn dim_with_no_colour_is_what_a_timestamp_gets() {
         assert_eq!(fill(style::MUTED, &LIGHT), LIGHT.dim);
         assert_ne!(fill(style::MUTED, &LIGHT), LIGHT.text);
+    }
+
+    /// Without it the canvas is white until the first paint of a dark page.
+    #[test]
+    fn the_canvas_follows_the_theme() {
+        let css = stylesheet();
+        assert!(css.starts_with(":root{color-scheme:light;"), "{css}");
+        assert!(css.contains("{color-scheme:dark;"), "{css}");
     }
 
     #[test]

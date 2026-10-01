@@ -1781,7 +1781,8 @@ background:var(--bg-sunk);font-size:12px;white-space:nowrap}\
 a{color:inherit;text-decoration:none}\
 .row{display:block;min-height:64px;padding:12px 16px;border-bottom:1px solid var(--rule);\
 -webkit-tap-highlight-color:transparent}\
-.row:active{background:var(--press)}\
+/* A touch's feedback only: a mouse press would flash --press before the swap sets .here. */\
+@media (hover:none){.row:active{background:var(--press)}}\
 /* The note the reading pane shows, where both panes are; a press's grey. */\
 .row.here{background:var(--press)}\
 .row .title{font-family:var(--read);font-size:17px;line-height:1.32}\
