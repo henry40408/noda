@@ -222,15 +222,6 @@ fn scripted(title: &str, app: &str, scripts: &[Asset], body: &str) -> String {
 /// `web::html` sends the same as a header a proxy may strip, and this copy also
 /// covers images a note embeds from elsewhere. `same-origin` rather than
 /// `no-referrer`, which would null a form post's `Origin` that `web::guard` needs.
-/// An "n" with a commit dot, inline so it costs no route and no request, and so a browser
-/// never falls back to asking for `/favicon.ico`. Percent-encoded by hand: `#` would end the URI.
-const ICON: &str = "<link rel=\"icon\" type=\"image/svg+xml\" href=\"data:image/svg+xml,\
-%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E\
-%3Crect width='32' height='32' rx='7' fill='%231f2430'/%3E\
-%3Cpath d='M9.5 23V11M9.5 15.5Q9.5 11 15.5 11T21.5 15.5V23' fill='none' stroke='%23fff' \
-stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E\
-%3Ccircle cx='24' cy='8' r='3' fill='%23f5c542'/%3E%3C/svg%3E\">";
-
 fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], body: &str) -> String {
     let refresh = refresh(again_in);
     let enhancement = scripts.iter().map(|asset| asset.tag()).collect::<String>();
@@ -244,10 +235,10 @@ fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], bod
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <meta name=\"referrer\" content=\"same-origin\">\n\
-         {ICON}\n\
-         {refresh}{}\n{}{enhancement}\n</head>\n<body>\n\
+         {refresh}{}\n{}\n{}{enhancement}\n</head>\n<body>\n\
          <div class=\"{classes}\">\n{}</div>\n</body>\n</html>\n",
         titled(title),
+        Asset::Icon.tag(),
         Asset::Style.tag(),
         body
     )
@@ -2757,7 +2748,10 @@ mod tests {
         let sheet = format!("{}{}", crate::web::theme::stylesheet(), stylesheet());
         assert!(sheet.contains("prefers-color-scheme:dark"), "{sheet}");
         assert!(sheet.contains("--tap:48px"), "{sheet}");
-        assert!(page.contains("<link rel=\"icon\""), "{page}");
+        assert!(
+            page.contains("<link rel=\"icon\" type=\"image/svg+xml\" href=\"/a/icon."),
+            "{page}"
+        );
     }
 
     fn reading() -> Reading {
