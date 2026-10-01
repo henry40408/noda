@@ -1,4 +1,4 @@
-//! The stylesheet and scripts, linked and cached rather than inlined, which
+//! The stylesheet, icon and scripts, linked and cached rather than inlined, which
 //! re-sent tens of KB the browser already had with every full page.
 //!
 //! **The name is the content**: `/a/style.<hash>.css` cannot go stale, so it is
@@ -12,8 +12,16 @@ use std::sync::OnceLock;
 
 use crate::web::{page, script};
 
+const ICON: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>\
+<rect width='32' height='32' rx='7' fill='#1f2430'/>\
+<path d='M9.5 23V11M9.5 15.5Q9.5 11 15.5 11T21.5 15.5V23' fill='none' stroke='#fff' \
+stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/>\
+<circle cx='24' cy='8' r='3' fill='#f5c542'/></svg>";
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Asset {
+    /// The tab's icon: an "n" with a commit dot.
+    Icon,
     /// The whole of the layout, both themes included.
     Style,
     /// The listing's filter.
@@ -31,7 +39,8 @@ pub enum Asset {
 }
 
 impl Asset {
-    const ALL: [Asset; 7] = [
+    const ALL: [Asset; 8] = [
+        Asset::Icon,
         Asset::Style,
         Asset::Listing,
         Asset::Standing,
@@ -44,6 +53,7 @@ impl Asset {
     /// The readable stem of its address.
     fn name(self) -> &'static str {
         match self {
+            Asset::Icon => "icon",
             Asset::Style => "style",
             Asset::Listing => "listing",
             Asset::Standing => "standing",
@@ -54,22 +64,27 @@ impl Asset {
         }
     }
 
-    fn css(self) -> bool {
-        self == Asset::Style
+    fn ext(self) -> &'static str {
+        match self {
+            Asset::Icon => "svg",
+            Asset::Style => "css",
+            _ => "js",
+        }
     }
 
     /// Sent with `nosniff`, so it is all the browser will treat it as.
     fn kind(self) -> &'static str {
-        if self.css() {
-            "text/css; charset=utf-8"
-        } else {
-            "text/javascript; charset=utf-8"
+        match self {
+            Asset::Icon => "image/svg+xml",
+            Asset::Style => "text/css; charset=utf-8",
+            _ => "text/javascript; charset=utf-8",
         }
     }
 
     /// Deterministic, which is what makes hashing it once honest.
     fn body(self) -> String {
         match self {
+            Asset::Icon => ICON.to_string(),
             Asset::Style => format!("{}{}", crate::web::theme::stylesheet(), page::stylesheet()),
             Asset::Listing => script::LISTING.to_string(),
             Asset::Standing => script::STANDING.to_string(),
@@ -87,10 +102,13 @@ impl Asset {
     /// `defer` in the head: runs after parsing (the scripts read the rows), in
     /// the listed order, but downloads during it.
     pub fn tag(self) -> String {
-        if self.css() {
-            format!("<link rel=\"stylesheet\" href=\"{}\">", self.href())
-        } else {
-            format!("<script src=\"{}\" defer></script>", self.href())
+        match self {
+            Asset::Icon => format!(
+                "<link rel=\"icon\" type=\"image/svg+xml\" href=\"{}\">",
+                self.href()
+            ),
+            Asset::Style => format!("<link rel=\"stylesheet\" href=\"{}\">", self.href()),
+            _ => format!("<script src=\"{}\" defer></script>", self.href()),
         }
     }
 
@@ -121,12 +139,7 @@ fn held() -> &'static Vec<Held> {
             .iter()
             .map(|asset| {
                 let body = asset.body();
-                let file = format!(
-                    "{}.{}.{}",
-                    asset.name(),
-                    fingerprint(&body),
-                    if asset.css() { "css" } else { "js" }
-                );
+                let file = format!("{}.{}.{}", asset.name(), fingerprint(&body), asset.ext());
                 Held {
                     at: format!("/a/{file}"),
                     file,

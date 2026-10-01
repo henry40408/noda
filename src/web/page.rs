@@ -235,9 +235,10 @@ fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], bod
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <meta name=\"referrer\" content=\"same-origin\">\n\
-         {refresh}{}\n{}{enhancement}\n</head>\n<body>\n\
+         {refresh}{}\n{}\n{}{enhancement}\n</head>\n<body>\n\
          <div class=\"{classes}\">\n{}</div>\n</body>\n</html>\n",
         titled(title),
+        Asset::Icon.tag(),
         Asset::Style.tag(),
         body
     )
@@ -2747,6 +2748,10 @@ mod tests {
         let sheet = format!("{}{}", crate::web::theme::stylesheet(), stylesheet());
         assert!(sheet.contains("prefers-color-scheme:dark"), "{sheet}");
         assert!(sheet.contains("--tap:48px"), "{sheet}");
+        assert!(
+            page.contains("<link rel=\"icon\" type=\"image/svg+xml\" href=\"/a/icon."),
+            "{page}"
+        );
     }
 
     fn reading() -> Reading {
