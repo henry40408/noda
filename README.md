@@ -1,36 +1,40 @@
-# noda
+# noda - Git-native Notebook in Rust
 
 > A git-native notebook for your terminal. Your notes are plain Markdown in an ordinary
 > git repository — versioned, syncable, and yours.
 
----
+[![CI](https://github.com/henry40408/noda/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/noda/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/henry40408/noda)](https://github.com/henry40408/noda/releases/latest)
+[![License](https://img.shields.io/github/license/henry40408/noda)](LICENSE.txt)
+[![Rust toolchain](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/henry40408/noda/main/rust-toolchain.toml&query=$.toolchain.channel&label=rust%20toolchain&logo=rust)](https://www.rust-lang.org/)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/noda)
+[![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
+[![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
-**Start here** — [Why noda](#why-noda) · [Install](#install) · [Quickstart](#quickstart) · [Concepts](#concepts)
+Local-first, plain-text, and built to start fast. No account, no index file, no lock-in.
 
-**The commands** — [Notebooks](#notebooks) · [Notes](#notes) · [Attachments](#attachments) · [Paths](#paths) · [Action items](#action-items) · [Backlinks](#backlinks) · [History](#history-git-backed) · [Remote sync](#remote-sync-https--ssh) · [Config](#config) · [Signing](#signing) · [Output](#output) · [Importing](#importing) · [Storage layout](#storage-layout) · [Roadmap](#roadmap) · [Building](#building-from-source)
+## Features
 
-**The two other ways in** — [In the terminal](#browsing) · [In a browser](#in-a-browser)
+- **Just git** - Every notebook is a normal git repo of Markdown files. Anything noda does,
+  plain `git` can inspect and undo
+- **Automatic history** - Every change is committed for you; `noda log` shows a note's
+  history and `noda restore` rewinds it
+- **Sync anywhere** - HTTPS and SSH are compiled in, so `noda sync` talks to any git host
+  with nothing else to install
+- **Fast to reach** - Address a note by a short id *or* a readable slug
+- **Search** - Substring search over title, tags and body, with `tag:`, `OR` and `-` negation
+- **Terminal UI** - `noda tui` to list, filter, open and edit without leaving the terminal
+- **Web UI** - `noda web` serves the notebooks to a phone or browser; works with JavaScript off
+- **Attachments & backlinks** - Link notes and files; links survive a retitle
+- **Action items** - `- [ ]` boxes found across notes, read from the Markdown, never grepped
+- **Import** - Bring in a TiddlyWiki 5 export
+- **Signed commits** - Follows your git config's `commit.gpgsign` (OpenPGP)
+- **One static binary** - Self-contained for macOS and Linux (incl. arm64/musl), plus a
+  container image
 
-**In full** — [Browsing in the terminal](docs/tui.md) · [In a browser](docs/web.md) · [History and sync](docs/history.md) · [Importing](docs/importing.md) · [Architecture](docs/ARCHITECTURE.md)
+## Quick Start
 
-This page says what each command does. The reasoning behind a decision sits behind a ▸ or in
-one of the documents above.
-
----
-
-## Why noda
-
-- **Just git.** Every notebook is a normal git repo of Markdown files. Anything noda does,
-  plain `git` can inspect and undo.
-- **Automatic history.** Every change is committed for you; `noda log` shows a note's history
-  and `noda restore` rewinds it.
-- **Sync anywhere.** HTTPS and SSH are compiled in, so `noda sync` talks to any git host with
-  nothing else to install.
-- **Fast to reach.** Address a note by a short id *or* a readable slug.
-- **One static binary.** Self-contained for macOS and Linux (incl. arm64/musl), and a
-  container image.
-
-## Install
+### Using Docker (Recommended)
 
 A container image on GitHub's registry, for `linux/amd64` and `linux/arm64`. Notebooks live in
 a volume, and the image runs `noda` directly:
@@ -40,12 +44,6 @@ docker pull ghcr.io/henry40408/noda:main
 alias noda='docker run --rm -it -v noda:/data ghcr.io/henry40408/noda:main'
 noda init
 noda add "Meeting notes" -c "agenda"
-```
-
-Otherwise build it — there is no crates.io package and no Homebrew formula:
-
-```sh
-cargo build --release        # target/release/noda
 ```
 
 <details>
@@ -59,7 +57,17 @@ says so.
 
 </details>
 
-## Quickstart
+### Building from Source
+
+There is no crates.io package and no Homebrew formula:
+
+```sh
+git clone https://github.com/henry40408/noda.git
+cd noda
+cargo build --release        # target/release/noda
+```
+
+### First Notes
 
 ```sh
 noda init                       # create XDG config/data dirs and a default notebook
@@ -73,6 +81,17 @@ noda notebook add work --remote git@github.com:me/work-notes.git
 noda use work                   # switch active notebook
 noda sync                       # pull + push over SSH/HTTPS
 ```
+
+## Documentation
+
+This page says what each command does. The reasoning behind a decision sits behind a ▸ or in
+one of the documents below.
+
+**Guides** — [Browsing in the terminal](docs/tui.md) · [In a browser](docs/web.md) · [History and sync](docs/history.md) · [Importing](docs/importing.md) · [Architecture](docs/ARCHITECTURE.md)
+
+**On this page** — [Concepts](#concepts) · [Notebooks](#notebooks) · [Notes](#notes) · [Attachments](#attachments) · [Paths](#paths) · [Action items](#action-items) · [Backlinks](#backlinks) · [History](#history-git-backed) · [Remote sync](#remote-sync-https--ssh) · [Config](#config) · [Signing](#signing) · [Output](#output) · [Importing](#importing) · [Storage layout](#storage-layout) · [Building](#building-from-source)
+
+**The two other ways in** — [In the terminal](#browsing) · [In a browser](#in-a-browser)
 
 ## Concepts
 
@@ -718,9 +737,7 @@ editor's scratch buffer stay out of your synced data.
 
 ## Roadmap
 
-- **The web UI reads, writes and syncs**, with a script layer that the scriptless forms never
-  depend on. See [In a browser](#in-a-browser).
-- Encrypted notebooks are under consideration.
+Encrypted notebooks are under consideration.
 
 ## Building from source
 
@@ -741,6 +758,17 @@ build has no `.git`, so it is passed a `NODA_VERSION` build argument instead.
 libgit2, OpenSSL and libssh2 are vendored into one static binary. Startup time is a feature, so
 the release profile is tuned for size and cold start is measured. How the crate fits together:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Tech Stack
+
+- **Git**: git2 (libgit2, OpenSSL and libssh2 vendored)
+- **CLI**: clap
+- **Terminal UI**: ratatui
+- **Web**: axum on tokio
+- **Markdown**: pulldown-cmark
+- **Config**: toml_edit
+- **Import**: serde_json
+- **Time**: jiff
 
 ## License
 
