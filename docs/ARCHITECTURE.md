@@ -156,7 +156,7 @@ wait (not the errand) and the process exits non-zero.
 ## Adding to it
 
 **A new command.** In order: a variant in `main.rs`'s `Command` enum, a match arm calling into
-`cmd`, the function in `cmd.rs` returning `Result<String>`, its row in README.md's command table,
+`cmd`, the function in `cmd.rs` returning `Result<String>`, its row in docs/commands.md's command table,
 and a test in `tests/cli.rs`. If a front end will call it with a notebook already open, write the
 `foo_in(notebook, …)` half and have `foo(paths, …)` open the active notebook and delegate.
 
@@ -210,5 +210,5 @@ environment variables**: tests run in parallel and cannot safely mutate process-
 - **`build.rs`** — where `--version` comes from, and why it is not `Cargo.toml`'s `version`.
 - **`Cargo.toml`** — why each dependency is present, what was rejected, and the measurements
   behind it.
-- **`README.md`** — the user-facing contract. The reasoning behind it is in [tui.md](tui.md),
+- **`docs/commands.md`** — the user-facing contract. The reasoning behind it is in [tui.md](tui.md),
   [web.md](web.md), [history.md](history.md) and [importing.md](importing.md).

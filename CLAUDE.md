@@ -8,10 +8,11 @@ noda is a git-native notebook CLI: notes are Markdown files in an ordinary git r
 notebook per repo. Everything is a library (`src/lib.rs`); the binary is a thin shell, so commands
 are tested without spawning a process.
 
-**README.md is a contract, not a description.** It was written spec-first, before any code
-(`docs/PRFAQ.md` is the working-backwards artifact behind it). A change to user-facing behaviour
-updates README.md in the same commit; where the contract turned out wrong, correct it rather than
-leave it behind.
+**`docs/commands.md` is a contract, not a description.** It was written spec-first, before any
+code (`docs/PRFAQ.md` is the working-backwards artifact behind it), when it was the README's
+command reference. A change to user-facing behaviour updates it in the same commit; where the
+contract turned out wrong, correct it rather than leave it behind. README.md is the front page —
+Features, Quick Start, a command overview — and changes when those do.
 
 ## Commands
 
@@ -151,7 +152,7 @@ crate.
   the code plainly says, is not. Where a name and signature already answer the question, write no
   comment.
 - **`main.rs`'s `///` comments are clap's `--help` text, not documentation.** Editing one changes
-  what the CLI prints, which is user-facing behaviour and belongs in README.md with it.
+  what the CLI prints, which is user-facing behaviour and belongs in `docs/commands.md` with it.
 - **Startup time is a feature.** A quick `noda ls` costs more in process startup than in work, so
   the release profile is tuned for size and anything that grows the binary is measured, not
   assumed.

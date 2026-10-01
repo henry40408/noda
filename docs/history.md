@@ -215,7 +215,7 @@ The same libgit2 means **noda runs no git hooks**: a `pre-commit` in your notebo
 hook, commit through git: `cd "$(noda path)"` and commit there.
 
 GPG signing has the same root cause and is the one case noda makes up for, by calling gpg the way
-git would — see [Signing](../README.md#signing).
+git would — see [Signing](commands.md#signing).
 
 A pull fast-forwards when only the remote moved, and makes a merge commit when both sides did. Two
 notebooks that each added a note produce two different filenames, so there is nothing to conflict
