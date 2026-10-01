@@ -412,7 +412,8 @@ fn notebook_bar(book: &str, here: At) -> String {
     // under the last row, and a button pinned to the window would float below.
     format!(
         "<div class=\"foot\">{}<a class=\"fab\" href=\"/nb/{at}/new\" aria-label=\"New note\">\
-         <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a></div>",
+         <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">{NEW}</svg></a>\
+         <span class=\"ver\" title=\"noda {version}\">{version}</span></div>",
         action_bar(&[
             (
                 NOTES,
@@ -438,7 +439,8 @@ fn notebook_bar(book: &str, here: At) -> String {
                 Act::Go(format!("/nb/{at}/files")),
                 mark(At::Files)
             ),
-        ])
+        ]),
+        version = escape(crate::VERSION)
     )
 }
 
@@ -1886,6 +1888,8 @@ display:flex;align-items:center;justify-content:center;\
 box-shadow:0 0 0 5px var(--bg);-webkit-tap-highlight-color:transparent}\
 .fab svg{width:26px;height:26px;stroke-width:2.4}\
 .fab:active{background:var(--id-dim)}\
+/* Which build this is, for a bug report; only the rail has room for it. */\
+.ver{display:none}\
 /* Room under the last row for the 56px button standing 16px clear. */\
 body:has(.fab) main{padding-bottom:76px}\
 form.write{padding:16px;display:flex;flex-direction:column;gap:16px}\
@@ -1986,6 +1990,8 @@ color:var(--id);margin-top:3px}\
 align-items:stretch;background:var(--bg-sunk);border-right:1px solid var(--rule)}\
 .foot .actionbar{flex-direction:column;border-top:0;background:transparent;padding:0}\
 .foot .actionbar a{flex:0 0 auto;min-height:62px}\
+.ver{display:block;margin-top:auto;padding:12px 6px;text-align:center;font-size:10px;\
+line-height:1.3;color:var(--muted);overflow-wrap:anywhere}\
 /* The action first in the rail, and squarish to sit in a column of them. */\
 .fab{order:-1;position:static;width:44px;height:44px;border-radius:13px;\
 margin:14px auto 12px;box-shadow:none}\
@@ -2709,6 +2715,17 @@ mod tests {
             "{page}"
         );
         assert!(page.contains("<span class=\"count\"></span>"), "{page}");
+    }
+
+    /// For a bug report against `noda web`, without opening the status screen.
+    #[test]
+    fn the_rail_names_the_build() {
+        let bar = notebook_bar("work", At::Notes);
+        let named = format!(
+            "<span class=\"ver\" title=\"noda {v}\">{v}</span>",
+            v = crate::VERSION
+        );
+        assert!(bar.contains(&named), "{bar}");
     }
 
     #[test]

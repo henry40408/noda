@@ -222,7 +222,8 @@ reaches the backlinks at every width.
 The corner of the listing's bar shows where the notebook stands — `2 to push`, `in sync`,
 `never synced` — and opens `/nb/<book>/status`: what `noda status` prints, nothing fetched, with
 `Sync`, `Pull` and `Push` below. Its last row is the version answering, as `noda --version`
-prints it, so a bug report can name the build.
+prints it, so a bug report can name the build. The same version is in small type at the foot of
+the rail, on screens wide enough to have one.
 
 Pressing starts the errand and answers at once; the screen checks back every two seconds until
 it finishes (`<meta http-equiv="refresh">` without scripts, a fetch with them).
