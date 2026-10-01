@@ -120,6 +120,13 @@ pub struct Server {
 impl Server {
     /// Starts a server on a fresh notebook, or adopts one already listening.
     pub fn start() -> Result<Self> {
+        Self::start_with(write_notebook)
+    }
+
+    /// [`Self::start`] over a notebook `seed` writes, for the screenshots, whose
+    /// notes are not the features' fixture. `seed` is given the binary and the
+    /// root whose XDG directories [`run`] points the binary at.
+    pub fn start_with(seed: impl FnOnce(&Path, &Path) -> Result<()>) -> Result<Self> {
         if port_is_open() {
             return Ok(Self {
                 child: None,
@@ -136,7 +143,7 @@ impl Server {
             root: Some(root.clone()),
         };
 
-        write_notebook(&binary, &root)?;
+        seed(&binary, &root)?;
 
         let notebook = root.join("data/noda/notebooks/default");
         let head = git(&notebook, &["rev-parse", "HEAD"])?.trim().to_string();
@@ -260,13 +267,14 @@ fn write_notebook(binary: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
+/// Runs noda against the notebook under `root`, discarding what it says.
+pub fn run(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
     capture(binary, root, args).map(|_| ())
 }
 
 /// Runs noda, returning stdout. Only for `noda path`, whose output is meant for
 /// programs; other commands' output is prose, not an interface.
-fn capture(binary: &Path, root: &Path, args: &[&str]) -> Result<String> {
+pub fn capture(binary: &Path, root: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new(binary)
         .args(args)
         .envs(xdg(root))
@@ -327,7 +335,9 @@ fn wait_until_listening() -> Result<()> {
     bail!("noda web did not start listening on 127.0.0.1:{PORT} within {STARTUP_TIMEOUT:?}")
 }
 
-fn port_is_open() -> bool {
+/// Whether something already answers on [`PORT`], which a run that must serve
+/// its own notebook has to refuse rather than adopt.
+pub fn port_is_open() -> bool {
     TcpStream::connect(("127.0.0.1", PORT)).is_ok()
 }
 

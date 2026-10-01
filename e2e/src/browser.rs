@@ -125,6 +125,13 @@ impl Browser {
             .clone())
     }
 
+    /// Writes the viewport as a PNG.
+    pub async fn screenshot(&self, path: &std::path::Path) -> Result<()> {
+        let png = self.driver.screenshot_as_png().await?;
+        std::fs::write(path, png).with_context(|| format!("writing {}", path.display()))?;
+        Ok(())
+    }
+
     pub async fn quit(self) -> Result<()> {
         self.driver.quit().await?;
         Ok(())
