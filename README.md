@@ -13,6 +13,13 @@
 
 Local-first, plain-text, and built to start fast. No account, no index file, no lock-in.
 
+`noda web`, on a monitor and on a phone:
+
+| Light | Dark |
+|-------|------|
+| ![A note with its backlinks - Light](screenshots/web-note.png) | ![A note with its backlinks - Dark](screenshots/web-note-dark.png) |
+| <img src="screenshots/web-phone.png" alt="The notes list on a phone - Light" width="240"> | <img src="screenshots/web-phone-dark.png" alt="The notes list on a phone - Dark" width="240"> |
+
 ## Features
 
 - **Just git** - Every notebook is a normal git repo of Markdown files. Anything noda does,

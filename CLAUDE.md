@@ -33,6 +33,13 @@ cargo build                                              # e2e drives the built 
 cargo test --manifest-path e2e/Cargo.toml --test e2e     # needs Chrome; chromedriver is fetched
 ```
 
+The README's four web screenshots are generated, not taken by hand. A change to what `noda web`
+renders (`web/page.rs`, `web/theme.rs`, `web/script.rs`) is committed with the regenerated images:
+
+```sh
+cargo build && cargo run --manifest-path e2e/Cargo.toml --bin screenshots   # writes screenshots/
+```
+
 The toolchain is pinned in `rust-toolchain.toml` so local, CI and release builds use the same
 compiler, and it declares the musl targets so the cross-compile is reproducible locally.
 `unsafe_code = "deny"`. Clippy runs `all` + `pedantic` with an itemised opt-out list in
