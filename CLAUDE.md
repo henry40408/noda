@@ -10,7 +10,7 @@ are tested without spawning a process.
 
 **`docs/commands.md` is a contract, not a description.** It was written spec-first, before any
 code (`docs/PRFAQ.md` is the working-backwards artifact behind it), when it was the README's
-command reference. A change to user-facing behaviour updates it in the same commit; where the
+command reference. A change to user-facing behaviour updates it in the same change; where the
 contract turned out wrong, correct it rather than leave it behind. README.md is the front page —
 Features, Quick Start, a command overview — and changes when those do.
 
@@ -18,7 +18,8 @@ Features, Quick Start, a command overview — and changes when those do.
 
 ```sh
 cargo nextest run                          # the suite — not `cargo test`
-cargo nextest run <substring>              # one test by name
+cargo nextest run <substring>              # one test by name, e.g. `add_writes_the_id`
+cargo nextest run -E 'test(<name>)'        # filterset, exact selection
 cargo nextest run --test cli               # one integration file
 cargo fmt                                  # before committing
 cargo clippy --all-targets -- -D warnings
@@ -26,12 +27,13 @@ cargo deny check                           # supply chain, as CI runs it
 scripts/bench-coldstart.sh                 # times whole processes, not in-process code
 ```
 
-`e2e/` is **its own workspace**, so the root suite never compiles it; run the browser tests
-explicitly. Its lint set mirrors the root crate's minus program-only entries (a separate
+`e2e/` is **its own workspace** (`harness = false`), so the root suite never compiles it and root
+fmt, clippy, nextest and `cargo deny check` do not cover it; run the browser tests with `cargo test`
+from there explicitly, and run fmt and clippy inside `e2e/` too (CI does). Its lint set mirrors the root crate's minus program-only entries (a separate
 workspace inherits none of it), so keep the two in sync:
 
 ```sh
-cargo build                                              # e2e drives the built binary
+cargo build                                              # e2e does not rebuild an existing binary
 cargo test --manifest-path e2e/Cargo.toml --test e2e     # needs Chrome; chromedriver is fetched
 ```
 
@@ -162,3 +164,5 @@ crate.
   `noda show` emits exactly the bytes on disk. NUL-separated output (`ls -q0`) bypasses `anstream`
   and is written raw.
 - **GitHub Actions are pinned by commit SHA**, with the tag as a trailing comment.
+- Releases use `gh release create --generate-notes`; never edit the manifest `version` (it is a
+  placeholder) or add a `CHANGELOG.md`.
