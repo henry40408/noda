@@ -219,13 +219,14 @@ acceptable tags meant.
 The grammar cannot write `(a AND b) OR (c AND d)` directly. That is two searches, which is cheaper
 than a language nobody can predict.
 
-**Q: Why hand-write the JSON instead of adding serde?**
-Because it is one object with five string fields, and the alternative is two crates and a derive
-macro in a tool whose distribution story is one small static binary. The part that must be right is
-the escaping: thirty lines with tests. The project made the same trade for percent-decoding and for
-having no error-handling crate.
+**Q: Why assemble the JSON by hand instead of deriving it with serde?**
+Because it is one object with five string fields, and a derive macro would add a proc-macro crate
+to a tool whose distribution story is one small static binary. `serde_json` is already a
+dependency (it reads `noda import`), so the one part that must be right, string escaping, is
+delegated to it and the structure around it is a few `format!` calls with tests. The project made
+the same trade for percent-decoding and for having no error-handling crate.
 
-**Q: If serde was too much dependency for five string fields, why is a whole UI library not
+**Q: If a derive macro was too much dependency for five string fields, why is a whole UI library not
 too much for one screen?**
 Because the problems differ in size. The JSON was thirty lines whose hard part was escaping; a
 terminal UI must hold raw mode, restore the terminal on the way out *including* on panic, survive a
