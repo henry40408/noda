@@ -2921,13 +2921,29 @@ fn summary(id: &str, slug: &str, tags: &[String]) -> String {
 /// Width of [`format_time`]'s output.
 pub const TIME_WIDTH: usize = "0000-00-00 00:00".len();
 
+/// What [`format_time`] prints for an instant outside years 0000-9999.
+const TIME_PLACEHOLDER: &str = "---------- --:--";
+
 /// Width of a `due:` date, for padding rows that have none.
 pub const DATE_WIDTH: usize = "0000-00-00".len();
 
 /// In the commit's own zone, as git does. Absolute rather than "3 days ago": it
 /// sorts and needs no frozen clock to test. Public so the TUI and web match.
+///
+/// Timestamps come from commits, which a cloned repository does not vouch for.
+/// The offset is added with `saturating_add` (a wrapped sum would be a plausible
+/// but wrong date, and debug builds would panic; a saturated one is simply out of
+/// range), and anything outside 0000-01-01..=9999-12-31 renders as
+/// [`TIME_PLACEHOLDER`], so the output is always [`TIME_WIDTH`] wide and
+/// `today()`'s `[..DATE_WIDTH]` slice cannot panic.
 pub fn format_time(seconds: i64, offset_minutes: i32) -> String {
-    let local = seconds + i64::from(offset_minutes) * 60;
+    // 0000-01-01 is day -719,528; 9999-12-31 ends on day 2,932,896.
+    const MIN_LOCAL: i64 = -719_528 * 86_400;
+    const MAX_LOCAL: i64 = 2_932_897 * 86_400 - 1;
+    let local = seconds.saturating_add(i64::from(offset_minutes) * 60);
+    if !(MIN_LOCAL..=MAX_LOCAL).contains(&local) {
+        return TIME_PLACEHOLDER.to_string();
+    }
     let (year, month, day) = civil_from_days(local.div_euclid(86_400));
     let time = local.rem_euclid(86_400);
     format!(
@@ -3316,6 +3332,33 @@ mod tests {
         // A 400-year leap day, and the second before the epoch.
         assert_eq!(format_time(951_782_400, 0), "2000-02-29 00:00");
         assert_eq!(format_time(-1, 0), "1969-12-31 23:59");
+        // Hostile timestamps: no panic, fixed width, placeholder out of range.
+        let blank = TIME_PLACEHOLDER;
+        assert_eq!(blank.len(), TIME_WIDTH);
+        for (seconds, offset) in [
+            (i64::MAX, 1),
+            (i64::MAX, 0),
+            (i64::MIN, 0),
+            (i64::MIN, -1),
+            (-62_167_219_201, 0),
+            (253_402_300_800, 0),
+            (-100_000_000_000, 0),
+        ] {
+            let text = format_time(seconds, offset);
+            assert_eq!(text, blank, "{seconds} {offset}");
+            assert_eq!(&text[..DATE_WIDTH], "----------");
+        }
+        // The edges of the displayable range.
+        assert_eq!(format_time(-62_167_219_200, 0), "0000-01-01 00:00");
+        assert_eq!(format_time(253_402_300_799, 0), "9999-12-31 23:59");
+        assert_eq!(format_time(253_402_300_740, 0), "9999-12-31 23:59");
+        assert_eq!(format_time(253_402_300_800 - 60, 0), "9999-12-31 23:59");
+        // The offset can push an instant across the edge in either direction.
+        assert_eq!(format_time(253_402_300_800, -60), "9999-12-31 23:00");
+        assert_eq!(format_time(253_402_300_799, 1), blank);
+        assert_eq!(format_time(-62_167_219_200, -1), blank);
+        assert_eq!(format_time(-62_167_219_200, 1), "0000-01-01 00:01");
+        assert_eq!(format_time(1_785_073_605, 0).len(), TIME_WIDTH);
         // A negative offset can push a commit back across midnight.
         assert_eq!(format_time(1_785_073_605, -840), "2026-07-25 23:46");
     }
