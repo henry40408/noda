@@ -23,9 +23,11 @@ anstyle = "1.0.14"
 # `env` is only for `--log-format`, usually set by a unit file or container
 # alongside `RUST_LOG`; everything else is `config.toml` and flags.
 clap = { version = "4.6.2", features = ["derive", "env"] }
-# Only `std`: noda records UTC instants and needs no tz database. Chosen over ~60
-# hand-rolled lines because imported notes carry UTC offsets, where a hand-written
-# parser gets the day rollover wrong.
+# Only `std`: noda records UTC instants and needs no tz database. Used for parsing
+# and validating RFC 3339 stamps with UTC offsets. `format_time` and
+# `civil_from_days` (src/cmd.rs) stay hand-written: a commit's offset is applied by
+# hand there, and jiff's Timestamp ends at 9999-12-30, short of the 9999-12-31 the
+# display handles, so jiff would turn some timestamps into errors.
 jiff = { version = "0.2.35", default-features = false, features = ["std"] }
 # HTTPS and SSH are always compiled in: they are how GitHub and GitLab are reached.
 # vendored-*: libgit2 and OpenSSL built from source, for a single static
