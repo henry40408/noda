@@ -27,9 +27,9 @@ cargo deny check                           # supply chain, as CI runs it
 scripts/bench-coldstart.sh                 # times whole processes, not in-process code
 ```
 
-`e2e/` is **its own workspace** (`harness = false`), so the root suite never compiles it and root
-fmt, clippy, nextest and `cargo deny check` do not cover it; run the browser tests with `cargo test`
-from there explicitly, and run fmt and clippy inside `e2e/` too (CI does). Its lint set mirrors the root crate's minus program-only entries (a separate
+`e2e/` is **its own workspace**, so the root suite never compiles it and root
+fmt, clippy, nextest and `cargo deny check` do not cover it; its test target sets `harness = false`,
+so run it with `cargo test` (below), and run fmt and clippy inside `e2e/` too (CI does). Its lint set mirrors the root crate's minus program-only entries (a separate
 workspace inherits none of it), so keep the two in sync:
 
 ```sh
