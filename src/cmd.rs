@@ -520,9 +520,9 @@ pub fn sort_notes(notes: &mut [notebook::NoteFile], sort: Sort) {
     notes.sort_by_key(|file| !file.note.is_pinned());
 }
 
-/// Hand-written: a few string fields do not justify a serialization crate's
-/// supply-chain surface; the escaping is tested. Each note carries its filename
-/// so a script need not know the naming rule.
+/// Assembled by hand around `serde_json`'s string escaping: a few flat fields
+/// need no derive. Each note carries its filename so a script need not know
+/// the naming rule.
 fn as_json(notebook: &str, notes: &[notebook::NoteFile], files: &[String]) -> String {
     let mut out = String::from("{\"notebook\":");
     out.push_str(&json_string(notebook));
@@ -584,25 +584,7 @@ fn as_identifiers(notes: &[notebook::NoteFile], files: &[String], null: bool) ->
 
 /// A JSON string literal, quotes included.
 fn json_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for ch in text.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    serde_json::to_string(text).expect("a str always serializes")
 }
 
 /// Prints a note verbatim — frontmatter included, because that is the file.
@@ -3122,6 +3104,17 @@ mod tests {
             at = at.next();
         }
         assert_eq!(at, Sort::default(), "the ring stopped coming round");
+    }
+
+    #[test]
+    fn json_string_round_trips_what_breaks_a_document() {
+        let nasty = "q\" b\\ \n\r\t\u{8}\u{c}\u{0}\u{1f}\u{7f} \u{2028}\u{2029} \u{1F600} é 日本";
+        let encoded = json_string(nasty);
+        assert!(encoded.starts_with('"') && encoded.ends_with('"'));
+        assert!(!encoded.contains(|c: char| c < ' '), "{encoded}");
+        let back: String = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(back, nasty);
+        assert_eq!(json_string("a\u{1}\"\\"), r#""a\u0001\"\\""#);
     }
 
     /// Fixed ids and stamps, so only the sort can move anything.

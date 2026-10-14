@@ -43,8 +43,8 @@ git2 = { version = "0.21.0", default-features = false, features = [
 pulldown-cmark = { version = "0.13.4", default-features = false, features = [
     "html",
 ] }
-# Reads `noda import`'s JSON, which may be megabytes of foreign text; noda writes
-# its own small JSON by hand.
+# Reads `noda import`'s JSON, which may be megabytes of foreign text, and escapes
+# the strings in noda's own small `--json` output.
 serde_json = "1.0.151"
 toml_edit = "0.25.13"
 # `noda tui`: raw mode, resize, wide-character width and diffed redraws are a
