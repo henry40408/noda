@@ -27,7 +27,8 @@ scripts/bench-coldstart.sh                 # times whole processes, not in-proce
 ```
 
 `e2e/` is **its own workspace**, so the root suite never compiles it; run the browser tests
-explicitly:
+explicitly. Its lint set mirrors the root crate's minus program-only entries (a separate
+workspace inherits none of it), so keep the two in sync:
 
 ```sh
 cargo build                                              # e2e drives the built binary
@@ -68,8 +69,9 @@ These hold *between* modules, so no single file states them. Breaking one is how
 ends drift apart; `docs/ARCHITECTURE.md` explains each in context.
 
 1. **A command returns its answer; it does not emit it.** Every `cmd` entry point is
-   `-> Result<String>`. The crate's one write to stdout is `cmd::print`, called once from
-   `main.rs`, through `anstream` so a redirected `noda show` is byte-for-byte the file.
+   `-> Result<String>`. Command output reaches stdout only through `cmd::print`, called once from
+   `main.rs`, through `anstream` so a redirected `noda show` is byte-for-byte the file; `noda web`
+   and `noda tui` write their own terminal output.
 
 2. **What a command returns is prose, not an interface.** A caller that parses it turns a message's
    wording into an API. To learn what just happened, ask the notebook — both front ends diff
@@ -157,4 +159,6 @@ crate.
   the release profile is tuned for size and anything that grows the binary is measured, not
   assumed.
 - Colour is emitted unconditionally; `anstream` strips it when output is not a terminal, so a piped
-  `noda show` emits exactly the bytes on disk.
+  `noda show` emits exactly the bytes on disk. NUL-separated output (`ls -q0`) bypasses `anstream`
+  and is written raw.
+- **GitHub Actions are pinned by commit SHA**, with the tag as a trailing comment.
