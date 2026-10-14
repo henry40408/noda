@@ -53,6 +53,10 @@ toml_edit = "0.25.13"
 # library, not an afternoon. crossterm comes re-exported as `ratatui::crossterm`;
 # the default features (calendar, macros, palette) are for other programs.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# The same crate ratatui measures with, so the CLI tables and the TUI agree on
+# what a cell is. `width()` counts ambiguous-width characters as narrow; the
+# `cjk` feature only adds `width_cjk()`, which nothing here calls.
+unicode-width = { version = "0.2.2", default-features = false }
 
 # `noda web`. Its size costs every command's cold start, so changes to this
 # section are measured with scripts/bench-coldstart.sh, not assumed.

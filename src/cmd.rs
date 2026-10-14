@@ -2977,29 +2977,11 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// East Asian Wide and Fullwidth characters take two cells, so `chars()` would
-/// misalign a CJK slug. The wide blocks in common use, not all of UAX #11.
+/// Terminal cells `text` occupies (UAX #11 plus emoji presentation), so a CJK or
+/// emoji slug does not misalign a table. The same `unicode-width` ratatui uses,
+/// which keeps the CLI tables and the TUI in agreement.
 pub fn display_width(text: &str) -> usize {
-    text.chars()
-        .map(|c| match c as u32 {
-            0x1100..=0x115F
-            | 0x2E80..=0x303E
-            | 0x3041..=0x33FF
-            | 0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0xA000..=0xA4CF
-            | 0xAC00..=0xD7A3
-            | 0xF900..=0xFAFF
-            | 0xFE10..=0xFE19
-            | 0xFE30..=0xFE6F
-            | 0xFF00..=0xFF60
-            | 0xFFE0..=0xFFE6
-            | 0x1F300..=0x1F64F
-            | 0x1F900..=0x1F9FF
-            | 0x20000..=0x3FFFD => 2,
-            _ => 1,
-        })
-        .sum()
+    unicode_width::UnicodeWidthStr::width(text)
 }
 
 fn pad(text: &str, width: usize) -> String {
@@ -3202,6 +3184,23 @@ mod tests {
     fn wide_characters_count_as_two_columns() {
         assert_eq!(display_width("reading-log"), 11);
         assert_eq!(display_width("會議-筆記"), 9);
+    }
+
+    #[test]
+    fn width_follows_unicode_not_the_char_count() {
+        // Halfwidth katakana are narrow, though they sit in the Fullwidth block.
+        assert_eq!(display_width("ｱｲｳ"), 3);
+        // Emoji presentation is two cells, which the old hand-written ranges missed.
+        assert_eq!(display_width("✅"), 2);
+        assert_eq!(display_width("⭐"), 2);
+        assert_eq!(display_width("🚀"), 2);
+        // A ZWJ sequence is one glyph; a combining accent adds nothing.
+        assert_eq!(display_width("👨\u{200d}👩\u{200d}👧"), 2);
+        assert_eq!(display_width("e\u{301}"), 1);
+        // Zero-width characters occupy no cell.
+        assert_eq!(display_width("\u{200b}"), 0);
+        assert_eq!(display_width("a\u{200b}b"), 2);
+        assert_eq!(display_width(""), 0);
     }
 
     #[test]

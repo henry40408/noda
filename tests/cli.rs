@@ -2878,6 +2878,56 @@ fn ls_greys_the_punctuation_a_tag_list_is_written_with() {
     assert!(plain(&out).contains("[work, q3]"), "{out}");
 }
 
+/// Emoji and CJK titles are wider than their char count; the slug column must
+/// still start at the same terminal column on every row.
+#[test]
+fn ls_long_aligns_the_slug_column_under_emoji_and_cjk_titles() {
+    let (_root, paths) = initialized();
+    let titles = [
+        "plain-ascii",
+        "\u{2705} shipped",
+        "\u{2b50} starred",
+        "\u{1f680} launch",
+        "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467} family",
+        "\u{1f44d}\u{1f3fd} approved",
+        "會議筆記",
+    ];
+    let slugs: Vec<String> = titles
+        .iter()
+        .map(|t| {
+            let added = cmd::add(&paths, Some(t), Some("body\n"), &[]).unwrap();
+            parts(&added).1.to_string()
+        })
+        .collect();
+
+    let out = plain(
+        &cmd::ls(
+            &paths,
+            &cmd::List {
+                long: true,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    // Measured with unicode-width directly, not `cmd::display_width`, so the
+    // ruler is independent of the code under test. The title column is 11 cells
+    // (`plain-ascii`) plus a 2-cell gutter, so the slug starts 13 cells in.
+    let starts: Vec<usize> = titles
+        .iter()
+        .zip(&slugs)
+        .map(|(title, slug)| {
+            let row = out.lines().find(|l| l.contains(title)).unwrap();
+            let from = row.find(title).unwrap();
+            let after = from + title.len();
+            // Past the title, so a slug that is a prefix of the title cannot match early.
+            let at = after + row[after..].find(slug.as_str()).unwrap();
+            unicode_width::UnicodeWidthStr::width(&row[from..at])
+        })
+        .collect();
+    assert_eq!(starts, vec![13; titles.len()], "slug columns\n{out}");
+}
+
 /// A script cutting the first two fields reads the same thing either way, and
 /// the one field a note may lack stays last in both.
 #[test]
