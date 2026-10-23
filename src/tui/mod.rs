@@ -181,7 +181,15 @@ fn perform(
             in_the_foreground(terminal, || cmd::add(paths, title.as_deref(), None, &[]))?
         }
         // No `--update-links`: it edits notes nobody is looking at.
-        Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
+        Action::Retitle { key, title, touch } => cmd::mv(
+            paths,
+            &cmd::Rename {
+                key: &key,
+                new_title: &title,
+                update_links: false,
+                touch,
+            },
+        ),
         Action::Tag {
             key,
             changes,

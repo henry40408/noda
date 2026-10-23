@@ -433,7 +433,15 @@ fn perform(paths: &Paths, app: &mut App, action: tui::Action) {
             changes,
             touch,
         } => cmd::tag(paths, &key, &changes, touch),
-        tui::Action::Retitle { key, title, touch } => cmd::mv(paths, &key, &title, false, touch),
+        tui::Action::Retitle { key, title, touch } => cmd::mv(
+            paths,
+            &cmd::Rename {
+                key: &key,
+                new_title: &title,
+                update_links: false,
+                touch,
+            },
+        ),
         tui::Action::Pin { key, pinned, touch } => cmd::pin(paths, &key, pinned, touch),
         tui::Action::Remove(key) => cmd::rm(paths, &key),
         tui::Action::Restore { key, rev, touch } => cmd::restore(paths, &key, &rev, touch),

@@ -206,13 +206,35 @@ fn tag_line(tags: &[String]) -> String {
 /// `indexed` — each a fact about the route, decided by its handler rather than
 /// worked out again from the markup.
 fn shell(title: &str, app: &str, body: &str) -> String {
-    dressed(title, app, None, &[], body)
+    dressed(&Dress {
+        title,
+        app,
+        again_in: None,
+        scripts: &[],
+        body,
+    })
 }
 
 /// A page links the scripts it uses and no others. They are `defer`red: they
 /// read the rows, so they run after parsing but download during it.
 fn scripted(title: &str, app: &str, scripts: &[Asset], body: &str) -> String {
-    dressed(title, app, None, scripts, body)
+    dressed(&Dress {
+        title,
+        app,
+        again_in: None,
+        scripts,
+        body,
+    })
+}
+
+/// What [`dressed`] wraps a page in.
+#[derive(Clone, Copy)]
+struct Dress<'a> {
+    title: &'a str,
+    app: &'a str,
+    again_in: Option<u32>,
+    scripts: &'a [Asset],
+    body: &'a str,
 }
 
 /// The shell, plus an optional `<meta http-equiv="refresh">` — how the
@@ -222,7 +244,14 @@ fn scripted(title: &str, app: &str, scripts: &[Asset], body: &str) -> String {
 /// `web::html` sends the same as a header a proxy may strip, and this copy also
 /// covers images a note embeds from elsewhere. `same-origin` rather than
 /// `no-referrer`, which would null a form post's `Origin` that `web::guard` needs.
-fn dressed(title: &str, app: &str, again_in: Option<u32>, scripts: &[Asset], body: &str) -> String {
+fn dressed(dress: &Dress<'_>) -> String {
+    let Dress {
+        title,
+        app,
+        again_in,
+        scripts,
+        body,
+    } = *dress;
     let refresh = refresh(again_in);
     let enhancement = scripts.iter().map(|asset| asset.tag()).collect::<String>();
     let classes = if app.is_empty() {
@@ -594,27 +623,31 @@ impl Order {
     }
 }
 
-/// A notebook's notes, narrowed by whatever was typed. `drift` is the chip
-/// linking to the network screen.
-pub fn listing(
-    book: &str,
-    rows: &[Row],
-    asked: &Asked<'_>,
-    order: Order,
-    drift: &str,
-    front: Option<&str>,
-) -> String {
+/// What the listing's index pane is drawn from. `drift` is the chip linking to
+/// the network screen.
+#[derive(Clone, Copy)]
+pub struct Listing<'a> {
+    pub book: &'a str,
+    pub rows: &'a [Row],
+    pub asked: &'a Asked<'a>,
+    pub order: Order,
+    pub drift: &'a str,
+}
+
+/// A notebook's notes, narrowed by whatever was typed. `front` is the front
+/// page beside them, when the notebook has one.
+pub fn listing(list: &Listing<'_>, front: Option<&str>) -> String {
     // `indexed`: the rows are in the markup, as the script marks a note route
     // once it has fetched them.
     scripted(
-        &listing_title(book),
+        &listing_title(list.book),
         "split at-list indexed",
         // `Beside` is for the note a picked row swaps into the reading pane.
         &[Asset::Listing, Asset::Panes, Asset::Beside, Asset::Stamps],
         &format!(
             "{}{}",
-            listing_panes(book, rows, asked, order, drift, front),
-            notebook_bar(book, At::Notes)
+            listing_panes(list, front),
+            notebook_bar(list.book, At::Notes)
         ),
     )
 }
@@ -622,18 +655,11 @@ pub fn listing(
 /// Both of the listing's panes and its title, for a screen going back to it
 /// from a note in one round trip. Narrowing a search asks for
 /// [`listing_pane`] alone and leaves the note pane and the tab be.
-pub fn listing_screen(
-    book: &str,
-    rows: &[Row],
-    asked: &Asked<'_>,
-    order: Order,
-    drift: &str,
-    front: Option<&str>,
-) -> String {
+pub fn listing_screen(list: &Listing<'_>, front: Option<&str>) -> String {
     format!(
         "{}{}",
-        titled(&listing_title(book)),
-        listing_panes(book, rows, asked, order, drift, front)
+        titled(&listing_title(list.book)),
+        listing_panes(list, front)
     )
 }
 
@@ -641,30 +667,20 @@ fn listing_title(book: &str) -> String {
     format!("{book} — noda")
 }
 
-fn listing_panes(
-    book: &str,
-    rows: &[Row],
-    asked: &Asked<'_>,
-    order: Order,
-    drift: &str,
-    front: Option<&str>,
-) -> String {
-    format!(
-        "{}{}",
-        listing_pane(book, rows, asked, order, drift),
-        front_pane(book, front)
-    )
+fn listing_panes(list: &Listing<'_>, front: Option<&str>) -> String {
+    format!("{}{}", listing_pane(list), front_pane(list.book, front))
 }
 
 /// The index pane with rows. [`note`] sends it empty, since a phone never draws
 /// it, and `script::PANES` asks for this where it will be drawn.
-pub fn listing_pane(
-    book: &str,
-    rows: &[Row],
-    asked: &Asked<'_>,
-    order: Order,
-    drift: &str,
-) -> String {
+pub fn listing_pane(list: &Listing<'_>) -> String {
+    let Listing {
+        book,
+        rows,
+        asked,
+        order,
+        drift,
+    } = *list;
     let total = rows.len();
     let shown = rows.iter().filter(|row| row.shown).count();
 
@@ -734,20 +750,39 @@ pub fn listing_pane(
         format!("{shown} of {total}")
     };
 
-    index_pane(book, asked, Some(order), &counted, drift, &body)
+    index_pane(&IndexPane {
+        book,
+        asked,
+        order: Some(order),
+        counted: &counted,
+        drift,
+        rows: &body,
+    })
+}
+
+/// What [`index_pane`] frames.
+#[derive(Clone, Copy)]
+struct IndexPane<'a> {
+    book: &'a str,
+    asked: &'a Asked<'a>,
+    order: Option<Order>,
+    counted: &'a str,
+    drift: &'a str,
+    rows: &'a str,
 }
 
 /// The index pane's frame, the same on both routes, with a `GET` search form a
-/// scriptless reader can submit from a note page. A note route sends `rows`
-/// and `counted` empty for `script::PANES` to fill.
-fn index_pane(
-    book: &str,
-    asked: &Asked<'_>,
-    order: Option<Order>,
-    counted: &str,
-    drift: &str,
-    rows: &str,
-) -> String {
+/// scriptless reader can submit from a note page. A note route sends `order`,
+/// `rows` and `counted` empty for `script::PANES` to fill.
+fn index_pane(pane: &IndexPane<'_>) -> String {
+    let IndexPane {
+        book,
+        asked,
+        order,
+        counted,
+        drift,
+        rows,
+    } = *pane;
     format!(
         "<section class=\"pane index\">\
          <header class=\"topbar\">{}<span class=\"here\">{}</span>{}\
@@ -1145,7 +1180,14 @@ pub fn note(book: &str, reading: &Reading, drift: &str) -> String {
             "{}{}{}",
             // No order either: 450 bytes of a control over no rows.
             // `script::PANES` brings the rows and the order together.
-            index_pane(book, &Asked::nothing(), None, "", drift, ""),
+            index_pane(&IndexPane {
+                book,
+                asked: &Asked::nothing(),
+                order: None,
+                counted: "",
+                drift,
+                rows: "",
+            }),
             read_pane(book, reading),
             notebook_bar(book, At::Notes),
         ),
@@ -1247,27 +1289,38 @@ fn read_pane(book: &str, reading: &Reading) -> String {
     )
 }
 
+/// The parts of a [`form_page`]: where it is, where back goes, what to say and
+/// the form to say it beside.
+#[derive(Clone, Copy)]
+struct Form<'a> {
+    book: &'a str,
+    title: &'a str,
+    back_to: &'a str,
+    said: &'a str,
+    form: &'a str,
+}
+
 /// A bar with a way back, an optional line saying what went wrong, and the form.
 /// Both inside `<main>`, which the wide layout caps to a column; outside it a
 /// textarea would run the monitor's width.
-fn form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
-    laid_out(book, title, back_to, said, form, &[])
+fn form_page(page: &Form<'_>) -> String {
+    laid_out(page, &[])
 }
 
 /// A form page that also listens for the note moving under it: the three that
 /// carry a fingerprint (the editor and the two answers to a concurrent change).
-fn watching_form_page(book: &str, title: &str, back_to: &str, said: &str, form: &str) -> String {
-    laid_out(book, title, back_to, said, form, &[Asset::Watching])
+fn watching_form_page(page: &Form<'_>) -> String {
+    laid_out(page, &[Asset::Watching])
 }
 
-fn laid_out(
-    book: &str,
-    title: &str,
-    back_to: &str,
-    said: &str,
-    form: &str,
-    scripts: &[Asset],
-) -> String {
+fn laid_out(page: &Form<'_>, scripts: &[Asset]) -> String {
+    let Form {
+        book,
+        title,
+        back_to,
+        said,
+        form,
+    } = *page;
     scripted(
         &format!("{title} — noda"),
         "",
@@ -1291,12 +1344,12 @@ fn refusal(problem: Option<&str>) -> String {
 
 /// A new note.
 pub fn composing(book: &str, draft: &Draft, problem: Option<&str>) -> String {
-    form_page(
+    form_page(&Form {
         book,
-        "New note",
-        &format!("/nb/{}", escape(book)),
-        &refusal(problem),
-        &format!(
+        title: "New note",
+        back_to: &format!("/nb/{}", escape(book)),
+        said: &refusal(problem),
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"/nb/{}/new\">\
              <div><label for=\"t\">Title</label>\
              <input id=\"t\" type=\"text\" name=\"title\" value=\"{}\" \
@@ -1313,21 +1366,39 @@ pub fn composing(book: &str, draft: &Draft, problem: Option<&str>) -> String {
             escape(&draft.body),
             escape(book)
         ),
-    )
+    })
 }
 
-/// `was` is the fingerprint the file had when this page was drawn, carried
-/// through the form so the write can tell whether anything happened since.
-pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option<&str>) -> String {
-    watching_form_page(
+/// What [`editing`] draws. `was` is the fingerprint the file had when the page
+/// was drawn, carried through the form so the write can tell whether anything
+/// happened since.
+#[derive(Clone, Copy)]
+pub struct Editing<'a> {
+    pub book: &'a str,
+    pub about: &'a About,
+    pub body: &'a str,
+    pub was: &'a str,
+    pub problem: Option<&'a str>,
+}
+
+/// The body in a textarea, with the fingerprint it was drawn from.
+pub fn editing(edit: &Editing<'_>) -> String {
+    let Editing {
         book,
-        &about.title,
-        &about.at(book),
-        &format!(
+        about,
+        body,
+        was,
+        problem,
+    } = *edit;
+    watching_form_page(&Form {
+        book,
+        title: &about.title,
+        back_to: &about.at(book),
+        said: &format!(
             "{}<p class=\"said\">Editing the body. The title and the tags have their own screens.</p>",
             refusal(problem)
         ),
-        &format!(
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/edit\">\
              <input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
              <div><textarea name=\"body\" autofocus>{}</textarea></div>\
@@ -1338,7 +1409,17 @@ pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option
             escape(body),
             about.at(book)
         ),
-    )
+    })
+}
+
+/// What [`clashed`] shows: both versions, and the fingerprint of the one on disk.
+#[derive(Clone, Copy)]
+pub struct Clash<'a> {
+    pub book: &'a str,
+    pub about: &'a About,
+    pub theirs: &'a str,
+    pub mine: &'a str,
+    pub now: &'a str,
 }
 
 /// The note changed under the reader and there was no version to merge from
@@ -1347,14 +1428,21 @@ pub fn editing(book: &str, about: &About, body: &str, was: &str, problem: Option
 ///
 /// What is on disk is shown read-only above what they wrote, which stays
 /// editable: saving is "keep mine", and editing is combining the two.
-pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -> String {
-    watching_form_page(
+pub fn clashed(clash: &Clash<'_>) -> String {
+    let Clash {
         book,
-        &about.title,
-        &about.at(book),
-        "<p class=\"said bad\"><b>This note changed while you were writing.</b> \
+        about,
+        theirs,
+        mine,
+        now,
+    } = *clash;
+    watching_form_page(&Form {
+        book,
+        title: &about.title,
+        back_to: &about.at(book),
+        said: "<p class=\"said bad\"><b>This note changed while you were writing.</b> \
          Nothing has been overwritten.</p>",
-        &format!(
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/edit\">\
              <input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
              <div><label>Saved now</label><pre class=\"theirs\">{}</pre></div>\
@@ -1368,21 +1456,21 @@ pub fn clashed(book: &str, about: &About, theirs: &str, mine: &str, now: &str) -
             escape(mine),
             about.at(book)
         ),
-    )
+    })
 }
 
 /// The two edits changed the same lines, and the merge comes back to be
 /// settled in one field: everything outside the markers is both edits combined.
 pub fn conflicted(book: &str, about: &About, merged: &str, now: &str) -> String {
-    watching_form_page(
+    watching_form_page(&Form {
         book,
-        &about.title,
-        &about.at(book),
-        "<p class=\"said bad\"><b>Someone else saved while you were writing.</b> \
+        title: &about.title,
+        back_to: &about.at(book),
+        said: "<p class=\"said bad\"><b>Someone else saved while you were writing.</b> \
          Both versions are here and nothing has been overwritten. Where the two \
          changed the same lines, they are wrapped in <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> \
          markers — keep what the note should say and delete the rest.</p>",
-        &format!(
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/edit\">\
              <input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
              <div><textarea name=\"body\" autofocus>{}</textarea></div>\
@@ -1393,21 +1481,21 @@ pub fn conflicted(book: &str, about: &About, merged: &str, now: &str) -> String 
             escape(merged),
             about.at(book)
         ),
-    )
+    })
 }
 
 /// A new title.
 pub fn renaming(book: &str, about: &About, title: &str, problem: Option<&str>) -> String {
-    form_page(
+    form_page(&Form {
         book,
-        "Rename",
-        &about.at(book),
-        &format!(
+        title: "Rename",
+        back_to: &about.at(book),
+        said: &format!(
             "{}<p class=\"said\">The id never moves, so links and bookmarks survive. \
              The filename follows the title.</p>",
             refusal(problem)
         ),
-        &format!(
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/rename\">\
              <div><label for=\"t\">Title</label>\
              <input id=\"t\" type=\"text\" name=\"title\" value=\"{}\" autofocus></div>\
@@ -1417,7 +1505,7 @@ pub fn renaming(book: &str, about: &About, title: &str, problem: Option<&str>) -
             escape(title),
             about.at(book)
         ),
-    )
+    })
 }
 
 /// A ticked box per tag the note has, and a field for new ones; the server
@@ -1449,12 +1537,12 @@ pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>
         format!("<div><label>On this note</label><div class=\"ticks\">{boxes}</div></div>")
     };
 
-    form_page(
+    form_page(&Form {
         book,
-        "Tags",
-        &about.at(book),
-        &refusal(problem),
-        &format!(
+        title: "Tags",
+        back_to: &about.at(book),
+        said: &refusal(problem),
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/tags\">{held}\
              <div><label for=\"a\">Add tags</label>\
              <input id=\"a\" type=\"text\" name=\"add\" \
@@ -1466,31 +1554,31 @@ pub fn tagging(book: &str, about: &About, tags: &[String], problem: Option<&str>
             about.at(book),
             about.at(book)
         ),
-    )
+    })
 }
 
 /// Says the note can be brought back, which git makes true: a warning that
 /// overstates the danger teaches people to click through warnings.
 pub fn deleting(book: &str, about: &About) -> String {
-    form_page(
+    form_page(&Form {
         book,
-        "Delete",
-        &about.at(book),
+        title: "Delete",
+        back_to: &about.at(book),
         // In the `said` slot, not the form: `.said` has its own padding and
         // rule, which a form would inset.
-        &format!(
+        said: &format!(
             "<p class=\"said\"><b>Delete {}?</b> The file goes and the commit that \
              removed it stays, so <code>noda restore</code> brings it back with its id.</p>",
             escape(&about.title)
         ),
-        &format!(
+        form: &format!(
             "<form class=\"write\" method=\"post\" action=\"{}/delete\">\
              <div class=\"buttons\"><button class=\"danger\" type=\"submit\">Delete</button>\
              <a class=\"button\" href=\"{}\">Keep it</a></div></form>",
             about.at(book),
             about.at(book)
         ),
-    )
+    })
 }
 
 /// `noda status`'s facts, already worked out by the caller.
@@ -1526,12 +1614,12 @@ pub struct Errand<'a> {
 /// reload asks how it is going. While one runs the page refreshes itself.
 pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
     let at = escape(book);
-    dressed(
-        &format!("Status — {book} — noda"),
-        "",
-        working(errand).then_some(AGAIN_IN),
-        &[Asset::Standing],
-        &format!(
+    dressed(&Dress {
+        title: &format!("Status — {book} — noda"),
+        app: "",
+        again_in: working(errand).then_some(AGAIN_IN),
+        scripts: &[Asset::Standing],
+        body: &format!(
             "<section class=\"pane\">\
              <header class=\"topbar\">{}<span class=\"here\">Status</span>\
              <span class=\"count\">{at}</span></header>{}</section>{}",
@@ -1539,7 +1627,7 @@ pub fn standing(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
             network_main(book, standing, errand),
             notebook_bar(book, At::Status),
         ),
-    )
+    })
 }
 
 /// What `script::STANDING` polls every `AGAIN_IN` seconds while an errand
@@ -2301,11 +2389,13 @@ mod tests {
     #[test]
     fn the_default_order_writes_no_parameter_and_the_rest_write_one() {
         let page = listing(
-            "work",
-            &[row("k3f9", "Budget review", true)],
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &[row("k3f9", "Budget review", true)],
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         assert!(page.contains("<nav class=\"sortbar\""), "{page}");
@@ -2323,11 +2413,13 @@ mod tests {
     #[test]
     fn every_order_the_command_names_is_on_the_screen() {
         let page = listing(
-            "work",
-            &[],
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         for sort in Sort::ALL {
@@ -2347,7 +2439,16 @@ mod tests {
             sort: Sort::Updated,
             reversed: false,
         };
-        let page = listing("work", &[], &Asked::nothing(), order, "in sync", None);
+        let page = listing(
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked::nothing(),
+                order,
+                drift: "in sync",
+            },
+            None,
+        );
         assert!(
             page.contains("href=\"/nb/work?sort=updated&amp;r=1\""),
             "{page}"
@@ -2356,14 +2457,16 @@ mod tests {
         assert!(page.contains("href=\"/nb/work\""), "{page}");
 
         let back = listing(
-            "work",
-            &[],
-            &Asked::nothing(),
-            Order {
-                sort: Sort::Updated,
-                reversed: true,
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked::nothing(),
+                order: Order {
+                    sort: Sort::Updated,
+                    reversed: true,
+                },
+                drift: "in sync",
             },
-            "in sync",
             None,
         );
         assert!(back.contains("href=\"/nb/work?sort=updated\""), "{back}");
@@ -2381,14 +2484,16 @@ mod tests {
             reversed: true,
         };
         let page = listing(
-            "work",
-            &[],
-            &Asked {
-                typed: "tag:q3 budget",
-                ..Asked::nothing()
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked {
+                    typed: "tag:q3 budget",
+                    ..Asked::nothing()
+                },
+                order,
+                drift: "in sync",
             },
-            order,
-            "in sync",
             None,
         );
         // Encoded as an address, not as markup: a query may hold an `&`.
@@ -2456,16 +2561,16 @@ mod tests {
         assert!(!page.contains("class=\"sortbar\""), "{page}");
         assert!(!page.contains("name=\"sort\""), "{page}");
 
-        let column = listing_pane(
-            "work",
-            &[row("k3f9", "Budget review", true)],
-            &Asked::nothing(),
-            Order {
+        let column = listing_pane(&Listing {
+            book: "work",
+            rows: &[row("k3f9", "Budget review", true)],
+            asked: &Asked::nothing(),
+            order: Order {
                 sort: Sort::Title,
                 reversed: false,
             },
-            "in sync",
-        );
+            drift: "in sync",
+        });
         assert!(column.contains("class=\"sortbar\""), "{column}");
         assert!(column.contains("name=\"sort\""), "{column}");
     }
@@ -2476,14 +2581,16 @@ mod tests {
             .map(|n| row(&format!("k3f{n}"), "Budget review", false))
             .collect::<Vec<_>>();
         let page = listing(
-            "work",
-            &rows,
-            &Asked {
-                typed: "tag:ghost",
-                ..Asked::nothing()
+            &Listing {
+                book: "work",
+                rows: &rows,
+                asked: &Asked {
+                    typed: "tag:ghost",
+                    ..Asked::nothing()
+                },
+                order: Order::default(),
+                drift: "in sync",
             },
-            Order::default(),
-            "in sync",
             None,
         );
         assert!(
@@ -2503,15 +2610,17 @@ mod tests {
         ];
         let terms = ["budget".to_string()];
         let page = listing(
-            "work",
-            &rows,
-            &Asked {
-                typed: "budget",
-                terms: &terms,
-                ..Asked::nothing()
+            &Listing {
+                book: "work",
+                rows: &rows,
+                asked: &Asked {
+                    typed: "budget",
+                    terms: &terms,
+                    ..Asked::nothing()
+                },
+                order: Order::default(),
+                drift: "in sync",
             },
-            Order::default(),
-            "in sync",
             None,
         );
         assert!(
@@ -2530,11 +2639,13 @@ mod tests {
     #[test]
     fn an_empty_notebook_says_what_to_do_instead_of_nothing() {
         let page = listing(
-            "work",
-            &[],
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         assert!(page.contains("No notes yet"), "{page}");
@@ -2546,11 +2657,13 @@ mod tests {
     #[test]
     fn the_hint_is_written_by_the_page_and_hidden_by_it() {
         let page = listing(
-            "work",
-            &[row("k3f9", "Budget review", true)],
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &[row("k3f9", "Budget review", true)],
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         assert!(page.contains("<p class=\"hint\" hidden>"), "{page}");
@@ -2590,11 +2703,13 @@ mod tests {
             pinned: false,
         }];
         let page = listing(
-            "work",
-            &rows,
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &rows,
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         assert!(!page.contains("·"), "{page}");
@@ -2614,11 +2729,13 @@ mod tests {
     #[test]
     fn a_row_prints_the_columns_ls_dash_l_prints_in_that_order() {
         let page = listing(
-            "work",
-            &[row("em0xvn4e", "Budget review", true)],
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &[row("em0xvn4e", "Budget review", true)],
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         assert!(
@@ -2647,15 +2764,17 @@ mod tests {
             vec!["budget".to_string()],
         ];
         let page = listing(
-            "work",
-            &[row("k3f9", "Budget review", true)],
-            &Asked {
-                typed: "tag:work OR tag:q3 budget",
-                grouping: &grouping,
-                ..Asked::nothing()
+            &Listing {
+                book: "work",
+                rows: &[row("k3f9", "Budget review", true)],
+                asked: &Asked {
+                    typed: "tag:work OR tag:q3 budget",
+                    grouping: &grouping,
+                    ..Asked::nothing()
+                },
+                order: Order::default(),
+                drift: "in sync",
             },
-            Order::default(),
-            "in sync",
             None,
         );
         assert!(
@@ -2673,15 +2792,17 @@ mod tests {
     #[test]
     fn a_line_that_is_not_a_query_yet_is_grouped_into_nothing() {
         let page = listing(
-            "work",
-            &[row("k3f9", "Budget review", true)],
-            &Asked {
-                typed: "budget OR",
-                problem: Some("`OR` needs a term on both sides"),
-                ..Asked::nothing()
+            &Listing {
+                book: "work",
+                rows: &[row("k3f9", "Budget review", true)],
+                asked: &Asked {
+                    typed: "budget OR",
+                    problem: Some("`OR` needs a term on both sides"),
+                    ..Asked::nothing()
+                },
+                order: Order::default(),
+                drift: "in sync",
             },
-            Order::default(),
-            "in sync",
             None,
         );
         assert!(
@@ -2733,15 +2854,17 @@ mod tests {
     fn a_grouping_cannot_write_markup_into_the_page() {
         let grouping = [vec!["<script>x</script>".to_string()]];
         let page = listing(
-            "work",
-            &[],
-            &Asked {
-                typed: "<script>x</script>",
-                grouping: &grouping,
-                ..Asked::nothing()
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked {
+                    typed: "<script>x</script>",
+                    grouping: &grouping,
+                    ..Asked::nothing()
+                },
+                order: Order::default(),
+                drift: "in sync",
             },
-            Order::default(),
-            "in sync",
             None,
         );
         assert!(page.contains("&lt;script&gt;x&lt;/script&gt;"), "{page}");
@@ -2751,11 +2874,13 @@ mod tests {
     #[test]
     fn every_page_names_the_viewport_and_links_the_sheet_that_holds_both_themes() {
         let page = listing(
-            "work",
-            &[],
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &[],
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             None,
         );
         assert!(page.contains("width=device-width"), "{page}");
@@ -2805,20 +2930,22 @@ mod tests {
             shown: true,
             pinned: false,
         }];
-        let column = listing_pane(
-            "work",
-            &rows,
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
-        );
+        let column = listing_pane(&Listing {
+            book: "work",
+            rows: &rows,
+            asked: &Asked::nothing(),
+            order: Order::default(),
+            drift: "in sync",
+        });
         assert!(
             listing(
-                "work",
-                &rows,
-                &Asked::nothing(),
-                Order::default(),
-                "in sync",
+                &Listing {
+                    book: "work",
+                    rows: &rows,
+                    asked: &Asked::nothing(),
+                    order: Order::default(),
+                    drift: "in sync"
+                },
                 None
             )
             .contains(&column),
@@ -2840,11 +2967,13 @@ mod tests {
         assert!(standing("work", &still(), None).contains(&news), "{news}");
 
         let both = listing_screen(
-            "work",
-            &rows,
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &rows,
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             Some("<p>Read me</p>"),
         );
         let (title, panes) = both
@@ -2852,11 +2981,13 @@ mod tests {
             .map(|(title, panes)| (format!("{title}</title>"), panes.to_string()))
             .expect("the listing screen names the tab");
         let page = listing(
-            "work",
-            &rows,
-            &Asked::nothing(),
-            Order::default(),
-            "in sync",
+            &Listing {
+                book: "work",
+                rows: &rows,
+                asked: &Asked::nothing(),
+                order: Order::default(),
+                drift: "in sync",
+            },
             Some("<p>Read me</p>"),
         );
         assert!(page.contains(&title), "{page}");
@@ -3009,11 +3140,13 @@ mod tests {
         assert!(note("work", &reading(), "in sync").contains(hook), "note");
         assert!(
             listing(
-                "work",
-                &[],
-                &Asked::nothing(),
-                Order::default(),
-                "in sync",
+                &Listing {
+                    book: "work",
+                    rows: &[],
+                    asked: &Asked::nothing(),
+                    order: Order::default(),
+                    drift: "in sync"
+                },
                 None
             )
             .contains(hook),
@@ -3028,11 +3161,13 @@ mod tests {
         assert!(note("work", &reading(), "in sync").contains(hook), "note");
         assert!(
             listing(
-                "work",
-                &[],
-                &Asked::nothing(),
-                Order::default(),
-                "in sync",
+                &Listing {
+                    book: "work",
+                    rows: &[],
+                    asked: &Asked::nothing(),
+                    order: Order::default(),
+                    drift: "in sync"
+                },
                 None
             )
             .contains(hook),

@@ -549,7 +549,15 @@ fn run() -> noda::Result<()> {
             new_title,
             update_links,
             no_touch,
-        } => cmd::mv(&paths, note, new_title, *update_links, touch(*no_touch))?,
+        } => cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: note,
+                new_title,
+                update_links: *update_links,
+                touch: touch(*no_touch),
+            },
+        )?,
         Command::Tag {
             note,
             changes,

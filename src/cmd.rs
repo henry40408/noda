@@ -851,29 +851,32 @@ fn settle(notebook: &Notebook, located: &Located, before: &str, touch: Touch) ->
     Ok(summary(&located.id, &located.slug, &edited.tags))
 }
 
+/// What `mv` changes.
+#[derive(Clone, Copy)]
+pub struct Rename<'a> {
+    pub key: &'a str,
+    pub new_title: &'a str,
+    pub update_links: bool,
+    pub touch: Touch,
+}
+
 /// Retitles a note. The slug follows the title; the id never moves, so links to
 /// it go stale rather than broken (`backlinks` still finds them by id). A retitle
 /// reports them; `update_links` rewrites them — opt-in, because it edits notes
 /// the command was not pointed at.
-pub fn mv(
-    paths: &Paths,
-    key: &str,
-    new_title: &str,
-    update_links: bool,
-    touch: Touch,
-) -> Result<String> {
+pub fn mv(paths: &Paths, rename: &Rename<'_>) -> Result<String> {
     let notebook = Notebook::open_active(paths)?;
-    mv_in(&notebook, key, new_title, update_links, touch)
+    mv_in(&notebook, rename)
 }
 
 /// `mv`, in a notebook the caller already has open.
-pub fn mv_in(
-    notebook: &Notebook,
-    key: &str,
-    new_title: &str,
-    update_links: bool,
-    touch: Touch,
-) -> Result<String> {
+pub fn mv_in(notebook: &Notebook, rename: &Rename<'_>) -> Result<String> {
+    let Rename {
+        key,
+        new_title,
+        update_links,
+        touch,
+    } = *rename;
     let located = locate(notebook, key)?;
     let mut note = located.note;
 

@@ -566,7 +566,16 @@ fn changing_a_note_moves_updated_and_leaves_created_alone() {
         "a tag change is a change"
     );
 
-    cmd::mv(&paths, "alpha", "Beta", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Beta",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     assert_eq!(
         times(&paths, "beta").0,
         created,
@@ -605,7 +614,16 @@ fn no_touch_leaves_updated_where_it_stands() {
         "the tag went on without redating the note"
     );
 
-    cmd::mv(&paths, "alpha", "Beta", false, cmd::Touch::Keep).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Beta",
+            update_links: false,
+            touch: cmd::Touch::Keep,
+        },
+    )
+    .unwrap();
     let (created, updated) = times(&paths, "beta");
     assert_eq!(
         updated.as_deref(),
@@ -793,7 +811,16 @@ fn mv_renames_the_slug_and_keeps_the_id() {
     let id = id.to_string();
     let notebook = paths.notebook_dir(cmd::DEFAULT_NOTEBOOK);
 
-    let out = cmd::mv(&paths, "alpha", "Beta Notes", false, cmd::Touch::Stamp).unwrap();
+    let out = cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Beta Notes",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     assert_eq!(out, format!("{id}  beta-notes  [work]"));
 
     assert!(
@@ -823,7 +850,16 @@ fn mv_retitles_without_moving_when_the_slug_is_unchanged() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
 
-    cmd::mv(&paths, "alpha", "  ALPHA  ", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "  ALPHA  ",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     let text = cmd::show(&paths, "alpha").unwrap();
     assert!(text.contains("title: ALPHA"), "{text}");
 }
@@ -835,7 +871,18 @@ fn mv_says_which_notes_linked_to_the_name_it_left() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
 
-    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap());
+    let out = plain(
+        &cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: &target_id,
+                new_title: "Weekly sync",
+                update_links: false,
+                touch: cmd::Touch::Stamp,
+            },
+        )
+        .unwrap(),
+    );
     assert!(
         out.contains(&format!("1 note links to {target_id} by an older name")),
         "{out}"
@@ -859,7 +906,18 @@ fn mv_update_links_rewrites_the_notes_that_pointed_at_the_old_name() {
     let commits = commit_count(&notebook);
     let before = times(&paths, &source_slug);
 
-    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", true, cmd::Touch::Stamp).unwrap());
+    let out = plain(
+        &cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: &target_id,
+                new_title: "Weekly sync",
+                update_links: true,
+                touch: cmd::Touch::Stamp,
+            },
+        )
+        .unwrap(),
+    );
     assert!(out.contains("updated  1 note"), "{out}");
     assert!(
         !out.contains("links to"),
@@ -898,8 +956,28 @@ fn mv_update_links_catches_a_link_two_renames_behind() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
 
-    cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
-    let out = plain(&cmd::mv(&paths, &target_id, "Team sync", true, cmd::Touch::Stamp).unwrap());
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: &target_id,
+            new_title: "Weekly sync",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
+    let out = plain(
+        &cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: &target_id,
+                new_title: "Team sync",
+                update_links: true,
+                touch: cmd::Touch::Stamp,
+            },
+        )
+        .unwrap(),
+    );
 
     assert!(out.contains("updated  1 note"), "{out}");
     let text = note_text(&paths, &source_slug);
@@ -917,9 +995,29 @@ fn mv_update_links_catches_a_link_two_renames_behind() {
 fn mv_update_links_repairs_without_having_to_retitle_again() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
-    cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: &target_id,
+            new_title: "Weekly sync",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
 
-    let out = plain(&cmd::mv(&paths, &target_id, "Weekly sync", true, cmd::Touch::Stamp).unwrap());
+    let out = plain(
+        &cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: &target_id,
+                new_title: "Weekly sync",
+                update_links: true,
+                touch: cmd::Touch::Stamp,
+            },
+        )
+        .unwrap(),
+    );
     assert!(out.contains("updated  1 note"), "{out}");
     assert!(
         note_text(&paths, &source_slug).contains(&format!("{target_id}-weekly-sync.md")),
@@ -940,7 +1038,16 @@ fn mv_update_links_reaches_a_note_that_links_to_itself() {
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, format!("{text}\nand [me]({id}-alpha.md)\n")).unwrap();
 
-    cmd::mv(&paths, &id, "Beta", true, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: &id,
+            new_title: "Beta",
+            update_links: true,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     let text = note_text(&paths, "beta");
     assert!(text.contains(&format!("[me]({id}-beta.md)")), "{text}");
 }
@@ -954,10 +1061,12 @@ fn a_retitle_that_keeps_the_slug_says_nothing_about_links() {
     let out = plain(
         &cmd::mv(
             &paths,
-            &target_id,
-            "  MEETING NOTES  ",
-            false,
-            cmd::Touch::Stamp,
+            &cmd::Rename {
+                key: &target_id,
+                new_title: "  MEETING NOTES  ",
+                update_links: false,
+                touch: cmd::Touch::Stamp,
+            },
         )
         .unwrap(),
     );
@@ -973,9 +1082,29 @@ fn mv_may_land_on_a_slug_another_note_already_uses() {
     let (alpha_id, _) = parts(&alpha);
     let (beta_id, _) = parts(&beta);
 
-    assert!(cmd::mv(&paths, "alpha", "   ", false, cmd::Touch::Stamp).is_err());
+    assert!(
+        cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: "alpha",
+                new_title: "   ",
+                update_links: false,
+                touch: cmd::Touch::Stamp
+            }
+        )
+        .is_err()
+    );
 
-    let out = cmd::mv(&paths, alpha_id, "Beta", false, cmd::Touch::Stamp).unwrap();
+    let out = cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: alpha_id,
+            new_title: "Beta",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     assert!(out.ends_with("  beta"), "no `-2` invented: {out}");
     assert!(
         cmd::show(&paths, beta_id).unwrap().ends_with("b\n"),
@@ -997,10 +1126,12 @@ fn mv_refuses_a_title_the_frontmatter_cannot_carry() {
 
     let err = cmd::mv(
         &paths,
-        "alpha",
-        "Renamed\ntitle: hijacked",
-        false,
-        cmd::Touch::Stamp,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Renamed\ntitle: hijacked",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
     )
     .unwrap_err()
     .to_string();
@@ -1235,7 +1366,16 @@ fn the_commands_that_read_a_note_still_refuse_one_that_cannot_be_read() {
 
     // These rewrite the frontmatter, so they must read it first.
     for err in [
-        cmd::mv(&paths, &id, "Renamed", false, cmd::Touch::Stamp).unwrap_err(),
+        cmd::mv(
+            &paths,
+            &cmd::Rename {
+                key: &id,
+                new_title: "Renamed",
+                update_links: false,
+                touch: cmd::Touch::Stamp,
+            },
+        )
+        .unwrap_err(),
         cmd::tag(&paths, &id, &["+work".to_string()], cmd::Touch::Stamp).unwrap_err(),
     ] {
         assert!(err.to_string().contains("frontmatter"), "{err}");
@@ -2287,7 +2427,16 @@ fn doctor_times_is_quiet_about_notes_noda_wrote() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
-    cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Renamed",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
 
     let out = plain(&cmd::doctor(&paths, false, false, true).unwrap());
     assert!(out.contains("in order"), "{out}");
@@ -2438,7 +2587,16 @@ fn doctor_links_reports_a_link_that_names_nothing() {
 fn doctor_links_tells_a_stale_link_from_a_broken_one() {
     let (_root, paths) = initialized();
     let ((target_id, _), (_, source_slug)) = linked_pair(&paths);
-    cmd::mv(&paths, &target_id, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: &target_id,
+            new_title: "Weekly sync",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
 
     let out = plain(&cmd::doctor(&paths, false, true, false).unwrap());
     assert!(out.contains("1 stale link"), "{out}");
@@ -3996,7 +4154,16 @@ fn log_for_a_note_follows_it_across_a_rename() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Alpha"), Some("a\n"), &[]).unwrap();
     cmd::tag(&paths, "alpha", &["+work".to_string()], cmd::Touch::Stamp).unwrap();
-    cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Renamed",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
 
     let out = plain(&cmd::log(&paths, Some("renamed"), None).unwrap());
@@ -4333,7 +4500,16 @@ fn deleted_names_the_commit_that_brings_a_note_back() {
 fn deleted_does_not_count_a_rename() {
     let (_root, paths) = initialized();
     cmd::add(&paths, Some("Beta"), Some("b\n"), &[]).unwrap();
-    cmd::mv(&paths, "beta", "Beta Renamed", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "beta",
+            new_title: "Beta Renamed",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
 
     assert_eq!(cmd::deleted(&paths, None, false).unwrap(), "");
 }
@@ -4722,7 +4898,16 @@ fn blame_reaches_past_a_rename() {
     let added = cmd::add(&paths, Some("Alpha"), Some("written before\n"), &[]).unwrap();
     let created = head_commit(&paths);
 
-    cmd::mv(&paths, "alpha", "Renamed", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: "alpha",
+            new_title: "Renamed",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
     let renamed = head_commit(&paths);
     assert_ne!(created, renamed, "the rename is its own commit");
 
@@ -4841,7 +5026,16 @@ fn backlinks_name_the_notes_that_point_at_one() {
 fn backlinks_survive_a_retitle() {
     let (_root, paths) = initialized();
     let ((_, target), (source_id, _)) = linked_pair(&paths);
-    cmd::mv(&paths, &target, "Weekly sync", false, cmd::Touch::Stamp).unwrap();
+    cmd::mv(
+        &paths,
+        &cmd::Rename {
+            key: &target,
+            new_title: "Weekly sync",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
+    )
+    .unwrap();
 
     // Broken for any Markdown reader, stale for noda: the id still names one note.
     let audit = plain(&cmd::doctor(&paths, false, true, false).unwrap());

@@ -16,7 +16,7 @@ use ratatui::widgets::{
 
 use super::app::{App, Choice, Mark, Mode, Proposal, SCOPE_KEYS, View, What};
 use super::command;
-use super::frame::{self, card, plural};
+use super::frame::{self, Card, card, plural};
 use super::theme;
 use crate::cmd::{self, display_width, find_ignoring_case};
 use crate::style as palette;
@@ -117,8 +117,16 @@ fn less_the_bar(area: Rect) -> (Rect, Rect) {
     (content, bar)
 }
 
+/// How far through `total` rows the `shown` ones have got, `at` being the first.
+struct Scroll {
+    total: usize,
+    shown: usize,
+    at: usize,
+}
+
 /// Drawn only on overflow, and without end arrows, which would cost two rows.
-fn draw_scrollbar(f: &mut Frame, area: Rect, total: usize, shown: usize, at: usize) {
+fn draw_scrollbar(f: &mut Frame, area: Rect, scroll: Scroll) {
+    let Scroll { total, shown, at } = scroll;
     if total <= shown || area.height == 0 {
         return;
     }
@@ -169,19 +177,69 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
     match app.view().clone() {
         View::Notes => draw_listing(f, area, app),
         View::Note(_) => draw_note(f, area, app),
-        View::Todo => draw_rows(f, area, app, todo_rows(app), "nothing to do"),
-        View::Tags => draw_rows(f, area, app, tag_rows(app), "no tags yet"),
+        View::Todo => draw_rows(
+            f,
+            area,
+            app,
+            Listed {
+                sheet: todo_rows(app),
+                empty: "nothing to do",
+            },
+        ),
+        View::Tags => draw_rows(
+            f,
+            area,
+            app,
+            Listed {
+                sheet: tag_rows(app),
+                empty: "no tags yet",
+            },
+        ),
         View::Files => draw_rows(
             f,
             area,
             app,
-            file_rows(app),
-            "this notebook holds nothing but notes",
+            Listed {
+                sheet: file_rows(app),
+                empty: "this notebook holds nothing but notes",
+            },
         ),
-        View::Notebooks => draw_rows(f, area, app, notebook_rows(app), "no notebooks"),
-        View::Deleted => draw_rows(f, area, app, deleted_rows(app), "nothing has been deleted"),
-        View::Backlinks(_) => draw_rows(f, area, app, backlink_rows(app), "nothing links here"),
-        View::Log(_) => draw_rows(f, area, app, log_rows(app), "no commits"),
+        View::Notebooks => draw_rows(
+            f,
+            area,
+            app,
+            Listed {
+                sheet: notebook_rows(app),
+                empty: "no notebooks",
+            },
+        ),
+        View::Deleted => draw_rows(
+            f,
+            area,
+            app,
+            Listed {
+                sheet: deleted_rows(app),
+                empty: "nothing has been deleted",
+            },
+        ),
+        View::Backlinks(_) => draw_rows(
+            f,
+            area,
+            app,
+            Listed {
+                sheet: backlink_rows(app),
+                empty: "nothing links here",
+            },
+        ),
+        View::Log(_) => draw_rows(
+            f,
+            area,
+            app,
+            Listed {
+                sheet: log_rows(app),
+                empty: "no commits",
+            },
+        ),
         View::Blame(_) => draw_blame(f, area, app),
         View::Diff => draw_diff(f, area, app),
     }
@@ -341,9 +399,11 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     draw_scrollbar(
         f,
         rows_area(bar),
-        rows_shown,
-        rows_area(bar).height as usize,
-        state.offset(),
+        Scroll {
+            total: rows_shown,
+            shown: rows_area(bar).height as usize,
+            at: state.offset(),
+        },
     );
     app.put_table(state);
 }
@@ -360,7 +420,17 @@ fn stamp(value: Option<&String>) -> String {
     value.cloned().unwrap_or_else(|| "-".to_string())
 }
 
-fn draw_rows(f: &mut Frame, area: Rect, app: &mut App, sheet_of: Sheet, empty: &str) {
+/// A [`Sheet`], and what to say when it has no rows.
+struct Listed<'a> {
+    sheet: Sheet,
+    empty: &'a str,
+}
+
+fn draw_rows(f: &mut Frame, area: Rect, app: &mut App, listed: Listed<'_>) {
+    let Listed {
+        sheet: sheet_of,
+        empty,
+    } = listed;
     if sheet_of.rows.is_empty() {
         draw_nothing(f, area, empty);
         return;
@@ -376,9 +446,11 @@ fn draw_rows(f: &mut Frame, area: Rect, app: &mut App, sheet_of: Sheet, empty: &
     draw_scrollbar(
         f,
         rows_area(bar),
-        total,
-        rows_area(bar).height as usize,
-        state.offset(),
+        Scroll {
+            total,
+            shown: rows_area(bar).height as usize,
+            at: state.offset(),
+        },
     );
     app.put_table(state);
 }
@@ -647,12 +719,33 @@ fn draw_blame(f: &mut Frame, area: Rect, app: &App) {
             ])
         })
         .collect();
-    draw_page(f, area, lines, app.scroll(), false);
+    draw_page(
+        f,
+        area,
+        Page {
+            lines,
+            scroll: app.scroll(),
+            wrap: false,
+        },
+    );
+}
+
+/// The lines of a page, how far down they are scrolled, and whether long ones
+/// wrap.
+struct Page<'a> {
+    lines: Vec<Line<'a>>,
+    scroll: u16,
+    wrap: bool,
 }
 
 /// The bar counts source lines, which `j` moves by, not wrapped rows: an
 /// approximate bar beats one that disagrees with the key.
-fn draw_page(f: &mut Frame, area: Rect, lines: Vec<Line>, scroll: u16, wrap: bool) {
+fn draw_page(f: &mut Frame, area: Rect, page: Page<'_>) {
+    let Page {
+        lines,
+        scroll,
+        wrap,
+    } = page;
     let (area, bar) = less_the_bar(area);
     let total = lines.len();
     let mut page = Paragraph::new(lines)
@@ -663,7 +756,15 @@ fn draw_page(f: &mut Frame, area: Rect, lines: Vec<Line>, scroll: u16, wrap: boo
         page = page.wrap(Wrap { trim: false });
     }
     f.render_widget(page, area);
-    draw_scrollbar(f, bar, total, bar.height as usize, scroll as usize);
+    draw_scrollbar(
+        f,
+        bar,
+        Scroll {
+            total,
+            shown: bar.height as usize,
+            at: scroll as usize,
+        },
+    );
 }
 
 /// Coloured by each line's prefix; `fetch` strips `cmd::diff`'s escapes rather
@@ -697,7 +798,15 @@ fn draw_diff(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
     // Unwrapped: a wrapped `+` line reads as two additions.
-    draw_page(f, area, lines, app.scroll(), false);
+    draw_page(
+        f,
+        area,
+        Page {
+            lines,
+            scroll: app.scroll(),
+            wrap: false,
+        },
+    );
 }
 
 fn draw_note(f: &mut Frame, area: Rect, app: &App) {
@@ -706,7 +815,15 @@ fn draw_note(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
     // Wrapped, so prose needs no sideways scrolling.
-    draw_page(f, area, lines(text, app.terms()), app.scroll(), true);
+    draw_page(
+        f,
+        area,
+        Page {
+            lines: lines(text, app.terms()),
+            scroll: app.scroll(),
+            wrap: true,
+        },
+    );
 }
 
 fn draw_help(f: &mut Frame, area: Rect) {
@@ -719,7 +836,15 @@ fn draw_help(f: &mut Frame, area: Rect) {
             ])
         })
         .collect();
-    card(f, area, " keys ", keys, theme::from(palette::MUTED));
+    card(
+        f,
+        area,
+        Card {
+            title: " keys ",
+            lines: keys,
+            border: theme::from(palette::MUTED),
+        },
+    );
 }
 
 /// Cut to what the terminal holds, cursor kept in view and the rest counted in
@@ -774,7 +899,15 @@ fn draw_commands(f: &mut Frame, area: Rect, app: &App) {
     } else {
         format!(" commands: {} ", app.input.text())
     };
-    card(f, area, &title, lines, muted);
+    card(
+        f,
+        area,
+        Card {
+            title: &title,
+            lines,
+            border: muted,
+        },
+    );
 }
 
 /// Asked on screen: here a delete is one chord, and in raw mode a command
@@ -828,7 +961,15 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, what: What) {
         Line::default(),
         Line::from(Span::styled(keys, muted)),
     ];
-    card(f, area, title, lines, muted);
+    card(
+        f,
+        area,
+        Card {
+            title,
+            lines,
+            border: muted,
+        },
+    );
 }
 
 /// Each line is the sentence the commit message will use.
@@ -858,7 +999,15 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App) {
         "enter  send, in one commit       d  drop this one       esc  back",
         muted,
     )));
-    card(f, area, " queued ", lines, muted);
+    card(
+        f,
+        area,
+        Card {
+            title: " queued ",
+            lines,
+            border: muted,
+        },
+    );
 }
 
 /// A box per notebook tag, in the tags screen's order. The count is the tag's
@@ -928,7 +1077,15 @@ fn draw_tagging(f: &mut Frame, area: Rect, app: &App) {
     } else {
         format!(" tags: {about} / {} ", app.input.text())
     };
-    card(f, area, &title, lines, muted);
+    card(
+        f,
+        area,
+        Card {
+            title: &title,
+            lines,
+            border: muted,
+        },
+    );
 }
 
 /// A tag no note carries was just made on this card, so it says `new`, not
@@ -1010,7 +1167,15 @@ fn draw_alert(f: &mut Frame, area: Rect, app: &App) {
     } else {
         (" done ", theme::from(palette::MUTED))
     };
-    card(f, area, title, lines, border);
+    card(
+        f,
+        area,
+        Card {
+            title,
+            lines,
+            border,
+        },
+    );
 }
 
 /// Cut on a character, not a byte, which could panic mid-code-point.

@@ -592,9 +592,21 @@ pub fn plural(n: usize, thing: &str) -> String {
     }
 }
 
+/// What a [`card`] says, and the colour it says it in.
+pub struct Card<'a> {
+    pub title: &'a str,
+    pub lines: Vec<Line<'a>>,
+    pub border: Style,
+}
+
 /// As wide as its widest line in terminal columns, clamped to the screen;
 /// what does not fit wraps rather than cuts.
-pub fn card(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, border: Style) {
+pub fn card(frame: &mut Frame, area: Rect, contents: Card<'_>) {
+    let Card {
+        title,
+        lines,
+        border,
+    } = contents;
     let width = (2 + lines.iter().map(Line::width).max().unwrap_or(0) as u16)
         .max(title.chars().count() as u16 + 2)
         .min(area.width);
