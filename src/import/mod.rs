@@ -72,14 +72,59 @@ pub fn write(
         ..Report::default()
     };
 
-    let held = already_here(&notebook)?;
-    let mut taken = notebook.taken_ids()?;
+    let (named, mut by_key) = name_incoming(&notebook, incoming, &mut report)?;
+    if named.is_empty() {
+        return Ok(summary(&report, source, None));
+    }
 
-    // Where every source name ends up, for rewriting links; seeded with what
-    // is already held, since a wiki may be imported in pieces.
+    let (files, written) = write_source_text(&notebook, named, &mut by_key, &mut report);
+    if written.is_empty() {
+        return Ok(summary(&report, source, None));
+    }
+    commit(
+        &notebook,
+        &files,
+        &format!("import: {} notes from {source}", report.written),
+    )?;
+
+    // Pass two: the conversion, once every name is resolvable.
+    let Some(convert) = convert else {
+        return Ok(summary(&report, source, None));
+    };
+    let resolve = |key: &str| by_key.get(key).cloned();
+    let changed = convert_written(
+        &notebook,
+        &written,
+        &|body| convert(body, &resolve),
+        &mut report,
+    );
+    if !changed.is_empty() {
+        commit(
+            &notebook,
+            &changed,
+            &format!("import: convert {} notes from {source}", report.converted),
+        )?;
+    }
+    Ok(summary(&report, source, Some(&notebook)))
+}
+
+/// A note with the id and slug it will be written under.
+type Named = (String, String, Incoming);
+
+/// Gives each note that will be imported its name, and says why the others
+/// will not be. Also returns where every source name ends up, for rewriting
+/// links; seeded with what is already held, since a wiki may be imported in
+/// pieces.
+fn name_incoming(
+    notebook: &Notebook,
+    incoming: Vec<Incoming>,
+    report: &mut Report,
+) -> Result<(Vec<Named>, HashMap<String, String>)> {
+    let held = already_here(notebook)?;
+    let mut taken = notebook.taken_ids()?;
     let mut by_key = held.clone();
 
-    let mut named: Vec<(String, String, Incoming)> = Vec::new();
+    let mut named: Vec<Named> = Vec::new();
     for note in incoming {
         if let Some(file) = held.get(&note.key) {
             report
@@ -104,16 +149,20 @@ pub fn write(
         by_key.insert(note.key.clone(), note::file_name(&id, &slug));
         named.push((id, slug, note));
     }
+    Ok((named, by_key))
+}
 
-    if named.is_empty() {
-        return Ok(summary(&report, source, None));
-    }
-
-    // Pass one: every note as the source wrote it. A write that fails is
-    // skipped rather than ending the run, which would leave the rest written
-    // but uncommitted.
+/// Pass one: every note as the source wrote it. A write that fails is skipped
+/// rather than ending the run, which would leave the rest written but
+/// uncommitted.
+fn write_source_text(
+    notebook: &Notebook,
+    named: Vec<Named>,
+    by_key: &mut HashMap<String, String>,
+    report: &mut Report,
+) -> (Vec<PathBuf>, Vec<Named>) {
     let mut files: Vec<PathBuf> = Vec::new();
-    let mut written: Vec<(String, String, Incoming)> = Vec::new();
+    let mut written: Vec<Named> = Vec::new();
     for (id, slug, note) in named {
         let file = note::file_name(&id, &slug);
         if let Err(e) = std::fs::write(notebook.path.join(&file), render(&note, &note.body, &[])) {
@@ -125,25 +174,20 @@ pub fn write(
         report.written += 1;
         written.push((id, slug, note));
     }
+    (files, written)
+}
 
-    if written.is_empty() {
-        return Ok(summary(&report, source, None));
-    }
-    commit(
-        &notebook,
-        &files,
-        &format!("import: {} notes from {source}", report.written),
-    )?;
-
-    // Pass two: the conversion, once every name is resolvable.
-    let Some(convert) = convert else {
-        return Ok(summary(&report, source, None));
-    };
-    let resolve = |key: &str| by_key.get(key).cloned();
-
+/// Pass two: rewrites the notes the conversion changed, and returns their
+/// files.
+fn convert_written(
+    notebook: &Notebook,
+    written: &[Named],
+    convert: &dyn Fn(&str) -> wikitext::Converted,
+    report: &mut Report,
+) -> Vec<PathBuf> {
     let mut changed: Vec<PathBuf> = Vec::new();
-    for (id, slug, note) in &written {
-        let converted = convert(&note.body, &resolve);
+    for (id, slug, note) in written {
+        let converted = convert(&note.body);
         let left: Vec<&str> = converted.left.iter().copied().collect();
         if converted.text == note.body && left.is_empty() {
             continue;
@@ -166,14 +210,7 @@ pub fn write(
         changed.push(PathBuf::from(file));
         report.converted += 1;
     }
-    if !changed.is_empty() {
-        commit(
-            &notebook,
-            &changed,
-            &format!("import: convert {} notes from {source}", report.converted),
-        )?;
-    }
-    Ok(summary(&report, source, Some(&notebook)))
+    changed
 }
 
 /// The source's own fields carried through, plus `source_key` and

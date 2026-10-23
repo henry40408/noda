@@ -284,23 +284,7 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
     // column is already gone).
     let inner = (area.width as usize).saturating_sub(GUTTER);
 
-    // What `-l` adds.
-    let mut extra: Vec<(&'static str, Vec<String>)> = Vec::new();
-    if app.long {
-        extra.push(("slug", app.rows().map(|file| file.slug.clone()).collect()));
-        extra.push((
-            "created",
-            app.rows()
-                .map(|file| stamp(file.note.created.as_ref()))
-                .collect(),
-        ));
-        extra.push((
-            "updated",
-            app.rows()
-                .map(|file| stamp(file.note.updated.as_ref()))
-                .collect(),
-        ));
-    }
+    let mut extra = long_columns(app);
     // `-l`'s columns are dropped whole from the right while the title is below
     // its floor: the id and title name a note, the rest is density.
     let mut widths: Vec<usize> = extra
@@ -336,48 +320,7 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or(0)
         .min(room);
 
-    let terms = app.terms().to_vec();
-    let muted = theme::from(palette::MUTED);
-    let rows: Vec<Row> = app
-        .rows()
-        .enumerate()
-        .map(|(at, file)| {
-            let mut cells = vec![
-                Line::from(vec![
-                    Span::styled(
-                        if app.marked(&file.id) { MARK } else { UNMARKED },
-                        theme::from(palette::MATCH),
-                    ),
-                    Span::styled(file.id.as_str(), theme::from(palette::ID)),
-                ]),
-                // Uncoloured, as in `noda ls`: it is where the eye lands.
-                marked(&file.note.title, &terms, Style::default()),
-            ];
-            // `-l` extends the row, in the CLI's order and colours.
-            for (which, values) in &extra {
-                let style = if *which == "slug" {
-                    theme::from(palette::SLUG)
-                } else {
-                    muted
-                };
-                cells.push(Line::from(Span::styled(values[at].clone(), style)));
-            }
-            cells.push(Line::from(
-                palette::tag_pieces(&file.note.tags)
-                    .into_iter()
-                    .map(|(style, text)| Span::styled(text, theme::from(style)))
-                    .collect::<Vec<_>>(),
-            ));
-            if pinned_here {
-                cells.push(Line::from(if file.note.is_pinned() {
-                    Span::styled(palette::PIN_MARK, theme::from(palette::PIN))
-                } else {
-                    Span::raw("")
-                }));
-            }
-            Row::new(cells)
-        })
-        .collect();
+    let rows = listing_rows(app, &extra, pinned_here);
 
     let mut constraints = vec![Constraint::Length(id_width as u16), Constraint::Fill(1)];
     constraints.extend(widths.iter().map(|w| Constraint::Length(*w as u16)));
@@ -406,6 +349,77 @@ fn draw_listing(f: &mut Frame, area: Rect, app: &mut App) {
         },
     );
     app.put_table(state);
+}
+
+/// One row per note on screen, with whatever `-l` and a pin add after the title.
+fn listing_rows<'a>(
+    app: &'a App,
+    extra: &[(&'static str, Vec<String>)],
+    pinned_here: bool,
+) -> Vec<Row<'a>> {
+    let terms = app.terms().to_vec();
+    let muted = theme::from(palette::MUTED);
+    app.rows()
+        .enumerate()
+        .map(|(at, file)| {
+            let mut cells = vec![
+                Line::from(vec![
+                    Span::styled(
+                        if app.marked(&file.id) { MARK } else { UNMARKED },
+                        theme::from(palette::MATCH),
+                    ),
+                    Span::styled(file.id.as_str(), theme::from(palette::ID)),
+                ]),
+                // Uncoloured, as in `noda ls`: it is where the eye lands.
+                marked(&file.note.title, &terms, Style::default()),
+            ];
+            // `-l` extends the row, in the CLI's order and colours.
+            for (which, values) in extra {
+                let style = if *which == "slug" {
+                    theme::from(palette::SLUG)
+                } else {
+                    muted
+                };
+                cells.push(Line::from(Span::styled(values[at].clone(), style)));
+            }
+            cells.push(Line::from(
+                palette::tag_pieces(&file.note.tags)
+                    .into_iter()
+                    .map(|(style, text)| Span::styled(text, theme::from(style)))
+                    .collect::<Vec<_>>(),
+            ));
+            if pinned_here {
+                cells.push(Line::from(if file.note.is_pinned() {
+                    Span::styled(palette::PIN_MARK, theme::from(palette::PIN))
+                } else {
+                    Span::raw("")
+                }));
+            }
+            Row::new(cells)
+        })
+        .collect()
+}
+
+/// What `-l` adds, one column of values per heading.
+fn long_columns(app: &App) -> Vec<(&'static str, Vec<String>)> {
+    if !app.long {
+        return Vec::new();
+    }
+    vec![
+        ("slug", app.rows().map(|file| file.slug.clone()).collect()),
+        (
+            "created",
+            app.rows()
+                .map(|file| stamp(file.note.created.as_ref()))
+                .collect(),
+        ),
+        (
+            "updated",
+            app.rows()
+                .map(|file| stamp(file.note.updated.as_ref()))
+                .collect(),
+        ),
+    ]
 }
 
 /// The bar lines up with the rows, not the heading.
