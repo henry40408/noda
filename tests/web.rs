@@ -2229,10 +2229,12 @@ fn a_backlink_survives_a_retitle() {
     .expect("add");
     cmd::mv(
         &paths,
-        &id,
-        "Something else entirely",
-        false,
-        cmd::Touch::Stamp,
+        &cmd::Rename {
+            key: &id,
+            new_title: "Something else entirely",
+            update_links: false,
+            touch: cmd::Touch::Stamp,
+        },
     )
     .expect("mv");
 

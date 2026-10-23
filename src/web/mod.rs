@@ -677,12 +677,19 @@ async fn listing(
             front_page(&notebook, &book)?
         };
         let drawn = |rows: &[page::Row], asked: &page::Asked<'_>| {
+            let list = page::Listing {
+                book: &book,
+                rows,
+                asked,
+                order,
+                drift: &drift,
+            };
             if column {
-                page::listing_pane(&book, rows, asked, order, &drift)
+                page::listing_pane(&list)
             } else if screen {
-                page::listing_screen(&book, rows, asked, order, &drift, front.as_deref())
+                page::listing_screen(&list, front.as_deref())
             } else {
-                page::listing(&book, rows, asked, order, &drift, front.as_deref())
+                page::listing(&list, front.as_deref())
             }
         };
         let tokens = query::split(&typed);
@@ -1128,13 +1135,13 @@ async fn edit_form(
         let path = notebook.note_path(&id, &slug);
         let note = Note::parse(&std::fs::read_to_string(&path)?)
             .map_err(|e| Error::msg(format!("{id}-{slug}.md: {e}")))?;
-        Ok(Answer::Page(page::editing(
-            &book,
-            &page::About::of(&id, &slug, &note.title),
-            &note.body,
-            &fingerprint(&path)?,
-            None,
-        )))
+        Ok(Answer::Page(page::editing(&page::Editing {
+            book: &book,
+            about: &page::About::of(&id, &slug, &note.title),
+            body: &note.body,
+            was: &fingerprint(&path)?,
+            problem: None,
+        })))
     })
     .await
 }
@@ -1236,25 +1243,25 @@ async fn edit_note(
                 // No base (the note was never committed): write nothing, and
                 // show both versions so neither is lost.
                 None => {
-                    return Ok(Answer::Page(page::clashed(
-                        &book,
-                        &about,
-                        &theirs.body,
-                        &body,
-                        &now,
-                    )));
+                    return Ok(Answer::Page(page::clashed(&page::Clash {
+                        book: &book,
+                        about: &about,
+                        theirs: &theirs.body,
+                        mine: &body,
+                        now: &now,
+                    })));
                 }
             }
         }
         match cmd::rewrite_in(&notebook, &id, &body, cmd::Touch::Stamp) {
             Ok(_) => Ok(back_to_note(&book, &id)),
-            Err(e) => Ok(Answer::Page(page::editing(
-                &book,
-                &page::About::of(&id, &slug, ""),
-                &body,
-                &now,
-                Some(&e.to_string()),
-            ))),
+            Err(e) => Ok(Answer::Page(page::editing(&page::Editing {
+                book: &book,
+                about: &page::About::of(&id, &slug, ""),
+                body: &body,
+                was: &now,
+                problem: Some(&e.to_string()),
+            }))),
         }
     })
     .await
@@ -1296,7 +1303,15 @@ async fn rename_note(
         let _writing = writing.lock();
         // As the TUI's `m` calls it: `--update-links` must be asked for, and
         // this form has no way to.
-        match cmd::mv_in(&notebook, &id, &title, false, cmd::Touch::Stamp) {
+        match cmd::mv_in(
+            &notebook,
+            &cmd::Rename {
+                key: &id,
+                new_title: &title,
+                update_links: false,
+                touch: cmd::Touch::Stamp,
+            },
+        ) {
             Ok(_) => Ok(back_to_note(&book, &id)),
             Err(e) => Ok(Answer::Page(page::renaming(
                 &book,
