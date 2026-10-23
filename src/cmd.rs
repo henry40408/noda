@@ -402,6 +402,11 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         Format::Table => {}
     }
 
+    Ok(as_table(notes, files, options.long))
+}
+
+/// The aligned listing: a row per note, then the files under their heading.
+fn as_table(notes: Vec<notebook::NoteFile>, files: Vec<String>, long: bool) -> String {
     // A missing stamp prints as `-` rather than a hole.
     let stamp = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
     let rows: Vec<Listed> = notes
@@ -418,7 +423,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         .collect();
 
     if rows.is_empty() && files.is_empty() {
-        return Ok(String::new());
+        return String::new();
     }
 
     let widest = |of: fn(&Listed) -> &String| {
@@ -447,7 +452,7 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         // id and title off the front reads the same either way. The optional
         // columns (tags, pin) go last so their absence shifts nothing.
         let mut line = column(style::ID, &id, id_width);
-        if options.long {
+        if long {
             let _ = write!(
                 line,
                 "  {}  {}  {}  {}",
@@ -469,17 +474,22 @@ pub fn ls(paths: &Paths, options: &List) -> Result<String> {
         out.push('\n');
     }
 
-    // Under a heading: a file has no id, title or tags to fill a row with.
-    if !files.is_empty() {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        let _ = writeln!(out, "{}", style::paint(style::MUTED, "files"));
-        for file in files {
-            let _ = writeln!(out, "  {file}");
-        }
+    append_files(&mut out, &files);
+    out
+}
+
+/// Under a heading: a file has no id, title or tags to fill a row with.
+fn append_files(out: &mut String, files: &[String]) {
+    if files.is_empty() {
+        return;
     }
-    Ok(out)
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    let _ = writeln!(out, "{}", style::paint(style::MUTED, "files"));
+    for file in files {
+        let _ = writeln!(out, "  {file}");
+    }
 }
 
 /// The instant a stamp names, `None` when absent or unreadable. Parsed rather
@@ -1886,42 +1896,7 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
     let notebook = Notebook::open_active(paths)?;
     let scan = notebook.scan()?;
     let problems = scan.problems();
-
-    let audit = if links {
-        Some(notebook.audit_links()?)
-    } else {
-        None
-    };
-    let mut report = audit.as_ref().map(describe_audit).unwrap_or_default();
-    let notes = notebook.notes()?;
-
-    if times {
-        let found = describe_times(&notes, &notebook.last_changed()?);
-        if !found.is_empty() {
-            if !report.is_empty() {
-                report.push('\n');
-            }
-            report.push_str(&found);
-        }
-    }
-
-    // Always on: it parses no links and walks no history.
-    let unconverted = describe_unconverted(&notes);
-    if !unconverted.is_empty() {
-        if !report.is_empty() {
-            report.push('\n');
-        }
-        report.push_str(&unconverted);
-    }
-
-    let hooks = describe_hooks(&notebook.hooks()?);
-    if !hooks.is_empty() {
-        if !report.is_empty() {
-            report.push('\n');
-        }
-        report.push_str(&hooks);
-    }
-    let extras = report;
+    let extras = extra_findings(&notebook, links, times)?;
 
     if problems.is_empty() {
         return Ok(if extras.is_empty() {
@@ -1963,10 +1938,51 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
         return Ok(out.trim_end().to_string());
     }
 
-    // A commit, so an unwanted repair is revertible.
+    adopt_unnamed(
+        &notebook,
+        &scan.unnamed,
+        &format!("doctor: adopt {count} {noun}"),
+    )?;
+    let _ = write!(out, "adopted {count} {noun}");
+    Ok(out.trim_end().to_string())
+}
+
+/// What `doctor` has to say beyond the scan's problems, one blank line between
+/// the sections.
+fn extra_findings(notebook: &Notebook, links: bool, times: bool) -> Result<String> {
+    let mut report = String::new();
+    if links {
+        append_section(&mut report, &describe_audit(&notebook.audit_links()?));
+    }
+    let notes = notebook.notes()?;
+
+    if times {
+        let found = describe_times(&notes, &notebook.last_changed()?);
+        append_section(&mut report, &found);
+    }
+
+    // Always on: it parses no links and walks no history.
+    append_section(&mut report, &describe_unconverted(&notes));
+    append_section(&mut report, &describe_hooks(&notebook.hooks()?));
+    Ok(report)
+}
+
+fn append_section(report: &mut String, section: &str) {
+    if section.is_empty() {
+        return;
+    }
+    if !report.is_empty() {
+        report.push('\n');
+    }
+    report.push_str(section);
+}
+
+/// Gives each unnamed file an id, in one commit, so an unwanted repair is
+/// revertible.
+fn adopt_unnamed(notebook: &Notebook, unnamed: &[String], message: &str) -> Result<()> {
     let mut taken = notebook.taken_ids()?;
     let mut changed = Vec::new();
-    for file in &scan.unnamed {
+    for file in unnamed {
         let stem = file.strip_suffix(".md").unwrap_or(file);
         let id = note::mint_id(&taken);
         taken.insert(note::normalize_id(&id));
@@ -1976,9 +1992,7 @@ pub fn doctor(paths: &Paths, dry_run: bool, links: bool, times: bool) -> Result<
         changed.push(adopted);
     }
     let files: Vec<&Path> = changed.iter().map(Path::new).collect();
-    notebook.commit(&files, &format!("doctor: adopt {count} {noun}"))?;
-    let _ = write!(out, "adopted {count} {noun}");
-    Ok(out.trim_end().to_string())
+    notebook.commit(&files, message)
 }
 
 /// Orphaned files, stale links and broken links. Nothing is repaired: only the
