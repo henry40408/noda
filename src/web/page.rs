@@ -686,63 +686,10 @@ pub fn listing_pane(list: &Listing<'_>) -> String {
 
     let mut body = String::new();
     for row in rows {
-        // The pin mark goes last, after the tags.
-        let mark = if row.pinned {
-            format!("<span class=\"pin\">{}</span>", style::PIN_MARK)
-        } else {
-            String::new()
-        };
-        let under = [when(row.stamp.as_deref()), tag_line(&row.tags), mark]
-            .into_iter()
-            .filter(|piece| !piece.is_empty())
-            .collect::<Vec<_>>()
-            .join("<span class=\"sep\">·</span>");
-        let _ = write!(
-            body,
-            "<a class=\"row\"{} href=\"/nb/{}/n/{}\">\
-             <div class=\"ident\"><span class=\"id\">{}</span>{}</div>\
-             <div class=\"title\">{}</div>\
-             <div class=\"under\">{under}</div></a>",
-            if row.shown { "" } else { " hidden" },
-            escape(book),
-            escape(&row.id),
-            escape(&row.id),
-            // The day is written twice — here beside the id and in `under` —
-            // and the stylesheet shows one, as the server does not know the
-            // screen's width.
-            row.stamp
-                .as_deref()
-                .map_or_else(String::new, |value| format!(
-                    "<span class=\"day\">{}</span>",
-                    escape(&day(value))
-                )),
-            // A hidden row's title is unmarked, as the script would leave it.
-            if row.shown {
-                highlight(&row.title, asked.terms)
-            } else {
-                escape(&row.title)
-            }
-        );
+        body.push_str(&listing_row(book, row, asked.terms));
     }
 
-    // Only the no-match sentence is ever hidden; typing cannot fill an empty
-    // notebook.
-    if total == 0 {
-        body.push_str(
-            "<div class=\"empty\"><b>No notes yet</b>Run <code>noda add \"First note\"</code> \
-             in a terminal to start one.</div>",
-        );
-    } else {
-        let _ = write!(
-            body,
-            "<div class=\"empty\"{}><b>No notes match <span class=\"asked\">{}</span></b>\
-             This notebook holds {}. <a href=\"/nb/{}\">Clear the search</a> to see them.</div>",
-            if shown > 0 { " hidden" } else { "" },
-            escape(asked.typed),
-            plural(total, "note"),
-            escape(book)
-        );
-    }
+    body.push_str(&empty_sentence(book, asked, total, shown));
 
     let counted = if asked.typed.is_empty() {
         total.to_string()
@@ -758,6 +705,64 @@ pub fn listing_pane(list: &Listing<'_>) -> String {
         drift,
         rows: &body,
     })
+}
+
+/// One note's row in the index pane.
+fn listing_row(book: &str, row: &Row, terms: &[String]) -> String {
+    // The pin mark goes last, after the tags.
+    let mark = if row.pinned {
+        format!("<span class=\"pin\">{}</span>", style::PIN_MARK)
+    } else {
+        String::new()
+    };
+    let under = [when(row.stamp.as_deref()), tag_line(&row.tags), mark]
+        .into_iter()
+        .filter(|piece| !piece.is_empty())
+        .collect::<Vec<_>>()
+        .join("<span class=\"sep\">·</span>");
+    format!(
+        "<a class=\"row\"{} href=\"/nb/{}/n/{}\">\
+         <div class=\"ident\"><span class=\"id\">{}</span>{}</div>\
+         <div class=\"title\">{}</div>\
+         <div class=\"under\">{under}</div></a>",
+        if row.shown { "" } else { " hidden" },
+        escape(book),
+        escape(&row.id),
+        escape(&row.id),
+        // The day is written twice — here beside the id and in `under` —
+        // and the stylesheet shows one, as the server does not know the
+        // screen's width.
+        row.stamp
+            .as_deref()
+            .map_or_else(String::new, |value| format!(
+                "<span class=\"day\">{}</span>",
+                escape(&day(value))
+            )),
+        // A hidden row's title is unmarked, as the script would leave it.
+        if row.shown {
+            highlight(&row.title, terms)
+        } else {
+            escape(&row.title)
+        }
+    )
+}
+
+/// Only the no-match sentence is ever hidden; typing cannot fill an empty
+/// notebook.
+fn empty_sentence(book: &str, asked: &Asked<'_>, total: usize, shown: usize) -> String {
+    if total == 0 {
+        return "<div class=\"empty\"><b>No notes yet</b>Run <code>noda add \"First note\"</code> \
+                in a terminal to start one.</div>"
+            .to_string();
+    }
+    format!(
+        "<div class=\"empty\"{}><b>No notes match <span class=\"asked\">{}</span></b>\
+         This notebook holds {}. <a href=\"/nb/{}\">Clear the search</a> to see them.</div>",
+        if shown > 0 { " hidden" } else { "" },
+        escape(asked.typed),
+        plural(total, "note"),
+        escape(book)
+    )
 }
 
 /// What [`index_pane`] frames.
@@ -1227,16 +1232,41 @@ fn read_pane(book: &str, reading: &Reading) -> String {
     // fills it where it shows; scriptless readers have the Links button.
     let beside = "<aside class=\"beside\" hidden><div class=\"pane-head\">Backlinks</div>\
                   <div class=\"answer\"></div></aside>";
+    let bar = read_bar(&at, reading.pinned);
+    let home = format!("/nb/{}", escape(book));
+
+    format!(
+        "<section class=\"pane read\">\
+         <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
+         <main class=\"note\">\
+         <div class=\"note-head\"><h1>{}</h1>\
+         <div class=\"filename\"><span class=\"id\">{}</span>\
+         <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
+         <div class=\"note-meta\">{meta}</div></div>\
+         <div class=\"body\">{}</div>\
+         {beside}</main>{bar}</section>",
+        back(&home, book),
+        // The note's title: the index pane beside it already names the notebook.
+        escape(&reading.title),
+        escape(&reading.title),
+        escape(&reading.id),
+        escape(&reading.slug),
+        reading.rendered,
+    )
+}
+
+/// What can be done to a note.
+fn read_bar(at: &str, pinned: bool) -> String {
     // Things to do to the note, so none is marked current. Delete is safe on
     // the bar because `/delete` is a confirmation page. Pin is labelled with
     // what a press does, and is the one item that writes without a page in
     // between: it is undone by pressing it again.
-    let (pin_label, pin_to) = if reading.pinned {
+    let (pin_label, pin_to) = if pinned {
         ("Unpin", format!("{at}/unpin"))
     } else {
         ("Pin", format!("{at}/pin"))
     };
-    let bar = action_bar(&[
+    action_bar(&[
         (EDIT, "Edit", Act::Go(format!("{at}/edit")), Mark::Plain),
         (TAGS, "Tags", Act::Go(format!("{at}/tags")), Mark::Plain),
         (
@@ -1266,27 +1296,7 @@ fn read_pane(book: &str, reading: &Reading) -> String {
             Act::Go(format!("{at}/delete")),
             Mark::Danger,
         ),
-    ]);
-    let home = format!("/nb/{}", escape(book));
-
-    format!(
-        "<section class=\"pane read\">\
-         <header class=\"topbar\">{}<span class=\"here\">{}</span></header>\
-         <main class=\"note\">\
-         <div class=\"note-head\"><h1>{}</h1>\
-         <div class=\"filename\"><span class=\"id\">{}</span>\
-         <span class=\"slug\">-{}</span><span class=\"ext\">.md</span></div>\
-         <div class=\"note-meta\">{meta}</div></div>\
-         <div class=\"body\">{}</div>\
-         {beside}</main>{bar}</section>",
-        back(&home, book),
-        // The note's title: the index pane beside it already names the notebook.
-        escape(&reading.title),
-        escape(&reading.title),
-        escape(&reading.id),
-        escape(&reading.slug),
-        reading.rendered,
-    )
+    ])
 }
 
 /// The parts of a [`form_page`]: where it is, where back goes, what to say and
@@ -1649,6 +1659,20 @@ fn working(errand: Option<&Errand>) -> bool {
 }
 
 fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> String {
+    let rows = facts(standing);
+
+    let said = errand_said(errand);
+
+    let buttons = network_buttons(book, working(errand));
+
+    format!(
+        "<main>{said}<div class=\"rows facts\">{rows}</div>\
+         <div class=\"abreast\">{buttons}</div></main>"
+    )
+}
+
+/// What `noda status` knows, a row each.
+fn facts(standing: &Standing) -> String {
     let mut rows = String::new();
     let mut row = |name: &str, value: &str, mono: bool| {
         let _ = write!(
@@ -1701,8 +1725,12 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
     }
     // Which build is answering, for bug reports against `noda web`.
     row("Version", crate::VERSION, true);
+    rows
+}
 
-    let said = match errand {
+/// How the errand is going, or how it went.
+fn errand_said(errand: Option<&Errand>) -> String {
+    match errand {
         None => String::new(),
         Some(errand) => match errand.said {
             // Seconds rather than a bar: nothing knows how long a fetch takes.
@@ -1719,11 +1747,11 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
                 escape(said)
             ),
         },
-    };
+    }
+}
 
-    // The server already refuses a second press; disabling shows the first
-    // landed.
-    let busy = working(errand);
+/// The three errands, disabled while one runs.
+fn network_buttons(book: &str, busy: bool) -> String {
     let at = escape(book);
     let mut buttons = String::new();
     for (errand, label) in [("sync", "Sync"), ("pull", "Pull"), ("push", "Push")] {
@@ -1733,14 +1761,12 @@ fn network_main(book: &str, standing: &Standing, errand: Option<&Errand>) -> Str
              <button class=\"{}\" type=\"submit\"{}>{label}</button></form>",
             // Sync is accented by colour, so all three stay one row on a phone.
             if errand == "sync" { "go" } else { "" },
+            // The server already refuses a second press; disabling shows the
+            // first landed.
             if busy { " disabled" } else { "" }
         );
     }
-
-    format!(
-        "<main>{said}<div class=\"rows facts\">{rows}</div>\
-         <div class=\"abreast\">{buttons}</div></main>"
-    )
+    buttons
 }
 
 /// What failed and why, with a way back so it is not a dead end.
