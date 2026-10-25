@@ -122,7 +122,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 # wrong, which is where layout bugs hide.
 [dev-dependencies]
 portable-pty = "0.9.0"
-vt100 = "0.16.2"
+vt100 = "0.17.0"
 
 # In the manifest so every build and IDE applies them; CI adds `-D warnings`.
 # Kept in step with the sibling `pingward` project.
