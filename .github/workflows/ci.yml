@@ -1,4 +1,4 @@
-# The cross job guards the PRFAQ's claim that noda builds for musl on x86_64 and
+# The build job guards the PRFAQ's claim that noda builds for musl on x86_64 and
 # aarch64: the vendored C libraries are what break silently there.
 #
 # Actions are pinned to commit SHAs, which cannot be repointed the way a tag can;
