@@ -23,8 +23,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: fmt, clippy, tests
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # `e2e/` is its own workspace; unnamed, its dependencies go uncached.
+          workspaces: |
+            .
+            e2e
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo fmt --check --manifest-path e2e/Cargo.toml
+      - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
+
+  test:
+    name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,12 +48,10 @@ jobs:
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run
 
   e2e:
-    name: browser
+    name: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,10 +60,6 @@ jobs:
           workspaces: |
             .
             e2e
-      # `e2e/` is its own workspace, so it is linted here, sharing this job's
-      # build of thirtyfour.
-      - run: cargo fmt --check --manifest-path e2e/Cargo.toml
-      - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
       # Built first so a compile error in noda reads as one, not as a browser
       # finding nothing listening.
       - run: cargo build
@@ -57,7 +67,7 @@ jobs:
       - run: cargo test --manifest-path e2e/Cargo.toml --test e2e
 
   deny:
-    name: supply chain
+    name: deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,8 +77,8 @@ jobs:
       # Can fail with no change here, when a new advisory is published.
       - run: cargo deny check
 
-  cross:
-    name: cross-compile ${{ matrix.target }}
+  build:
+    name: build (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
