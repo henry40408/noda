@@ -1,4 +1,4 @@
-# The cross job guards the PRFAQ's claim that noda builds for musl on x86_64 and
+# The build job guards the PRFAQ's claim that noda builds for musl on x86_64 and
 # aarch64: the vendored C libraries are what break silently there.
 #
 # Actions are pinned to commit SHAs, which cannot be repointed the way a tag can;
@@ -23,8 +23,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: fmt, clippy, tests
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # `e2e/` is its own workspace; unnamed, its dependencies go uncached.
+          workspaces: |
+            .
+            e2e
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo fmt --check --manifest-path e2e/Cargo.toml
+      - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
+
+  test:
+    name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,12 +48,10 @@ jobs:
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run
 
   e2e:
-    name: browser
+    name: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,18 +60,34 @@ jobs:
           workspaces: |
             .
             e2e
-      # `e2e/` is its own workspace, so it is linted here, sharing this job's
-      # build of thirtyfour.
-      - run: cargo fmt --check --manifest-path e2e/Cargo.toml
-      - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
       # Built first so a compile error in noda reads as one, not as a browser
       # finding nothing listening.
       - run: cargo build
       # The runner has Chrome; only the matching chromedriver is downloaded.
       - run: cargo test --manifest-path e2e/Cargo.toml --test e2e
 
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # cargo-llvm-cov installs llvm-tools-preview itself.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov,nextest
+      - name: Collect coverage (llvm source-based, via nextest)
+        run: cargo llvm-cov nextest --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          # Coverage is a signal, not a gate.
+          fail_ci_if_error: false
+
   deny:
-    name: supply chain
+    name: deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,8 +97,8 @@ jobs:
       # Can fail with no change here, when a new advisory is published.
       - run: cargo deny check
 
-  cross:
-    name: cross-compile ${{ matrix.target }}
+  build:
+    name: build (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -95,3 +125,23 @@ jobs:
             echo "::error::$binary is not statically linked"
             exit 1
           }
+
+  lint-workflow:
+    name: lint-workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # install-action has no actionlint manifest, so download the release and
+      # verify its checksum.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "$archive" actionlint
+      - run: ./actionlint
