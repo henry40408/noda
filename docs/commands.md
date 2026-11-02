@@ -414,8 +414,8 @@ and `due`.
 <summary>Which day counts as passed, how a box is recognised, and why there is no <code>noda done</code></summary>
 
 "Passed" means passed where you are. noda carries no timezone database, so it takes the offset
-from git — the same one on every commit and every time noda prints. In a container, set `TZ` as
-you would for `git`. `--json` has no "overdue" field; a program has its own clock.
+from git — the same one on every commit and every time noda prints. A container runs in UTC
+unless you pass `-e TZ=Asia/Taipei` (or a POSIX string such as `CST-8`), as you would for `git`. `--json` has no "overdue" field; a program has its own clock.
 
 Boxes are read with a CommonMark parser, so `- [ ]` inside a code fence is not an item and a
 nested list still is.

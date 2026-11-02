@@ -48,10 +48,14 @@ a volume, and the image runs `noda` directly:
 
 ```sh
 docker pull ghcr.io/henry40408/noda:main
-alias noda='docker run --rm -it -v noda:/data ghcr.io/henry40408/noda:main'
+alias noda='docker run --rm -it -e TZ=Asia/Taipei -v noda:/data ghcr.io/henry40408/noda:main'
 noda init
 noda add "Meeting notes" -c "agenda"
 ```
+
+Set `TZ` to your own zone (an IANA name such as `Asia/Taipei` or a POSIX string such as
+`CST-8`). Without it the container runs in UTC, so commit times are recorded and printed in
+UTC, and a `due:` date counts as passed hours late for anyone east of Greenwich.
 
 <details>
 <summary>The three things a container cannot do for you</summary>
