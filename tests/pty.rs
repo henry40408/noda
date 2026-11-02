@@ -126,7 +126,9 @@ impl Browser {
 
         let mut reader = master.try_clone_reader().expect("clone the reader");
         let writer = master.take_writer().expect("take the writer");
-        let screen = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+        // vt100 0.18 sizes the screen with NonZeroU16; a zero-sized terminal is a test bug.
+        let size = |n: u16| std::num::NonZeroU16::new(n).expect("terminal size is non-zero");
+        let screen = Arc::new(Mutex::new(vt100::Parser::new(size(rows), size(cols), 0)));
 
         let feed = Arc::clone(&screen);
         std::thread::spawn(move || {
