@@ -11,10 +11,6 @@ yanked = "deny"
 # Accepted advisory IDs, each with a note saying why. An entry is a debt to be
 # removed, not a dismissal.
 ignore = [
-    # libz-sys <= 1.1.30 leaks the build environment into target/, but only
-    # with cc >= 1.6.0; Cargo.lock pins cc 1.4.0. The fix, libz-sys 1.1.31, is
-    # inside the dependency cooldown until 2026-11-04 14:00 UTC. Tracked in #164.
-    "RUSTSEC-2026-0418",
     # pulldown-cmark 0.13.5: quadratic parsing of nested image wikilinks, but
     # only with ENABLE_WIKILINKS, which noda never sets. The fix, 0.13.6, is
     # inside the dependency cooldown until 2026-11-06 08:50 UTC. Tracked in #167.
