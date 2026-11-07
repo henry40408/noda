@@ -10,12 +10,7 @@ version = 2
 yanked = "deny"
 # Accepted advisory IDs, each with a note saying why. An entry is a debt to be
 # removed, not a dismissal.
-ignore = [
-    # pulldown-cmark 0.13.5: quadratic parsing of nested image wikilinks, but
-    # only with ENABLE_WIKILINKS, which noda never sets. The fix, 0.13.6, is
-    # inside the dependency cooldown until 2026-11-06 08:50 UTC. Tracked in #167.
-    "RUSTSEC-2026-0433",
-]
+ignore = []
 
 [licenses]
 version = 2
