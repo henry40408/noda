@@ -411,8 +411,7 @@ pub fn draw_title(frame: &mut Frame, area: Rect, app: &App) {
     };
     let titled = |id: &str| {
         app.note_of(id)
-            .map(|file| file.note.title.clone())
-            .unwrap_or_default()
+            .map_or_default(|file| file.note.title.clone())
     };
 
     let mut spans = match app.view() {

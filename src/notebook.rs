@@ -1304,9 +1304,7 @@ impl Notebook {
                 found.push(Deleted {
                     id: id.clone(),
                     slug,
-                    title: Note::parse(&text)
-                        .map(|note| note.title)
-                        .unwrap_or_default(),
+                    title: Note::parse(&text).map_or_default(|note| note.title),
                     removed_in: commit.id(),
                     restore_from: parent.id(),
                     removed_at: commit.time().seconds(),

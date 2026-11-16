@@ -551,8 +551,7 @@ pub(crate) fn encoded(name: &str) -> String {
 fn holding(name: &str) -> (&'static str, bool) {
     let extension = name
         .rsplit_once('.')
-        .map(|(_, ext)| ext.to_ascii_lowercase())
-        .unwrap_or_default();
+        .map_or_default(|(_, ext)| ext.to_ascii_lowercase());
     match extension.as_str() {
         "png" => ("image/png", true),
         "jpg" | "jpeg" => ("image/jpeg", true),
@@ -791,9 +790,8 @@ async fn files(State(server): State<Shared>, Path(book): Path<String>) -> Respon
 
         let mut rows = Vec::new();
         for name in held {
-            let size = std::fs::metadata(notebook.path.join(&name))
-                .map(|meta| meta.len())
-                .unwrap_or_default();
+            let size =
+                std::fs::metadata(notebook.path.join(&name)).map_or_default(|meta| meta.len());
             let (kind, _) = holding(&name);
             rows.push(page::Held {
                 used: used.get(&name).copied().unwrap_or_default(),

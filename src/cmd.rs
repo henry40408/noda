@@ -83,8 +83,7 @@ pub fn config_get(paths: &Paths, key: &str) -> Result<String> {
     Ok(effective(paths, &config)
         .into_iter()
         .find(|(name, _, _)| name == key)
-        .map(|(_, value, _)| value)
-        .unwrap_or_default())
+        .map_or_default(|(_, value, _)| value))
 }
 
 pub fn config_set(paths: &Paths, key: &str, value: &str) -> Result<String> {
@@ -966,11 +965,7 @@ fn apply_remove(notebook: &Notebook, key: &str) -> Result<Applied> {
 
     std::fs::remove_file(&found.path)?;
 
-    let tags = found
-        .note
-        .as_ref()
-        .map(|note| note.tags.clone())
-        .unwrap_or_default();
+    let tags = found.note.as_ref().map_or_default(|note| note.tags.clone());
     Ok(Applied {
         summary: format!("removed  {}", summary(&found.id, &found.slug, &tags)),
         files: vec![note::file_name(&found.id, &found.slug)],
@@ -2638,8 +2633,7 @@ fn deleted_as_json(notebook: &str, gone: &[notebook::Deleted]) -> String {
 /// The spelling noda writes everywhere.
 fn rfc3339(seconds: i64) -> String {
     jiff::Timestamp::from_second(seconds)
-        .map(|time| time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .unwrap_or_default()
+        .map_or_default(|time| time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
 /// Uncommitted changes, or what the last commit changed, as a plain unified diff
