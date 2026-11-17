@@ -11,6 +11,17 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      gomod:
+        patterns:
+          - "*"
+
   # `e2e/` is its own workspace with its own lockfile.
   - package-ecosystem: "cargo"
     directories:
