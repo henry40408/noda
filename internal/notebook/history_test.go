@@ -101,18 +101,33 @@ func renderBlame(lines []BlameLine) []string {
 			}
 			label = "<OID:" + itoa(ids[label]) + ">"
 		}
-		out = append(out, strings.TrimRight(label+"  "+clock.FormatTime(line.Seconds, line.OffsetMinutes)+"  "+line.Text, " "))
+		when := clock.FormatTime(line.Seconds, line.OffsetMinutes)
+		if line.Commit == "" {
+			when = "not committed   "
+		}
+		out = append(out, strings.TrimRight(label+"  "+when+"  "+line.Text, " "))
 	}
 	return out
 }
 
-var indexLine = regexp.MustCompile(`(?m)^index [0-9a-f]{7}\.\.[0-9a-f]{7}`)
+var indexLine = regexp.MustCompile(`(?m)^index ([0-9a-f]{7})\.\.([0-9a-f]{7})`)
 
+// renderDiff numbers the blob ids as the goldens do; the all-zero id of a file
+// that did not exist is not an object and stays as it is.
 func renderDiff(text string) []string {
-	n := 0
+	ids := map[string]int{}
+	label := func(id string) string {
+		if id == "0000000" {
+			return id
+		}
+		if _, seen := ids[id]; !seen {
+			ids[id] = len(ids) + 1
+		}
+		return "<OID:" + itoa(ids[id]) + ">"
+	}
 	text = indexLine.ReplaceAllStringFunc(text, func(match string) string {
-		n += 2
-		return "index <OID:" + itoa(n-1) + ">..<OID:" + itoa(n) + ">"
+		parts := indexLine.FindStringSubmatch(match)
+		return "index " + label(parts[1]) + ".." + label(parts[2])
 	})
 	return strings.Split(strings.TrimRight(text, "\n"), "\n")
 }
@@ -380,6 +395,15 @@ func TestRevisionNoteAtAndIDAt(t *testing.T) {
 	if _, ok, _ := nb.BlobText("HEAD"); ok {
 		t.Error("only an object id names a blob")
 	}
+}
+
+func TestBlameOfUncommittedLinesMatchesTheRustGolden(t *testing.T) {
+	nb := fixture(t, "dirty")
+	lines, err := nb.Blame("01abc234", "budget-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	same(t, "blame", renderBlame(lines), golden(t, "dirty", "blame-uncommitted", "noda blame budget-review"))
 }
 
 func TestBlameOfAnUncommittedEditAndRename(t *testing.T) {

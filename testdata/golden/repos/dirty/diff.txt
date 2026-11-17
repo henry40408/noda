@@ -19,5 +19,6 @@ index <OID:1>..<OID:2> 100644
 +- second line changed
  - third line
 +- fourth line
+
 --- stderr
 --- exit 0

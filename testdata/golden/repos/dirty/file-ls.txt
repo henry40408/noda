@@ -1,5 +1,4 @@
 $ noda file ls
-
 --- stderr
 error: unrecognized subcommand 'ls'
 

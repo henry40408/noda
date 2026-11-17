@@ -1,7 +1,7 @@
 $ noda diff --remote
 diff --git a/03ghj890-reading-list.md b/03ghj890-reading-list.md
 new file mode 100644
-index <OID:1>..<OID:2>
+index 0000000..<OID:1>
 --- /dev/null
 +++ b/03ghj890-reading-list.md
 @@ -0,0 +1,9 @@
@@ -14,5 +14,6 @@ index <OID:1>..<OID:2>
 +
 +a book
 +another book
+
 --- stderr
 --- exit 0

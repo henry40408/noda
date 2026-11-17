@@ -1,5 +1,4 @@
 $ noda tag meeting-notes +new -q3 --no-touch
-
 --- stderr
 noda: `--no-touch` is being read as a tag: the tags take everything after them, so a flag has to come before them — `noda tag meeting-notes --no-touch +tag`
 --- exit 1

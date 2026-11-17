@@ -17,5 +17,6 @@ index <OID:1>..<OID:2> 100644
  
  see [the budget](01abc234-budget-review.md)
 +- a local line
+
 --- stderr
 --- exit 0

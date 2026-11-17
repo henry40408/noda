@@ -17,5 +17,6 @@ index <OID:1>..<OID:2> 100644
  ten
  lima
 +eleven
+
 --- stderr
 --- exit 0

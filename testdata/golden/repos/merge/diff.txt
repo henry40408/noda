@@ -17,5 +17,6 @@ index <OID:1>..<OID:2> 100644
  - third line
  - fourth line
 +- after the merge
+
 --- stderr
 --- exit 0

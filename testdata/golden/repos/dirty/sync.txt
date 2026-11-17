@@ -1,5 +1,4 @@
 $ noda sync
-
 --- stderr
 noda: notebook `default` has no remote — set one with `noda remote set <url>`
 --- exit 1
