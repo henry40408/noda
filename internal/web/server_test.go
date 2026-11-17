@@ -97,8 +97,9 @@ func servingOn(t *testing.T, env cmd.Env, allowed ...string) *site {
 	web := NewServer(Options{Env: env, AllowHosts: allowed, LogFormat: LogText, LogLevel: -4, Stderr: logged})
 	server := httptest.NewServer(web.Handler())
 	t.Cleanup(func() {
-		server.Close()
+		// A watch never ends by itself, and Close waits for every request.
 		web.watching.Stop()
+		server.Close()
 	})
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	// Transparent decompression would hide the very header under test.

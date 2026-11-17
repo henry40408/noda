@@ -73,7 +73,8 @@ func Serve(opts Options) error {
 	}
 	announce(opts.Stdout, listener.Addr())
 
-	httpServer := &http.Server{Handler: server.Handler()}
+	silent := &silentConns{}
+	httpServer := &http.Server{Handler: server.Handler(), ConnState: silent.track}
 	served := make(chan error, 1)
 	go func() { served <- httpServer.Serve(listener) }()
 
@@ -86,6 +87,7 @@ func Serve(opts Options) error {
 		// Before the wait: a watch never finishes by itself, so shutdown would
 		// wait on it forever.
 		server.watching.Stop()
+		silent.closeAll()
 		go server.abandonOnSecond(signals, opts.Stdout)
 	}
 	// The second signal cuts short the errands, which are unbounded (a push to
