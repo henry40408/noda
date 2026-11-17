@@ -69,9 +69,12 @@ func (n *Notebook) Blame(id, slug string) ([]BlameLine, error) {
 // blameLines runs `git blame --porcelain` on the working file under the name
 // HEAD holds it by. It returns each line's commit ("" for one not committed)
 // and each commit's time.
+//
+// No revision is named: git before 2.41 refuses `--contents` together with one,
+// and without one it blames the working file as a commit on top of HEAD.
 func (n *Notebook) blameLines(headName, workFile string, count int) ([]string, map[string]commitTime, error) {
 	result, err := n.run(gitx.Cmd{
-		Args:     []string{"blame", "--porcelain", "--contents", workFile, "HEAD", "--", headName},
+		Args:     []string{"blame", "--porcelain", "--contents", workFile, "--", headName},
 		ReadOnly: true,
 	})
 	if err != nil {
