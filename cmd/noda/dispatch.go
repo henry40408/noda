@@ -60,9 +60,11 @@ func handlers() map[string]handler {
 		"restore": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Restore(e, l.arg("note"), l.arg("commit"), touchOf(l))
 		},
-		"config":            runConfig,
-		"import tiddlywiki": notYet("import tiddlywiki"),
-		"file add":          func(e cmd.Env, l parsed) (string, error) { return cmd.FileAdd(e, l.args["paths"], l.value("as")) },
+		"config": runConfig,
+		"import tiddlywiki": func(e cmd.Env, l parsed) (string, error) {
+			return cmd.ImportTiddlywiki(e, l.args["files"], !l.has("no-convert"))
+		},
+		"file add": func(e cmd.Env, l parsed) (string, error) { return cmd.FileAdd(e, l.args["paths"], l.value("as")) },
 		"file mv": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.FileMv(e, l.arg("old"), l.arg("new"), l.has("update-links"))
 		},
