@@ -70,6 +70,7 @@ var fixedConfig = []string{
 	"core.fsmonitor=false",      // a watcher daemon started by a status call
 	"log.showSignature=false",   // a gpg report spliced into `git log` output
 	"log.decorate=false",        // `(HEAD -> main)` after an id
+	"log.follow=false",          // a pathspec log that follows renames by content
 	"diff.noprefix=false",       // paths without `a/` and `b/`
 	"diff.mnemonicPrefix=false", // `i/` and `w/` instead of `a/` and `b/`
 	"diff.relative=false",       // paths relative to the current directory
