@@ -256,6 +256,19 @@ func TestRewriteFindsTheRealDefinitionNotALazyContinuation(t *testing.T) {
 	}
 }
 
+func TestRewriteSkipsRawHTMLAndAutolinksBeforeAnEmptyLabel(t *testing.T) {
+	cases := []struct{ name, body, want string }{
+		{"raw html", "<i title=\"](p.png)\"></i>![](p.png)\n", "<i title=\"](p.png)\"></i>![](z.md)\n"},
+		{"autolink", "x <https://e.com/](p.png)> ![](p.png)\n", "x <https://e.com/](p.png)> ![](z.md)\n"},
+	}
+	for _, c := range cases {
+		got, ok := Rewrite(c.body, "p.png", "z.md")
+		if !ok || got != c.want {
+			t.Errorf("%s: got %q (%v), want %q", c.name, got, ok, c.want)
+		}
+	}
+}
+
 func TestRewriteReachesDestinationsWithAnEmptyLabel(t *testing.T) {
 	cases := []struct{ name, body, old, want string }{
 		{"empty link", "[](x.md)\n", "x.md", "[](z.md)\n"},

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 
 	"github.com/henry40408/noda/internal/markdown"
@@ -62,7 +63,7 @@ func pathPart(found span, destination string) span {
 // an image inside a link closes first. Each search starts after the previous
 // hit in the same block, which is what anchors a link with an empty label.
 func inlineSpans(doc markdown.Document, old string) []span {
-	searchable := maskCodeSpans(doc)
+	searchable := maskLiteralText(doc)
 	cursors := map[ast.Node]int{}
 	var spans []span
 	_ = ast.Walk(doc.Root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -89,25 +90,42 @@ func inlineSpans(doc markdown.Document, old string) []span {
 	return spans
 }
 
-// maskCodeSpans blanks what is inside code spans, so a `[b](x.md)` written in
-// code is never taken for the link's destination. Offsets stay the same.
-func maskCodeSpans(doc markdown.Document) []byte {
+// maskLiteralText blanks what is inside code spans, raw HTML and autolinks, so
+// a `](x.md)` written there is never taken for a link's destination. Offsets
+// stay the same.
+func maskLiteralText(doc markdown.Document) []byte {
 	masked := bytes.Clone(doc.Source)
-	doc.Walk(func(node ast.Node) {
-		if node.Kind() != ast.KindCodeSpan {
-			return
+	blank := func(segment text.Segment) {
+		for at := segment.Start; at < segment.Stop; at++ {
+			masked[at] = ' '
 		}
-		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-			text, ok := child.(*ast.Text)
-			if !ok {
-				continue
+	}
+	doc.Walk(func(node ast.Node) {
+		switch node := node.(type) {
+		case *ast.CodeSpan:
+			for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+				if literal, ok := child.(*ast.Text); ok {
+					blank(literal.Segment)
+				}
 			}
-			for at := text.Segment.Start; at < text.Segment.Stop; at++ {
-				masked[at] = ' '
+		case *ast.RawHTML:
+			for i := 0; i < node.Segments.Len(); i++ {
+				blank(node.Segments.At(i))
 			}
+		case *ast.AutoLink:
+			blank(autoLinkSegment(node, doc.Source))
 		}
 	})
 	return masked
+}
+
+// autoLinkSegment is where the autolink's text sits in source. goldmark keeps
+// that segment private, but Label returns a slice of source itself, so its
+// start follows from how much capacity is left.
+func autoLinkSegment(link *ast.AutoLink, source []byte) text.Segment {
+	label := link.Label(source)
+	start := cap(source) - cap(label)
+	return text.NewSegment(start, start+len(label))
 }
 
 // enclosingBlock is the nearest block with source lines, and the bytes they
