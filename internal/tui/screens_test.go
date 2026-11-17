@@ -4,11 +4,15 @@ package tui
 // into a buffer. The state machine's own tests are in app_*_test.go.
 
 import (
+	"context"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/henry40408/noda/internal/cmd"
 	"github.com/henry40408/noda/internal/config"
+	"github.com/henry40408/noda/internal/gitx"
 )
 
 // barRune is matched at the start of the line, which is otherwise the body's
@@ -635,5 +639,262 @@ func TestMarksMadeUnderOneQuerySurviveTheNext(t *testing.T) {
 	// A mark is a note picked out, not a query re-run when sending.
 	if got := strings.Join(titlesTagged(app, "seen"), ","); got != "Meeting notes,Reading list" {
 		t.Fatal(got)
+	}
+}
+
+func TestACommandReachesWhatNoKeyDoes(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	// `noda status` has no key; this is why the prompt exists.
+	perform(t, env, app, commandLine(app, "status"))
+
+	// More than a line, so it goes on a card.
+	after := screen(env, app)
+	if !hasLineWith(after, "3 notes") || !(hasLineWith(after, "branch") || hasLineWith(after, "clean")) {
+		t.Fatalf("%q", after)
+	}
+}
+
+func TestANoteCanBeOpenedByNameFromThePrompt(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	perform(t, env, app, commandLine(app, "open reading-list"))
+
+	rows := screen(env, app)
+	if app.Depth() != 2 || !hasLineWith(rows, "Note  ", "Reading list") || !hasLineWith(rows, "a book") {
+		t.Fatalf("depth %d: %q", app.Depth(), rows)
+	}
+}
+
+func TestANameThatNamesNothingIsRefusedInTheNotebooksOwnWords(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	perform(t, env, app, commandLine(app, "open nowhere"))
+
+	// The answer `noda show nowhere` gives, on a card because it is a refusal.
+	after := screen(env, app)
+	if !hasLineWith(after, "nowhere") || app.Depth() != 1 {
+		t.Fatalf("nothing opened, depth %d: %q", app.Depth(), after)
+	}
+}
+
+func TestATagCanBeChangedFromTheCommandLineToo(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	// Naming a note, which the `#` key cannot do.
+	perform(t, env, app, commandLine(app, "tag reading-list +urgent"))
+
+	app.OnKey(Rune('G'))
+	if after := screen(env, app); !hasLineWith(after, "Reading list", "[urgent]") {
+		t.Fatalf("%q", after)
+	}
+}
+
+func TestTheCommandListIsNarrowedByWhatACommandDoes(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	app.OnKey(CtrlKey('a'))
+	listed := screen(env, app)
+	if !hasLineWith(listed, "commands") || !hasLineWith(listed, "open <note>") {
+		t.Fatalf("%q", listed)
+	}
+	// Matches on descriptions, not only names.
+	typing(app, "remote")
+	narrowed := screen(env, app)
+	if !hasLineWith(narrowed, "push") || !hasLineWith(narrowed, "pull") || hasLineWith(narrowed, "open <note>") {
+		t.Fatalf("%q", narrowed)
+	}
+}
+
+func TestALineThatIsNotACommandStaysOnTheLine(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	if action := commandLine(app, "frobnicate"); action != nil {
+		t.Fatalf("%+v", action)
+	}
+	after := screen(env, app)
+	if !hasLineWith(after, "frobnicate") || !hasLineWith(after, "Budget review") || app.Total() != 3 {
+		t.Fatalf("%q", after)
+	}
+}
+
+func TestItRefusesToRunWhereThereIsNoTerminal(t *testing.T) {
+	env := threeNotes(t)
+	if err := Browse(RunOptions{Env: env}); !errors.Is(err, ErrNeedsTerminal) || !strings.Contains(err.Error(), "needs a terminal") {
+		t.Fatalf("a pipe is not a terminal: %v", err)
+	}
+}
+
+func TestTheTodoScreenListsTheBoxesWithTheDatesThatHaveBeenMissed(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	todo := goTo(t, env, app, "todo")
+	if !hasLineWith(todo, "Todo", "  1") || !hasLineWith(todo, "meeting-notes", "2020-01-01", "book a room") {
+		t.Fatalf("%q", todo)
+	}
+	app.OnKey(key(CodeEsc))
+	app.OnKey(Rune('t'))
+	if !hasLineWith(screen(env, app), "book a room") {
+		t.Fatal("t opens the same screen")
+	}
+}
+
+func TestTheTagsScreenCountsThemAndEnterNarrowsTheListing(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	if tags := goTo(t, env, app, "tags"); !hasLineWith(tags, "work", "2 notes") {
+		t.Fatalf("%q", tags)
+	}
+	// A tag narrows the listing rather than opening a screen of its own.
+	app.OnKey(key(CodeEnter))
+	narrowed := screen(env, app)
+	if !hasLineWith(narrowed, "Notes  tag:work  2") || strings.Join(app.Crumbs(), ",") != "notes" {
+		t.Fatalf("%v: %q", app.Crumbs(), narrowed)
+	}
+}
+
+func TestTheBacklinksScreenFindsTheNoteThatPointsHere(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	// The meeting notes link to the budget, which the cursor opens on.
+	found := goTo(t, env, app, "backlinks")
+	if !hasLineWith(found, "Backlinks  ") || !hasLineWith(found, "Meeting notes") {
+		t.Fatalf("%q", found)
+	}
+	app.OnKey(key(CodeEnter))
+	if note := screen(env, app); !hasLineWith(note, "Note  ", "Meeting notes") {
+		t.Fatalf("%q", note)
+	}
+}
+
+func TestTheFilesScreenLeadsToWhatUsesAnAttachment(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	if files := goTo(t, env, app, "files"); !hasLineWith(files, "diagram.png") {
+		t.Fatalf("%q", files)
+	}
+	// Nothing uses it: the orphan `doctor --links` reports, not an empty screen.
+	app.OnKey(key(CodeEnter))
+	if orphan := screen(env, app); !hasLineWith(orphan, "nothing links here") {
+		t.Fatalf("%q", orphan)
+	}
+}
+
+func TestTheLogScreenShowsTheNotebooksCommitsAndThenOneNotesOwn(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	whole := goTo(t, env, app, "log")
+	all := commits(t, env)
+	if !hasLineWith(whole, "Log  "+config.DefaultNotebook) || len(app.Entries()) != all {
+		t.Fatalf("%d of %d: %q", len(app.Entries()), all, whole)
+	}
+	// On a note, the log is only that note's.
+	app.OnKey(key(CodeEsc))
+	app.OnKey(key(CodeEnter))
+	app.OnKey(Rune('l'))
+	one := screen(env, app)
+	if !hasLineWith(one, "Log  ", "Budget review") || len(app.Entries()) >= all {
+		t.Fatalf("%q", one)
+	}
+}
+
+// The chrome says `↑1`; this says which commit, with the same arrow and margin
+// as `noda log`.
+func TestTheLogScreenMarksWhatTheRemoteHasNotSeen(t *testing.T) {
+	env := workedNotebook(t)
+	branch, err := notebookOf(t, env).Branch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// `main` or `master` depending on the machine.
+	parent := t.TempDir()
+	bare := filepath.Join(parent, "origin.git")
+	for _, step := range []struct {
+		dir  string
+		args []string
+	}{
+		{parent, []string{"init", "--bare", bare}},
+		{bare, []string{"symbolic-ref", "HEAD", "refs/heads/" + branch}},
+	} {
+		if _, err := env.Git.Run(context.Background(), gitx.Cmd{Dir: step.dir, Args: step.args}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmd.RemoteSet(env, bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmd.Push(env); err != nil {
+		t.Fatal(err)
+	}
+	addTagged(t, env, "Not sent yet")
+
+	app := load(t, env)
+	log := goTo(t, env, app, "log")
+	if !hasLineWith(log, "↑", "not-sent-yet") {
+		t.Fatalf("%q", log)
+	}
+	// Commits the remote has get a blank margin. The chrome's `↑1` has no space
+	// after the arrow, so the count below does not match it.
+	for _, row := range log {
+		if strings.Contains(row, "initialize notebook") && strings.Contains(row, "↑") {
+			t.Fatalf("a commit the remote has was marked: %q", log)
+		}
+	}
+	marked := 0
+	for _, row := range log {
+		if strings.Contains(row, "↑ ") {
+			marked++
+		}
+	}
+	if marked != 1 {
+		t.Fatalf("%d marked: %q", marked, log)
+	}
+	// `↑` is East Asian Ambiguous: a one-cell column clips a hex digit off the
+	// row carrying it.
+	for _, entry := range app.Entries() {
+		if id := entry.ShortID(); !hasLineWith(log, id) {
+			t.Fatalf("`%s` was clipped: %q", id, log)
+		}
+	}
+}
+
+// `p` is a toggle, so it reads the row before deciding.
+func TestPPinsTheNoteUnderTheCursorAndTheSecondPressLetsItDown(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	app.OnKey(Rune('j'))
+	id := app.Selected().ID
+	action := app.OnKey(Rune('p'))
+	if action == nil || action.Kind != ActPin || action.Key != id || !action.Pinned || action.Touch != cmd.TouchStamp {
+		t.Fatalf("p pins: %+v", action)
+	}
+	perform(t, env, app, action)
+
+	if app.Rows()[0].ID != id {
+		t.Fatal("the pinned note leads")
+	}
+	if rows := screen(env, app); !hasLineWith(rows, id, "pinned") {
+		t.Fatalf("%q", rows)
+	}
+	app.OnKey(Rune('g'))
+	action = app.OnKey(Rune('p'))
+	if action == nil || action.Kind != ActPin || action.Key != id || action.Pinned || action.Touch != cmd.TouchStamp {
+		t.Fatalf("p unpins: %+v", action)
+	}
+	perform(t, env, app, action)
+	if app.NoteOf(id).Note.IsPinned() {
+		t.Fatal("the second press left it pinned")
 	}
 }

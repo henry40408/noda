@@ -262,3 +262,42 @@ func backdate(t *testing.T, env cmd.Env, app *App) {
 		t.Fatal(err)
 	}
 }
+
+// workedNotebook has something for every screen: a link by id, an overdue box,
+// an unused attachment and a deletion in the history. The link names the
+// budget's real id, which is what backlinks match on.
+func workedNotebook(t *testing.T) cmd.Env {
+	t.Helper()
+	env := emptyNotebook(t)
+	added, err := cmd.Add(env, cmd.AddOptions{Title: ptr("Budget review"), Content: ptr("the q3 budget is late"), Tags: []string{"work"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Fields(added)[0]
+	meeting := "see [the budget](" + id + "-budget-review.md)\n\n- [ ] book a room due:2020-01-01\n"
+	for _, note := range []cmd.AddOptions{
+		{Title: ptr("Meeting notes"), Content: ptr(meeting), Tags: []string{"work", "q3"}},
+		{Title: ptr("Reading list"), Content: ptr("a book")},
+		{Title: ptr("Trip plan"), Content: ptr("flights"), Tags: []string{"travel"}},
+	} {
+		if _, err := cmd.Add(env, note); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmd.Rm(env, "trip-plan"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(notebookOf(t, env).Path, "diagram.png"), []byte("png"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+// goTo opens a screen from the prompt and lets the runtime load it.
+func goTo(t *testing.T, env cmd.Env, app *App, line string) []string {
+	t.Helper()
+	if action := commandLine(app, line); action != nil {
+		perform(t, env, app, action)
+	}
+	return screen(env, app)
+}
