@@ -172,6 +172,10 @@ Two things are not optional:
   and fails startup with a rename hint. `ensureNoLegacyEnvVars` (`cmd/noda/env.go`) does that:
   update `legacyEnvVars` there whenever an environment variable is added, renamed or removed — a
   silently ignored variable is worse than a startup failure.
+- **Breaking change of the Go release: `RUST_LOG` is retired.** A deployment that sets it (compose,
+  k8s, a shell profile) now exits at startup, and `restart: always` turns that into a crash loop.
+  The release notes must list it with the `NODA_LOG_LEVEL` replacement, and the version should
+  be a major bump.
 - **GitHub Actions are pinned by commit SHA**, with the tag as a trailing comment.
 - Releases use `gh release create --generate-notes`; never edit a manifest version or add a
   `CHANGELOG.md`.
