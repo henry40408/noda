@@ -2,10 +2,8 @@ package tui
 
 import (
 	"errors"
-	"os"
 
 	"github.com/gdamore/tcell/v2"
-	"golang.org/x/term"
 
 	"github.com/henry40408/noda/internal/cmd"
 	"github.com/henry40408/noda/internal/tui/ui"
@@ -14,8 +12,8 @@ import (
 // RunOptions is what a session is run with.
 type RunOptions struct {
 	Env cmd.Env
-	// Stdin and Stdout are only asked whether they are terminals.
-	Stdin, Stdout *os.File
+	// Terminals is whether stdin and stdout are both terminals.
+	Terminals bool
 	// Screen is the terminal to draw on; nil opens the real one. A test passes
 	// a simulated screen.
 	Screen tcell.Screen
@@ -29,7 +27,7 @@ var ErrNeedsTerminal = errors.New("noda tui needs a terminal at both ends; " +
 // Browse runs the active notebook until the user quits. Everything is said on
 // screen, so it prints nothing.
 func Browse(options RunOptions) error {
-	if options.Screen == nil && !isTerminal(options.Stdin, options.Stdout) {
+	if options.Screen == nil && !options.Terminals {
 		return ErrNeedsTerminal
 	}
 	// Before taking over the screen, so an error is printed at the prompt.
@@ -50,15 +48,6 @@ func Browse(options RunOptions) error {
 	// Deferred, so a panic still gives the terminal back.
 	defer screen.Fini()
 	return loop(options.Env, screen, app)
-}
-
-func isTerminal(files ...*os.File) bool {
-	for _, file := range files {
-		if file == nil || !term.IsTerminal(int(file.Fd())) {
-			return false
-		}
-	}
-	return true
 }
 
 func loop(env cmd.Env, screen tcell.Screen, app *App) error {

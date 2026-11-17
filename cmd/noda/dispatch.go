@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/henry40408/noda/internal/tui"
 	"strings"
 
 	"github.com/henry40408/noda/internal/cmd"
@@ -11,13 +12,6 @@ import (
 
 // handler runs one command and returns what to print.
 type handler func(env cmd.Env, line parsed) (string, error)
-
-// notYet names the commands whose Go port is a later step.
-func notYet(name string) handler {
-	return func(cmd.Env, parsed) (string, error) {
-		return "", fmt.Errorf("`noda %s` is not available in this build yet", name)
-	}
-}
 
 func handlers() map[string]handler {
 	return map[string]handler{
@@ -46,7 +40,8 @@ func handlers() map[string]handler {
 			return cmd.Path(e, l.arg("key"))
 		}),
 		"search": func(e cmd.Env, l parsed) (string, error) { return cmd.Search(e, l.args["query"]) },
-		"tui":    notYet("tui"),
+		// Needs the terminal facts, so dispatch runs it.
+		"tui": nil,
 		// Needs the process (its log level and streams), so dispatch runs it.
 		"web": nil,
 		"log": refuseEmptyNoteReference("note", runLog),
@@ -102,6 +97,9 @@ func (p process) dispatch(line parsed) error {
 	env, err := p.environment()
 	if err != nil {
 		return err
+	}
+	if line.path[0] == "tui" {
+		return p.browse(env)
 	}
 	output, err := run(env, line)
 	if err != nil {
@@ -237,4 +235,11 @@ func (p process) serveWeb(line parsed) error {
 		LogFormat: web.LogFormat(line.value("log-format")), LogLevel: level,
 		Stdout: p.stdout, Stderr: p.stderr,
 	})
+}
+
+// browse takes over the terminal, so git must not ask questions on it.
+func (p process) browse(env cmd.Env) error {
+	env.Interactive = false
+	env.Confirm = nil
+	return tui.Browse(tui.RunOptions{Env: env, Terminals: p.stdinIsTerminal && p.stdoutIsTerminal})
 }

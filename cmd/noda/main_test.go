@@ -376,3 +376,10 @@ func withoutRustLog(environ []string) []string {
 	}
 	return kept
 }
+
+func TestTuiRefusesAPipe(t *testing.T) {
+	got := newSandbox(t).run("tui")
+	if got.code == 0 || !strings.Contains(got.stderr, "noda tui needs a terminal at both ends") {
+		t.Fatalf("exit %d, stderr %q", got.code, got.stderr)
+	}
+}
