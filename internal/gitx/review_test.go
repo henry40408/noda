@@ -32,18 +32,11 @@ func freshRepo(t *testing.T, extraEnv map[string]string) (*gitx.Git, string) {
 // appendGlobalConfig adds to the isolated global config gittest.Isolate made.
 func appendGlobalConfig(t *testing.T, git *gitx.Git, text string) {
 	t.Helper()
-	path, set := git.Getenv("GIT_CONFIG_GLOBAL")
-	if !set {
-		t.Fatal("the environment is not isolated")
+	env := map[string]string{}
+	for _, name := range []string{"HOME", "GIT_CONFIG_GLOBAL"} {
+		env[name], _ = git.Getenv(name)
 	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	if _, err := file.WriteString(text); err != nil {
-		t.Fatal(err)
-	}
+	gittest.WriteGlobalConfig(t, env, text, true)
 }
 
 func TestARunNeedsADirectory(t *testing.T) {

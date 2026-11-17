@@ -89,9 +89,7 @@ func TestConfigLastValueWinsAndIncludes(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := "[user]\n\tname = One\n\tname = Two\n\tflag\n[include]\n\tpath = " + extra + "\n"
-	if err := os.WriteFile(env["GIT_CONFIG_GLOBAL"], []byte(text), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	gittest.WriteGlobalConfig(t, env, text, false)
 	git, err := gitx.New(gitx.Options{Env: env})
 	if err != nil {
 		t.Fatal(err)

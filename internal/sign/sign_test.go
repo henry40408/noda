@@ -24,9 +24,7 @@ func configWith(t *testing.T, entries ...[2]string) gitx.ConfigValues {
 		}
 		text.WriteString("[" + section + "]\n\t" + name + " = " + entry[1] + "\n")
 	}
-	if err := os.WriteFile(env["GIT_CONFIG_GLOBAL"], []byte(text.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	gittest.WriteGlobalConfig(t, env, text.String(), false)
 	git, err := gitx.New(gitx.Options{Env: env})
 	if err != nil {
 		t.Fatal(err)

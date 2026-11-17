@@ -15,6 +15,14 @@ set -eu
 out=${1:?usage: build.sh <out-dir> <scenario>}
 scenario=${2:?usage: build.sh <out-dir> <scenario>}
 
+# This script writes $out/home/.gitconfig. Pointing it at the real home directory
+# would replace the developer's git configuration.
+real_home=$(cd "$HOME" && pwd -P)
+if [ "$(mkdir -p "$out" && cd "$out" && pwd -P)" = "$real_home" ]; then
+	echo "build.sh: <out-dir> must not be the real home directory" >&2
+	exit 1
+fi
+
 mkdir -p "$out/home" "$out/config/noda" "$out/data/noda/notebooks" "$out/state/noda" "$out/cache/noda"
 out=$(cd "$out" && pwd)
 

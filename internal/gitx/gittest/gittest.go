@@ -3,6 +3,7 @@
 package gittest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,14 +25,52 @@ func Isolate(t *testing.T) map[string]string {
 	home := t.TempDir()
 	config := filepath.Join(home, "gitconfig")
 	settings := "[user]\n\tname = Test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"
-	if err := os.WriteFile(config, []byte(settings), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	env["HOME"] = home
 	env["XDG_CONFIG_HOME"] = filepath.Join(home, "xdg")
 	env["GIT_CONFIG_NOSYSTEM"] = "1"
 	env["GIT_CONFIG_GLOBAL"] = config
+	WriteGlobalConfig(t, env, settings, false)
 	return env
+}
+
+// WriteGlobalConfig replaces (or, with appendTo, extends) the isolated global
+// git config. It refuses any path outside the sandbox home that Isolate made:
+// a test once wrote a gitconfig into the real $HOME and broke the developer's git.
+func WriteGlobalConfig(t *testing.T, env map[string]string, text string, appendTo bool) {
+	t.Helper()
+	path := env["GIT_CONFIG_GLOBAL"]
+	if err := sandboxError(env, path); err != nil {
+		t.Fatal(err)
+	}
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if appendTo {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(text); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sandboxError(env map[string]string, path string) error {
+	home := env["HOME"]
+	if path == "" || home == "" {
+		return fmt.Errorf("refusing to write %q: the environment is not isolated", path)
+	}
+	if realHome, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == filepath.Clean(realHome) {
+		return fmt.Errorf("refusing to write %q: HOME is the real home directory", path)
+	}
+	relative, err := filepath.Rel(home, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to write %q: it is outside the sandbox home %q", path, home)
+	}
+	return nil
 }
 
 // Require returns a Git running in the isolated environment.

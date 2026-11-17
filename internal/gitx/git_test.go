@@ -58,14 +58,7 @@ func TestUserSettingsDoNotChangeParsedOutput(t *testing.T) {
 	env := gittest.Isolate(t)
 	settings := "[diff]\n\tnoprefix = true\n\tmnemonicPrefix = true\n\texternal = /nonexistent/driver\n[color]\n\tui = always\n" +
 		"[log]\n\tshowSignature = true\n\tdecorate = full\n[core]\n\tquotePath = true\n"
-	f, err := os.OpenFile(env["GIT_CONFIG_GLOBAL"], os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(settings); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	gittest.WriteGlobalConfig(t, env, settings, true)
 	git, err := gitx.New(gitx.Options{Env: env})
 	if err != nil {
 		t.Fatal(err)
