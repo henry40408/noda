@@ -38,6 +38,10 @@ type Author struct{ Name, Email string }
 type Notebook struct {
 	Name string
 	Path string
+	// Interactive lets ssh ask for a passphrase or a host key at the terminal.
+	// It is off by default: a web errand would hang there, and a full-screen
+	// interface would be drawn over.
+	Interactive bool
 
 	git    *gitx.Git
 	author *Author

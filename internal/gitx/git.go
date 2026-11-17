@@ -166,6 +166,12 @@ type Cmd struct {
 	ReadOnly bool
 	// OKCodes are the exit codes that are not an error. Empty means only 0.
 	OKCodes []int
+	// Network marks a run that talks to a remote. Unless Interactive is set,
+	// ssh is kept from opening /dev/tty, where a web errand would hang and a
+	// full-screen interface would be drawn over.
+	Network bool
+	// Interactive says a person at a terminal can answer ssh's prompts.
+	Interactive bool
 }
 
 // Result is what a finished run left behind.
@@ -178,6 +184,9 @@ type Result struct {
 // with the Result.
 func (g *Git) Run(ctx context.Context, c Cmd) (Result, error) {
 	args := globalArgs(c.Dir)
+	if c.Network && !c.Interactive && !g.hasOwnSSH(ctx, c.Dir) {
+		args = append(args, "-c", "core.sshCommand=ssh -o BatchMode=yes")
+	}
 	args = append(args, c.Args...)
 	command := exec.CommandContext(ctx, g.path, args...)
 	command.Env = sanitizedEnv(g.env, c.ReadOnly, c.ExtraEnv)
@@ -206,6 +215,19 @@ func (g *Git) Run(ctx context.Context, c Cmd) (Result, error) {
 		return result, &Error{Args: c.Args, Code: result.Code, Stderr: string(result.Stderr)}
 	}
 	return result, nil
+}
+
+// hasOwnSSH reports whether the user chose the ssh command, which then stays
+// as they set it. GIT_SSH_COMMAND outranks core.sshCommand, which outranks
+// GIT_SSH.
+func (g *Git) hasOwnSSH(ctx context.Context, dir string) bool {
+	for _, name := range []string{"GIT_SSH_COMMAND", "GIT_SSH"} {
+		if _, set := g.env[name]; set {
+			return true
+		}
+	}
+	result, err := g.Run(ctx, Cmd{Dir: dir, Args: []string{"config", "--includes", "--get", "core.sshCommand"}, ReadOnly: true, OKCodes: []int{0, 1, 128}})
+	return err == nil && result.Code == 0
 }
 
 func okCodes(c Cmd) []int {
