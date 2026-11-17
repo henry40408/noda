@@ -1,6 +1,9 @@
 # The build compiles from source inside the image; nothing here is needed and
-# `target/` alone would add gigabytes to the build context.
+# build output alone would add gigabytes to the build context.
 target/
+bin/
+e2e/
+screenshots/
 .git/
 .github/
 docs/
