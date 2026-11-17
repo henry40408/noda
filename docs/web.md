@@ -23,7 +23,7 @@ refusals, failures, and requests slower than a second. `NODA_LOG_LEVEL=debug` tu
 request. `--log-format json` (or `NODA_LOG_FORMAT=json`) writes one JSON object per line. An
 unknown level is an error at startup rather than a silent default.
 
-`RUST_LOG`, which the Rust releases read, is retired: noda refuses to start while it is set.
+The Rust releases' log variable is retired; noda refuses to start while it is set (see the README).
 
 ```
 $ NODA_LOG_LEVEL=debug noda web
