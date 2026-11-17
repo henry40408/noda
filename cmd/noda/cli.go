@@ -303,11 +303,20 @@ func (s *parseState) set(spec *flagSpec, value string) error {
 		return s.fail("invalid value '%s' for '--%s <%s>'\n  [possible values: %s]",
 			value, spec.long, spec.value, strings.Join(spec.allowed, ", "))
 	}
-	if _, seen := s.out.flags[spec.long]; seen && !spec.repeat && spec.value != "" {
-		return s.fail("the argument '--%s <%s>' cannot be used multiple times", spec.long, spec.value)
+	if _, seen := s.out.flags[spec.long]; seen && !spec.repeat {
+		return s.fail("the argument '%s' cannot be used multiple times", flagName(spec))
 	}
 	s.out.flags[spec.long] = append(s.out.flags[spec.long], value)
 	return nil
+}
+
+// flagName names a flag the way clap does: a switch by its long name, an
+// option with its value placeholder.
+func flagName(spec *flagSpec) string {
+	if spec.value == "" {
+		return "--" + spec.long
+	}
+	return "--" + spec.long + " <" + spec.value + ">"
 }
 
 // finish applies what only the whole line can tell: a missing subcommand or

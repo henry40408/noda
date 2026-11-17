@@ -102,6 +102,23 @@ func TestOptionsStillCountBeforeAHyphenArgumentHasItsFirstValue(t *testing.T) {
 	}
 }
 
+func TestARepeatedSwitchIsAUsageError(t *testing.T) {
+	for want, args := range map[string][]string{
+		"the argument '--quiet' cannot be used multiple times":    {"ls", "-qq"},
+		"the argument '--reverse' cannot be used multiple times":  {"ls", "-r", "-r"},
+		"the argument '--json' cannot be used multiple times":     {"ls", "--json", "--json"},
+		"the argument '--long' cannot be used multiple times":     {"ls", "--long", "-l"},
+		"the argument '--no-touch' cannot be used multiple times": {"tag", "n", "--no-touch", "--no-touch", "+x"},
+	} {
+		if got := parseError(t, args...); got != want {
+			t.Errorf("%v: got %q want %q", args, got, want)
+		}
+	}
+	if got := parse(t, "add", "x", "--tag", "a", "--tag", "b"); len(got.flags["tag"]) != 2 {
+		t.Fatalf("a repeatable option may repeat: %+v", got)
+	}
+}
+
 func TestRelationsBetweenFlags(t *testing.T) {
 	cases := map[string][]string{
 		"the argument '--json' cannot be used with '--quiet'":              {"ls", "--json", "-q"},
