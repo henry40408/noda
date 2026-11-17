@@ -179,6 +179,10 @@ type Cmd struct {
 	Network bool
 	// Interactive says a person at a terminal can answer ssh's prompts.
 	Interactive bool
+	// Credentials, when set, answer git's request for a login, from the
+	// environment of the run: an HTTP remote's secret must not sit in the
+	// arguments of a process that any local user can list.
+	Credentials *remote.Credentials
 
 	// showHooksPath leaves core.hooksPath as configured, for Hooks.
 	showHooksPath bool
@@ -201,9 +205,10 @@ func (g *Git) Run(ctx context.Context, c Cmd) (Result, error) {
 	if c.Network && !c.Interactive && !g.hasOwnSSH(ctx, c.Dir) {
 		args = append(args, "-c", "core.sshCommand=ssh -o BatchMode=yes")
 	}
+	args = append(args, credentialArgs(c.Credentials)...)
 	args = append(args, withoutExternalDiff(c.Args)...)
 	command := exec.CommandContext(ctx, g.path, args...)
-	command.Env = g.environment(c.Dir, c.ReadOnly, c.ExtraEnv)
+	command.Env = g.environment(c.Dir, c.ReadOnly, withCredentials(c.ExtraEnv, c.Credentials))
 	stopGently(command)
 	if c.Stdin != nil {
 		command.Stdin = bytes.NewReader(c.Stdin)

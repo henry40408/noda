@@ -32,18 +32,30 @@ func Clone(g *gitx.Git, p paths.Paths, opts CloneOptions) (*Notebook, error) {
 	if err := os.MkdirAll(p.NotebooksDir(), 0o777); err != nil {
 		return nil, err
 	}
-	_, err := g.Run(context.Background(), gitx.Cmd{
+	// A login in the URL goes by environment, not on git's command line.
+	clean, credentials, hasLogin := remote.SplitCredentials(opts.URL)
+	cmd := gitx.Cmd{
 		Dir:         p.NotebooksDir(),
-		Args:        []string{"clone", "--quiet", "--", opts.URL, path},
+		Args:        []string{"clone", "--quiet", "--", clean, path},
 		Network:     true,
 		Interactive: opts.Interactive,
-	})
-	if err != nil {
+	}
+	if hasLogin {
+		cmd.Credentials = &credentials
+	}
+	if _, err := g.Run(context.Background(), cmd); err != nil {
 		os.RemoveAll(path)
 		return nil, explain(err, opts.URL)
 	}
 	notebook := newNotebook(g, p, opts.Name)
 	notebook.Interactive = opts.Interactive
+	// The remote is kept as given, as it is for a notebook set up with `remote set`.
+	if hasLogin {
+		if err := notebook.SetRemote(opts.URL); err != nil {
+			os.RemoveAll(path)
+			return nil, err
+		}
+	}
 	if err := notebook.adoptRemoteBranch(); err != nil {
 		os.RemoveAll(path)
 		return nil, err

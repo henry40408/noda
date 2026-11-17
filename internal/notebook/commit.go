@@ -106,14 +106,31 @@ type treeCommit struct {
 // it. It does the work in steps, signing needs the commit's text before it is
 // an object, and `git commit` would run hooks, which noda never does.
 func (n *Notebook) commitTree(c treeCommit) (string, error) {
-	values, err := gitx.LoadConfig(context.Background(), n.git, n.Path)
+	written, err := n.writeCommit(c)
 	if err != nil {
 		return "", err
+	}
+	return written.oid, n.moveHead(written.oid, c, written.who, written.signed)
+}
+
+// writtenCommit is a commit in the object store that no ref names yet.
+type writtenCommit struct {
+	oid    string
+	who    gitx.Ident
+	signed bool
+}
+
+// writeCommit does commitTree's work but leaves HEAD where it is, for a caller
+// that must bring the working tree along first.
+func (n *Notebook) writeCommit(c treeCommit) (writtenCommit, error) {
+	values, err := gitx.LoadConfig(context.Background(), n.git, n.Path)
+	if err != nil {
+		return writtenCommit{}, err
 	}
 	who := n.signature(values)
 	signer, err := sign.Resolve(n.sign, values)
 	if err != nil {
-		return "", err
+		return writtenCommit{}, err
 	}
 
 	encoded := gitx.CommitObject{Tree: c.tree, Parents: c.parents, Author: who, Committer: who, Message: c.message}.Encode()
@@ -121,17 +138,16 @@ func (n *Notebook) commitTree(c treeCommit) (string, error) {
 		signer.Env, signer.Stderr = n.git.Environ(), n.git.Stderr()
 		armored, err := signer.Sign(encoded)
 		if err != nil {
-			return "", err
+			return writtenCommit{}, err
 		}
 		encoded = gitx.WithSignature(encoded, armored)
 	}
 
 	stored, err := n.run(gitx.Cmd{Args: []string{"hash-object", "-t", "commit", "-w", "--stdin"}, Stdin: encoded})
 	if err != nil {
-		return "", err
+		return writtenCommit{}, err
 	}
-	oid := strings.TrimSpace(string(stored.Stdout))
-	return oid, n.moveHead(oid, c, who, signer != nil)
+	return writtenCommit{oid: strings.TrimSpace(string(stored.Stdout)), who: who, signed: signer != nil}, nil
 }
 
 // moveHead points the branch HEAD names, or a detached HEAD, at oid. The old

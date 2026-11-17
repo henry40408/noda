@@ -51,6 +51,17 @@ type Notebook struct {
 	sign *bool
 	// now is replaced by tests that need fixed commit times.
 	now func() time.Time
+	// ctx stops the git runs of a copy made by WithContext; nil means never.
+	ctx context.Context
+}
+
+// WithContext is a copy of the notebook whose git runs stop when ctx ends: git
+// is sent SIGTERM and removes its lock files. A web request passes its own, so
+// a client that went away does not leave a fetch running.
+func (n *Notebook) WithContext(ctx context.Context) *Notebook {
+	copied := *n
+	copied.ctx = ctx
+	return &copied
 }
 
 // ValidateName refuses what would escape the data directory: notebook names
@@ -253,7 +264,11 @@ func (n *Notebook) run(cmd gitx.Cmd) (gitx.Result, error) {
 	if cmd.Dir == "" {
 		cmd.Dir = n.Path
 	}
-	return n.git.Run(context.Background(), cmd)
+	ctx := n.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return n.git.Run(ctx, cmd)
 }
 
 // read runs a read-only command and returns its output, trimmed of the

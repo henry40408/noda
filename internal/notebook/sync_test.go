@@ -1,6 +1,8 @@
 package notebook
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
@@ -382,7 +384,78 @@ func TestHTTPSErrorsNeverShowTheTokenInTheURL(t *testing.T) {
 	if strings.Contains(err.Error(), secret) {
 		t.Fatalf("the token reached the error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "http://***@") {
+}
+
+func TestALoginInTheURLWorksAndNeverReachesGitsArguments(t *testing.T) {
+	nb := fixture(t, "behind")
+	url := httpRemote(t, nb, "u", "p@ss")
+	withLogin := strings.Replace(url, "http://", "http://u:p%40ss@", 1)
+	if err := nb.SetRemote(withLogin); err != nil {
+		t.Fatal(err)
+	}
+	cmd := nb.networkCmd(withLogin, gitx.Cmd{Args: []string{"fetch", remoteName}})
+	if strings.Contains(strings.Join(cmd.Args, " "), "p%40ss") || strings.Contains(strings.Join(cmd.Args, " "), "p@ss") {
+		t.Fatalf("the secret is in the arguments: %v", cmd.Args)
+	}
+	pulled, err := nb.Pull()
+	if got := mustSync(t, pulled, err); !strings.HasPrefix(got, "pull: fast-forwarded 2 commits") {
+		t.Fatalf("pull = %q", got)
+	}
+	if configured, _ := nb.configuredRemote(); configured != withLogin {
+		t.Fatalf("the remote was changed to %q", configured)
+	}
+}
+
+func TestASnapshotNameTakenOnBothSidesDoesNotFailThePull(t *testing.T) {
+	nb := fixture(t, "tags")
+	before := gitOut(t, nb, "for-each-ref", "refs/tags")
+	if _, err := nb.Pull(); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if after := gitOut(t, nb, "for-each-ref", "refs/tags"); !strings.Contains(after, before) {
+		t.Fatalf("a local tag changed:\n%s\nbecame\n%s", before, after)
+	}
+	if left := gitOut(t, nb, "for-each-ref", remoteTagsRef); left != "" {
+		t.Fatalf("the private copies stayed: %s", left)
+	}
+}
+
+func TestPullBringsInATagTheNotebookLacks(t *testing.T) {
+	nb := fixture(t, "behind")
+	remoteDir := filepath.Join(rootOf(nb), "remote.git")
+	gitOut(t, nb, "-C", remoteDir, "tag", "from-elsewhere", "main")
+	if _, err := nb.Pull(); err != nil {
+		t.Fatal(err)
+	}
+	remoteTip := gitOut(t, nb, "-C", remoteDir, "rev-parse", "from-elsewhere")
+	if got := gitOut(t, nb, "rev-parse", "refs/tags/from-elsewhere"); got != remoteTip {
+		t.Fatalf("tag = %q, want %q", got, remoteTip)
+	}
+}
+
+func TestAContextStopsTheGitRunsOfANotebookCopy(t *testing.T) {
+	nb := fixture(t, "behind")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := nb.WithContext(ctx).Fetch(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := nb.Fetch(); err != nil {
+		t.Fatalf("the original is affected: %v", err)
+	}
+}
+
+func TestPullMergesHistoriesThatShareNoCommit(t *testing.T) {
+	nb := fixture(t, "ahead")
+	remoteDir := filepath.Join(rootOf(nb), "remote.git")
+	emptyTree := gitOut(t, nb, "-C", remoteDir, "hash-object", "-t", "tree", "-w", "/dev/null")
+	root := gitOut(t, nb, "-C", remoteDir, "commit-tree", emptyTree, "-m", "another machine's first commit")
+	gitOut(t, nb, "-C", remoteDir, "update-ref", "refs/heads/main", root)
+	pulled, err := nb.Pull()
+	if got := mustSync(t, pulled, err); !strings.HasPrefix(got, "pull: merged") {
+		t.Fatalf("pull = %q", got)
+	}
+	if dirty, _ := nb.IsDirty(); dirty {
+		t.Fatal("the working tree differs from the merge commit")
 	}
 }

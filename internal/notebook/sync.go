@@ -28,8 +28,22 @@ func (n *Notebook) remoteURL() (string, error) {
 
 // network runs a git command that talks to the remote.
 func (n *Notebook) network(url string, args ...string) (gitx.Result, error) {
-	result, err := n.run(gitx.Cmd{Args: args, Network: true, Interactive: n.Interactive})
+	result, err := n.run(n.networkCmd(url, gitx.Cmd{Args: args}))
 	return result, explain(err, url)
+}
+
+// networkCmd marks cmd as talking to the remote at url. A login in an HTTP(S)
+// URL is taken out of the arguments git hands its helper process and passed by
+// environment instead.
+func (n *Notebook) networkCmd(url string, cmd gitx.Cmd) gitx.Cmd {
+	cmd.Network, cmd.Interactive = true, n.Interactive
+	clean, credentials, found := remote.SplitCredentials(url)
+	if !found {
+		return cmd
+	}
+	cmd.Args = append([]string{"-c", "remote." + remoteName + ".url=" + clean}, cmd.Args...)
+	cmd.Credentials = &credentials
+	return cmd
 }
 
 // explain adds the way out of a failed login to a git error. Anything it has
@@ -58,21 +72,63 @@ func (n *Notebook) Fetch() (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	// Always an explicit refspec: `fetch.pruneTags` would delete local snapshots
-	// otherwise.
+	// Always explicit refspecs: `fetch.pruneTags` would delete local snapshots
+	// otherwise. The remote's tags land in a private namespace, not in
+	// `refs/tags`: git refuses to replace a local tag the remote has at another
+	// commit and fails the whole fetch, but a name taken on two machines must not
+	// hold up the notes.
 	tracking := trackingRef(branch)
-	_, err = n.run(gitx.Cmd{
-		Args:    []string{"fetch", "--quiet", "--tags", "--no-recurse-submodules", remoteName, "+refs/heads/" + branch + ":" + tracking},
-		Network: true, Interactive: n.Interactive,
-	})
+	_, err = n.run(n.networkCmd(url, gitx.Cmd{
+		Args: []string{
+			"fetch", "--quiet", "--no-tags", "--no-recurse-submodules", remoteName,
+			"+refs/heads/" + branch + ":" + tracking,
+			"+refs/tags/*:" + remoteTagsRef + "/*",
+		},
+	}))
 	if isMissingRemoteBranch(err) {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, explain(err, url)
 	}
+	if err := n.adoptRemoteTags(); err != nil {
+		return "", false, err
+	}
 	oid, err := n.read("rev-parse", "--verify", "--quiet", tracking)
 	return oid, oid != "", err
+}
+
+// remoteTagsRef is where a fetch leaves the remote's tags until adoptRemoteTags
+// has made the missing ones local.
+const remoteTagsRef = "refs/noda/remote-tags"
+
+// adoptRemoteTags creates the local tags the remote has and this notebook lacks,
+// and clears the private copies. A tag that exists here stays as it is, as
+// libgit2's autotag did.
+func (n *Notebook) adoptRemoteTags() error {
+	output, err := n.read("for-each-ref", "--format=%(objectname) %(refname)", remoteTagsRef)
+	if err != nil || output == "" {
+		return err
+	}
+	local, err := n.localTags()
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for _, tag := range local {
+		have[tag.name] = true
+	}
+	var script strings.Builder
+	for _, line := range strings.Split(output, "\n") {
+		oid, ref, _ := strings.Cut(line, " ")
+		name := strings.TrimPrefix(ref, remoteTagsRef+"/")
+		if !have[name] {
+			script.WriteString("create refs/tags/" + name + " " + oid + "\n")
+		}
+		script.WriteString("delete " + ref + "\n")
+	}
+	_, err = n.run(gitx.Cmd{Args: []string{"update-ref", "--stdin"}, Stdin: []byte(script.String())})
+	return err
 }
 
 func isMissingRemoteBranch(err error) bool {
@@ -102,6 +158,12 @@ func (n *Notebook) Pull() (string, error) {
 	if !found {
 		return fmt.Sprintf("pull: the remote has no `%s` branch yet", branch), nil
 	}
+	// HEAD is resolved once: everything below works from this commit, so one
+	// that lands meanwhile is refused by the old-value check, not overwritten.
+	head, err := n.headParents()
+	if err != nil {
+		return "", err
+	}
 	drift, err := n.Drift(branch)
 	if err != nil {
 		return "", err
@@ -110,26 +172,66 @@ func (n *Notebook) Pull() (string, error) {
 	case drift.Behind == 0:
 		return "pull: already up to date", nil
 	case drift.Ahead == 0:
-		return n.fastForward(incoming, drift.Behind)
+		return n.fastForward(head, incoming, drift.Behind)
 	}
-	return n.merge(branch, incoming, drift.Behind)
+	return n.merge(mergeRequest{head: head, branch: branch, incoming: incoming, count: drift.Behind})
 }
 
-func (n *Notebook) fastForward(incoming string, count int) (string, error) {
-	if _, err := n.run(gitx.Cmd{Args: []string{"reset", "--hard", "--quiet", incoming}}); err != nil {
+func (n *Notebook) fastForward(head []string, incoming string, count int) (string, error) {
+	err := n.advance(head, incoming, func() error {
+		_, err := n.run(gitx.Cmd{Args: updateRefArgs("pull: fast-forward", incoming, head)})
+		return err
+	})
+	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("pull: fast-forwarded %s to %s", plural(count, "commit"), Short(incoming)), nil
 }
 
+// updateRefArgs moves HEAD to oid, from the commit in head (none: unborn).
+func updateRefArgs(message, oid string, head []string) []string {
+	previous := strings.Repeat("0", len(oid))
+	if len(head) > 0 {
+		previous = head[0]
+	}
+	return []string{"update-ref", "-m", message, "HEAD", oid, previous}
+}
+
+// advance brings the index and working tree from head to target, then runs move
+// to point HEAD there. The tree goes first: if it fails (a locked file, a full
+// disk) HEAD has not moved and the next sync commits nothing that was not
+// there. `read-tree -m -u` refuses to overwrite a local change, so an edit
+// made during the fetch survives. When move fails the tree is put back.
+func (n *Notebook) advance(head []string, target string, move func() error) error {
+	forward := append([]string{"read-tree", "-m", "-u"}, append(head, target)...)
+	if _, err := n.run(gitx.Cmd{Args: forward}); err != nil {
+		return err
+	}
+	if err := move(); err != nil {
+		if len(head) > 0 {
+			_, _ = n.run(gitx.Cmd{Args: []string{"read-tree", "-m", "-u", target, head[0]}})
+		}
+		return err
+	}
+	return nil
+}
+
+type mergeRequest struct {
+	head     []string
+	branch   string
+	incoming string
+	count    int
+}
+
 // merge works in git's object store first (`merge-tree` touches neither the
 // index nor the working tree), so a conflict leaves nothing to roll back.
-func (n *Notebook) merge(branch, incoming string, count int) (string, error) {
-	// Renames are looked for, as libgit2 did; directory renames are not.
+func (n *Notebook) merge(r mergeRequest) (string, error) {
+	// Renames are looked for, as libgit2 did; directory renames are not. Two
+	// histories with no common root merge too, as they did there.
 	merged, err := n.run(gitx.Cmd{
 		Args: []string{
 			"-c", "merge.directoryRenames=false", "-c", "merge.renames=true",
-			"merge-tree", "--write-tree", "--name-only", "-z", "HEAD", incoming,
+			"merge-tree", "--write-tree", "--allow-unrelated-histories", "--name-only", "-z", r.head[0], r.incoming,
 		},
 		OKCodes: []int{0, 1},
 	})
@@ -139,25 +241,24 @@ func (n *Notebook) merge(branch, incoming string, count int) (string, error) {
 	tokens := strings.Split(string(merged.Stdout), "\x00")
 	if merged.Code == 1 {
 		return "", fmt.Errorf("pull: `%s` conflicts with the remote in %s — the merge was rolled back; resolve it with git in %s",
-			branch, strings.Join(conflictedFiles(tokens[1:]), ", "), n.Path)
+			r.branch, strings.Join(conflictedFiles(tokens[1:]), ", "), n.Path)
 	}
-	parents, err := n.headParents()
+	commit := treeCommit{
+		tree:    tokens[0],
+		parents: []string{r.head[0], r.incoming},
+		message: "merge: " + remoteName + "/" + r.branch,
+	}
+	written, err := n.writeCommit(commit)
 	if err != nil {
 		return "", err
 	}
-	_, err = n.commitTree(treeCommit{
-		tree:    tokens[0],
-		parents: append(parents, incoming),
-		message: "merge: " + remoteName + "/" + branch,
+	err = n.advance(r.head, written.oid, func() error {
+		return n.moveHead(written.oid, commit, written.who, written.signed)
 	})
 	if err != nil {
 		return "", err
 	}
-	// HEAD has moved; the index and the working tree follow.
-	if _, err := n.run(gitx.Cmd{Args: []string{"reset", "--hard", "--quiet", "HEAD"}}); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("pull: merged %s from %s/%s", plural(count, "commit"), remoteName, branch), nil
+	return fmt.Sprintf("pull: merged %s from %s/%s", plural(r.count, "commit"), remoteName, r.branch), nil
 }
 
 // conflictedFiles are the names `merge-tree --name-only -z` lists after the
@@ -228,7 +329,7 @@ func (n *Notebook) sendRefs(url string, refspecs []string) error {
 		"-c", "push.followTags=false", "-c", "push.gpgSign=false", "-c", "push.recurseSubmodules=no",
 		"push", "--porcelain", "--no-verify", remoteName,
 	}
-	result, err := n.run(gitx.Cmd{Args: append(args, refspecs...), Network: true, Interactive: n.Interactive, OKCodes: []int{0, 1}})
+	result, err := n.run(n.networkCmd(url, gitx.Cmd{Args: append(args, refspecs...), OKCodes: []int{0, 1}}))
 	if err != nil {
 		return explain(err, url)
 	}
