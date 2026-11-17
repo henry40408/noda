@@ -321,6 +321,29 @@ func TestBinaryTreatsABrokenPipeAsSuccess(t *testing.T) {
 	}
 }
 
+// The editor is a child of the binary. If noda ignored SIGPIPE, the child
+// would inherit that and `yes | head -1` would end with "Broken pipe".
+func TestBinaryLeavesSIGPIPEAtItsDefaultForChildren(t *testing.T) {
+	binary := buildBinary(t)
+	s := newSandbox(t)
+	s.ok(t, "init")
+	editor := filepath.Join(t.TempDir(), "editor.sh")
+	if err := os.WriteFile(editor, []byte("#!/bin/sh\nyes | head -1 >/dev/null\n"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	s.env["EDITOR"] = editor
+	command := exec.Command(binary, "add")
+	for name, value := range s.env {
+		command.Env = append(command.Env, name+"="+value)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	_ = command.Run() // the empty note is refused; only the editor's stderr matters
+	if strings.Contains(stderr.String(), "Broken pipe") || !strings.Contains(stderr.String(), "aborted") {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+}
+
 func withoutRustLog(environ []string) []string {
 	kept := make([]string, 0, len(environ))
 	for _, line := range environ {
