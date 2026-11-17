@@ -37,8 +37,10 @@ func Redact(url string) string {
 }
 
 // urlInText finds a URL inside prose such as git's stderr, where it sits in
-// quotes: `unable to access 'https://token@host/repo/'`.
-var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
+// quotes: `unable to access 'https://token@host/repo/'`. A `'` does not end the
+// match, because a password may hold one; the closing quote then rides along
+// unchanged, since only the userinfo is replaced.
+var urlInText = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"<>]+`)
 
 // RedactText applies Redact to every URL in text. Every git stderr passes
 // through it before it is shown or logged.

@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/henry40408/noda/internal/remote"
 )
 
 // Version is a git release.
@@ -164,7 +166,8 @@ type Cmd struct {
 	Stdin []byte
 	// ExtraEnv is set last, over everything else.
 	ExtraEnv map[string]string
-	// PassStderr copies git's stderr to Options.Stderr as well as capturing it.
+	// PassStderr copies git's stderr to Options.Stderr as well as capturing it,
+	// once the run has ended.
 	PassStderr bool
 	// ReadOnly keeps the run from taking optional locks.
 	ReadOnly bool
@@ -208,13 +211,15 @@ func (g *Git) Run(ctx context.Context, c Cmd) (Result, error) {
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	if c.PassStderr {
-		command.Stderr = io.MultiWriter(&stderr, g.stderr)
-	}
 
 	result := Result{}
 	err := command.Run()
-	result.Stdout, result.Stderr = stdout.Bytes(), stderr.Bytes()
+	// Redacted once, here: nothing downstream (an Error, a log line, `%#v`) can
+	// then leak a URL's secret, and what is passed through is redacted too.
+	result.Stdout, result.Stderr = stdout.Bytes(), []byte(remote.RedactText(stderr.String()))
+	if c.PassStderr && g.stderr != nil {
+		_, _ = g.stderr.Write(result.Stderr)
+	}
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
