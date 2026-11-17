@@ -2,23 +2,40 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 
-	"github.com/henry40408/noda/internal/version"
+	"golang.org/x/term"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	// Without this, a write to a closed stdout (`noda ls | head -1`) kills the
+	// process with the signal instead of returning EPIPE, which run treats as
+	// a normal end.
+	signal.Ignore(syscall.SIGPIPE)
+	os.Exit(run(process{
+		args:             os.Args[1:],
+		env:              environment(os.Environ()),
+		stdin:            os.Stdin,
+		stdout:           os.Stdout,
+		stderr:           os.Stderr,
+		stdinIsTerminal:  term.IsTerminal(int(os.Stdin.Fd())),
+		stdoutIsTerminal: term.IsTerminal(int(os.Stdout.Fd())),
+		stderrIsTerminal: term.IsTerminal(int(os.Stderr.Fd())),
+	}))
 }
 
-// run is separate from main so tests can call it without a process.
-func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "--version" || args[0] == "-V") {
-		fmt.Fprintf(stdout, "noda %s\n", version.String())
-		return 0
+// environment turns os.Environ's KEY=VALUE lines into a map. It is the one
+// place the process environment is read.
+func environment(lines []string) map[string]string {
+	env := make(map[string]string, len(lines))
+	for _, line := range lines {
+		name, value, found := strings.Cut(line, "=")
+		if found {
+			env[name] = value
+		}
 	}
-	fmt.Fprintln(stderr, "noda: this Go build only supports --version so far")
-	return 1
+	return env
 }
