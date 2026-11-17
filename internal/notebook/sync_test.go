@@ -7,6 +7,7 @@ import (
 	"net/http/cgi"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -386,23 +387,78 @@ func TestHTTPSErrorsNeverShowTheTokenInTheURL(t *testing.T) {
 	}
 }
 
+// tracedGit puts a `git` first on PATH that logs its arguments and runs the
+// real one with GIT_TRACE on, so the log holds what git itself spawns (the
+// remote helper, with its URL) and not only what noda asked for. gitx drops
+// GIT_TRACE from the environment, hence the wrapper.
+func tracedGit(t *testing.T, nb *Notebook) (log string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log = filepath.Join(dir, "trace")
+	body := "#!/bin/sh\necho \"git $*\" >> " + log + "\nGIT_TRACE=" + log + " exec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := nb.git.Getenv("PATH")
+	withEnv(t, nb, map[string]string{"PATH": dir + string(os.PathListSeparator) + path})
+	return log
+}
+
 func TestALoginInTheURLWorksAndNeverReachesGitsArguments(t *testing.T) {
 	nb := fixture(t, "behind")
-	url := httpRemote(t, nb, "u", "p@ss")
-	withLogin := strings.Replace(url, "http://", "http://u:p%40ss@", 1)
+	url := httpRemote(t, nb, "u", "SECRETpw")
+	withLogin := strings.Replace(url, "http://", "http://u:SECRETpw@", 1)
 	if err := nb.SetRemote(withLogin); err != nil {
 		t.Fatal(err)
 	}
-	cmd := nb.networkCmd(withLogin, gitx.Cmd{Args: []string{"fetch", remoteName}})
-	if strings.Contains(strings.Join(cmd.Args, " "), "p%40ss") || strings.Contains(strings.Join(cmd.Args, " "), "p@ss") {
-		t.Fatalf("the secret is in the arguments: %v", cmd.Args)
-	}
+	log := tracedGit(t, nb)
 	pulled, err := nb.Pull()
 	if got := mustSync(t, pulled, err); !strings.HasPrefix(got, "pull: fast-forwarded 2 commits") {
 		t.Fatalf("pull = %q", got)
 	}
+	trace, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(trace), "remote-http") {
+		t.Fatalf("the trace shows no remote helper:\n%s", trace)
+	}
+	if strings.Contains(string(trace), "SECRETpw") {
+		t.Fatalf("the secret is in a command line git ran:\n%s", trace)
+	}
 	if configured, _ := nb.configuredRemote(); configured != withLogin {
 		t.Fatalf("the remote was changed to %q", configured)
+	}
+}
+
+func TestPushWithALoginInTheURLSendsToOneRemoteOnly(t *testing.T) {
+	nb := fixture(t, "ahead")
+	url := httpRemote(t, nb, "u", "SECRETpw")
+	other := filepath.Join(t.TempDir(), "other.git")
+	gitOut(t, nb, "init", "--bare", "--quiet", other)
+	// A second URL on the remote: git pushes to all of them, so it receives the
+	// branch unless noda names the one repository itself.
+	gitOut(t, nb, "config", "remote.origin.url", other)
+	withLogin := strings.Replace(url, "http://", "http://u:SECRETpw@", 1)
+	gitOut(t, nb, "config", "--add", "remote.origin.url", withLogin)
+	log := tracedGit(t, nb)
+	if _, err := nb.Push(); err != nil {
+		t.Fatal(err)
+	}
+	remoteDir := filepath.Join(rootOf(nb), "remote.git")
+	if got, want := gitOut(t, nb, "-C", remoteDir, "rev-parse", "main"), gitOut(t, nb, "rev-parse", "main"); got != want {
+		t.Fatalf("the remote has %q, want %q", got, want)
+	}
+	if refs := gitOut(t, nb, "-C", other, "for-each-ref"); refs != "" {
+		t.Fatalf("the other URL received a push:\n%s", refs)
+	}
+	trace, _ := os.ReadFile(log)
+	if strings.Contains(string(trace), "SECRETpw") {
+		t.Fatalf("the secret is in a command line git ran:\n%s", trace)
 	}
 }
 

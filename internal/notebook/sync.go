@@ -26,22 +26,34 @@ func (n *Notebook) remoteURL() (string, error) {
 	return url, nil
 }
 
-// network runs a git command that talks to the remote.
+// network runs a git command that talks to the remote. args must end where the
+// repository goes: this adds it.
 func (n *Notebook) network(url string, args ...string) (gitx.Result, error) {
-	result, err := n.run(n.networkCmd(url, gitx.Cmd{Args: args}))
+	result, err := n.run(n.networkCmd(url, gitx.Cmd{Args: append(args, remoteTarget(url))}))
 	return result, explain(err, url)
 }
 
+// remoteTarget is the repository argument for a command that talks to the
+// remote at url. A URL with a login is passed without it, so git never hands the
+// secret to its helper process; `-c remote.origin.url=` could not replace the
+// configured URL, only add a second one that push would send to as well.
+func remoteTarget(url string) string {
+	clean, _, found := remote.SplitCredentials(url)
+	if !found {
+		return remoteName
+	}
+	return clean
+}
+
 // networkCmd marks cmd as talking to the remote at url. A login in an HTTP(S)
-// URL is taken out of the arguments git hands its helper process and passed by
-// environment instead.
+// URL is passed by environment to a credential helper; remoteTarget keeps it out
+// of the arguments.
 func (n *Notebook) networkCmd(url string, cmd gitx.Cmd) gitx.Cmd {
 	cmd.Network, cmd.Interactive = true, n.Interactive
-	clean, credentials, found := remote.SplitCredentials(url)
+	_, credentials, found := remote.SplitCredentials(url)
 	if !found {
 		return cmd
 	}
-	cmd.Args = append([]string{"-c", "remote." + remoteName + ".url=" + clean}, cmd.Args...)
 	cmd.Credentials = &credentials
 	return cmd
 }
@@ -80,7 +92,7 @@ func (n *Notebook) Fetch() (string, bool, error) {
 	tracking := trackingRef(branch)
 	_, err = n.run(n.networkCmd(url, gitx.Cmd{
 		Args: []string{
-			"fetch", "--quiet", "--no-tags", "--no-recurse-submodules", remoteName,
+			"fetch", "--quiet", "--no-tags", "--no-recurse-submodules", remoteTarget(url),
 			"+refs/heads/" + branch + ":" + tracking,
 			"+refs/tags/*:" + remoteTagsRef + "/*",
 		},
@@ -327,7 +339,7 @@ func (n *Notebook) Push() (string, error) {
 func (n *Notebook) sendRefs(url string, refspecs []string) error {
 	args := []string{
 		"-c", "push.followTags=false", "-c", "push.gpgSign=false", "-c", "push.recurseSubmodules=no",
-		"push", "--porcelain", "--no-verify", remoteName,
+		"push", "--porcelain", "--no-verify", remoteTarget(url),
 	}
 	result, err := n.run(n.networkCmd(url, gitx.Cmd{Args: append(args, refspecs...), OKCodes: []int{0, 1}}))
 	if err != nil {
@@ -410,7 +422,7 @@ func (n *Notebook) localTags() ([]localTag, error) {
 // remoteTags is the remote's advertisement: one extra round trip, made only
 // when there is a snapshot to send.
 func (n *Notebook) remoteTags(url string) (map[string]string, error) {
-	result, err := n.network(url, "ls-remote", "--tags", remoteName)
+	result, err := n.network(url, "ls-remote", "--tags")
 	if err != nil {
 		return nil, err
 	}
