@@ -6,7 +6,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -896,5 +898,293 @@ func TestPPinsTheNoteUnderTheCursorAndTheSecondPressLetsItDown(t *testing.T) {
 	perform(t, env, app, action)
 	if app.NoteOf(id).Note.IsPinned() {
 		t.Fatal("the second press left it pinned")
+	}
+}
+
+// The prompt runs the same command as the key and says which way it goes.
+func TestThePromptPinsAndUnpinsTheNoteItIsAimedAt(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+	id := app.Selected().ID
+
+	for _, step := range []struct {
+		line   string
+		pinned bool
+	}{{"pin", true}, {"unpin", false}} {
+		action := commandLine(app, step.line)
+		if action == nil || action.Kind != ActPin || action.Key != id || action.Pinned != step.pinned || action.Touch != cmd.TouchStamp {
+			t.Fatalf("the prompt runs %s: %+v", step.line, action)
+		}
+		perform(t, env, app, action)
+		app.OnKey(Rune('g'))
+	}
+	if app.NoteOf(id).Note.IsPinned() {
+		t.Fatal("still pinned")
+	}
+}
+
+func TestACommitOnANotesLogWritesARestoreThatPutsTheNoteBack(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	app.OnKey(Rune('j'))
+	id := app.Selected().ID
+	perform(t, env, app, &Action{Kind: ActTag, Key: id, Changes: []string{"+later"}, Touch: cmd.TouchStamp})
+	if !hasLineWith(screen(env, app), "later") {
+		t.Fatal("the tag shows")
+	}
+	// `l` on the listing would open the notebook's history, not the note's.
+	app.OnKey(key(CodeEnter))
+	app.OnKey(Rune('l'))
+	if log := screen(env, app); !hasLineWith(log, "tag: meeting-notes") {
+		t.Fatalf("%q", log)
+	}
+	// The row below the newest is the note before the tag.
+	app.OnKey(Rune('j'))
+	if action := app.OnKey(key(CodeEnter)); action != nil {
+		t.Fatalf("nothing runs yet: %+v", action)
+	}
+	if written := screen(env, app); !hasLineWith(written, "restore", id) {
+		t.Fatalf("%q", written)
+	}
+	perform(t, env, app, app.OnKey(key(CodeEnter)))
+	if tags := app.NoteOf(id).Note.Tags; slices.Contains(tags, "later") {
+		t.Fatalf("%v", tags)
+	}
+	// Restoring is a new commit; nothing is rewritten.
+	if commits(t, env) <= 7 {
+		t.Fatal("no new commit")
+	}
+}
+
+func TestTheDeletedScreenNamesTheRevisionThatBringsANoteBack(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+	if app.Total() != 3 {
+		t.Fatal("the trip was deleted")
+	}
+	gone := goTo(t, env, app, "deleted")
+	if !hasLineWith(gone, "Deleted", "  1") || !hasLineWith(gone, "trip-plan", "Trip plan") {
+		t.Fatalf("%q", gone)
+	}
+	// Enter fills in the restore; a second Enter runs it, because landing on a
+	// row is not agreeing to bring a note back.
+	app.OnKey(key(CodeEnter))
+	if written := screen(env, app); !hasLineWith(written, "restore ") || app.Total() != 3 {
+		t.Fatalf("nothing has happened yet: %q", written)
+	}
+	perform(t, env, app, app.OnKey(key(CodeEnter)))
+	if app.Total() != 4 {
+		t.Fatalf("%d notes", app.Total())
+	}
+	// The deleted screen is now empty, which is how the restore shows.
+	if emptied := screen(env, app); !hasLineWith(emptied, "nothing has been deleted") {
+		t.Fatalf("%q", emptied)
+	}
+	app.OnKey(key(CodeEsc))
+	if listing := screen(env, app); !hasLineWith(listing, "Trip plan") {
+		t.Fatalf("%q", listing)
+	}
+}
+
+func TestTheBlameScreenCreditsTheBodyAndLeavesTheFrontmatterOut(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	app.OnKey(Rune('j'))
+	app.OnKey(Rune('B'))
+	blame := screen(env, app)
+	// `updated` changes on every edit, so blaming frontmatter would credit
+	// every line to the latest commit.
+	if !hasLineWith(blame, "Blame  ", "Meeting notes") || !hasLineWith(blame, "book a room") || hasLineWith(blame, "updated:") {
+		t.Fatalf("%q", blame)
+	}
+}
+
+func TestTheDiffScreenShowsWhatHasNotBeenCommitted(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	// Changed from another window; the TUI watches no files.
+	file := filepath.Join(notebookOf(t, env).Path, app.Selected().ID+"-budget-review.md")
+	was, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, append(was, "a line nobody committed\n"...), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	patch := goTo(t, env, app, "diff")
+	if !hasLineWith(patch, "Diff") || !hasLineWith(patch, "@@") || !hasLineWith(patch, "+a line nobody committed") {
+		t.Fatalf("%q", patch)
+	}
+}
+
+func TestTheNotebooksScreenMovesTheWholeSession(t *testing.T) {
+	env := workedNotebook(t)
+	if _, err := cmd.NotebookAdd(env, "work", ""); err != nil {
+		t.Fatal(err)
+	}
+	app := load(t, env)
+	if app.Total() != 3 {
+		t.Fatalf("%d notes", app.Total())
+	}
+	listed := goTo(t, env, app, "notebooks")
+	if !hasLineWith(listed, "Notebooks  "+config.DefaultNotebook+"  2") || !hasLineWith(listed, "•", config.DefaultNotebook) {
+		t.Fatalf("%q", listed)
+	}
+	// A different notebook is a different session: header, notes and stack all change.
+	app.OnKey(Rune('j'))
+	perform(t, env, app, app.OnKey(key(CodeEnter)))
+	moved := screen(env, app)
+	if app.Total() != 0 || !hasLineWith(moved, "Notebook:", "work") || !hasLineWith(moved, "no notes yet") || strings.Join(app.Crumbs(), ",") != "notes" {
+		t.Fatalf("%q", moved)
+	}
+}
+
+func TestAScreenThatCannotBeFilledClosesAndSaysWhy(t *testing.T) {
+	env := threeNotes(t)
+	app := load(t, env)
+
+	// The file is gone but the id is still on the listing.
+	id := app.Selected().ID
+	if err := os.Remove(filepath.Join(notebookOf(t, env).Path, id+"-budget-review.md")); err != nil {
+		t.Fatal(err)
+	}
+	app.OnKey(Rune('B'))
+	after := screen(env, app)
+	// Back on the listing, not an empty screen behind a card about to be dismissed.
+	if app.Depth() != 1 || !hasLineWith(after, " no ") {
+		t.Fatalf("depth %d: %q", app.Depth(), after)
+	}
+}
+
+// titlesShown are the listing's titles, top to bottom, so order is checked
+// without depending on ids.
+func titlesShown(rows []string) []string {
+	type placed struct {
+		at    int
+		title string
+	}
+	var found []placed
+	for _, title := range []string{"Budget review", "Meeting notes", "Reading list", "Trip plan"} {
+		for at, row := range rows {
+			if strings.Contains(row, title) {
+				found = append(found, placed{at, title})
+				break
+			}
+		}
+	}
+	slices.SortFunc(found, func(a, b placed) int { return a.at - b.at })
+	titles := make([]string, len(found))
+	for i, one := range found {
+		titles[i] = one.title
+	}
+	return titles
+}
+
+func TestSAndRPutTheListingInTheOrdersSortAndRAlreadyName(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+	bySlug := titlesShown(screen(env, app))
+	if want := []string{"Budget review", "Meeting notes", "Reading list"}; !slices.Equal(bySlug, want) {
+		t.Fatalf("by slug, which is what a walk produces: %v", bySlug)
+	}
+	// `R` reverses the walk's own order, as `ls -r` does.
+	app.OnKey(Rune('R'))
+	turned := screen(env, app)
+	if want := []string{"Reading list", "Meeting notes", "Budget review"}; !hasLineWith(turned, "by slug reversed") || !slices.Equal(titlesShown(turned), want) {
+		t.Fatalf("%q", turned)
+	}
+	app.OnKey(Rune('R'))
+
+	// Which order each key produces is tested in the sort's own tests; here,
+	// only that `S` reaches every order and the band names it. Row order is not
+	// asserted for time orders: these notes share a second, so ties fall back
+	// to random ids.
+	for _, order := range []string{"by created", "by updated", "by title"} {
+		app.OnKey(Rune('S'))
+		sorted := screen(env, app)
+		stillThere := titlesShown(sorted)
+		slices.Sort(stillThere)
+		if !hasLineWith(sorted, order) || !slices.Equal(stillThere, bySlug) {
+			t.Fatalf("%s, reordering lost a note: %q", order, sorted)
+		}
+	}
+	app.OnKey(Rune('S'))
+	back := screen(env, app)
+	if hasLineWith(back, "by ") || !slices.Equal(titlesShown(back), bySlug) {
+		t.Fatalf("%q", back)
+	}
+}
+
+func TestCtrlWAddsTheColumnsLsLAddsAndPutsThemWhereItPutsThem(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+	if short := screen(env, app); hasLineWith(short, "budget-review") {
+		t.Fatalf("%q", short)
+	}
+	app.OnKey(CtrlKey('w'))
+	// At 90 columns the title is squeezed to its floor (the next test).
+	wide := screenAt(env, app, 120, 28)
+	// The long row extends the short one rather than rearranging it; a row that
+	// changed shape should say why.
+	if !hasLineWith(wide, "Budget review", "budget-review", "[work]") || !hasLineWith(wide, "Meeting notes", "meeting-notes") || !hasLineWith(wide, "wide") {
+		t.Fatalf("%q", wide)
+	}
+}
+
+func TestTheWideRowGivesWayFromTheRightRatherThanStarvingTheTitle(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+	app.OnKey(CtrlKey('w'))
+
+	// The id and title name a note; the other columns are what give way.
+	narrow := screenAt(env, app, 46, 28)
+	for _, title := range []string{"Budget rev", "Meeting no", "Reading li"} {
+		if !hasLineWith(narrow, title) {
+			t.Errorf("%s: %q", title, narrow)
+		}
+	}
+	if strings.Contains(strings.Join(narrow, "\n"), "2026-") {
+		t.Fatalf("the timestamps went before the title did: %q", narrow)
+	}
+}
+
+func TestADigitNarrowsToATagAndTheTagsScreenSaysWhichDigit(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+
+	tags := goTo(t, env, app, "tags")
+	if !hasLineWith(tags, "1", "work", "2 notes") || !hasLineWith(tags, "2", "q3", "1 note") {
+		t.Fatalf("%q", tags)
+	}
+	app.OnKey(Rune('1'))
+	if narrowed := screen(env, app); !hasLineWith(narrowed, "Notes  tag:work  2") || strings.Join(app.Crumbs(), ",") != "notes" {
+		t.Fatalf("%q", narrowed)
+	}
+	app.OnKey(Rune('0'))
+	if all := screen(env, app); !hasLineWith(all, "Notes  all  3") {
+		t.Fatalf("%q", all)
+	}
+}
+
+func TestCtrlGGivesTheCrumbRowToTheNotes(t *testing.T) {
+	env := workedNotebook(t)
+	app := load(t, env)
+	app.OnKey(key(CodeEnter))
+	// By position, not text: the header also says "notes". The trail is the
+	// band above the status line.
+	trail := func(rows []string) string { return strings.TrimSpace(rows[len(rows)-2]) }
+
+	with := screen(env, app)
+	if !strings.HasPrefix(trail(with), "notes") {
+		t.Fatalf("%q", with)
+	}
+	app.OnKey(CtrlKey('g'))
+	without := screen(env, app)
+	// The row went to the notes, and the band still names the screen.
+	if trail(without) != "" || !hasLineWith(without, "Note  ") {
+		t.Fatalf("%q", without)
 	}
 }
