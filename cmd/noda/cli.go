@@ -14,10 +14,12 @@ type flagSpec struct {
 	repeat bool
 	// hyphenValue lets the value start with `-`, as a note body may.
 	hyphenValue bool
-	env         string
-	fallback    string
-	allowed     []string
-	help        string
+	// number marks a numeric value: a refused `-5` then comes with a tip.
+	number   bool
+	env      string
+	fallback string
+	allowed  []string
+	help     string
 	// requires and conflicts name other flags (or, for requires, a positional).
 	requires  []string
 	conflicts []string
@@ -241,10 +243,40 @@ func (s *parseState) takeLong(args []string, i int) (int, error) {
 }
 
 func (s *parseState) takeValue(args []string, i int, spec *flagSpec) (int, error) {
-	if i+1 >= len(args) || (!spec.hyphenValue && strings.HasPrefix(args[i+1], "-") && args[i+1] != "-") {
+	if i+1 >= len(args) {
 		return i, s.missingValue(spec)
 	}
-	return i + 1, s.set(spec, args[i+1])
+	next := args[i+1]
+	if spec.hyphenValue || !strings.HasPrefix(next, "-") || next == "-" {
+		return i + 1, s.set(spec, next)
+	}
+	if s.isKnownOption(next) {
+		return i, s.missingValue(spec)
+	}
+	return i, s.unexpectedOption(spec, next)
+}
+
+// isKnownOption says arg names something this command takes: clap then calls
+// the flag before it valueless, where an unknown one is an unexpected argument.
+func (s *parseState) isKnownOption(arg string) bool {
+	if arg == "--" || arg == "-h" {
+		return true
+	}
+	if strings.HasPrefix(arg, "--") {
+		name, _, _ := strings.Cut(arg[2:], "=")
+		return name == "help" || s.findLong(name) != nil
+	}
+	return s.findShort(arg[1]) != nil
+}
+
+// unexpectedOption is a value that looks like an option. clap suggests `--`
+// only for a number, where `-5` is most likely meant as one.
+func (s *parseState) unexpectedOption(spec *flagSpec, arg string) error {
+	message := fmt.Sprintf("unexpected argument '%s' found", arg)
+	if spec.number {
+		message += fmt.Sprintf("\n\n  tip: to pass '%s' as a value, use '-- %s'", arg, arg)
+	}
+	return s.fail("%s", message)
 }
 
 // missingValue is also what clap says for an empty value where only a fixed

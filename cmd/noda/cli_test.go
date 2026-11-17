@@ -70,8 +70,17 @@ func TestHyphenValuesAreAllowedWhereTheyWereInClap(t *testing.T) {
 	if !slices.Equal(line.args["changes"], []string{"+a", "-b"}) {
 		t.Fatalf("changes %q", line.args["changes"])
 	}
-	if got := parseError(t, "log", "-n", "-5"); !strings.Contains(got, "a value is required for '--max-count <COUNT>'") {
+	want := "unexpected argument '-5' found\n\n  tip: to pass '-5' as a value, use '-- -5'"
+	if got := parseError(t, "log", "-n", "-5"); got != want {
 		t.Fatalf("a hyphen value is refused where it was: %q", got)
+	}
+	if got := parseError(t, "ls", "--tag", "-x"); got != "unexpected argument '-x' found" {
+		t.Fatalf("no tip for a text value: %q", got)
+	}
+	for _, args := range [][]string{{"log", "-n", "--help"}, {"log", "-n", "-h"}, {"log", "-n", "--"}, {"ls", "--tag", "--json"}, {"ls", "--tag", "-q"}} {
+		if got := parseError(t, args...); !strings.HasPrefix(got, "a value is required for '--") {
+			t.Errorf("%v: a known option leaves the flag valueless: %q", args, got)
+		}
 	}
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/henry40408/noda/internal/cmd"
@@ -184,15 +183,17 @@ func sortOf(name string) cmd.Sort {
 
 func runLog(e cmd.Env, line parsed) (string, error) {
 	limit := 0
-	if text := line.value("max-count"); text != "" {
-		count, err := strconv.ParseUint(text, 10, 31)
+	if line.has("max-count") {
+		text := line.value("max-count")
+		count, err := parseCount(text)
 		if err != nil {
 			return "", usageError{
-				message: fmt.Sprintf("invalid value '%s' for '--max-count <COUNT>': invalid digit found in string", text),
+				message: fmt.Sprintf("invalid value '%s' for '--max-count <COUNT>': %s", text, err),
 				usage:   usageLine(append([]string{"noda"}, line.path...), line.spec),
 			}
 		}
-		limit = int(count)
+		// Rust showed one commit for 0, where a limit of 0 would mean none.
+		limit = max(count, 1)
 	}
 	return cmd.Log(e, line.arg("note"), limit)
 }

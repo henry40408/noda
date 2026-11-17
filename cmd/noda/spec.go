@@ -72,7 +72,7 @@ func buildSpec() *commandSpec {
 				}},
 			{name: "log", about: "Show commit history for the notebook, or for one note.",
 				args:  []argSpec{{name: "note", shown: "[NOTE]"}},
-				flags: []flagSpec{{long: "max-count", short: 'n', value: "COUNT", help: "Show at most this many commits."}}},
+				flags: []flagSpec{{long: "max-count", short: 'n', value: "COUNT", number: true, help: "Show at most this many commits."}}},
 			{name: "backlinks", about: "List the notes that link to a note or a file. Reads every note's body, so it costs what `doctor --links` costs.",
 				args: []argSpec{{name: "key", required: true}},
 				flags: []flagSpec{
