@@ -130,7 +130,7 @@ func (s *parseState) run(args []string) (parsed, error) {
 func (s *parseState) take(args []string, i int) (int, error) {
 	arg := args[i]
 	switch {
-	case s.rest || s.hyphenNext():
+	case s.rest || (s.hyphenNext() && !s.isOptionBeforeFirstValue(arg)):
 		return i, s.addPositional(arg)
 	case arg == "--":
 		s.rest = true
@@ -181,6 +181,24 @@ func (s *parseState) hyphenNext() bool {
 	}
 	slot := s.slotFor(len(s.positional))
 	return slot != nil && slot.hyphen
+}
+
+// isOptionBeforeFirstValue is clap's rule for a hyphen-tolerant argument: until
+// it has its first value, `--`, `-h`, `--help` and the command's own long
+// flags are still options. Afterwards every argument is a value.
+func (s *parseState) isOptionBeforeFirstValue(arg string) bool {
+	slot := s.slotFor(len(s.positional))
+	if len(s.out.args[slot.name]) > 0 {
+		return false
+	}
+	if arg == "--" || arg == "-h" {
+		return true
+	}
+	if !strings.HasPrefix(arg, "--") {
+		return false
+	}
+	name, _, _ := strings.Cut(arg[2:], "=")
+	return name == "help" || s.findLong(name) != nil
 }
 
 // slotFor is the argument the n-th positional fills.

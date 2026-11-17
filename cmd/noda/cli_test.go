@@ -75,6 +75,33 @@ func TestHyphenValuesAreAllowedWhereTheyWereInClap(t *testing.T) {
 	}
 }
 
+func TestOptionsStillCountBeforeAHyphenArgumentHasItsFirstValue(t *testing.T) {
+	line := parse(t, "tag", "n", "--no-touch", "+x")
+	if !line.has("no-touch") || !slices.Equal(line.args["changes"], []string{"+x"}) {
+		t.Fatalf("--no-touch before the tags: %+v", line)
+	}
+	line = parse(t, "tag", "n", "--", "-x")
+	if !slices.Equal(line.args["changes"], []string{"-x"}) {
+		t.Fatalf("`--` escapes: %+v", line)
+	}
+	// Once the first tag is in, everything is a tag, `-h` and `--help` too.
+	line = parse(t, "tag", "n", "+a", "-h", "--help", "--no-touch")
+	if line.has("no-touch") || len(line.args["changes"]) != 4 {
+		t.Fatalf("after the first tag: %+v", line)
+	}
+	for _, args := range [][]string{{"tag", "n", "--help"}, {"tag", "n", "-h"}, {"search", "--help"}, {"search", "-h"}, {"tag", "n", "--no-touch", "-h"}} {
+		_, err := parseCommandLine(buildSpec(), args, lookupIn(nil))
+		var request helpRequest
+		if !errors.As(err, &request) || request.text == "" {
+			t.Errorf("%v: want help, got %v", args, err)
+		}
+	}
+	// Only the exact `-h` asks for help; `-hx` is a tag, as in clap.
+	if got := parse(t, "search", "-hx").args["query"]; !slices.Equal(got, []string{"-hx"}) {
+		t.Fatalf("query %q", got)
+	}
+}
+
 func TestRelationsBetweenFlags(t *testing.T) {
 	cases := map[string][]string{
 		"the argument '--json' cannot be used with '--quiet'":              {"ls", "--json", "-q"},
