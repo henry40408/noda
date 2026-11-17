@@ -183,6 +183,45 @@ func TestAFlagMayFollowThePositionalsExceptAfterTags(t *testing.T) {
 	}
 }
 
+func TestAnEmptyValueIsAValueNotAnAbsentOne(t *testing.T) {
+	s := newSandbox(t)
+	s.ok(t, "init")
+	s.ok(t, "add", "Alpha", "-c", "x", "--tag", "t")
+	source := filepath.Join(t.TempDir(), "f.txt")
+	if err := os.WriteFile(source, []byte("hi"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		want string
+		args []string
+	}{
+		{"invalid note reference:", []string{"path", ""}},
+		{"invalid note reference:", []string{"log", ""}},
+		{"invalid note reference:", []string{"diff", ""}},
+		{"invalid notebook name:", []string{"ls", "--notebook="}},
+		{"invalid notebook name:", []string{"deleted", "--notebook="}},
+		{"invalid notebook name:", []string{"clone", "somewhere", ""}},
+		{"a file needs a name", []string{"file", "add", "--as=", source}},
+		{"cannot set empty URL", []string{"clone", "", "nb"}},
+		{"cannot set empty URL", []string{"notebook", "add", "nb2", "--remote="}},
+	} {
+		got := s.run(c.args...)
+		if got.code != 1 || !strings.Contains(got.stderr, c.want) || got.stdout != "" {
+			t.Errorf("%v: %+v", c.args, got)
+		}
+	}
+	// Rust created the notebook before it refused the remote.
+	if got := s.ok(t, "notebook", "ls"); !strings.Contains(got, "nb2") {
+		t.Errorf("notebook ls: %q", got)
+	}
+	if got := s.run("ls", "--tag="); got.code != 0 || got.stdout != "" {
+		t.Errorf("--tag= lists nothing: %+v", got)
+	}
+	if got := s.ok(t, "ls", "--tag=", "--json"); !strings.Contains(got, `"notes":[]`) || !strings.Contains(got, `"files":[]`) {
+		t.Errorf("--tag= --json: %s", got)
+	}
+}
+
 func TestConfigThroughTheCommandLine(t *testing.T) {
 	s := newSandbox(t)
 	s.ok(t, "init")

@@ -102,6 +102,28 @@ func TestOptionsStillCountBeforeAHyphenArgumentHasItsFirstValue(t *testing.T) {
 	}
 }
 
+func TestAnEmptyValueWhereOnlyAFixedSetIsAllowedIsNoValue(t *testing.T) {
+	for _, args := range [][]string{{"ls", "--sort="}, {"ls", "--sort", ""}, {"web", "--log-format="}} {
+		got := parseError(t, args...)
+		if !strings.HasPrefix(got, "a value is required for '--") || !strings.Contains(got, "\n  [possible values: ") {
+			t.Errorf("%v: %q", args, got)
+		}
+	}
+	line := parse(t, "ls", "--tag=")
+	if !line.givenEmpty("tag") || !line.has("tag") {
+		t.Fatalf("--tag= is given and empty: %+v", line)
+	}
+	if line = parse(t, "ls"); line.givenEmpty("tag") || line.has("tag") {
+		t.Fatalf("an absent --tag is not empty: %+v", line)
+	}
+	if line = parse(t, "path", ""); !line.givenEmpty("key") {
+		t.Fatalf("an empty argument is given: %+v", line)
+	}
+	if line = parse(t, "path"); line.givenEmpty("key") {
+		t.Fatalf("an absent argument is not empty: %+v", line)
+	}
+}
+
 func TestARepeatedSwitchIsAUsageError(t *testing.T) {
 	for want, args := range map[string][]string{
 		"the argument '--quiet' cannot be used multiple times":    {"ls", "-qq"},

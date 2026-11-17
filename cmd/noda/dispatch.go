@@ -24,7 +24,7 @@ func handlers() map[string]handler {
 		"init":   func(e cmd.Env, _ parsed) (string, error) { return cmd.Init(e) },
 		"readme": func(e cmd.Env, l parsed) (string, error) { return cmd.Readme(e, l.has("force")) },
 		"add":    runAdd,
-		"ls":     runLs,
+		"ls":     refuseEmptyNotebook(runLs),
 		"show":   func(e cmd.Env, l parsed) (string, error) { return cmd.Show(e, l.arg("note")) },
 		"edit": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Edit(e, l.arg("note"), touchOf(l))
@@ -42,20 +42,24 @@ func handlers() map[string]handler {
 		"doctor": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Doctor(e, cmd.DoctorOptions{DryRun: l.has("dry-run"), Links: l.has("links"), Times: l.has("times")})
 		},
-		"path":   func(e cmd.Env, l parsed) (string, error) { return cmd.Path(e, l.arg("key")) },
+		"path": refuseEmptyNoteReference("key", func(e cmd.Env, l parsed) (string, error) {
+			return cmd.Path(e, l.arg("key"))
+		}),
 		"search": func(e cmd.Env, l parsed) (string, error) { return cmd.Search(e, l.args["query"]) },
 		"tui":    notYet("tui"),
 		"web":    runWeb,
-		"log":    runLog,
+		"log":    refuseEmptyNoteReference("note", runLog),
 		"backlinks": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Backlinks(e, l.arg("key"), formatOf(l))
 		},
 		"todo":  func(e cmd.Env, l parsed) (string, error) { return cmd.Todo(e, l.has("json")) },
 		"blame": func(e cmd.Env, l parsed) (string, error) { return cmd.Blame(e, l.arg("note")) },
-		"diff":  func(e cmd.Env, l parsed) (string, error) { return cmd.Diff(e, l.arg("note"), l.has("remote")) },
-		"deleted": func(e cmd.Env, l parsed) (string, error) {
+		"diff": refuseEmptyNoteReference("note", func(e cmd.Env, l parsed) (string, error) {
+			return cmd.Diff(e, l.arg("note"), l.has("remote"))
+		}),
+		"deleted": refuseEmptyNotebook(func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Deleted(e, l.value("notebook"), l.has("json"))
-		},
+		}),
 		"snapshot": runSnapshot,
 		"restore": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Restore(e, l.arg("note"), l.arg("commit"), touchOf(l))
@@ -64,19 +68,19 @@ func handlers() map[string]handler {
 		"import tiddlywiki": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.ImportTiddlywiki(e, l.args["files"], !l.has("no-convert"))
 		},
-		"file add": func(e cmd.Env, l parsed) (string, error) { return cmd.FileAdd(e, l.args["paths"], l.value("as")) },
+		"file add": runFileAdd,
 		"file mv": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.FileMv(e, l.arg("old"), l.arg("new"), l.has("update-links"))
 		},
 		"file rm":      func(e cmd.Env, l parsed) (string, error) { return cmd.FileRm(e, l.arg("name")) },
-		"notebook add": func(e cmd.Env, l parsed) (string, error) { return cmd.NotebookAdd(e, l.arg("name"), l.value("remote")) },
+		"notebook add": runNotebookAdd,
 		"notebook ls":  func(e cmd.Env, _ parsed) (string, error) { return cmd.NotebookLs(e) },
 		"notebook rm": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.NotebookRm(e, l.arg("name"), l.has("force"))
 		},
 		"notebook rename":  func(e cmd.Env, l parsed) (string, error) { return cmd.NotebookRename(e, l.arg("old"), l.arg("new")) },
 		"notebook current": func(e cmd.Env, _ parsed) (string, error) { return cmd.NotebookCurrent(e) },
-		"clone":            func(e cmd.Env, l parsed) (string, error) { return cmd.Clone(e, l.arg("url"), l.arg("name")) },
+		"clone":            runClone,
 		"remote set":       func(e cmd.Env, l parsed) (string, error) { return cmd.RemoteSet(e, l.arg("url")) },
 		"remote show":      func(e cmd.Env, _ parsed) (string, error) { return cmd.RemoteShow(e) },
 		"sync":             func(e cmd.Env, _ parsed) (string, error) { return cmd.Sync(e) },
@@ -143,7 +147,7 @@ func runAdd(e cmd.Env, line parsed) (string, error) {
 func runLs(e cmd.Env, line parsed) (string, error) {
 	options := cmd.List{
 		Notebook: line.value("notebook"),
-		Tag:      line.value("tag"),
+		Tag:      tagOf(line),
 		Long:     line.has("long"),
 		Reverse:  line.has("reverse"),
 		Null:     line.has("null"),
@@ -157,6 +161,13 @@ func runLs(e cmd.Env, line parsed) (string, error) {
 		options.Only = cmd.OnlyFiles
 	}
 	return cmd.Ls(e, options)
+}
+
+func tagOf(line parsed) string {
+	if line.givenEmpty("tag") {
+		return neverATag
+	}
+	return line.value("tag")
 }
 
 func sortOf(name string) cmd.Sort {

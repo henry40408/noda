@@ -242,9 +242,19 @@ func (s *parseState) takeLong(args []string, i int) (int, error) {
 
 func (s *parseState) takeValue(args []string, i int, spec *flagSpec) (int, error) {
 	if i+1 >= len(args) || (!spec.hyphenValue && strings.HasPrefix(args[i+1], "-") && args[i+1] != "-") {
-		return i, s.fail("a value is required for '--%s <%s>' but none was supplied", spec.long, spec.value)
+		return i, s.missingValue(spec)
 	}
 	return i + 1, s.set(spec, args[i+1])
+}
+
+// missingValue is also what clap says for an empty value where only a fixed
+// set is allowed: the empty string is no value at all there.
+func (s *parseState) missingValue(spec *flagSpec) error {
+	message := fmt.Sprintf("a value is required for '--%s <%s>' but none was supplied", spec.long, spec.value)
+	if len(spec.allowed) > 0 {
+		message += "\n  [possible values: " + strings.Join(spec.allowed, ", ") + "]"
+	}
+	return s.fail("%s", message)
 }
 
 func (s *parseState) takeShort(args []string, i int) (int, error) {
@@ -299,6 +309,9 @@ func (s *parseState) findShort(letter byte) *flagSpec {
 }
 
 func (s *parseState) set(spec *flagSpec, value string) error {
+	if len(spec.allowed) > 0 && value == "" {
+		return s.missingValue(spec)
+	}
 	if len(spec.allowed) > 0 && !contains(spec.allowed, value) {
 		return s.fail("invalid value '%s' for '--%s <%s>'\n  [possible values: %s]",
 			value, spec.long, spec.value, strings.Join(spec.allowed, ", "))
