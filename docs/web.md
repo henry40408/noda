@@ -17,18 +17,18 @@ noda is at http://127.0.0.1:8080
 
 The log goes to **stderr**, so the address stays on stdout where noda puts a command's answer.
 
-`RUST_LOG` decides what is on it. The default, `error,noda=info`, logs nothing per request:
-only refusals, failures, and requests slower than a second. `RUST_LOG=noda=debug` turns on a
-line per request; `RUST_LOG=noda::web::log=debug` gives the requests alone. `--log-format json`
-(or `NODA_LOG_FORMAT=json`) writes one JSON object per line.
+`NODA_LOG_LEVEL` decides what is on it: `debug`, `info`, `warn` or `error`, default `info`. It is an
+environment variable only; there is no flag. At the default nothing is logged per request: only
+refusals, failures, and requests slower than a second. `NODA_LOG_LEVEL=debug` turns on a line per
+request. `--log-format json` (or `NODA_LOG_FORMAT=json`) writes one JSON object per line. An
+unknown level is an error at startup rather than a silent default.
 
-`RUST_LOG` is applied *on top of* the default, so a typo costs you the setting and not the log.
-A bare level is the exception and replaces it: `RUST_LOG=off` is off.
+`RUST_LOG`, which the Rust releases read, is retired: noda refuses to start while it is set.
 
 ```
-$ RUST_LOG=noda=debug noda web
+$ NODA_LOG_LEVEL=debug noda web
 noda is at http://127.0.0.1:8080
-… DEBUG noda::web::log: request finished event="http.request" method=GET
+… level=DEBUG msg="request finished" event=http.request method=GET
   route="/nb/{book}/n/{key}" status=200 elapsed=1.78ms elapsed_ms=1.785
 ```
 
@@ -98,10 +98,10 @@ livenessProbe:
   httpGet: { path: /health, port: 8080 }
 ```
 
-The image is distroless and holds only the binary, so a Dockerfile `HEALTHCHECK` or Compose
-`test:` has nothing to make the request with. Probes from outside — Kubernetes' `httpGet`, a
+The image holds git and the OpenSSH client but no `curl` or `wget`, so a Dockerfile `HEALTHCHECK`
+or Compose `test:` has nothing to make the request with. Probes from outside — Kubernetes' `httpGet`, a
 load balancer, an uptime monitor — work as written. It is logged like any request: only under
-`RUST_LOG=noda=debug`, as `route="/health"`.
+`NODA_LOG_LEVEL=debug`, as `route="/health"`.
 
 ## Writing
 
@@ -291,7 +291,7 @@ an ordered listing falls from 74,163 bytes to 4,043. It was chosen by costing a 
 
 Sending only the new order would have saved 2.4 KB more at the cost of a new fragment vocabulary
 and a client that rewrites rows, so the protocol stayed as it was. The script cannot reorder the
-rows itself: a row lacks the slug and the second stamp, and Rust (UTF-8) and JavaScript (UTF-16)
+rows itself: a row lacks the slug and the second stamp, and the server (UTF-8) and JavaScript (UTF-16)
 order titles differently above the BMP.
 
 Not compressed: bodies under 32 bytes (`/health`'s `ok`), images, PDFs,
@@ -316,7 +316,7 @@ header, and the server sends that region from the same function that builds the 
 49,751 bytes down to 1,579 for a note, 41,418 to 876 for a network-screen poll, and 67,591 to
 4,723 for a search from the listing (the address still gets the query, so back works). The
 search box in a note page's index column is left alone, since ⏎ there means going to the
-listing. The part is a substring of the page (`page.rs` asserts it), and the whole page is always
+listing. The part is a substring of the page (the page tests assert it), and the whole page is always
 a correct answer: no header, or a name the server does not know, gets the page, and every fetch
 picks the element it wants out of whatever arrives.
 

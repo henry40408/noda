@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # The digest pins the image; dependabot's docker ecosystem moves it.
 #
 # Set NODA_LOG_LEVEL (debug, info, warn or error; default info) with
-# `docker run -e`. Do not set RUST_LOG: noda refuses to start while it exists.
+# `docker run -e`. The Rust build's logging variable is retired and noda refuses to start while it is set.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git openssh-client ca-certificates \

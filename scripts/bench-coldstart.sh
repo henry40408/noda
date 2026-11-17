@@ -2,6 +2,7 @@
 # Cold-start benchmark: a quick `noda ls` is mostly process startup, so this
 # times whole processes.
 #
+#   go build -mod=vendor -o bin/noda ./cmd/noda
 #   scripts/bench-coldstart.sh [binary ...]      (default: bin/noda)
 #   RUNS=500 scripts/bench-coldstart.sh
 #

@@ -53,9 +53,9 @@ Two things it does that `git blame` on the same file will not:
 
 **It reaches past a rename.** The note above was `meeting-notes` when its first lines were written;
 `noda mv` renamed the file when the title changed, yet those lines are still credited to the commit
-that wrote them. git's own blame follows renames by guessing at content similarity, and libgit2's
-rename-tracking options are all documented as not implemented. noda picks the note out of each
-commit **by id**, so a rename never comes up.
+that wrote them. noda asks `git blame` for the note, and git follows the rename. One edge differs
+from following the note by id: when a rename also rewrites most of the file, git credits the lines
+it cannot match to the rewriting commit.
 
 **It marks lines not committed yet** as `0000000` — what a note edited outside noda looks like
 before anything picks the change up.
@@ -194,28 +194,25 @@ A first push gives no number: until something has been fetched, what the remote 
 | which commits? | the `↑` margin in `noda log`, and on the TUI's log screen |
 | what is in them? | `noda diff --remote` |
 
-HTTPS and SSH are built in; no system git or OpenSSL is required at runtime. SSH keys come from
-`ssh-agent`, HTTPS credentials from git's credential helper. The helper is looked up in the
-notebook's own `.git/config` as well as `~/.gitconfig`, `~/.config/git/config` and
-`/etc/gitconfig`, so one notebook can authenticate differently from the rest. Those four are the
-whole list: noda carries its own libgit2 rather than calling `git`, so a helper set in your `git`
-installation's own `etc/gitconfig` (where a packaged build may have put
-`credential.helper = osxkeychain`) is invisible to noda and has to be repeated in one of them.
+noda runs your system `git` (2.39 or newer), and ssh remotes use the OpenSSH client. So SSH works
+as it does for git itself: `~/.ssh/config`, key files and `ssh-agent` all apply. HTTPS credentials
+come from git's credential helper, looked up wherever git looks: the notebook's own `.git/config`,
+`~/.gitconfig`, `~/.config/git/config`, `/etc/gitconfig`, the installation's own `etc/gitconfig`,
+and anything pulled in by `[include]` or `[includeIf]`.
 
 A remote can also carry credentials in the URL — `https://<user>:<token>@host/notes.git` — which is
-what is left where no helper can be run, as in the container image, which has no shell. So noda
+what is left where no helper can be run, as in the container image. So noda
 never prints the userinfo back: `noda status`, `noda remote show`, `noda notebook ls`, the TUI, the
 web status page and a failed sync's error all say `https://***@host/notes.git`, while `.git/config`
 keeps the URL you configured. The whole userinfo is replaced, not just the password, because Gitea
 and Forgejo take the token as the *username*. `git@github.com:me/notes.git` is left as is — over
 SSH the key authenticates and the username is no secret.
 
-The same libgit2 means **noda runs no git hooks**: a `pre-commit` in your notebook fires under
+**noda runs no git hooks**: a `pre-commit` in your notebook fires under
 `git commit` and does nothing under `noda add`. `noda doctor` says so when it finds one; to run a
 hook, commit through git: `cd "$(noda path)"` and commit there.
 
-GPG signing has the same root cause and is the one case noda makes up for, by calling gpg the way
-git would — see [Signing](commands.md#signing).
+GPG signing is the one case noda makes up for, by calling gpg the way git would — see [Signing](commands.md#signing).
 
 A pull fast-forwards when only the remote moved, and makes a merge commit when both sides did. Two
 notebooks that each added a note produce two different filenames, so there is nothing to conflict
