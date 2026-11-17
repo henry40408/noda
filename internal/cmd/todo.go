@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"os"
 	"slices"
 	"strings"
 
@@ -12,9 +11,10 @@ import (
 )
 
 // Today is the local date, `YYYY-MM-DD`. Public so the browser agrees with
-// `noda todo` on what is overdue.
-func Today() string {
-	tz, set := os.LookupEnv("TZ")
+// `noda todo` on what is overdue. `TZ` comes from the environment main handed
+// to git, never from the process, so a test can set it without a global.
+func Today(e Env) string {
+	tz, set := e.Git.Getenv("TZ")
 	return clock.LocalNow(tz, set).Format("2006-01-02")
 }
 
@@ -29,7 +29,7 @@ type todoRow struct {
 // There is no `noda done`: an item has no stable address (line numbers move,
 // text collides), and ids would make the file noda-only. `noda edit` it.
 func Todo(e Env, asJSON bool) (string, error) {
-	return TodoOn(e, asJSON, Today())
+	return TodoOn(e, asJSON, Today(e))
 }
 
 // TodoOn is Todo with today given, so a test need not freeze the clock.

@@ -2,7 +2,7 @@
 # Cold-start benchmark: a quick `noda ls` is mostly process startup, so this
 # times whole processes.
 #
-#   scripts/bench-coldstart.sh [binary ...]      (default: target/release/noda)
+#   scripts/bench-coldstart.sh [binary ...]      (default: bin/noda)
 #   RUNS=500 scripts/bench-coldstart.sh
 #
 # Subtract the `/usr/bin/true` floor to read the binary's own startup cost.
@@ -38,17 +38,23 @@ bench() {
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/noda-bench.XXXXXX")
 trap 'rm -rf "$root"' EXIT
+# Nothing here may read or write the developer's own home or git config.
+HOME="$root/home"
 XDG_CONFIG_HOME="$root/config"
 XDG_DATA_HOME="$root/data"
 XDG_STATE_HOME="$root/state"
 XDG_CACHE_HOME="$root/cache"
-export XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
+GIT_CONFIG_GLOBAL="$root/gitconfig"
+GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME"
+printf '[user]\n\tname = Bench\n\temail = bench@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n' >"$GIT_CONFIG_GLOBAL"
+export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
 
 echo "runs: $RUNS (after $WARMUP warmup)"
 echo
 bench "/usr/bin/true (floor)" /usr/bin/true
 
-for bin in "${@:-target/release/noda}"; do
+for bin in "${@:-bin/noda}"; do
     size=$(wc -c <"$bin" | tr -d ' ')
     echo
     echo "$bin ($((size / 1024)) KiB)"
