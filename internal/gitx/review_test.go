@@ -124,6 +124,23 @@ func TestBatchTellsAMissingPathWithSpacesFromAnError(t *testing.T) {
 	}
 }
 
+func TestBatchOutsideARepositoryExplainsAndStaysBroken(t *testing.T) {
+	git, _ := freshRepo(t, nil)
+	batch, err := git.OpenBatch(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer batch.Close()
+	_, _, _, first := batch.Read("HEAD:a.md")
+	if first == nil || !strings.Contains(first.Error(), "not a git repository") {
+		t.Fatalf("first read: %v", first)
+	}
+	_, _, _, second := batch.Read("HEAD:b.md")
+	if second == nil || !strings.Contains(second.Error(), "no longer usable") {
+		t.Fatalf("second read: %v", second)
+	}
+}
+
 func TestARelativePathEntryDoesNotChooseGit(t *testing.T) {
 	env := gittest.Isolate(t)
 	trap := t.TempDir()
