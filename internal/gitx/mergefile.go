@@ -35,9 +35,12 @@ func MergeFile(ctx context.Context, g *Git, in MergeInput) (MergeResult, error) 
 			return MergeResult{}, err
 		}
 	}
-	// The base label is only printed in diff3 style, which fixedConfig rules out.
+	// The base label is only printed in diff3 style. Outside a repository `-c`
+	// is not read by merge-file, so the user's own config files are shut out
+	// instead, to keep `merge.conflictStyle` from adding a base section.
 	result, err := g.Run(ctx, Cmd{
-		Dir: dir,
+		Dir:      dir,
+		ExtraEnv: map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1"},
 		Args: []string{
 			"merge-file", "-p", "-L", in.OursLabel, "-L", "base", "-L", in.TheirsLabel,
 			"ours", "base", "theirs",

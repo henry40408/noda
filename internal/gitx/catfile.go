@@ -22,9 +22,13 @@ type Batch struct {
 
 // OpenBatch starts the process in dir.
 func (g *Git) OpenBatch(ctx context.Context, dir string) (*Batch, error) {
-	args := append(globalArgs(dir), "cat-file", "--batch")
+	if dir == "" {
+		return nil, errors.New("running git without a directory")
+	}
+	args := append(globalArgs(dir, false), "cat-file", "--batch")
 	command := exec.CommandContext(ctx, g.path, args...)
-	command.Env = sanitizedEnv(g.env, true, nil)
+	command.Env = g.environment(dir, true, nil)
+	stopGently(command)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -52,12 +56,15 @@ func (b *Batch) Read(spec string) (kind string, data []byte, ok bool, err error)
 	if err != nil {
 		return "", nil, false, fmt.Errorf("reading git cat-file: %w", err)
 	}
-	fields := strings.Fields(header)
-	if len(fields) == 2 && (fields[1] == "missing" || fields[1] == "ambiguous") {
+	header = strings.TrimSpace(header)
+	// A spec may hold spaces (`HEAD:my file.md`), so a missing object is told
+	// by the end of the line.
+	if strings.HasSuffix(header, " missing") || strings.HasSuffix(header, " ambiguous") {
 		return "", nil, false, nil
 	}
+	fields := strings.Fields(header)
 	if len(fields) != 3 {
-		return "", nil, false, fmt.Errorf("unexpected git cat-file header %q", strings.TrimSpace(header))
+		return "", nil, false, fmt.Errorf("unexpected git cat-file header %q", header)
 	}
 	size, err := strconv.Atoi(fields[2])
 	if err != nil {

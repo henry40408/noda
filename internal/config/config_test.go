@@ -252,6 +252,29 @@ func TestUnknownSettingsAreNamedRatherThanIgnored(t *testing.T) {
 	}
 }
 
+// A value with a quote and a backslash or double quote used to be written as a
+// single-line literal string, which ended at the quote: config.toml was then
+// unparseable and every later Load failed.
+func TestAValueWithASingleQuoteStaysParseable(t *testing.T) {
+	for _, value := range []string{`it's "x"`, `a'b\c`, `'`, "it's\nmulti \"line\""} {
+		p := paths.Rooted(t.TempDir())
+		config, err := Load(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := config.Set("editor", value); err != nil {
+			t.Fatalf("%q: %v", value, err)
+		}
+		reloaded, err := Load(p)
+		if err != nil {
+			t.Fatalf("%q: the file no longer loads: %v", value, err)
+		}
+		if got, _ := reloaded.Get("editor"); got != value {
+			t.Fatalf("%q came back as %q", value, got)
+		}
+	}
+}
+
 func TestAKeyThatIsATableIsNotOverwrittenSilently(t *testing.T) {
 	p := paths.Rooted(t.TempDir())
 	if err := os.MkdirAll(p.ConfigDir(), 0o755); err != nil {

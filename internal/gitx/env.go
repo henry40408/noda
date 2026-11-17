@@ -15,13 +15,20 @@ var dropped = map[string]struct{}{
 	// LANGUAGE outranks LC_ALL for message catalogs, and noda matches on git's
 	// English wording.
 	"LANGUAGE": {},
+	// Each of these changes what noda parses or where it writes.
+	"GIT_DIFF_OPTS": {}, "GIT_CONFIG": {}, "GIT_EXEC_PATH": {}, "GIT_DEFAULT_HASH": {},
 }
 
 func isDropped(name string) bool {
 	if _, found := dropped[name]; found {
 		return true
 	}
-	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
+	for _, prefix := range []string{"GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "GIT_TRACE"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // sanitizedEnv is the environment of one git run: base without what redirects
@@ -65,16 +72,20 @@ func sanitizedEnv(base map[string]string, readOnly bool, extra map[string]string
 // diff.external cannot be neutralised here: an empty value is run as a command.
 // Callers that parse a diff pass --no-ext-diff.
 var fixedConfig = []string{
-	"core.quotePath=false",      // octal-escaped non-ASCII paths
-	"color.ui=never",            // colour codes in parsed output
-	"core.fsmonitor=false",      // a watcher daemon started by a status call
-	"log.showSignature=false",   // a gpg report spliced into `git log` output
-	"log.decorate=false",        // `(HEAD -> main)` after an id
-	"log.follow=false",          // a pathspec log that follows renames by content
-	"diff.noprefix=false",       // paths without `a/` and `b/`
-	"diff.mnemonicPrefix=false", // `i/` and `w/` instead of `a/` and `b/`
-	"diff.relative=false",       // paths relative to the current directory
-	"blame.ignoreRevsFile=",     // lines attributed past a user's ignore list
+	"core.quotePath=false",          // octal-escaped non-ASCII paths
+	"color.ui=never",                // colour codes in parsed output
+	"color.diff=never",              // outranks color.ui, even for `log -p`
+	"diff.suppressBlankEmpty=false", // a blank context line without its leading space
+	"diff.orderFile=/dev/null",      // files in a user's order; an empty value is an error
+	"merge.conflictStyle=merge",     // diff3 sections in `merge-file` output
+	"core.fsmonitor=false",          // a watcher daemon started by a status call
+	"log.showSignature=false",       // a gpg report spliced into `git log` output
+	"log.decorate=false",            // `(HEAD -> main)` after an id
+	"log.follow=false",              // a pathspec log that follows renames by content
+	"diff.noprefix=false",           // paths without `a/` and `b/`
+	"diff.mnemonicPrefix=false",     // `i/` and `w/` instead of `a/` and `b/`
+	"diff.relative=false",           // paths relative to the current directory
+	"blame.ignoreRevsFile=",         // lines attributed past a user's ignore list
 	"blame.markUnblamableLines=false",
 	"blame.markIgnoredLines=false",
 	"advice.defaultBranchName=false", // a hint block on stderr of `init`

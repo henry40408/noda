@@ -244,6 +244,11 @@ func canBeLiteral(value string) bool {
 	if strings.Contains(value, "'''") || strings.HasSuffix(value, "'") {
 		return false
 	}
+	// A single-line literal string ends at the first quote, so one inside
+	// would cut the value short and leave config.toml unparseable.
+	if strings.Contains(value, "'") && !strings.Contains(value, "\n") {
+		return false
+	}
 	for _, ch := range value {
 		if ch != '\n' && ch != '\t' && (ch < 0x20 || ch == 0x7f) {
 			return false

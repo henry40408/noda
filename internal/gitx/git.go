@@ -16,6 +16,8 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"syscall"
+	"time"
 )
 
 // Version is a git release.
@@ -106,7 +108,9 @@ func shortVersion(v Version) string {
 
 func lookPath(pathVariable string) (string, error) {
 	for _, dir := range filepath.SplitList(pathVariable) {
-		if dir == "" {
+		// A relative entry would run a `git` out of whatever directory noda is
+		// in, which may be an untrusted clone.
+		if !filepath.IsAbs(dir) {
 			continue
 		}
 		candidate := filepath.Join(dir, "git")
@@ -172,6 +176,9 @@ type Cmd struct {
 	Network bool
 	// Interactive says a person at a terminal can answer ssh's prompts.
 	Interactive bool
+
+	// showHooksPath leaves core.hooksPath as configured, for Hooks.
+	showHooksPath bool
 }
 
 // Result is what a finished run left behind.
@@ -183,13 +190,18 @@ type Result struct {
 // Run executes git. An exit code outside OKCodes comes back as a *Error along
 // with the Result.
 func (g *Git) Run(ctx context.Context, c Cmd) (Result, error) {
-	args := globalArgs(c.Dir)
+	if c.Dir == "" {
+		// `-C ""` is noda's own working directory, which may hold any repository.
+		return Result{}, errors.New("running git without a directory")
+	}
+	args := globalArgs(c.Dir, c.showHooksPath)
 	if c.Network && !c.Interactive && !g.hasOwnSSH(ctx, c.Dir) {
 		args = append(args, "-c", "core.sshCommand=ssh -o BatchMode=yes")
 	}
-	args = append(args, c.Args...)
+	args = append(args, withoutExternalDiff(c.Args)...)
 	command := exec.CommandContext(ctx, g.path, args...)
-	command.Env = sanitizedEnv(g.env, c.ReadOnly, c.ExtraEnv)
+	command.Env = g.environment(c.Dir, c.ReadOnly, c.ExtraEnv)
+	stopGently(command)
 	if c.Stdin != nil {
 		command.Stdin = bytes.NewReader(c.Stdin)
 	}
@@ -211,10 +223,49 @@ func (g *Git) Run(ctx context.Context, c Cmd) (Result, error) {
 	default:
 		return result, fmt.Errorf("running git %s: %w", subcommand(c.Args), err)
 	}
+	if ctx.Err() != nil {
+		return result, fmt.Errorf("git %s: %w", subcommand(c.Args), ctx.Err())
+	}
 	if !slices.Contains(okCodes(c), result.Code) {
 		return result, &Error{Args: c.Args, Code: result.Code, Stderr: string(result.Stderr)}
 	}
 	return result, nil
+}
+
+// environment is sanitizedEnv with discovery stopped at dir's parent: a
+// notebook whose `.git` is damaged must not be mistaken for the repository
+// above it (a home directory kept in git, say).
+func (g *Git) environment(dir string, readOnly bool, extra map[string]string) []string {
+	merged := map[string]string{"GIT_CEILING_DIRECTORIES": filepath.Dir(filepath.Clean(dir))}
+	for name, value := range extra {
+		merged[name] = value
+	}
+	return sanitizedEnv(g.env, readOnly, merged)
+}
+
+// stopGently makes cancellation send SIGTERM, which git answers by removing
+// its lock files, and gives a child of git (ssh, a credential helper) a moment
+// to close its pipes before Go stops waiting.
+func stopGently(command *exec.Cmd) {
+	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
+	command.WaitDelay = 5 * time.Second
+}
+
+// withoutExternalDiff keeps a user's diff driver and textconv filters out of
+// anything that renders a patch. Commands that never print one ignore the
+// options.
+func withoutExternalDiff(args []string) []string {
+	at := subcommandIndex(args)
+	if at < 0 {
+		return args
+	}
+	switch args[at] {
+	case "diff", "log", "show":
+		out := append([]string{}, args[:at+1]...)
+		out = append(out, "--no-ext-diff", "--no-textconv")
+		return append(out, args[at+1:]...)
+	}
+	return args
 }
 
 // hasOwnSSH reports whether the user chose the ssh command, which then stays
@@ -239,10 +290,17 @@ func okCodes(c Cmd) []int {
 
 // globalArgs are the options before the subcommand: no pager, the fixed
 // settings, and the directory.
-func globalArgs(dir string) []string {
+//
+// Hooks are switched off because libgit2 ran none: `update-ref`, `reset` and
+// `fetch` would otherwise fire `reference-transaction`, and `clone` would run
+// `post-checkout`. Only the run that asks where hooks live sees the real path.
+func globalArgs(dir string, showHooksPath bool) []string {
 	args := []string{"--no-pager"}
 	for _, setting := range fixedConfig {
 		args = append(args, "-c", setting)
+	}
+	if !showHooksPath {
+		args = append(args, "-c", "core.hooksPath=/dev/null")
 	}
 	return append(args, "-C", dir)
 }

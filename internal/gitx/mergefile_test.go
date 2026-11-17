@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/henry40408/noda/internal/gitx"
@@ -30,10 +29,7 @@ func TestMergeFileMatchesTheRustGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := "[merge]\n\tconflictStyle = diff3\n"
-	if err := os.WriteFile(filepath.Join(env["HOME"], ".gitconfig"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	appendGlobalConfig(t, git, "[merge]\n\tconflictStyle = diff3\n")
 	for i, c := range cases {
 		got, err := gitx.MergeFile(context.Background(), git, gitx.MergeInput{
 			Base: c.Base, Ours: c.Ours, Theirs: c.Theirs,

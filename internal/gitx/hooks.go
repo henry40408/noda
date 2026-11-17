@@ -14,7 +14,7 @@ import (
 // included), a hook needs the executable bit, and `*.sample` is not one. An
 // unreadable directory is not a finding.
 func Hooks(ctx context.Context, g *Git, dir string) ([]string, error) {
-	result, err := g.Run(ctx, Cmd{Dir: dir, Args: []string{"rev-parse", "--git-path", "hooks"}, ReadOnly: true})
+	result, err := g.Run(ctx, Cmd{Dir: dir, Args: []string{"rev-parse", "--git-path", "hooks"}, ReadOnly: true, showHooksPath: true})
 	if err != nil {
 		return nil, err
 	}
