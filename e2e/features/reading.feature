@@ -25,11 +25,11 @@ Feature: Reading a notebook from a phone
 
   # The exception: here the script states a fact the server cannot know, the
   # reader's zone. Without it the page keeps the file's spelling, asserted in
-  # the root crate's tests/web.rs.
+  # the web tests in internal/web.
   @scripted
   # The exception: here the script states a fact the server cannot know, the
   # reader's zone. Without it the page keeps the file's spelling, asserted in
-  # the root crate's tests/web.rs.
+  # the web tests in internal/web.
   Scenario: The stamps arrive in the reader's own zone
     Given I open the notebook
     When I press "Budget review"

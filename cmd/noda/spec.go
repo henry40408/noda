@@ -1,7 +1,6 @@
 package main
 
-// The command table. Help texts are the `///` comments of the Rust
-// `src/main.rs`, which this replaces.
+// The command table: help texts for the commands and their flags.
 
 const noteHelp = "Note id (`k3f9m2p1`, or any prefix naming exactly one) or slug (`meeting-notes`)."
 
