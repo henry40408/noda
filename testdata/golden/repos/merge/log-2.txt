@@ -1,0 +1,6 @@
+$ noda log -n 3
+  <OID:1>  2023-11-15 04:13  edit: Budget review after merge
+  <OID:2>  2023-11-15 03:13  merge: side
+  <OID:3>  2023-11-15 02:13  edit: Budget review on main
+--- stderr
+--- exit 0

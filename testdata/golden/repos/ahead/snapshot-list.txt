@@ -1,0 +1,4 @@
+$ noda snapshot
+before-books  2023-11-15 01:13  <OID:1>  before the books
+--- stderr
+--- exit 0

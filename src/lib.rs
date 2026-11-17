@@ -6,6 +6,8 @@
 pub mod cmd;
 pub mod config;
 pub mod error;
+#[cfg(test)]
+mod golden;
 pub mod import;
 pub mod link;
 pub mod note;

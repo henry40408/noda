@@ -1,0 +1,6 @@
+$ noda snapshot
+clash       2023-11-15 01:13  <OID:1>  here it is the new commit
+local-only  2023-11-15 01:13  <OID:1>  only here
+shared      2023-11-15 00:13  <OID:2>  on both
+--- stderr
+--- exit 0

@@ -1,0 +1,599 @@
+[
+  {
+    "name": "targets-00",
+    "out": [
+      "01abc234-hello.md"
+    ]
+  },
+  {
+    "name": "targets-01",
+    "out": [
+      "01abc234-hello.md",
+      "02abc234-other.md"
+    ]
+  },
+  {
+    "name": "targets-02",
+    "out": [
+      "pic.png"
+    ]
+  },
+  {
+    "name": "targets-03",
+    "out": [
+      "pic.png"
+    ]
+  },
+  {
+    "name": "targets-04",
+    "out": [
+      "03abc234-ref.md"
+    ]
+  },
+  {
+    "name": "targets-05",
+    "out": [
+      "03abc234-ref.md"
+    ]
+  },
+  {
+    "name": "targets-06",
+    "out": [
+      "03 abc234-ref.md"
+    ]
+  },
+  {
+    "name": "targets-07",
+    "out": []
+  },
+  {
+    "name": "targets-08",
+    "out": []
+  },
+  {
+    "name": "targets-09",
+    "out": []
+  },
+  {
+    "name": "targets-10",
+    "out": [
+      "with space.md"
+    ]
+  },
+  {
+    "name": "targets-11",
+    "out": [
+      "with space.md"
+    ]
+  },
+  {
+    "name": "targets-12",
+    "out": [
+      "sub/dir/file.md"
+    ]
+  },
+  {
+    "name": "targets-13",
+    "out": []
+  },
+  {
+    "name": "targets-14",
+    "out": []
+  },
+  {
+    "name": "targets-15",
+    "out": []
+  },
+  {
+    "name": "targets-16",
+    "out": [
+      "file.md"
+    ]
+  },
+  {
+    "name": "targets-17",
+    "out": [
+      "file.md"
+    ]
+  },
+  {
+    "name": "targets-18",
+    "out": [
+      "a.md",
+      "b.md"
+    ]
+  },
+  {
+    "name": "targets-19",
+    "out": [
+      "日本語.md"
+    ]
+  },
+  {
+    "name": "targets-20",
+    "out": [
+      "日本語文.md"
+    ]
+  },
+  {
+    "name": "targets-21",
+    "out": []
+  },
+  {
+    "name": "targets-22",
+    "out": []
+  },
+  {
+    "name": "targets-23",
+    "out": []
+  },
+  {
+    "name": "targets-24",
+    "out": []
+  },
+  {
+    "name": "targets-25",
+    "out": [
+      "x.md"
+    ]
+  },
+  {
+    "name": "targets-26",
+    "out": [
+      "x.md"
+    ]
+  },
+  {
+    "name": "targets-27",
+    "out": [
+      "x.md"
+    ]
+  },
+  {
+    "name": "targets-28",
+    "out": [
+      "x.md"
+    ]
+  },
+  {
+    "name": "targets-29",
+    "out": []
+  },
+  {
+    "name": "targets-30",
+    "out": [
+      "x(1).md"
+    ]
+  },
+  {
+    "name": "targets-31",
+    "out": [
+      "x(1).md"
+    ]
+  },
+  {
+    "name": "targets-32",
+    "out": [
+      "x.md",
+      "y.md"
+    ]
+  },
+  {
+    "name": "targets-33",
+    "out": [
+      "quoted.md"
+    ]
+  },
+  {
+    "name": "targets-34",
+    "out": [
+      "list.md",
+      "list2.md"
+    ]
+  },
+  {
+    "name": "targets-35",
+    "out": [
+      "cell.md"
+    ]
+  },
+  {
+    "name": "targets-36",
+    "out": [
+      "shortcut.md"
+    ]
+  },
+  {
+    "name": "targets-37",
+    "out": [
+      "Shortcut.MD"
+    ]
+  },
+  {
+    "name": "targets-38",
+    "out": [
+      "x.md"
+    ]
+  },
+  {
+    "name": "targets-39",
+    "out": []
+  },
+  {
+    "name": "targets-40",
+    "out": []
+  },
+  {
+    "name": "targets-41",
+    "out": []
+  },
+  {
+    "name": "targets-42",
+    "out": []
+  },
+  {
+    "name": "targets-43",
+    "out": [
+      "x.md",
+      "y.md"
+    ]
+  },
+  {
+    "name": "targets-44",
+    "out": []
+  },
+  {
+    "name": "targets-45",
+    "out": []
+  },
+  {
+    "name": "targets-46",
+    "out": []
+  },
+  {
+    "name": "targets-47",
+    "out": []
+  },
+  {
+    "name": "targets-48",
+    "out": []
+  },
+  {
+    "name": "rewrite-00",
+    "out": "[a](01abc234-new.md)"
+  },
+  {
+    "name": "rewrite-01",
+    "out": "[a](01abc234-new.md)"
+  },
+  {
+    "name": "rewrite-02",
+    "out": "[a](01abc234-new.md#frag)"
+  },
+  {
+    "name": "rewrite-03",
+    "out": "[a](01abc234-new.md?x=1)"
+  },
+  {
+    "name": "rewrite-04",
+    "out": "[a](01abc234-new.md) [b](01abc234-new.md)"
+  },
+  {
+    "name": "rewrite-05",
+    "out": "[a](x.md) [b](other.md)"
+  },
+  {
+    "name": "rewrite-06",
+    "out": "[r]\n\n[r]: 01abc234-new.md\n"
+  },
+  {
+    "name": "rewrite-07",
+    "out": "[r]\n\n[r]: <01abc234-new.md> \"t\"\n"
+  },
+  {
+    "name": "rewrite-08",
+    "out": null
+  },
+  {
+    "name": "rewrite-09",
+    "out": null
+  },
+  {
+    "name": "rewrite-10",
+    "out": null
+  },
+  {
+    "name": "rewrite-11",
+    "out": "[a](with%20space.md)"
+  },
+  {
+    "name": "rewrite-12",
+    "out": "[a](plain.md)"
+  },
+  {
+    "name": "rewrite-13",
+    "out": "[a](<plain.md>)"
+  },
+  {
+    "name": "rewrite-14",
+    "out": "![i](new%20pic.png)"
+  },
+  {
+    "name": "rewrite-15",
+    "out": {
+      "rust_panic": true
+    }
+  },
+  {
+    "name": "rewrite-16",
+    "out": "[a](x.md)"
+  },
+  {
+    "name": "rewrite-17",
+    "out": "[a](y%281%29.md)\n[b](y%281%29.md)"
+  },
+  {
+    "name": "rewrite-18",
+    "out": "[a](y.md \"title\")"
+  },
+  {
+    "name": "rewrite-19",
+    "out": "[a](y.md 'title')"
+  },
+  {
+    "name": "rewrite-20",
+    "out": "[a](x.md)"
+  },
+  {
+    "name": "rewrite-21",
+    "out": "[a](y.md)"
+  },
+  {
+    "name": "rewrite-22",
+    "out": null
+  },
+  {
+    "name": "rewrite-23",
+    "out": "[a](a%29b.md)"
+  },
+  {
+    "name": "rewrite-24",
+    "out": "[a](a%28b.md)"
+  },
+  {
+    "name": "rewrite-25",
+    "out": "[a](a%3Cb%3E.md)"
+  },
+  {
+    "name": "rewrite-26",
+    "out": null
+  },
+  {
+    "name": "rewrite-27",
+    "out": null
+  },
+  {
+    "name": "rewrite-28",
+    "out": "[a]( y.md )"
+  },
+  {
+    "name": "rewrite-29",
+    "out": "> [a](y.md)\n> [b](y.md)"
+  },
+  {
+    "name": "rewrite-30",
+    "out": "[a](y.md#f)[b](y.md#g)"
+  },
+  {
+    "name": "rewrite-31",
+    "out": null
+  },
+  {
+    "name": "target-00",
+    "out": "x.md"
+  },
+  {
+    "name": "target-01",
+    "out": "x.md"
+  },
+  {
+    "name": "target-02",
+    "out": null
+  },
+  {
+    "name": "target-03",
+    "out": "x.md"
+  },
+  {
+    "name": "target-04",
+    "out": "x.md"
+  },
+  {
+    "name": "target-05",
+    "out": "x y.md"
+  },
+  {
+    "name": "target-06",
+    "out": null
+  },
+  {
+    "name": "target-07",
+    "out": null
+  },
+  {
+    "name": "target-08",
+    "out": null
+  },
+  {
+    "name": "target-09",
+    "out": null
+  },
+  {
+    "name": "target-10",
+    "out": "sub/x.md"
+  },
+  {
+    "name": "target-11",
+    "out": null
+  },
+  {
+    "name": "target-12",
+    "out": null
+  },
+  {
+    "name": "target-13",
+    "out": "日本語.md"
+  },
+  {
+    "name": "target-14",
+    "out": "日.md"
+  },
+  {
+    "name": "target-15",
+    "out": "x.md"
+  },
+  {
+    "name": "target-16",
+    "out": "x.md"
+  },
+  {
+    "name": "target-17",
+    "out": null
+  },
+  {
+    "name": "target-18",
+    "out": null
+  },
+  {
+    "name": "target-19",
+    "out": null
+  },
+  {
+    "name": "target-20",
+    "out": "x.md"
+  },
+  {
+    "name": "target-21",
+    "out": "a b.md"
+  },
+  {
+    "name": "target-22",
+    "out": null
+  },
+  {
+    "name": "target-23",
+    "out": "01abc234-hello.md"
+  },
+  {
+    "name": "target-24",
+    "out": "%zz.md"
+  },
+  {
+    "name": "target-25",
+    "out": "\u0000.md"
+  },
+  {
+    "name": "target-26",
+    "out": "x.md"
+  },
+  {
+    "name": "target-27",
+    "out": "x.md"
+  },
+  {
+    "name": "scheme-00",
+    "out": "http"
+  },
+  {
+    "name": "scheme-01",
+    "out": "https"
+  },
+  {
+    "name": "scheme-02",
+    "out": "HTTP"
+  },
+  {
+    "name": "scheme-03",
+    "out": "mailto"
+  },
+  {
+    "name": "scheme-04",
+    "out": "tel"
+  },
+  {
+    "name": "scheme-05",
+    "out": "javascript"
+  },
+  {
+    "name": "scheme-06",
+    "out": "data"
+  },
+  {
+    "name": "scheme-07",
+    "out": null
+  },
+  {
+    "name": "scheme-08",
+    "out": "a"
+  },
+  {
+    "name": "scheme-09",
+    "out": null
+  },
+  {
+    "name": "scheme-10",
+    "out": "a+b.c-d"
+  },
+  {
+    "name": "scheme-11",
+    "out": null
+  },
+  {
+    "name": "scheme-12",
+    "out": null
+  },
+  {
+    "name": "scheme-13",
+    "out": "x"
+  },
+  {
+    "name": "scheme-14",
+    "out": "C"
+  },
+  {
+    "name": "scheme-15",
+    "out": "file"
+  },
+  {
+    "name": "scheme-16",
+    "out": "ftp"
+  },
+  {
+    "name": "scheme-17",
+    "out": null
+  },
+  {
+    "name": "scheme-18",
+    "out": null
+  },
+  {
+    "name": "scheme-19",
+    "out": null
+  },
+  {
+    "name": "scheme-20",
+    "out": "ssh"
+  },
+  {
+    "name": "scheme-21",
+    "out": "tel"
+  },
+  {
+    "name": "scheme-22",
+    "out": null
+  },
+  {
+    "name": "scheme-23",
+    "out": null
+  }
+]

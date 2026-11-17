@@ -1,0 +1,5 @@
+$ noda deleted
+03ghj890  reading-list  2023-11-15 08:13  <OID:1>  Reading list
+`noda restore <note> <commit>` with the commit above brings one back
+--- stderr
+--- exit 0

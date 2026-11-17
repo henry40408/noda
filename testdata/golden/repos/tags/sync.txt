@@ -1,0 +1,5 @@
+$ noda sync
+pull: already up to date
+push: main (1 commit, 1 snapshot) -> file://<ROOT>/remote.git
+--- stderr
+--- exit 0

@@ -1,0 +1,21 @@
+$ noda diff --remote
+diff --git a/02def567-meeting-notes.md b/02def567-meeting-notes.md
+index <OID:1>..<OID:2> 100644
+--- a/02def567-meeting-notes.md
++++ b/02def567-meeting-notes.md
+@@ -2,7 +2,7 @@
+ title: Meeting notes
+ tags: [work]
+ created: 2024-01-02T00:00:00Z
+-updated: 2024-01-02T00:00:00Z
++updated: 2024-01-08T00:00:00Z
+ ---
+ 
+ # Agenda
+@@ -10,3 +10,4 @@ updated: 2024-01-02T00:00:00Z
+ the budget, again
+ 
+ see [the budget](01abc234-budget-review.md)
++- a local line
+--- stderr
+--- exit 0

@@ -1,0 +1,9 @@
+$ noda file ls
+
+--- stderr
+error: unrecognized subcommand 'ls'
+
+Usage: noda file <COMMAND>
+
+For more information, try '--help'.
+--- exit 2

@@ -1,0 +1,571 @@
+[
+ {
+  "name": "fresh-set-editor",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-author",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "author",
+    "A B <a@b.c>"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-sign-true",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "sign",
+    "true"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-sign-no",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "sign",
+    "no"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-sign-bad",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "sign",
+    "maybe"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-author-bad",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "author",
+    "nobody"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-unknown",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "color",
+    "red"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-unset-unknown",
+  "initial": null,
+  "ops": [
+   [
+    "unset",
+    "color"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-unset-absent",
+  "initial": null,
+  "ops": [
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-two-sets",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ],
+   [
+    "set",
+    "notebook",
+    "work"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-set-unset",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ],
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-quote",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi \"x\" \\ y"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-unicode",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "編輯器"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-newline",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "a\nb"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-tab",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    "a\tb"
+   ]
+  ]
+ },
+ {
+  "name": "fresh-empty",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "editor",
+    ""
+   ]
+  ]
+ },
+ {
+  "name": "template-set-editor",
+  "initial": "@template",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ]
+  ]
+ },
+ {
+  "name": "template-set-sign",
+  "initial": "@template",
+  "ops": [
+   [
+    "set",
+    "sign",
+    "false"
+   ]
+  ]
+ },
+ {
+  "name": "template-set-two",
+  "initial": "@template",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ],
+   [
+    "set",
+    "sign",
+    "true"
+   ]
+  ]
+ },
+ {
+  "name": "template-set-unset",
+  "initial": "@template",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ],
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "template-set-twice",
+  "initial": "@template",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ],
+   [
+    "set",
+    "editor",
+    "vim"
+   ]
+  ]
+ },
+ {
+  "name": "existing-replace",
+  "initial": "editor = \"vi\"\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ]
+  ]
+ },
+ {
+  "name": "existing-comment-kept",
+  "initial": "editor = \"vi\" # my editor\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ]
+  ]
+ },
+ {
+  "name": "existing-indent-kept",
+  "initial": "  editor   =   \"vi\"\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ]
+  ]
+ },
+ {
+  "name": "existing-add-after",
+  "initial": "editor = \"vi\"\n",
+  "ops": [
+   [
+    "set",
+    "notebook",
+    "work"
+   ]
+  ]
+ },
+ {
+  "name": "existing-add-before-table",
+  "initial": "editor = \"vi\"\n\n[other]\nx = 1\n",
+  "ops": [
+   [
+    "set",
+    "notebook",
+    "work"
+   ]
+  ]
+ },
+ {
+  "name": "existing-header-comment",
+  "initial": "# my config\neditor = \"vi\"\n",
+  "ops": [
+   [
+    "set",
+    "sign",
+    "true"
+   ]
+  ]
+ },
+ {
+  "name": "existing-unset-first",
+  "initial": "editor = \"vi\"\nnotebook = \"w\"\n",
+  "ops": [
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "existing-unset-last",
+  "initial": "editor = \"vi\"\nnotebook = \"w\"\n",
+  "ops": [
+   [
+    "unset",
+    "notebook"
+   ]
+  ]
+ },
+ {
+  "name": "existing-unset-with-comment",
+  "initial": "# about editor\neditor = \"vi\"\n",
+  "ops": [
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "existing-unset-trailing-comment",
+  "initial": "editor = \"vi\" # c\n",
+  "ops": [
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "existing-no-trailing-newline",
+  "initial": "editor = \"vi\"",
+  "ops": [
+   [
+    "set",
+    "notebook",
+    "w"
+   ]
+  ]
+ },
+ {
+  "name": "existing-crlf",
+  "initial": "editor = \"vi\"\r\n",
+  "ops": [
+   [
+    "set",
+    "notebook",
+    "w"
+   ]
+  ]
+ },
+ {
+  "name": "existing-sign-string",
+  "initial": "sign = \"true\"\n",
+  "ops": [
+   [
+    "set",
+    "sign",
+    "false"
+   ]
+  ]
+ },
+ {
+  "name": "existing-sign-bool",
+  "initial": "sign = true\n",
+  "ops": [
+   [
+    "set",
+    "sign",
+    "false"
+   ]
+  ]
+ },
+ {
+  "name": "existing-single-quoted",
+  "initial": "editor = 'vi'\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "nvim"
+   ]
+  ]
+ },
+ {
+  "name": "existing-unknown-key",
+  "initial": "color = \"red\"\neditor = \"vi\"\n",
+  "ops": [
+   [
+    "set",
+    "notebook",
+    "w"
+   ]
+  ]
+ },
+ {
+  "name": "existing-blank-lines",
+  "initial": "\n\neditor = \"vi\"\n\n\n",
+  "ops": [
+   [
+    "set",
+    "notebook",
+    "w"
+   ]
+  ]
+ },
+ {
+  "name": "broken-syntax",
+  "initial": "editor = \n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "broken-unterminated",
+  "initial": "editor = \"vi\n",
+  "ops": [
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "broken-duplicate",
+  "initial": "editor = \"a\"\neditor = \"b\"\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "c"
+   ]
+  ]
+ },
+ {
+  "name": "template-unset-nothing",
+  "initial": "@template",
+  "ops": [
+   [
+    "unset",
+    "editor"
+   ]
+  ]
+ },
+ {
+  "name": "empty-file",
+  "initial": "",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "only-comment",
+  "initial": "# just a comment\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "only-comment-no-newline",
+  "initial": "# just a comment",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "dotted-table",
+  "initial": "[git]\neditor = \"x\"\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "inline-table-first",
+  "initial": "other = { a = 1 }\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "array-value",
+  "initial": "editor = [\"a\"]\n",
+  "ops": [
+   [
+    "set",
+    "editor",
+    "vi"
+   ]
+  ]
+ },
+ {
+  "name": "sign-all-forms",
+  "initial": null,
+  "ops": [
+   [
+    "set",
+    "sign",
+    "Yes"
+   ],
+   [
+    "set",
+    "sign",
+    "off"
+   ],
+   [
+    "set",
+    "sign",
+    "1"
+   ],
+   [
+    "set",
+    "sign",
+    "0"
+   ]
+  ]
+ }
+]

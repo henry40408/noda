@@ -1,0 +1,5 @@
+$ noda log -n 2
+  <OID:1>  2023-11-15 08:13  rm: Reading list
+  <OID:2>  2023-11-15 07:13  tag: Q3 budget review
+--- stderr
+--- exit 0

@@ -1,0 +1,21 @@
+$ noda diff
+diff --git a/01abc234-q3-budget-review.md b/01abc234-q3-budget-review.md
+index <OID:1>..<OID:2> 100644
+--- a/01abc234-q3-budget-review.md
++++ b/01abc234-q3-budget-review.md
+@@ -2,7 +2,7 @@
+ title: Q3 budget review
+ tags: [work]
+ created: 2024-01-01T00:00:00Z
+-updated: 2024-01-02T00:00:00Z
++updated: 2024-01-03T00:00:00Z
+ ---
+ 
+ one
+@@ -17,3 +17,4 @@ eight
+ nine
+ ten
+ lima
++eleven
+--- stderr
+--- exit 0

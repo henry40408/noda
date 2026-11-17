@@ -1,0 +1,5 @@
+$ noda ls
+02def567  Meeting notes  [work, q3]
+01abc234  Q3 budget review  [work, urgent]
+--- stderr
+--- exit 0

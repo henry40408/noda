@@ -1,0 +1,4 @@
+$ noda todo
+nothing to do
+--- stderr
+--- exit 0

@@ -1,0 +1,8 @@
+$ noda status
+notebook  default  (main)
+notes     3
+changes   clean
+remote    file://<ROOT>/remote.git
+sync      1 to push (as of the last sync)
+--- stderr
+--- exit 0

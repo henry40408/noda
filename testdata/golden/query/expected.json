@@ -1,0 +1,1225 @@
+[
+  {
+    "name": "q00",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "budget"
+          ],
+          "grouping": [
+            [
+              "budget"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "budget"
+      ]
+    }
+  },
+  {
+    "name": "q01",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:work"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:work"
+      ]
+    }
+  },
+  {
+    "name": "q02",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:Work"
+            ]
+          ],
+          "matches": [
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:Work"
+      ]
+    }
+  },
+  {
+    "name": "q03",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-tag:work"
+            ]
+          ],
+          "matches": [
+            "03ghj890",
+            "04kmn123",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "-tag:work"
+      ]
+    }
+  },
+  {
+    "name": "q04",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "review"
+          ],
+          "grouping": [
+            [
+              "title:review"
+            ]
+          ],
+          "matches": [
+            "01abc234"
+          ]
+        }
+      },
+      "tokens": [
+        "title:review"
+      ]
+    }
+  },
+  {
+    "name": "q05",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-title:review"
+            ]
+          ],
+          "matches": [
+            "02def567",
+            "03ghj890",
+            "04kmn123",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "-title:review"
+      ]
+    }
+  },
+  {
+    "name": "q06",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "id:01"
+            ]
+          ],
+          "matches": [
+            "01abc234"
+          ]
+        }
+      },
+      "tokens": [
+        "id:01"
+      ]
+    }
+  },
+  {
+    "name": "q07",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "id:O1"
+            ]
+          ],
+          "matches": [
+            "01abc234"
+          ]
+        }
+      },
+      "tokens": [
+        "id:O1"
+      ]
+    }
+  },
+  {
+    "name": "q08",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "id:zz"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "id:zz"
+      ]
+    }
+  },
+  {
+    "name": "q09",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "pinned:true"
+            ]
+          ],
+          "matches": [
+            "02def567",
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "pinned:true"
+      ]
+    }
+  },
+  {
+    "name": "q10",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "pinned:false"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "03ghj890",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "pinned:false"
+      ]
+    }
+  },
+  {
+    "name": "q11",
+    "out": {
+      "parse": {
+        "err": "`pinned:` takes `true` or `false`, not `maybe`"
+      },
+      "tokens": [
+        "pinned:maybe"
+      ]
+    }
+  },
+  {
+    "name": "q12",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "agenda"
+          ],
+          "grouping": [
+            [
+              "text:agenda"
+            ]
+          ],
+          "matches": [
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "text:agenda"
+      ]
+    }
+  },
+  {
+    "name": "q13",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-text:agenda"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "03ghj890",
+            "04kmn123",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "-text:agenda"
+      ]
+    }
+  },
+  {
+    "name": "q14",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "budget"
+          ],
+          "grouping": [
+            [
+              "budget"
+            ],
+            [
+              "tag:work"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "budget",
+        "tag:work"
+      ]
+    }
+  },
+  {
+    "name": "q15",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "budget",
+            "book"
+          ],
+          "grouping": [
+            [
+              "budget",
+              "book"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567",
+            "03ghj890"
+          ]
+        }
+      },
+      "tokens": [
+        "budget",
+        "OR",
+        "book"
+      ]
+    }
+  },
+  {
+    "name": "q16",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:q3",
+              "tag:work"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:q3",
+        "OR",
+        "tag:work"
+      ]
+    }
+  },
+  {
+    "name": "q17",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "budget"
+          ],
+          "grouping": [
+            [
+              "budget"
+            ],
+            [
+              "tag:q3",
+              "tag:work"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "budget",
+        "tag:q3",
+        "OR",
+        "tag:work"
+      ]
+    }
+  },
+  {
+    "name": "q18",
+    "out": {
+      "parse": {
+        "err": "`OR` needs a term on both sides"
+      },
+      "tokens": [
+        "tag:x",
+        "OR"
+      ]
+    }
+  },
+  {
+    "name": "q19",
+    "out": {
+      "parse": {
+        "err": "`OR` needs a term on both sides"
+      },
+      "tokens": [
+        "OR",
+        "tag:x"
+      ]
+    }
+  },
+  {
+    "name": "q20",
+    "out": {
+      "parse": {
+        "err": "`OR` needs a term on both sides"
+      },
+      "tokens": [
+        "OR"
+      ]
+    }
+  },
+  {
+    "name": "q21",
+    "out": {
+      "parse": {
+        "err": "`-` needs something after it"
+      },
+      "tokens": [
+        "-"
+      ]
+    }
+  },
+  {
+    "name": "q22",
+    "out": {
+      "parse": {
+        "err": "`tag:` has nothing to look for"
+      },
+      "tokens": [
+        "tag:"
+      ]
+    }
+  },
+  {
+    "name": "q23",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            ":x"
+          ],
+          "grouping": [
+            [
+              ":x"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        ":x"
+      ]
+    }
+  },
+  {
+    "name": "q24",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "unknown:x"
+          ],
+          "grouping": [
+            [
+              "unknown:x"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "unknown:x"
+      ]
+    }
+  },
+  {
+    "name": "q25",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-text:--flag"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567",
+            "03ghj890",
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "-text:--flag"
+      ]
+    }
+  },
+  {
+    "name": "q26",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "--flag"
+          ],
+          "grouping": [
+            [
+              "text:--flag"
+            ]
+          ],
+          "matches": [
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "text:--flag"
+      ]
+    }
+  },
+  {
+    "name": "q27",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "two words"
+          ],
+          "grouping": [
+            [
+              "two words"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "two words"
+      ]
+    }
+  },
+  {
+    "name": "q28",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "two words"
+          ],
+          "grouping": [
+            [
+              "two words"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "two words"
+      ]
+    }
+  },
+  {
+    "name": "q29",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:has space"
+            ]
+          ],
+          "matches": [
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:has space"
+      ]
+    }
+  },
+  {
+    "name": "q30",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:has space"
+            ]
+          ],
+          "matches": [
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:has space"
+      ]
+    }
+  },
+  {
+    "name": "q31",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "a",
+            "b",
+            "c"
+          ],
+          "grouping": [
+            [
+              "a"
+            ],
+            [
+              "b"
+            ],
+            [
+              "c"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "a",
+        "b",
+        "c"
+      ]
+    }
+  },
+  {
+    "name": "q32",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "budget"
+          ],
+          "grouping": [
+            [
+              "BUDGET"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "BUDGET"
+      ]
+    }
+  },
+  {
+    "name": "q33",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "日本"
+          ],
+          "grouping": [
+            [
+              "日本"
+            ]
+          ],
+          "matches": [
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "日本"
+      ]
+    }
+  },
+  {
+    "name": "q34",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "日本"
+          ],
+          "grouping": [
+            [
+              "title:日本"
+            ]
+          ],
+          "matches": [
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "title:日本"
+      ]
+    }
+  },
+  {
+    "name": "q35",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:日本語"
+            ]
+          ],
+          "matches": [
+            "04kmn123"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:日本語"
+      ]
+    }
+  },
+  {
+    "name": "q36",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-a"
+            ],
+            [
+              "-b"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "-a",
+        "-b"
+      ]
+    }
+  },
+  {
+    "name": "q37",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:work"
+            ],
+            [
+              "-tag:q3"
+            ]
+          ],
+          "matches": [
+            "01abc234"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:work",
+        "-tag:q3"
+      ]
+    }
+  },
+  {
+    "name": "q38",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:work",
+              "-tag:q3"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567",
+            "03ghj890",
+            "04kmn123",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:work",
+        "OR",
+        "-tag:q3"
+      ]
+    }
+  },
+  {
+    "name": "q39",
+    "out": {
+      "parse": {
+        "err": "search needs something to look for"
+      },
+      "tokens": []
+    }
+  },
+  {
+    "name": "q40",
+    "out": {
+      "parse": {
+        "err": "search needs something to look for"
+      },
+      "tokens": []
+    }
+  },
+  {
+    "name": "q41",
+    "out": {
+      "parse": {
+        "err": "`OR` needs a term on both sides"
+      },
+      "tokens": [
+        "OR",
+        "OR"
+      ]
+    }
+  },
+  {
+    "name": "q42",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "a",
+            "b",
+            "c"
+          ],
+          "grouping": [
+            [
+              "a",
+              "b",
+              "c"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567",
+            "03ghj890",
+            "04kmn123",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "a",
+        "OR",
+        "b",
+        "OR",
+        "c"
+      ]
+    }
+  },
+  {
+    "name": "q43",
+    "out": {
+      "parse": {
+        "err": "`title:` has nothing to look for"
+      },
+      "tokens": [
+        "title:"
+      ]
+    }
+  },
+  {
+    "name": "q44",
+    "out": {
+      "parse": {
+        "err": "`id:` has nothing to look for"
+      },
+      "tokens": [
+        "id:"
+      ]
+    }
+  },
+  {
+    "name": "q45",
+    "out": {
+      "parse": {
+        "err": "`pinned:` has nothing to look for"
+      },
+      "tokens": [
+        "pinned:"
+      ]
+    }
+  },
+  {
+    "name": "q46",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "or"
+          ],
+          "grouping": [
+            [
+              "or"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "or"
+      ]
+    }
+  },
+  {
+    "name": "q47",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "or"
+          ],
+          "grouping": [
+            [
+              "Or"
+            ],
+            [
+              "tag:x"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "Or",
+        "tag:x"
+      ]
+    }
+  },
+  {
+    "name": "q48",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "id:01"
+          ],
+          "grouping": [
+            [
+              "ID:01"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "ID:01"
+      ]
+    }
+  },
+  {
+    "name": "q49",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "tag:work"
+          ],
+          "grouping": [
+            [
+              "TAG:work"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "TAG:work"
+      ]
+    }
+  },
+  {
+    "name": "q50",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:work"
+            ],
+            [
+              "tag:q3"
+            ]
+          ],
+          "matches": [
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "tag:work",
+        "tag:q3"
+      ]
+    }
+  },
+  {
+    "name": "q51",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "unclosed"
+          ],
+          "grouping": [
+            [
+              "unclosed"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "unclosed"
+      ]
+    }
+  },
+  {
+    "name": "q52",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "tag:unclosed"
+            ]
+          ],
+          "matches": []
+        }
+      },
+      "tokens": [
+        "tag:unclosed"
+      ]
+    }
+  },
+  {
+    "name": "q53",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "budget"
+          ],
+          "grouping": [
+            [
+              "budget"
+            ],
+            [
+              "-title:review"
+            ]
+          ],
+          "matches": [
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "budget",
+        "-title:review"
+      ]
+    }
+  },
+  {
+    "name": "q54",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-pinned:true"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "03ghj890",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "-pinned:true"
+      ]
+    }
+  },
+  {
+    "name": "q55",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [],
+          "grouping": [
+            [
+              "-id:01"
+            ]
+          ],
+          "matches": [
+            "02def567",
+            "03ghj890",
+            "04kmn123",
+            "05pqr456"
+          ]
+        }
+      },
+      "tokens": [
+        "-id:01"
+      ]
+    }
+  },
+  {
+    "name": "q56",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "the"
+          ],
+          "grouping": [
+            [
+              "text:the"
+            ]
+          ],
+          "matches": [
+            "01abc234",
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "text:the"
+      ]
+    }
+  },
+  {
+    "name": "q57",
+    "out": {
+      "parse": {
+        "ok": {
+          "excerpt_terms": [
+            "meeting",
+            "budget"
+          ],
+          "grouping": [
+            [
+              "title:meeting"
+            ],
+            [
+              "text:budget"
+            ]
+          ],
+          "matches": [
+            "02def567"
+          ]
+        }
+      },
+      "tokens": [
+        "title:meeting",
+        "text:budget"
+      ]
+    }
+  }
+]
