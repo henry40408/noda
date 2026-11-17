@@ -62,6 +62,19 @@ func lowerCase(ch rune) []rune {
 	return []rune{unicode.ToLower(ch)}
 }
 
+// Lower is the full lowercase mapping of a string, for case-insensitive
+// comparison. It leaves out the final-sigma rule (`Σ` at a word's end), which
+// both sides of a comparison would have to agree on.
+func Lower(text string) string {
+	var out strings.Builder
+	for _, ch := range text {
+		for _, lower := range lowerCase(ch) {
+			out.WriteRune(lower)
+		}
+	}
+	return out.String()
+}
+
 // shorten cuts at the last `-` inside the cap, unless that loses more than half
 // the cap; then at the cap, on a UTF-8 character boundary.
 func shorten(slug string) string {
