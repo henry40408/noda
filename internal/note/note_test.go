@@ -105,6 +105,12 @@ func TestSlugifyLowercasesDottedCapitalIAsRustDoes(t *testing.T) {
 	}
 }
 
+func TestLowerFoldsAFinalSigmaSoBothSpellingsMatch(t *testing.T) {
+	if Lower("ΟΔΟΣ") != Lower("οδος") || Lower("οδοσ") != Lower("οδος") {
+		t.Fatalf("%q %q", Lower("ΟΔΟΣ"), Lower("οδος"))
+	}
+}
+
 func TestNormalizeIDFoldsConfusableCharacters(t *testing.T) {
 	if got := NormalizeID("K3F9ABCD"); got != "k3f9abcd" {
 		t.Error(got)
