@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/henry40408/noda/internal/cmd"
+	"github.com/henry40408/noda/internal/web"
 )
 
 // handler runs one command and returns what to print.
@@ -46,8 +47,9 @@ func handlers() map[string]handler {
 		}),
 		"search": func(e cmd.Env, l parsed) (string, error) { return cmd.Search(e, l.args["query"]) },
 		"tui":    notYet("tui"),
-		"web":    runWeb,
-		"log":    refuseEmptyNoteReference("note", runLog),
+		// Needs the process (its log level and streams), so dispatch runs it.
+		"web": nil,
+		"log": refuseEmptyNoteReference("note", runLog),
 		"backlinks": func(e cmd.Env, l parsed) (string, error) {
 			return cmd.Backlinks(e, l.arg("key"), formatOf(l))
 		},
@@ -94,13 +96,8 @@ func (p process) dispatch(line parsed) error {
 	if !ok {
 		return errors.New("no such command: " + strings.Join(line.path, " "))
 	}
-	// Checked for `web` alone: no other command has a log to level. The value
-	// is read here and nowhere below, so the web package never touches the
-	// environment.
 	if line.path[0] == "web" {
-		if _, err := parseLogLevel(p.env[envLogLevel]); err != nil {
-			return err
-		}
+		return p.serveWeb(line)
 	}
 	env, err := p.environment()
 	if err != nil {
@@ -221,6 +218,23 @@ func runConfig(e cmd.Env, line parsed) (string, error) {
 	return cmd.ConfigShow(e)
 }
 
-func runWeb(_ cmd.Env, _ parsed) (string, error) {
-	return "", errors.New("`noda web` is not available in this build yet")
+// serveWeb reads NODA_LOG_LEVEL here and nowhere below, so the web package
+// never touches the environment.
+func (p process) serveWeb(line parsed) error {
+	level, err := parseLogLevel(p.env[envLogLevel])
+	if err != nil {
+		return err
+	}
+	env, err := p.environment()
+	if err != nil {
+		return err
+	}
+	// A request must not wait at a terminal for a passphrase or a question.
+	env.Interactive = false
+	env.Confirm = nil
+	return web.Serve(web.Options{
+		Env: env, Listen: line.value("listen"), AllowHosts: line.flags["allow-host"],
+		LogFormat: web.LogFormat(line.value("log-format")), LogLevel: level,
+		Stdout: p.stdout, Stderr: p.stderr,
+	})
 }
