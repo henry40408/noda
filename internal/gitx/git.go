@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 )
 
@@ -125,6 +126,29 @@ func (g *Git) versionOutput() (string, error) {
 		return "", fmt.Errorf("running `git version`: %w", err)
 	}
 	return string(output), nil
+}
+
+// Getenv is a variable of the environment git was given.
+func (g *Git) Getenv(name string) (string, bool) {
+	value, found := g.env[name]
+	return value, found
+}
+
+// Environ is that environment as `NAME=value` pairs, for the programs noda
+// starts itself (gpg) so they see what git sees.
+func (g *Git) Environ() []string {
+	pairs := make([]string, 0, len(g.env))
+	for name, value := range g.env {
+		pairs = append(pairs, name+"="+value)
+	}
+	sort.Strings(pairs)
+	return pairs
+}
+
+// Stderr is where a Cmd with PassStderr, and anything else needing the
+// terminal, writes.
+func (g *Git) Stderr() io.Writer {
+	return g.stderr
 }
 
 // Cmd is one git run.
