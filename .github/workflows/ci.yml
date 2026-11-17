@@ -1,5 +1,5 @@
-# The build job guards the PRFAQ's claim that noda builds for musl on x86_64 and
-# aarch64: the vendored C libraries are what break silently there.
+# The go-build job guards the PRFAQ's claim that noda is one static binary on
+# x86_64 and aarch64: a cgo dependency is what breaks that silently.
 #
 # Actions are pinned to commit SHAs, which cannot be repointed the way a tag can;
 # the trailing comment names the release.
@@ -102,32 +102,31 @@ jobs:
       # Can fail with no change here, when a new advisory is published.
       - run: cargo deny check
 
-  build:
-    name: build (${{ matrix.target }})
+  go-build:
+    name: go-build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          key: ${{ matrix.target }}
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-zigbuild
-      - run: cargo zigbuild --release --target ${{ matrix.target }}
-      # Vendoring exists to ship one file that needs nothing installed.
-      - name: the binary must be self-contained
+          go-version-file: go.mod
+      - run: go build -mod=vendor -trimpath -o noda ./cmd/noda
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+      # noda ships as one file that needs nothing installed but git.
+      - name: the binary must be static
         run: |
-          binary=target/${{ matrix.target }}/release/noda
-          file "$binary"
-          file "$binary" | grep -Eq 'static' || {
-            echo "::error::$binary is not statically linked"
+          file noda
+          file noda | grep -Eq 'statically linked' || {
+            echo "::error::noda is not statically linked"
             exit 1
           }
 
@@ -145,6 +144,15 @@ jobs:
           test -z "$(git status --porcelain -- vendor go.mod go.sum)"
       - run: scripts/check-dep-age.sh
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # e2e/ is its own module, so none of the above reached it.
+      - name: e2e module
+        working-directory: e2e
+        run: |
+          go mod tidy -diff
+          go mod vendor
+          test -z "$(git status --porcelain -- vendor go.mod go.sum)"
+          ../scripts/check-dep-age.sh
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   go-lint:
     name: go-lint
@@ -160,6 +168,17 @@ jobs:
           test -z "$unformatted"
       - run: go vet -mod=vendor ./...
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: e2e module
+        working-directory: e2e
+        run: |
+          go vet -mod=vendor ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      # One toolchain for both modules, or a bump in one is missed in the other.
+      - name: e2e uses the root go and toolchain lines
+        run: |
+          for key in go toolchain; do
+            test "$(grep "^$key " go.mod)" = "$(grep "^$key " e2e/go.mod)"
+          done
 
   go-test:
     name: go-test
@@ -170,6 +189,21 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test -mod=vendor -race ./...
+
+  go-e2e:
+    name: go-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # chromedp's own search prefers a chromium on PATH over google-chrome, so
+      # the browser the runner reports is pinned.
+      - name: Pin the browser
+        run: echo "E2E_CHROME=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - run: go test -mod=vendor -count=1 -timeout 25m ./...
+        working-directory: e2e
 
   # noda supports git 2.39 (Debian bookworm) and up; the other jobs run the
   # runner's newer git, so this one builds the floor and runs the suites on it.

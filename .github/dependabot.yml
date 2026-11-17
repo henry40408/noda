@@ -12,7 +12,9 @@ updates:
           - "*"
 
   - package-ecosystem: "gomod"
-    directory: "/"
+    directories:
+      - "/"
+      - "/e2e"
     schedule:
       interval: "weekly"
     cooldown:
@@ -37,6 +39,14 @@ updates:
           - "*"
 
   - package-ecosystem: "rust-toolchain"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+
+  # Tracks the runtime image's digest.
+  - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
