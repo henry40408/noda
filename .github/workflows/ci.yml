@@ -171,6 +171,25 @@ jobs:
           go-version-file: go.mod
       - run: go test -mod=vendor -race ./...
 
+  # noda supports git 2.39 (Debian bookworm) and up; the other jobs run the
+  # runner's newer git, so this one builds the floor and runs the suites on it.
+  go-min-git:
+    name: go-min-git (git 2.39)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build git 2.39.5
+        run: |
+          git clone --quiet --depth 1 --branch v2.39.5 https://github.com/git/git "$RUNNER_TEMP/git-src"
+          make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" prefix="$RUNNER_TEMP/git-2.39" NO_GETTEXT=1 NO_TCLTK=1 NO_CURL=1 NO_EXPAT=1 NO_PERL=1 NO_PYTHON=1 install
+          echo "$RUNNER_TEMP/git-2.39/bin" >> "$GITHUB_PATH"
+      - name: The floor is what runs
+        run: test "$(git --version)" = "git version 2.39.5"
+      - run: go test -mod=vendor ./internal/gitx/... ./internal/notebook/...
+
   lint-workflow:
     name: lint-workflow
     runs-on: ubuntu-latest
