@@ -48,13 +48,12 @@ func (t Table) Render(buf *Buffer, area Rect, state *TableState) {
 	for i := start; i < end; i++ {
 		y := rowsTop + i - start
 		selected := i == state.Selected
+		// Before the cells, as ratatui does: a wide character then resets the cell it covers.
 		if selected {
+			buf.SetStyle(Rect{area.X, y, area.Width, 1}, t.HighlightStyle)
 			t.HighlightSymbol.renderIn(buf, Rect{area.X, y, t.HighlightSymbol.Width(), 1})
 		}
 		t.drawCells(buf, area, y, columns, t.Rows[i])
-		if selected {
-			buf.SetStyle(Rect{area.X, y, area.Width, 1}, t.HighlightStyle)
-		}
 	}
 }
 

@@ -70,7 +70,8 @@ func (l Layout) Split(area Rect) []Rect {
 	sizes := l.sizes(total)
 	start := 0
 	if l.Flex == FlexCenter {
-		start = max(0, total-l.spanOf(sizes)) / 2
+		// The odd column goes to the leading spacer, as ratatui rounds it.
+		start = (max(0, total-l.spanOf(sizes)) + 1) / 2
 	}
 	out := make([]Rect, len(sizes))
 	at := start
