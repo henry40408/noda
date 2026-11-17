@@ -224,6 +224,57 @@ func TestALinkNestedInAnImageIsRewrittenAtItsOwnDestination(t *testing.T) {
 	}
 }
 
+// The cases below are what the Rust rewrite does (it searches only the event's
+// own range); the review that found these gaps listed each outcome.
+func TestRewriteTouchesTheLinkNotTheCodeThatLooksLikeOne(t *testing.T) {
+	cases := []struct{ name, body, old, want string }{
+		{"code span after an escaped link", "[a](x\\_y.md) and `[b](x_y.md)`\n", "x_y.md", ""},
+		{"code span after the real link", "[a](x_y.md) and `[b](x_y.md)`\n", "x_y.md", "[a](z.md) and `[b](x_y.md)`\n"},
+		{"code span before the real link", "`[b](x_y.md)` then [a](x_y.md)\n", "x_y.md", "`[b](x_y.md)` then [a](z.md)\n"},
+		{"fence after the paragraph", "[a](x_y.md)\n\n```\n[b](x_y.md)\n```\n", "x_y.md", "[a](z.md)\n\n```\n[b](x_y.md)\n```\n"},
+		{"fence only", "```\n[b](x_y.md)\n```\n", "x_y.md", ""},
+	}
+	for _, c := range cases {
+		got, ok := Rewrite(c.body, c.old, "z.md")
+		if c.want == "" {
+			if ok {
+				t.Errorf("%s: rewrote %q", c.name, got)
+			}
+			continue
+		}
+		if !ok || got != c.want {
+			t.Errorf("%s: got %q (%v), want %q", c.name, got, ok, c.want)
+		}
+	}
+}
+
+func TestRewriteFindsTheRealDefinitionNotALazyContinuation(t *testing.T) {
+	body := "intro\n[r]: x.md\n\n[r]: x.md\n\n[see][r]\n"
+	got, ok := Rewrite(body, "x.md", "z.md")
+	if !ok || got != "intro\n[r]: x.md\n\n[r]: z.md\n\n[see][r]\n" {
+		t.Fatalf("%q %v", got, ok)
+	}
+}
+
+func TestRewriteReachesDestinationsWithAnEmptyLabel(t *testing.T) {
+	cases := []struct{ name, body, old, want string }{
+		{"empty link", "[](x.md)\n", "x.md", "[](z.md)\n"},
+		{"empty alt", "![](pic.png)\n", "pic.png", "![](z.md)\n"},
+		{"empty alt in a link, outer", "[![](t.png)](f.png)\n", "f.png", "[![](t.png)](z.md)\n"},
+		{"empty alt in a link, inner", "[![](t.png)](f.png)\n", "t.png", "[![](z.md)](f.png)\n"},
+		{"two in a row", "![](p.png) ![](p.png)\n", "p.png", "![](z.md) ![](z.md)\n"},
+		{"after a labelled one", "[a](p.png) then ![](p.png)\n", "p.png", "[a](z.md) then ![](z.md)\n"},
+		{"in a blockquote definition", "> [r]: x.md\n\n[see][r]\n", "x.md", "> [r]: z.md\n\n[see][r]\n"},
+		{"in a list definition", "- [r]: x.md\n\n[see][r]\n", "x.md", "- [r]: z.md\n\n[see][r]\n"},
+	}
+	for _, c := range cases {
+		got, ok := Rewrite(c.body, c.old, "z.md")
+		if !ok || got != c.want {
+			t.Errorf("%s: got %q (%v), want %q", c.name, got, ok, c.want)
+		}
+	}
+}
+
 func TestSchemeNeedsALetterFirstAndOnlySchemeCharacters(t *testing.T) {
 	cases := map[string]string{"https://x": "https", "mailto:a@b": "mailto", "a+b-c.d:x": "a+b-c.d"}
 	for dest, want := range cases {

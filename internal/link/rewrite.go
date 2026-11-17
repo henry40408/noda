@@ -22,26 +22,7 @@ type span struct{ start, end int }
 // so the caller re-checks with Targets.
 func Rewrite(body, old, replacement string) (string, bool) {
 	doc := markdown.Plain(body)
-	var spans []span
-	doc.Walk(func(node ast.Node) {
-		destination, ok := destinationOf(node)
-		if !ok || !namesFile(destination, old) {
-			return
-		}
-		// A reference-style usage's bytes are in the definition, handled below.
-		if found, ok := inlineDestination(doc.Source, node, destination); ok {
-			spans = append(spans, pathPart(found, destination))
-		}
-	})
-	for _, reference := range doc.References {
-		destination := markdown.Unescape(reference.Destination())
-		if !namesFile(destination, old) {
-			continue
-		}
-		if found, ok := definitionDestination(doc, reference); ok {
-			spans = append(spans, pathPart(found, destination))
-		}
-	}
+	spans := append(inlineSpans(doc, old), definitionSpans(doc, old)...)
 	if len(spans) == 0 {
 		return "", false
 	}
@@ -76,14 +57,79 @@ func pathPart(found span, destination string) span {
 	return span{found.start, found.start + length}
 }
 
-// inlineDestination locates where `[label](destination)` wrote its destination.
-// goldmark gives no offsets for a link, so it starts from the end of the label's
-// last text and takes the first `](` that is followed by this very destination.
-func inlineDestination(source []byte, node ast.Node, destination string) (span, bool) {
-	from, ok := labelEnd(node)
-	if !ok {
-		return span{}, false
+// inlineSpans locates the destination of every inline link or image naming old.
+// Nodes are visited on the way out, the order their `](` appear in the source:
+// an image inside a link closes first. Each search starts after the previous
+// hit in the same block, which is what anchors a link with an empty label.
+func inlineSpans(doc markdown.Document, old string) []span {
+	searchable := maskCodeSpans(doc)
+	cursors := map[ast.Node]int{}
+	var spans []span
+	_ = ast.Walk(doc.Root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			return ast.WalkContinue, nil
+		}
+		destination, ok := destinationOf(node)
+		if !ok || !namesFile(destination, old) {
+			return ast.WalkContinue, nil
+		}
+		block, window, ok := enclosingBlock(node)
+		if !ok {
+			return ast.WalkContinue, nil
+		}
+		from := max(cursors[block], window.start, labelEnd(node))
+		found, ok := inlineDestination(searchable[:window.end], from, destination)
+		if !ok {
+			return ast.WalkContinue, nil
+		}
+		cursors[block] = found.end
+		spans = append(spans, pathPart(found, destination))
+		return ast.WalkContinue, nil
+	})
+	return spans
+}
+
+// maskCodeSpans blanks what is inside code spans, so a `[b](x.md)` written in
+// code is never taken for the link's destination. Offsets stay the same.
+func maskCodeSpans(doc markdown.Document) []byte {
+	masked := bytes.Clone(doc.Source)
+	doc.Walk(func(node ast.Node) {
+		if node.Kind() != ast.KindCodeSpan {
+			return
+		}
+		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+			text, ok := child.(*ast.Text)
+			if !ok {
+				continue
+			}
+			for at := text.Segment.Start; at < text.Segment.Stop; at++ {
+				masked[at] = ' '
+			}
+		}
+	})
+	return masked
+}
+
+// enclosingBlock is the nearest block with source lines, and the bytes they
+// cover: a link's destination is never outside it.
+func enclosingBlock(node ast.Node) (ast.Node, span, bool) {
+	for block := node.Parent(); block != nil; block = block.Parent() {
+		if block.Type() != ast.TypeBlock {
+			continue
+		}
+		lines := block.Lines()
+		if lines.Len() > 0 {
+			return block, span{lines.At(0).Start, lines.At(lines.Len() - 1).Stop}, true
+		}
 	}
+	return nil, span{}, false
+}
+
+// inlineDestination locates where `[label](destination)` wrote its destination.
+// goldmark gives no offsets for a link, so it takes the first `](` at or after
+// from that is followed by this very destination. source ends where the
+// enclosing block does.
+func inlineDestination(source []byte, from int, destination string) (span, bool) {
 	for {
 		at := bytes.Index(source[from:], []byte("]("))
 		if at < 0 {
@@ -96,17 +142,17 @@ func inlineDestination(source []byte, node ast.Node, destination string) (span, 
 	}
 }
 
-// labelEnd is where the last piece of the label's text stops. An empty label has
-// no text to anchor on, so it is left for the caller's re-check.
-func labelEnd(node ast.Node) (int, bool) {
-	end, found := 0, false
+// labelEnd is where the last piece of the label's text stops, or 0 for a label
+// with no text (`![](pic.png)`), which the caller anchors on the previous hit.
+func labelEnd(node ast.Node) int {
+	end := 0
 	_ = ast.Walk(node, func(child ast.Node, entering bool) (ast.WalkStatus, error) {
-		if text, ok := child.(*ast.Text); ok && entering && text.Segment.Stop > end {
-			end, found = text.Segment.Stop, true
+		if text, ok := child.(*ast.Text); ok && entering {
+			end = max(end, text.Segment.Stop)
 		}
 		return ast.WalkContinue, nil
 	})
-	return end, found
+	return end
 }
 
 // writtenDestination reads a link destination as CommonMark spells it starting
@@ -162,35 +208,52 @@ func bareDestination(source []byte, start int) (span, bool) {
 	return span{start, len(source)}, len(source) > start
 }
 
-// definitionDestination finds the `[label]: destination` line of a reference.
-// goldmark drops definitions from the tree and keeps no offsets, so the source
-// is scanned for the line, skipping anything inside a code block.
-func definitionDestination(doc markdown.Document, reference interface {
-	Label() []byte
-	Destination() []byte
-}) (span, bool) {
-	code := codeRanges(doc)
-	label := util.ToLinkReference(reference.Label())
-	destination := markdown.Unescape(reference.Destination())
-	for _, start := range lineStarts(doc.Source) {
-		if inside(code, start) {
+func definitionSpans(doc markdown.Document, old string) []span {
+	var spans []span
+	definitions := definitionStarts(doc.Root)
+	for _, reference := range doc.References {
+		destination := markdown.Unescape(reference.Destination())
+		if !namesFile(destination, old) {
 			continue
 		}
-		found, ok := definitionOnLine(doc.Source, start, label)
-		if ok && string(doc.Source[found.start:found.end]) == destination {
+		label := util.ToLinkReference(reference.Label())
+		if found, ok := definitionDestination(doc.Source, definitions, label, destination); ok {
+			spans = append(spans, pathPart(found, destination))
+		}
+	}
+	return spans
+}
+
+// definitionStarts is where each `[label]: destination` definition begins.
+// goldmark keeps a node for a definition, with its lines, but not the
+// destination's offset. A line that only looks like one (in a fence, or as a
+// paragraph's lazy continuation) has no such node.
+func definitionStarts(root ast.Node) []int {
+	var starts []int
+	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering && node.Kind() == ast.KindLinkReferenceDefinition && node.Lines().Len() > 0 {
+			starts = append(starts, node.Lines().At(0).Start)
+		}
+		return ast.WalkContinue, nil
+	})
+	return starts
+}
+
+// definitionDestination finds the destination bytes of the first definition
+// with this label, the one a reader uses.
+func definitionDestination(source []byte, starts []int, label, destination string) (span, bool) {
+	for _, start := range starts {
+		found, ok := definitionOnLine(source, start, label)
+		if ok && string(source[found.start:found.end]) == destination {
 			return found, true
 		}
 	}
 	return span{}, false
 }
 
-// definitionOnLine reads `[label]:` at the start of a line (up to three spaces
-// of indent) and returns the destination's bytes when the label matches.
-func definitionOnLine(source []byte, lineStart int, label string) (span, bool) {
-	at := lineStart
-	for at < len(source) && source[at] == ' ' && at-lineStart < 3 {
-		at++
-	}
+// definitionOnLine reads `[label]:` at the given offset and returns the
+// destination's bytes when the label matches.
+func definitionOnLine(source []byte, at int, label string) (span, bool) {
 	if at >= len(source) || source[at] != '[' {
 		return span{}, false
 	}
@@ -204,42 +267,6 @@ func definitionOnLine(source []byte, lineStart int, label string) (span, bool) {
 		return span{}, false
 	}
 	return writtenDestination(source, at+2)
-}
-
-func lineStarts(source []byte) []int {
-	starts := []int{0}
-	for at, ch := range source {
-		if ch == '\n' && at+1 < len(source) {
-			starts = append(starts, at+1)
-		}
-	}
-	return starts
-}
-
-func codeRanges(doc markdown.Document) []span {
-	var ranges []span
-	doc.Walk(func(node ast.Node) {
-		switch node.Kind() {
-		case ast.KindFencedCodeBlock, ast.KindCodeBlock, ast.KindHTMLBlock:
-		default:
-			return
-		}
-		lines := node.Lines()
-		if lines.Len() == 0 {
-			return
-		}
-		ranges = append(ranges, span{lines.At(0).Start, lines.At(lines.Len() - 1).Stop})
-	})
-	return ranges
-}
-
-func inside(ranges []span, at int) bool {
-	for _, r := range ranges {
-		if at >= r.start && at < r.end {
-			return true
-		}
-	}
-	return false
 }
 
 // encodeDestination encodes what would otherwise end a destination or start its
