@@ -126,8 +126,16 @@ func firstSentence(text string) string {
 
 // helpCommand answers `noda help [command...]`.
 func helpCommand(root *commandSpec, names []string) (string, error) {
-	spec, path := root, []string{root.name}
+	return helpAt([]string{root.name}, root, names)
+}
+
+// helpAt answers `help [command...]` typed under the command at path, which
+// every command with subcommands has: `noda file help add`.
+func helpAt(path []string, spec *commandSpec, names []string) (string, error) {
 	for _, name := range names {
+		if name == "help" && len(spec.subs) > 0 {
+			return helpOfHelp(path), nil
+		}
 		next := findSub(spec, name)
 		if next == nil {
 			return "", usageError{message: "unrecognized subcommand '" + name + "'", usage: usageLine(path, spec)}
@@ -135,6 +143,13 @@ func helpCommand(root *commandSpec, names []string) (string, error) {
 		spec, path = next, append(path, name)
 	}
 	return helpFor(path, spec), nil
+}
+
+// helpOfHelp is the help of the `help` subcommand itself.
+func helpOfHelp(path []string) string {
+	return "Print this message or the help of the given subcommand(s)\n\n" +
+		"Usage: " + strings.Join(path, " ") + " help [COMMAND]...\n\n" +
+		"Arguments:\n  [COMMAND]...  Print help for the subcommand(s)\n"
 }
 
 func findSub(spec *commandSpec, name string) *commandSpec {

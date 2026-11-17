@@ -54,13 +54,6 @@ func run(p process) int {
 
 func (p process) execute() error {
 	root := buildSpec()
-	if len(p.args) > 0 && p.args[0] == "help" {
-		text, err := helpCommand(root, p.args[1:])
-		if err != nil {
-			return err
-		}
-		return p.print(text)
-	}
 	line, err := parseCommandLine(root, p.args, p.lookupEnv)
 	var request helpRequest
 	if errors.As(err, &request) {

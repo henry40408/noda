@@ -135,7 +135,7 @@ func TestUsageErrorsExitTwoWithClapsShape(t *testing.T) {
 	if got.code != 2 || got.stderr != want {
 		t.Fatalf("%+v", got)
 	}
-	if got := s.run(); got.code != 2 || !strings.HasPrefix(got.stderr, "error: 'noda' requires a subcommand") {
+	if got := s.run(); got.code != 2 || got.stdout != "" || !strings.HasPrefix(got.stderr, "A git-native notebook for your terminal\n\nUsage: noda <COMMAND>") {
 		t.Fatalf("no subcommand: %+v", got)
 	}
 }

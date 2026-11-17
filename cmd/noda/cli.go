@@ -88,9 +88,15 @@ func (h helpRequest) Error() string { return "help requested" }
 type usageError struct {
 	message string
 	usage   string
+	// help replaces the rest: clap answers a missing subcommand with the
+	// command's help on stderr.
+	help string
 }
 
 func (u usageError) Error() string {
+	if u.help != "" {
+		return strings.TrimSuffix(u.help, "\n")
+	}
 	return fmt.Sprintf("error: %s\n\nUsage: %s\n\nFor more information, try '--help'.", u.message, u.usage)
 }
 
@@ -134,6 +140,8 @@ func (s *parseState) take(args []string, i int) (int, error) {
 	switch {
 	case s.rest || (s.hyphenNext() && !s.isOptionBeforeFirstValue(arg)):
 		return i, s.addPositional(arg)
+	case arg == "help" && s.awaitsSubcommand():
+		return len(args) - 1, s.helpOn(args[i+1:])
 	case arg == "--":
 		s.rest = true
 		return i, nil
@@ -143,6 +151,19 @@ func (s *parseState) take(args []string, i int) (int, error) {
 		return s.takeShort(args, i)
 	}
 	return i, s.addPositionalOrSub(arg)
+}
+
+func (s *parseState) awaitsSubcommand() bool {
+	return len(s.spec.subs) > 0 && len(s.positional) == 0
+}
+
+// helpOn is `help [command...]` under the current command, answered as help.
+func (s *parseState) helpOn(names []string) error {
+	text, err := helpAt(s.path, s.spec, names)
+	if err != nil {
+		return err
+	}
+	return helpRequest{text: text}
 }
 
 func (s *parseState) addPositionalOrSub(arg string) error {
@@ -368,7 +389,7 @@ func flagName(spec *flagSpec) string {
 // argument, environment fallbacks, and the flag relations.
 func (s *parseState) finish() (parsed, error) {
 	if len(s.spec.subs) > 0 {
-		return parsed{}, s.fail("'%s' requires a subcommand but one was not provided", strings.Join(s.path, " "))
+		return parsed{}, usageError{help: helpFor(s.path, s.spec)}
 	}
 	if err := s.requireArguments(); err != nil {
 		return parsed{}, err

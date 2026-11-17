@@ -174,11 +174,10 @@ func TestRelationsBetweenFlags(t *testing.T) {
 
 func TestUnknownThingsAreUsageErrors(t *testing.T) {
 	for want, args := range map[string][]string{
-		"unrecognized subcommand 'bogus'":                            {"bogus"},
-		"unexpected argument '--nope' found":                         {"ls", "--nope"},
-		"unexpected argument '-z' found":                             {"ls", "-z"},
-		"unexpected argument 'extra' found":                          {"show", "a", "extra"},
-		"'noda file' requires a subcommand but one was not provided": {"file"},
+		"unrecognized subcommand 'bogus'":    {"bogus"},
+		"unexpected argument '--nope' found": {"ls", "--nope"},
+		"unexpected argument '-z' found":     {"ls", "-z"},
+		"unexpected argument 'extra' found":  {"show", "a", "extra"},
 	} {
 		if got := parseError(t, args...); got != want {
 			t.Errorf("%v: got %q want %q", args, got, want)
@@ -186,6 +185,48 @@ func TestUnknownThingsAreUsageErrors(t *testing.T) {
 	}
 	if got := parseError(t, "ls", "--json=yes"); !strings.HasPrefix(got, "unexpected value 'yes' for '--json'") {
 		t.Errorf("a switch takes no value: %q", got)
+	}
+}
+
+func TestAMissingSubcommandIsTheCommandsHelpAsAUsageError(t *testing.T) {
+	for args, usage := range map[string]string{
+		"":         "Usage: noda <COMMAND>",
+		"file":     "Usage: noda file <COMMAND>",
+		"notebook": "Usage: noda notebook <COMMAND>",
+		"remote":   "Usage: noda remote <COMMAND>",
+		"import":   "Usage: noda import <COMMAND>",
+	} {
+		_, err := parseCommandLine(buildSpec(), strings.Fields(args), lookupIn(nil))
+		var failure usageError
+		if !errors.As(err, &failure) || !strings.Contains(failure.Error(), usage) || strings.HasPrefix(failure.Error(), "error:") ||
+			strings.HasSuffix(failure.Error(), "\n") {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+}
+
+func TestHelpSubcommandWorksUnderEveryCommandWithSubcommands(t *testing.T) {
+	for args, want := range map[string]string{
+		"help help":        "Usage: noda help [COMMAND]...",
+		"file help":        "Usage: noda file <COMMAND>",
+		"file help add":    "Usage: noda file add [OPTIONS] <PATH>...",
+		"file help help":   "Usage: noda file help [COMMAND]...",
+		"notebook help rm": "Usage: noda notebook rm [OPTIONS] <NAME>",
+		"help file add":    "Usage: noda file add [OPTIONS] <PATH>...",
+		"import help":      "Usage: noda import <COMMAND>",
+	} {
+		_, err := parseCommandLine(buildSpec(), strings.Fields(args), lookupIn(nil))
+		var request helpRequest
+		if !errors.As(err, &request) || !strings.Contains(request.text, want) {
+			t.Errorf("%q: %v %q", args, err, request.text)
+		}
+	}
+	for _, args := range []string{"help nope", "file help nope", "file add help"} {
+		_, err := parseCommandLine(buildSpec(), strings.Fields(args), lookupIn(nil))
+		var request helpRequest
+		if errors.As(err, &request) {
+			t.Errorf("%q is not a help request", args)
+		}
 	}
 }
 
