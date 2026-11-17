@@ -71,7 +71,7 @@ func openBrowser(t *testing.T, box sandbox, cols, rows int) *browser {
 	for name, value := range box.env {
 		command.Env = append(command.Env, name+"="+value)
 	}
-	command.Env = append(command.Env, "TERM=xterm-256color")
+	command.Env = withCoverage(append(command.Env, "TERM=xterm-256color"))
 	master, err := pty.StartWithSize(command, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		t.Fatal(err)

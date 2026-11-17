@@ -21,6 +21,27 @@ var (
 	builtErr  error
 )
 
+// coverDir is where a `-cover` binary writes its profile; empty means the
+// binary is built plain. `go test -coverprofile` does not see an exec'd binary.
+var coverDir = os.Getenv("NODA_COVERDIR")
+
+func buildArguments(output string) []string {
+	arguments := []string{"build", "-mod=vendor"}
+	if coverDir != "" {
+		arguments = append(arguments, "-cover", "-coverpkg=github.com/henry40408/noda/...")
+	}
+	return append(arguments, "-o", output, ".")
+}
+
+// withCoverage tells a `-cover` binary where to write; without GOCOVERDIR it
+// would warn on stderr, which the tests read.
+func withCoverage(env []string) []string {
+	if coverDir == "" {
+		return env
+	}
+	return append(env, "GOCOVERDIR="+coverDir)
+}
+
 // theBinary is built once: these tests are about a real process and its
 // signals, which a call into run cannot show.
 func theBinary(t *testing.T) string {
@@ -31,8 +52,14 @@ func theBinary(t *testing.T) string {
 			builtErr = err
 			return
 		}
+		if coverDir != "" {
+			if err := os.MkdirAll(coverDir, 0o755); err != nil {
+				builtErr = err
+				return
+			}
+		}
 		builtPath = filepath.Join(dir, "noda")
-		build := exec.Command("go", "build", "-o", builtPath, ".")
+		build := exec.Command("go", buildArguments(builtPath)...)
 		if out, err := build.CombinedOutput(); err != nil {
 			builtErr = &buildFailure{err: err, out: string(out)}
 		}
@@ -65,6 +92,7 @@ func startServer(t *testing.T, args ...string) *serverProcess {
 	for name, value := range box.env {
 		command.Env = append(command.Env, name+"="+value)
 	}
+	command.Env = withCoverage(command.Env)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +221,7 @@ func TestAWideAddressWarnsThatThereIsNoPassword(t *testing.T) {
 	for name, value := range box.env {
 		command.Env = append(command.Env, name+"="+value)
 	}
+	command.Env = withCoverage(command.Env)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

@@ -304,18 +304,13 @@ func TestOnlyEPIPEIsABrokenPipe(t *testing.T) {
 // and a closed stdout cannot be seen from run().
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "noda")
-	build := exec.Command("go", "build", "-o", out, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, output)
-	}
-	return out
+	return theBinary(t)
 }
 
 func TestBinaryExitsOneOnARetiredVariable(t *testing.T) {
 	binary := buildBinary(t)
 	command := exec.Command(binary, "--version")
-	command.Env = append(withoutRustLog(os.Environ()), "RUST_LOG=")
+	command.Env = withCoverage(append(withoutRustLog(os.Environ()), "RUST_LOG="))
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	err := command.Run()
@@ -333,7 +328,7 @@ func TestBinaryTreatsABrokenPipeAsSuccess(t *testing.T) {
 	}
 	read.Close()
 	command := exec.Command(binary, "--help")
-	command.Env = withoutRustLog(os.Environ())
+	command.Env = withCoverage(withoutRustLog(os.Environ()))
 	command.Stdout = write
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
@@ -359,6 +354,7 @@ func TestBinaryLeavesSIGPIPEAtItsDefaultForChildren(t *testing.T) {
 	for name, value := range s.env {
 		command.Env = append(command.Env, name+"="+value)
 	}
+	command.Env = withCoverage(command.Env)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	_ = command.Run() // the empty note is refused; only the editor's stderr matters
