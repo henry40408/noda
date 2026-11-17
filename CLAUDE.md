@@ -166,3 +166,14 @@ crate.
 - **GitHub Actions are pinned by commit SHA**, with the tag as a trailing comment.
 - Releases use `gh release create --generate-notes`; never edit the manifest `version` (it is a
   placeholder) or add a `CHANGELOG.md`.
+
+## Accepted differences from the Rust version
+
+- **`noda blame` across a rename that also rewrites the file.** Rust follows a note by id, so it
+  credits lines kept through a large rewrite to the note's first commit. Go delegates to
+  `git blame`, which follows by content and credits them to the rewriting commit. The user accepted
+  this and no boundary mapping is implemented. `testdata/golden/repos/rename-rewrite/blame.txt`
+  stays the Rust record; `TestRenameRewriteBlameDiffersFromRustAsKnown` pins the Go result.
+- **ssh may prompt in the CLI.** The command line sets `Interactive` when stdin is a terminal, so
+  ssh can ask for a passphrase or host key; the web server and the TUI never do.
+

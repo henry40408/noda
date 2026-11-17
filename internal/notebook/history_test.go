@@ -274,7 +274,9 @@ func TestRenameRewriteFollowsTheNoteById(t *testing.T) {
 
 // Rust follows a rename by id and so credits `golf` and `lima` to the note's
 // first commit. git follows by content, and a rewrite this large is not one
-// file to it; the difference is listed in the hand-off for the user to decide.
+// file to it. The user accepted the difference (CLAUDE.md, "Accepted differences
+// from the Rust version"), so the golden is kept as the Rust record and this test
+// pins what git does instead.
 func TestRenameRewriteBlameDiffersFromRustAsKnown(t *testing.T) {
 	nb := fixture(t, "rename-rewrite")
 	lines, err := nb.Blame("01abc234", "q3-budget-review")
