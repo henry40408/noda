@@ -316,6 +316,10 @@ func TestPrintAddsOneNewlineAndKeepsNULOutputRaw(t *testing.T) {
 		{"a\n", "a\n", false},
 		{"\x1b[1ma\x1b[0m", "a\n", false},
 		{"\x1b[1ma\x1b[0m", "\x1b[1ma\x1b[0m\n", true},
+		// A coloured section ends "\n\x1b[0m": the newline after it stays when
+		// the escapes go, as in Rust.
+		{"a\n\x1b[0m", "a\n\n", false},
+		{"a\n\x1b[0m", "a\n\x1b[0m\n", true},
 		{"a\x00b\x00", "a\x00b\x00", false},
 		{"\x1b[1ma\x1b[0m\x00", "\x1b[1ma\x1b[0m\x00", false},
 	}

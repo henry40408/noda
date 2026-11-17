@@ -23,10 +23,14 @@ func printOutput(w io.Writer, text string, color bool) error {
 		_, err := io.WriteString(w, text)
 		return err
 	}
+	// Asked before the escapes go: a coloured section ends "\n\x1b[0m", and
+	// Rust added its newline after that, so a plain `noda diff` ends with a
+	// blank line.
+	needsNewline := !strings.HasSuffix(text, "\n")
 	if !color {
 		text = style.Strip(text)
 	}
-	if !strings.HasSuffix(text, "\n") {
+	if needsNewline {
 		text += "\n"
 	}
 	_, err := io.WriteString(w, text)

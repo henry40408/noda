@@ -252,6 +252,29 @@ func TestPrintStripsColourOffATerminalAndKeepsItWhenForced(t *testing.T) {
 	}
 }
 
+// The golden helper in internal/notebook trims trailing newlines, so nothing
+// else pins the blank line a plain `noda diff` ends with in the Rust build.
+func TestPlainDiffEndsWithABlankLineAsInRust(t *testing.T) {
+	s := newSandbox(t)
+	s.ok(t, "init")
+	s.ok(t, "add", "Alpha", "-c", "x")
+	note := strings.TrimSpace(s.ok(t, "path", "alpha"))
+	body, err := os.ReadFile(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(note, append(body, "extra\n"...), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ok(t, "diff"); !strings.HasSuffix(got, "+extra\n\n") {
+		t.Fatalf("plain: %q", got)
+	}
+	s.env["CLICOLOR_FORCE"] = "1"
+	if got := s.ok(t, "diff"); !strings.HasSuffix(got, "+extra\n\x1b[0m\n") {
+		t.Fatalf("forced colour: %q", got)
+	}
+}
+
 func TestWebRefusesABadLogLevelAndIsNotYetServed(t *testing.T) {
 	s := newSandbox(t)
 	s.env["NODA_LOG_LEVEL"] = "loud"
