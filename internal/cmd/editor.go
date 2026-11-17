@@ -21,7 +21,7 @@ func (e Env) runEditor(editor, path string) error {
 	}
 	program := parts[0]
 	command := exec.Command(program, append(parts[1:], path)...)
-	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stderr, os.Stderr
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = e.Git.Environ()
 	if err := command.Run(); err != nil {
 		var exit *exec.ExitError

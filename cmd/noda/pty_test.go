@@ -67,7 +67,17 @@ type browser struct {
 
 func openBrowser(t *testing.T, box sandbox, cols, rows int) *browser {
 	t.Helper()
+	return openBrowserWithStderr(t, box, cols, rows, nil)
+}
+
+// openBrowserWithStderr sends the browser's stderr to a file instead of the
+// terminal, as `noda tui 2>log` does. A nil file leaves it on the terminal.
+func openBrowserWithStderr(t *testing.T, box sandbox, cols, rows int, stderr *os.File) *browser {
+	t.Helper()
 	command := exec.Command(theBinary(t), "tui")
+	if stderr != nil {
+		command.Stderr = stderr
+	}
 	for name, value := range box.env {
 		command.Env = append(command.Env, name+"="+value)
 	}
@@ -374,4 +384,45 @@ func TestThePtyComingBackFromTheEditorRedrawsTheScreen(t *testing.T) {
 	b.send("\r")
 	b.waitFor("edited by the test")
 	b.quit()
+}
+
+// With stderr redirected, an editor that draws on stdout must still reach the
+// terminal; it used to be wired to stderr and drew into the log file instead.
+func TestThePtyEditorScreenGoesToTheTerminalWhenStderrIsRedirected(t *testing.T) {
+	box := aNotebook(t)
+	script := filepath.Join(t.TempDir(), "editor.sh")
+	body := "#!/bin/sh\necho EDITOR-DREW-ON-STDOUT\nprintf '\\nedited by the test\\n' >> \"$1\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(box.env["XDG_CONFIG_HOME"], "noda", "config.toml")
+	file, err := os.OpenFile(config, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(file, "editor = %q\n", script); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+
+	logPath := filepath.Join(t.TempDir(), "stderr.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+	b := openBrowserWithStderr(t, box, 90, 28, logFile)
+	b.waitFor("Budget review")
+	b.send("e")
+	waitForFile(t, strings.TrimSpace(box.ok(t, "path", "budget-review")), "edited by the test")
+	b.waitFor("budget-review")
+	b.quit()
+
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(logged), "EDITOR-DREW-ON-STDOUT") {
+		t.Fatalf("the editor's screen went into the stderr file: %q", logged)
+	}
 }
