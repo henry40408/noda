@@ -2,9 +2,12 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -391,5 +394,69 @@ func TestAStopDoesNotWaitForAWatchThatNeverEnds(t *testing.T) {
 	case <-ended:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the stream outlived Stop")
+	}
+}
+
+func TestAWatchEndsWhenItsReaderHangsUpAndStopThenFinishes(t *testing.T) {
+	site := serving(t)
+	id := site.idOf("budget-review")
+	ctx, hangUp := context.WithCancel(context.Background())
+	request, _ := http.NewRequestWithContext(ctx, "GET", site.server.URL+"/nb/default/n/"+id+"/watch", nil)
+	response, err := site.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	hangUp()
+	time.Sleep(watchEvery + time.Second)
+	site.web.watching.Stop()
+	closed := make(chan struct{})
+	go func() {
+		site.server.CloseClientConnections()
+		site.server.Config.Shutdown(context.Background())
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown waited on a watch whose reader had gone")
+	}
+}
+
+func TestASubscriptionWhoseReaderHasGoneIsClosedByTheWatcher(t *testing.T) {
+	watch := NewWatch()
+	defer watch.Stop()
+	gone := make(chan struct{})
+	changes := watch.Subscribe("default", "1", filepath.Join(t.TempDir(), "n.md"), "x", gone)
+	close(gone)
+	select {
+	case _, open := <-changes:
+		if open {
+			t.Fatal("a value arrived")
+		}
+	case <-time.After(watchEvery + 5*time.Second):
+		t.Fatal("the channel of a departed reader stayed open")
+	}
+}
+
+func TestAWriteStartedByAReaderWhoHungUpStillCommits(t *testing.T) {
+	site := serving(t)
+	ctx, hangUp := context.WithCancel(context.Background())
+	hangUp()
+	form := url.Values{"title": {"Written anyway"}, "body": {"text"}}
+	request := httptest.NewRequest("POST", "/nb/default/new", strings.NewReader(form.Encode())).WithContext(ctx)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Host = strings.TrimPrefix(site.server.URL, "http://")
+	request.Header.Set("Origin", site.server.URL)
+	recorded := httptest.NewRecorder()
+	site.web.Handler().ServeHTTP(recorded, request)
+	if recorded.Code != 303 {
+		t.Fatalf("%d: %s", recorded.Code, recorded.Body)
+	}
+	if out, err := exec.Command("git", "-C", site.env.Paths.NotebookDir(config.DefaultNotebook), "status", "--porcelain").Output(); err != nil || len(out) != 0 {
+		t.Fatalf("the note was written but not committed: %q %v", out, err)
+	}
+	if found := site.get("/nb/default"); !found.says("Written anyway") {
+		t.Fatal("the note is not there")
 	}
 }

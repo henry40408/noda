@@ -72,7 +72,7 @@ func (s *Server) newNote(r *http.Request) (answer, error) {
 		return refused, nil
 	}
 	book := r.PathValue("book")
-	opened, found, err := s.openNotebook(r.Context(), book)
+	opened, found, err := s.openNotebook(workContext(r), book)
 	if err != nil || !found {
 		return orMissing(err, missingNotebook(book))
 	}

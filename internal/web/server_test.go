@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/henry40408/noda/internal/cmd"
 	"github.com/henry40408/noda/internal/config"
@@ -524,5 +525,15 @@ func TestAParameterIsDecodedAsAFormSendsIt(t *testing.T) {
 	}
 	if got := parameters("keep=a&keep=b+c&saw=d", "keep"); len(got) != 2 || got[1] != "b c" {
 		t.Fatalf("%v", got)
+	}
+}
+
+func TestTheServerTimesOutSlowHeadersButNeverCutsAStream(t *testing.T) {
+	server := newHTTPServer(http.NotFoundHandler(), &silentConns{})
+	if server.ReadHeaderTimeout != 15*time.Second {
+		t.Fatalf("ReadHeaderTimeout is %v", server.ReadHeaderTimeout)
+	}
+	if server.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout is %v, which cuts a watch", server.WriteTimeout)
 	}
 }

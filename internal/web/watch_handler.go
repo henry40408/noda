@@ -35,7 +35,17 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	flush := http.NewResponseController(w).Flush
 	_ = flush()
-	for hash := range changes {
+	for {
+		var hash string
+		select {
+		case <-r.Context().Done():
+			return
+		case received, open := <-changes:
+			if !open {
+				return
+			}
+			hash = received
+		}
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", hash); err != nil {
 			return
 		}

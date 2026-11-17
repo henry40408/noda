@@ -68,8 +68,8 @@ func NewWatch() *Watch {
 }
 
 // Subscribe starts telling a reader about a note. now is the fingerprint it
-// already has. The channel is closed by Stop; the subscription ends when gone
-// does (a request's context).
+// already has. The channel is closed by Stop, or once gone is
+// closed (a request's context) and the watcher has noticed.
 func (w *Watch) Subscribe(book, id, path, now string, gone <-chan struct{}) <-chan string {
 	changes := make(chan string, watchBehind)
 	w.mutex.Lock()
@@ -154,6 +154,9 @@ func stillListening(subscribers []subscriber) []subscriber {
 	for _, each := range subscribers {
 		select {
 		case <-each.gone:
+			// Under the watch's lock, as is every send and Stop's close, so
+			// it is closed once.
+			close(each.changes)
 		default:
 			kept = append(kept, each)
 		}

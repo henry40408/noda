@@ -219,7 +219,7 @@ type located struct {
 // slug or prefix redirects to.
 func (s *Server) aim(r *http.Request, tail string) (located, error) {
 	book, key := r.PathValue("book"), r.PathValue("key")
-	opened, found, err := s.openNotebook(r.Context(), book)
+	opened, found, err := s.openNotebook(workContext(r), book)
 	if err != nil {
 		return located{}, err
 	}

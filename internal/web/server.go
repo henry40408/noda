@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/henry40408/noda/internal/cmd"
 	"github.com/henry40408/noda/internal/notebook"
@@ -52,6 +53,15 @@ func NewServer(opts Options) *Server {
 	}
 }
 
+// readHeaderTimeout keeps a client that sends its headers a byte at a time from
+// holding a connection open for good.
+const readHeaderTimeout = 15 * time.Second
+
+// newHTTPServer sets no WriteTimeout: it would cut the watch stream.
+func newHTTPServer(handler http.Handler, silent *silentConns) *http.Server {
+	return &http.Server{Handler: handler, ConnState: silent.track, ReadHeaderTimeout: readHeaderTimeout}
+}
+
 // Serve runs until it is asked to stop. Unlike every other command it prints
 // the address rather than returning it, since it does not finish while in use.
 //
@@ -74,7 +84,7 @@ func Serve(opts Options) error {
 	announce(opts.Stdout, listener.Addr())
 
 	silent := &silentConns{}
-	httpServer := &http.Server{Handler: server.Handler(), ConnState: silent.track}
+	httpServer := newHTTPServer(server.Handler(), silent)
 	served := make(chan error, 1)
 	go func() { served <- httpServer.Serve(listener) }()
 
@@ -137,6 +147,17 @@ func signalName(received os.Signal) string {
 		return "SIGTERM"
 	}
 	return "SIGINT"
+}
+
+// workContext is the context a handler's git runs use. A write must finish
+// once begun (a killed git leaves a file written but not committed), so it
+// ignores the client hanging up; a read has no use for its answer then.
+func workContext(r *http.Request) context.Context {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		return r.Context()
+	}
+	return context.WithoutCancel(r.Context())
 }
 
 func (s *Server) openNotebook(ctx context.Context, book string) (*notebook.Notebook, bool, error) {
