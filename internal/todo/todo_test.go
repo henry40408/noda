@@ -157,3 +157,24 @@ func TestCompareSortsSoonestFirstUndatedLastThenBySlug(t *testing.T) {
 		}
 	}
 }
+
+func TestOneSpaceIsStrippedFromEachSideOfACodeSpan(t *testing.T) {
+	expectTexts(t, "- [ ] x` a `y\n", "xay")
+	expectTexts(t, "- [ ] x`  a  `y\n", "xay")
+	expectTexts(t, "- [ ] x` a`y\n", "x ay")
+	expectTexts(t, "- [ ] x`a `y\n", "xa y")
+	expectTexts(t, "- [ ] x`  `y\n", "x y")
+}
+
+func TestADueDateTakesDigitsOnly(t *testing.T) {
+	for _, date := range []string{"2026-01-01", "0000-00-00", "9999-99-99"} {
+		if !isDate(date) {
+			t.Errorf("%s is a date", date)
+		}
+	}
+	for _, date := range []string{"/026-01-01", ":026-01-01", "2026-0/-01", "2026-0:-01", "2026-01-0:", "2026-01-/1"} {
+		if isDate(date) {
+			t.Errorf("%s is not a date", date)
+		}
+	}
+}

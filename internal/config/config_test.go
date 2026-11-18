@@ -292,3 +292,37 @@ func TestAKeyThatIsATableIsNotOverwrittenSilently(t *testing.T) {
 		t.Fatal("a table and a key cannot share a name")
 	}
 }
+
+func TestAWrittenSettingIsReadBackFromTheSameConfig(t *testing.T) {
+	config, err := Load(paths.Rooted(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Set("editor", "vi"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := config.Get("editor"); got != "vi" {
+		t.Fatalf("got %q after Set", got)
+	}
+	if removed, err := config.Unset("editor"); err != nil || !removed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	if _, set := config.Get("editor"); set {
+		t.Fatal("still set after Unset")
+	}
+}
+
+func TestAStringIsWrittenLiteralOnlyWhenALiteralCanCarryIt(t *testing.T) {
+	cases := map[string]string{
+		"a\\b\nc":  "'''\na\\b\nc'''",
+		"a\\\tb":   "'a\\\tb'",
+		"a\\ b":    `'a\ b'`,
+		"a\\\x1fb": `"a\\\u001Fb"`,
+		"a\\\x7fb": `"a\\\u007Fb"`,
+	}
+	for value, want := range cases {
+		if got := tomlString(value); got != want {
+			t.Errorf("%q: got %q, want %q", value, got, want)
+		}
+	}
+}

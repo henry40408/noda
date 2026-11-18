@@ -388,3 +388,53 @@ func TestLinesSplitLikeRust(t *testing.T) {
 		}
 	}
 }
+
+func TestAnUppercaseIDIsShapedLikeOne(t *testing.T) {
+	if !IsIDShaped(strings.Repeat("Z", IDLen)) || !IsIDShaped(strings.Repeat("A", IDLen)) {
+		t.Fatal("case must not matter")
+	}
+	if IsIDShaped(strings.Repeat("@", IDLen)) || IsIDShaped(strings.Repeat("[", IDLen)) {
+		t.Fatal("the characters next to the letters are not ids")
+	}
+}
+
+func TestEveryCharacterOfAWideIDIsRandom(t *testing.T) {
+	const length, samples = 36, 100
+	seen := make([]map[byte]bool, length)
+	for position := range seen {
+		seen[position] = map[byte]bool{}
+	}
+	for range samples {
+		id := randomID(length)
+		for position := range id {
+			seen[position][id[position]] = true
+		}
+	}
+	for position, chars := range seen {
+		if len(chars) < 2 {
+			t.Errorf("position %d never varied", position)
+		}
+	}
+}
+
+func TestABlankLineInsideTheFrontmatterDoesNotEndTheSearch(t *testing.T) {
+	frontmatter, body, ok := SplitFrontmatter("---\ntitle: x\n\ntags: y\n---\nbody")
+	if !ok || frontmatter != "title: x\n\ntags: y\n" || body != "body" {
+		t.Fatalf("%q %q %v", frontmatter, body, ok)
+	}
+}
+
+func TestASlugAtTheCapIsLeftAlone(t *testing.T) {
+	exact := strings.Repeat("a", maxSlugLen)
+	if got := Slugify(exact); got != exact {
+		t.Fatalf("%d bytes", len(got))
+	}
+}
+
+func TestASlugCutsAtADashHalfwayToTheCap(t *testing.T) {
+	half := strings.Repeat("a", maxSlugLen/2)
+	got := Slugify(half + "-" + strings.Repeat("b", maxSlugLen))
+	if got != half {
+		t.Fatalf("got %d bytes: %q", len(got), got)
+	}
+}

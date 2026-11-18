@@ -301,3 +301,28 @@ func TestSchemeNeedsALetterFirstAndOnlySchemeCharacters(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemeLettersAreExactlyTheASCIILetters(t *testing.T) {
+	for _, dest := range []string{"a:x", "z:x", "A:x", "Z:x", "bz:x", "bZ:x", "ba:x", "bA:x"} {
+		if _, ok := Scheme(dest); !ok {
+			t.Errorf("%s is a scheme", dest)
+		}
+	}
+	for _, dest := range []string{"`:x", "{:x", "@:x", "[:x", "b`:x", "b{:x", "b@:x", "b[:x"} {
+		if got, ok := Scheme(dest); ok {
+			t.Errorf("%s: %q", dest, got)
+		}
+	}
+}
+
+func TestAPercentSignThatCutsOffTheTextIsKept(t *testing.T) {
+	for _, dest := range []string{"file%", "file%4", "file%41", "file%4g.md"} {
+		want := map[string]string{"file%41": "fileA"}[dest]
+		if want == "" {
+			want = dest
+		}
+		if got, ok := Target(dest); !ok || got != want {
+			t.Errorf("%s: %q %v, want %q", dest, got, ok, want)
+		}
+	}
+}

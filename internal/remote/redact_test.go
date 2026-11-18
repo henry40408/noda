@@ -40,3 +40,15 @@ func TestRedactTextFindsURLsInsideProse(t *testing.T) {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
 }
+
+func TestAnEmptyOrMissingAuthorityHidesNothingElse(t *testing.T) {
+	cases := map[string]string{
+		"https://@example.com/a": "https://***@example.com/a",
+		"https:///x@y":           "https:///x@y",
+	}
+	for url, want := range cases {
+		if got := Redact(url); got != want {
+			t.Errorf("%s: %s, want %s", url, got, want)
+		}
+	}
+}

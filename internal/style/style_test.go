@@ -110,3 +110,17 @@ func TestStripRemovesSequencesAndKeepsText(t *testing.T) {
 		}
 	}
 }
+
+func TestStripKnowsTheFirstAndLastFinalByte(t *testing.T) {
+	cases := map[string]string{
+		"a\x1b[@b":       "ab",
+		"a\x1b[~b":       "ab",
+		"\x1b[1mhi\x1b":  "hi\x1b",
+		"\x1b[1mhi\x1b[": "hi",
+	}
+	for in, want := range cases {
+		if got := Strip(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}
