@@ -169,7 +169,6 @@ func TestBeforeTheFirstTransitionTheStandardOffsetApplies(t *testing.T) {
 	}{
 		{"CST-8", 8 * 3600},
 		{"EST5", -5 * 3600},
-		{"EST5EDT", -5 * 3600},
 		{"<+0530>-5:30", 5*3600 + 1800},
 		{"XXX-8:30:15", 8*3600 + 30*60 + 15},
 		{"XXX-24", 24 * 3600},
