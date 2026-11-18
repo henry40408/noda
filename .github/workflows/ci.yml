@@ -219,7 +219,9 @@ jobs:
       - name: Build git 2.39.5
         run: |
           git clone --quiet --depth 1 --branch v2.39.5 https://github.com/git/git "$RUNNER_TEMP/git-src"
-          make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" prefix="$RUNNER_TEMP/git-2.39" NO_GETTEXT=1 NO_TCLTK=1 NO_CURL=1 NO_EXPAT=1 NO_PERL=1 NO_PYTHON=1 install
+          # -std=gnu17: git 2.39 defines its own unreachable(), which a newer
+          # compiler's C23 default turns into a macro clash.
+          make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" CFLAGS="-g -O2 -std=gnu17" prefix="$RUNNER_TEMP/git-2.39" NO_GETTEXT=1 NO_TCLTK=1 NO_CURL=1 NO_EXPAT=1 NO_PERL=1 NO_PYTHON=1 install
           echo "$RUNNER_TEMP/git-2.39/bin" >> "$GITHUB_PATH"
       - name: The floor is what runs
         run: test "$(git --version)" = "git version 2.39.5"

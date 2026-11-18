@@ -89,7 +89,9 @@ func TestCancellingStopsGitPromptly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := git.Run(ctx, gitx.Cmd{Dir: dir, Args: []string{"-c", "alias.nap=!sleep 5", "nap"}})
+	// `exec` makes sleep git's direct child: a plain `sleep 5` can stay behind a
+	// shell that holds git's pipes open, and Run then waits out WaitDelay.
+	_, err := git.Run(ctx, gitx.Cmd{Dir: dir, Args: []string{"-c", "alias.nap=!exec sleep 5", "nap"}})
 	if err == nil || ctx.Err() == nil {
 		t.Fatalf("err = %v", err)
 	}
