@@ -59,7 +59,7 @@ killed) or `--threshold-efficacy` (ignored on the command line). **A new package
 in `internal/tui` or `internal/web` (split by file), needs a place in the matrix** in
 `.github/workflows/ci.yml`: the shards must stay disjoint and complete, which `unleash --dry-run`
 per shard summing to the whole module's `Runnable` count checks. Packages that scan text in loops
-(`config`, `importer`, `link`, `note`, `query`) have a `TestMain` watchdog (`main_test.go`) that
+(`config`, `importer`, `link`, `note`, `query`, `tui`) have a `TestMain` watchdog (`main_test.go`) that
 exits a test binary stuck in a loop or holding over 512 MiB, because gremlins kills `go test` on a
 timeout but not the binary it started.
 
