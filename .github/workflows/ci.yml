@@ -7,7 +7,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/mutation-gate-shards]
   pull_request:
 
 # A newer push cancels a pull request's older run; on `main` every commit is
@@ -190,8 +190,12 @@ jobs:
         shard:
           - name: core
             exclude: '^(e2e|vendor)/|^internal/(cmd|tui|web)/'
-          - name: cmd
-            exclude: '^(e2e|vendor|cmd)/|^internal/(clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui|web)/'
+          - name: cmd-a
+            exclude: '^(e2e|vendor|cmd)/|^internal/(clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui|web)/|^internal/cmd/(files|notebooks|sync|search|status|todo|use|env|init|backlinks|retarget|mv|add|restore|tag|bulk|edit|pin|rm|show|path|located|import|readme|subject|editor)\.go'
+          - name: cmd-b
+            exclude: '^(e2e|vendor|cmd)/|^internal/(clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui|web)/|^internal/cmd/(doctor|history|ls|width|init|backlinks|retarget|mv|add|restore|tag|bulk|edit|pin|rm|show|path|located|import|readme|subject|editor)\.go'
+          - name: cmd-c
+            exclude: '^(e2e|vendor|cmd)/|^internal/(clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui|web)/|^internal/cmd/(doctor|history|ls|width|files|notebooks|sync|search|status|todo|use|env)\.go'
           - name: tui-app
             exclude: '^(e2e|vendor|cmd)/|^internal/(cmd|clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|web)/|^internal/tui/(command|field|frame|keys|run|session|theme|view)\.go|^internal/tui/ui/'
           - name: tui-view
@@ -200,8 +204,10 @@ jobs:
             exclude: '^(e2e|vendor|cmd)/|^internal/(cmd|clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui)/|^internal/web/(answer|asset|escape|form|guard|gzip|handlers_read|locks|log|page|page_forms|render|routes|server|silent|theme|watch|watch_handler|work)\.go'
           - name: web-forms
             exclude: '^(e2e|vendor|cmd)/|^internal/(cmd|clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui)/|^internal/web/(answer|asset|escape|form|guard|gzip|handlers_write|locks|log|page_listing|render|routes|server|silent|theme|watch|watch_handler|work)\.go'
+          - name: web-render
+            exclude: '^(e2e|vendor|cmd)/|^internal/(cmd|clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui)/|^internal/web/(answer|asset|escape|form|guard|gzip|handlers_read|handlers_write|locks|log|page|page_forms|page_listing|routes|server|silent|theme|watch|watch_handler|work)\.go'
           - name: web-rest
-            exclude: '^(e2e|vendor|cmd)/|^internal/(cmd|clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui)/|^internal/web/(handlers_read|handlers_write|page|page_forms|page_listing)\.go'
+            exclude: '^(e2e|vendor|cmd)/|^internal/(cmd|clock|config|gitx|importer|link|markdown|note|notebook|paths|query|remote|sign|style|todo|version|tui)/|^internal/web/(handlers_read|handlers_write|page|page_forms|page_listing|render)\.go'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

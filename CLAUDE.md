@@ -48,15 +48,16 @@ Test coverage: `NODA_COVERDIR=$PWD/covdata go test -mod=vendor -coverprofile=cov
 the threshold in `.gremlins.yaml`.
 
 **Mutation testing is sharded.** One whole-module run exhausted the runner's memory (exit 143,
-"runner received a shutdown signal"), so CI runs seven `mutation-shard (<name>)` matrix jobs
-(`core`, `cmd`, `tui-app`, `tui-view`, `web-listing`, `web-forms`, `web-rest`) and a `mutation` job
+"runner received a shutdown signal"), so CI runs nine `mutation-shard (<name>)` matrix jobs
+(`core`, `cmd-a`, `cmd-b`, `cmd-c`, `tui-app`, `tui-view`, `web-listing`, `web-forms`, `web-render`,
+`web-rest`; each under ~15 minutes, because the push run waits for the slowest) and a `mutation` job
 that `needs` all of them. Each shard runs `GOMAXPROCS=2 gremlins unleash --workers 2` under
 `ulimit -v 4194304` with an `--exclude-files` regexp naming everything outside it (RE2 has no
 lookahead, so the matrix lists the complement; the flag replaces `.gremlins.yaml`'s list, so every
 entry repeats `e2e/` and `vendor/`). Each shard must reach the 95 threshold by itself. Never pass
 `--test-cpu` (gremlins v0.6.0 builds a bad `-cpu 2` argument and every mutant then counts as
 killed) or `--threshold-efficacy` (ignored on the command line). **A new package, or a new file
-in `internal/tui` or `internal/web` (split by file), needs a place in the matrix** in
+in `internal/cmd`, `internal/tui` or `internal/web` (split by file), needs a place in the matrix** in
 `.github/workflows/ci.yml`: the shards must stay disjoint and complete, which `unleash --dry-run`
 per shard summing to the whole module's `Runnable` count checks. Packages that scan text in loops
 (`config`, `importer`, `link`, `note`, `query`, `tui`) have a `TestMain` watchdog (`main_test.go`) that
