@@ -3,11 +3,11 @@
 # ---- build: cross-compile a static Go binary --------------------------------
 # Runs on the native build platform; Go cross-compiles to the target with
 # CGO off, so no qemu and no C toolchain.
-# Pinned by version and digest (pushed 2026-11-10, past the 168-hour cooldown);
-# dependabot's docker ecosystem moves both. GOTOOLCHAIN=auto below fetches
-# go.mod's `toolchain` line when it is newer than this image's Go. Keep the
-# `bookworm` suffix: a bare tag resolves to trixie, a silent Debian major bump.
-FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
+# Floating on purpose: the image is not pinned by version or digest.
+# GOTOOLCHAIN=auto below fetches go.mod's `toolchain` line when it differs from
+# this image's Go. Keep the `bookworm` suffix: a bare tag resolves to trixie, a
+# silent Debian major bump.
+FROM --platform=$BUILDPLATFORM golang:bookworm AS build
 
 WORKDIR /app
 
@@ -38,12 +38,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # it verifies HTTPS remotes against, and tini is PID 1. gnupg is left out: as before, commits made
 # in the container are not signed.
 #
-# The digest pins the image; dependabot's docker ecosystem moves it.
-#
 # Set NODA_LOG_LEVEL (debug, info, warn or error; default info) with
 # `docker run -e`. The Rust build's logging variable is retired; noda refuses to
 # start while it is set.
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git openssh-client ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
