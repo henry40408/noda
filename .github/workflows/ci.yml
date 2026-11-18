@@ -7,7 +7,7 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/mutation-gate-shards]
+    branches: [main]
   pull_request:
 
 # A newer push cancels a pull request's older run; on `main` every commit is
