@@ -4,6 +4,7 @@
 > git repository — versioned, syncable, and yours.
 
 [![CI](https://github.com/henry40408/noda/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/noda/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/henry40408/noda/graph/badge.svg)](https://codecov.io/gh/henry40408/noda)
 [![Release](https://img.shields.io/github/v/release/henry40408/noda)](https://github.com/henry40408/noda/releases/latest)
 [![License](https://img.shields.io/github/license/henry40408/noda)](LICENSE.txt)
 [![Go version](https://img.shields.io/github/go-mod/go-version/henry40408/noda)](go.mod)
