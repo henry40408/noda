@@ -34,3 +34,16 @@ func TestSandboxErrorRefusesOutsideAndRealHome(t *testing.T) {
 		}
 	}
 }
+
+func TestIsolateDropsInheritedGitRepositoryVariables(t *testing.T) {
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	t.Setenv("GIT_WORK_TREE", "/elsewhere")
+
+	env := Isolate(t)
+
+	for _, name := range []string{"GIT_DIR", "GIT_WORK_TREE"} {
+		if value, found := env[name]; found {
+			t.Errorf("%s = %q leaked into the isolated environment", name, value)
+		}
+	}
+}

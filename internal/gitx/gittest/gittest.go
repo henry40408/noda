@@ -18,9 +18,13 @@ func Isolate(t *testing.T) map[string]string {
 	t.Helper()
 	env := map[string]string{}
 	for _, pair := range os.Environ() {
-		if name, value, found := strings.Cut(pair, "="); found {
-			env[name] = value
+		name, value, found := strings.Cut(pair, "=")
+		// A test run from a git hook or `rebase -x` inherits GIT_DIR and friends,
+		// which would aim the test's own git calls at the real repository.
+		if !found || strings.HasPrefix(name, "GIT_") {
+			continue
 		}
+		env[name] = value
 	}
 	home := t.TempDir()
 	config := filepath.Join(home, "gitconfig")

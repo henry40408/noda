@@ -2,7 +2,7 @@
 # Homebrew). Actions are pinned to SHAs as in ci.yml; this token can write packages.
 name: Docker
 
-# No `pull_request` trigger: this job takes 9m24s against 1m27s for ci.yml's cross-compile
+# No `pull_request` trigger: this job is much slower than ci.yml's build job
 # (the GHA cache does not carry `RUN --mount=type=cache`), and ci.yml already covers the
 # source. A broken Dockerfile surfaces on `main`, where it publishes nothing.
 on:
@@ -32,7 +32,7 @@ jobs:
       - id: version
         run: |
           echo "value=$(git describe --tags --always --match 'v[0-9]*')" >> "$GITHUB_OUTPUT"
-      # No qemu: zig cross-compiles arm64 on the native builder.
+      # No qemu: Dockerfile cross-compiles arm64 with Go on the native builder.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:

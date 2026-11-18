@@ -173,8 +173,8 @@ Two things are not optional:
   silently ignored variable is worse than a startup failure.
 - **Breaking change of the Go release: `RUST_LOG` is retired.** A deployment that sets it (compose,
   k8s, a shell profile) now exits at startup, and `restart: always` turns that into a crash loop.
-  The release notes must list it with the `NODA_LOG_LEVEL` replacement, and the version should
-  be a major bump.
+  Release notes are generated, so the PR title carries it: mark it breaking (`feat!:`) and name
+  `RUST_LOG -> NODA_LOG_LEVEL` in the body. The version number is chosen after the PR merges.
 - **GitHub Actions are pinned by commit SHA**, with the tag as a trailing comment.
 - Releases use `gh release create --generate-notes`; never edit a manifest version or add a
   `CHANGELOG.md`.
