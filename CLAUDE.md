@@ -9,8 +9,7 @@ notebook per repo. Everything is a library (`internal/`); `cmd/noda` is a thin s
 are tested without spawning a process.
 
 **`docs/commands.md` is a contract, not a description.** It was written spec-first, before any
-code (`docs/PRFAQ.md` is the working-backwards artifact behind it), when it was the README's
-command reference. A change to user-facing behaviour updates it in the same change; where the
+code, when it was the README's command reference. A change to user-facing behaviour updates it in the same change; where the
 contract turned out wrong, correct it rather than leave it behind. README.md is the front page —
 Features, Quick Start, a command overview — and changes when those do.
 

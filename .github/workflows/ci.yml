@@ -1,4 +1,4 @@
-# The build job guards the PRFAQ's claim that noda is one static binary on
+# The build job guards the claim that noda is one static binary on
 # x86_64 and aarch64: a cgo dependency is what breaks that silently.
 #
 # Actions are pinned to commit SHAs, which cannot be repointed the way a tag can;
