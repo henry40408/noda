@@ -23,11 +23,3 @@ updates:
       gomod:
         patterns:
           - "*"
-
-  # Tracks the runtime image's digest.
-  - package-ecosystem: "docker"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
