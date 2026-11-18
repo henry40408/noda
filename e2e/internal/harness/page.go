@@ -189,17 +189,25 @@ const searchField = "input[name='q']"
 func (p Page) Search(query string) error { return p.typeInto(searchField, query+kb.Enter) }
 
 // typeInto empties the field matching selector, focuses it and types keys.
+// The field is awaited: the script-less pass clicks a link or button and gets
+// no signal when the next page has loaded, so the field may not exist yet.
 func (p Page) typeInto(selector, keys string) error {
-	focused, err := Exec[bool](p.Browser, `const el = document.querySelector(arguments[0]);
-		if (!el) return false;
-		el.focus();
-		el.value = '';
-		return true;`, selector)
+	err := Eventually("focusing "+selector, func() (bool, error) {
+		focused, err := Exec[bool](p.Browser, `const el = document.querySelector(arguments[0]);
+			if (!el) return false;
+			el.focus();
+			el.value = '';
+			return true;`, selector)
+		if err != nil {
+			return false, err
+		}
+		if !focused {
+			return false, fmt.Errorf("this page has no field matching %s", selector)
+		}
+		return true, nil
+	})
 	if err != nil {
 		return err
-	}
-	if !focused {
-		return fmt.Errorf("this page has no field matching %s", selector)
 	}
 	return p.Browser.Do(chromedp.KeyEvent(keys))
 }
