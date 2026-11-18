@@ -48,7 +48,7 @@ problems  2 problems
 `noda doctor` lists everything `status` elides. It makes one repair: a file with frontmatter
 that only lacks an id is given one, as a revertible commit (`--dry-run` shows it without
 changing anything). Everything else it only reports, including git hooks that will never run
-because noda uses its own libgit2 and never calls git.
+because noda never runs a command that triggers them.
 
 ```
 $ noda doctor --dry-run
@@ -478,7 +478,7 @@ never a rewrite. `deleted` says which commit to bring a removed note back from.
 | `noda sync` | Pull, then push (auto-commits pending changes first). |
 | `noda push` / `noda pull` | One-directional sync. |
 
-HTTPS and SSH are compiled in; no system git, OpenSSL or libssh2 is needed. Where you stand is
+noda runs the system git (2.39 or newer); ssh remotes need the OpenSSH client. Where you stand is
 always said in one vocabulary — `in sync`, `2 to push`, `3 to pull`, `never synced`,
 `no remote` — measured against what the last sync left behind, so it never goes to the network.
 

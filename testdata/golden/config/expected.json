@@ -1,0 +1,565 @@
+[
+  {
+    "name": "fresh-set-editor",
+    "out": {
+      "file": "editor = \"vi\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-author",
+    "out": {
+      "file": "author = \"A B <a@b.c>\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-sign-true",
+    "out": {
+      "file": "sign = true\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-sign-no",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "err": "sign must be `true` or `false`, not `no`"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-sign-bad",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "err": "sign must be `true` or `false`, not `maybe`"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-author-bad",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "err": "author must be `Name <email>`, not `nobody`"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-unknown",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "err": "unknown setting: color — noda knows editor, author, notebook, sign"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-unset-unknown",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "err": "unknown setting: color — noda knows editor, author, notebook, sign"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-unset-absent",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "ok": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-two-sets",
+    "out": {
+      "file": "editor = \"vi\"\nnotebook = \"work\"\n",
+      "results": [
+        {
+          "ok": "set"
+        },
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-set-unset",
+    "out": {
+      "file": "",
+      "results": [
+        {
+          "ok": "set"
+        },
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-quote",
+    "out": {
+      "file": "editor = 'vi \"x\" \\ y'\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-unicode",
+    "out": {
+      "file": "editor = \"編輯器\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-newline",
+    "out": {
+      "file": "editor = \"\"\"\na\nb\"\"\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-tab",
+    "out": {
+      "file": "editor = \"a\\tb\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fresh-empty",
+    "out": {
+      "file": "editor = \"\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "template-set-editor",
+    "out": {
+      "file": "# noda configuration. Every setting is optional; the defaults are shown.\n\n# Editor for `noda add` and `noda edit`.\n# Overrides $VISUAL and $EDITOR, the way git's core.editor does.\n# editor = \"nvim\"\n\n# Who commits. Falls back to your git config, then to noda <noda@localhost>.\n# author = \"Your Name <you@example.com>\"\n\n# The notebook to fall back to when no notebook is active, and the one\n# `noda init` creates.\n# notebook = \"default\"\n\n# Whether commits are GPG-signed. Falls back to git's commit.gpgsign.\n# Set it here to sign your notes without signing everything else, or to\n# leave them unsigned when the rest of your commits are signed.\n# sign = true\neditor = \"nvim\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "template-set-sign",
+    "out": {
+      "file": "# noda configuration. Every setting is optional; the defaults are shown.\n\n# Editor for `noda add` and `noda edit`.\n# Overrides $VISUAL and $EDITOR, the way git's core.editor does.\n# editor = \"nvim\"\n\n# Who commits. Falls back to your git config, then to noda <noda@localhost>.\n# author = \"Your Name <you@example.com>\"\n\n# The notebook to fall back to when no notebook is active, and the one\n# `noda init` creates.\n# notebook = \"default\"\n\n# Whether commits are GPG-signed. Falls back to git's commit.gpgsign.\n# Set it here to sign your notes without signing everything else, or to\n# leave them unsigned when the rest of your commits are signed.\n# sign = true\nsign = false\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "template-set-two",
+    "out": {
+      "file": "# noda configuration. Every setting is optional; the defaults are shown.\n\n# Editor for `noda add` and `noda edit`.\n# Overrides $VISUAL and $EDITOR, the way git's core.editor does.\n# editor = \"nvim\"\n\n# Who commits. Falls back to your git config, then to noda <noda@localhost>.\n# author = \"Your Name <you@example.com>\"\n\n# The notebook to fall back to when no notebook is active, and the one\n# `noda init` creates.\n# notebook = \"default\"\n\n# Whether commits are GPG-signed. Falls back to git's commit.gpgsign.\n# Set it here to sign your notes without signing everything else, or to\n# leave them unsigned when the rest of your commits are signed.\n# sign = true\neditor = \"nvim\"\nsign = true\n",
+      "results": [
+        {
+          "ok": "set"
+        },
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "template-set-unset",
+    "out": {
+      "file": "",
+      "results": [
+        {
+          "ok": "set"
+        },
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "template-set-twice",
+    "out": {
+      "file": "# noda configuration. Every setting is optional; the defaults are shown.\n\n# Editor for `noda add` and `noda edit`.\n# Overrides $VISUAL and $EDITOR, the way git's core.editor does.\n# editor = \"nvim\"\n\n# Who commits. Falls back to your git config, then to noda <noda@localhost>.\n# author = \"Your Name <you@example.com>\"\n\n# The notebook to fall back to when no notebook is active, and the one\n# `noda init` creates.\n# notebook = \"default\"\n\n# Whether commits are GPG-signed. Falls back to git's commit.gpgsign.\n# Set it here to sign your notes without signing everything else, or to\n# leave them unsigned when the rest of your commits are signed.\n# sign = true\neditor = \"vim\"\n",
+      "results": [
+        {
+          "ok": "set"
+        },
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-replace",
+    "out": {
+      "file": "editor = \"nvim\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-comment-kept",
+    "out": {
+      "file": "editor = \"nvim\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-indent-kept",
+    "out": {
+      "file": "  editor   = \"nvim\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-add-after",
+    "out": {
+      "file": "editor = \"vi\"\nnotebook = \"work\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-add-before-table",
+    "out": {
+      "file": "editor = \"vi\"\nnotebook = \"work\"\n\n[other]\nx = 1\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-header-comment",
+    "out": {
+      "file": "# my config\neditor = \"vi\"\nsign = true\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-unset-first",
+    "out": {
+      "file": "notebook = \"w\"\n",
+      "results": [
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-unset-last",
+    "out": {
+      "file": "editor = \"vi\"\n",
+      "results": [
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-unset-with-comment",
+    "out": {
+      "file": "",
+      "results": [
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-unset-trailing-comment",
+    "out": {
+      "file": "",
+      "results": [
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-no-trailing-newline",
+    "out": {
+      "file": "editor = \"vi\"\nnotebook = \"w\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-crlf",
+    "out": {
+      "file": "editor = \"vi\"\nnotebook = \"w\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-sign-string",
+    "out": {
+      "file": "sign = false\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-sign-bool",
+    "out": {
+      "file": "sign = false\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-single-quoted",
+    "out": {
+      "file": "editor = \"nvim\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-unknown-key",
+    "out": {
+      "file": "color = \"red\"\neditor = \"vi\"\nnotebook = \"w\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "existing-blank-lines",
+    "out": {
+      "file": "\n\neditor = \"vi\"\nnotebook = \"w\"\n\n\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "broken-syntax",
+    "out": {
+      "file": "editor = \n",
+      "results": [
+        {
+          "err": "<ROOT>/config/noda/config.toml: TOML parse error at line 1, column 10\n  |\n1 | editor = \n  |          ^\nstring values must be quoted, expected literal string\n\nfix it by hand, or start over with `noda config --edit`"
+        }
+      ]
+    }
+  },
+  {
+    "name": "broken-unterminated",
+    "out": {
+      "file": "editor = \"vi\n",
+      "results": [
+        {
+          "err": "<ROOT>/config/noda/config.toml: TOML parse error at line 1, column 13\n  |\n1 | editor = \"vi\n  |             ^\ninvalid basic string, expected `\"`\n\nfix it by hand, or start over with `noda config --edit`"
+        }
+      ]
+    }
+  },
+  {
+    "name": "broken-duplicate",
+    "out": {
+      "file": "editor = \"a\"\neditor = \"b\"\n",
+      "results": [
+        {
+          "err": "<ROOT>/config/noda/config.toml: TOML parse error at line 2, column 1\n  |\n2 | editor = \"b\"\n  | ^^^^^^\nduplicate key\n\nfix it by hand, or start over with `noda config --edit`"
+        }
+      ]
+    }
+  },
+  {
+    "name": "template-unset-nothing",
+    "out": {
+      "file": "# noda configuration. Every setting is optional; the defaults are shown.\n\n# Editor for `noda add` and `noda edit`.\n# Overrides $VISUAL and $EDITOR, the way git's core.editor does.\n# editor = \"nvim\"\n\n# Who commits. Falls back to your git config, then to noda <noda@localhost>.\n# author = \"Your Name <you@example.com>\"\n\n# The notebook to fall back to when no notebook is active, and the one\n# `noda init` creates.\n# notebook = \"default\"\n\n# Whether commits are GPG-signed. Falls back to git's commit.gpgsign.\n# Set it here to sign your notes without signing everything else, or to\n# leave them unsigned when the rest of your commits are signed.\n# sign = true\n",
+      "results": [
+        {
+          "ok": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "empty-file",
+    "out": {
+      "file": "editor = \"vi\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "only-comment",
+    "out": {
+      "file": "# just a comment\neditor = \"vi\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "only-comment-no-newline",
+    "out": {
+      "file": "# just a comment\neditor = \"vi\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dotted-table",
+    "out": {
+      "file": "editor = \"vi\"\n[git]\neditor = \"x\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "inline-table-first",
+    "out": {
+      "file": "other = { a = 1 }\neditor = \"vi\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "array-value",
+    "out": {
+      "file": "editor = \"vi\"\n",
+      "results": [
+        {
+          "ok": "set"
+        }
+      ]
+    }
+  },
+  {
+    "name": "sign-all-forms",
+    "out": {
+      "file": null,
+      "results": [
+        {
+          "err": "sign must be `true` or `false`, not `Yes`"
+        },
+        {
+          "err": "sign must be `true` or `false`, not `off`"
+        },
+        {
+          "err": "sign must be `true` or `false`, not `1`"
+        },
+        {
+          "err": "sign must be `true` or `false`, not `0`"
+        }
+      ]
+    }
+  }
+]

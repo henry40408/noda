@@ -1,0 +1,4 @@
+$ noda deleted --json
+{"notebook":"default","deleted":[{"id":"03ghj890","slug":"reading-list","file":"03ghj890-reading-list.md","title":"Reading list","removed_at":"2023-11-15T08:13:20Z","removed_in":"<OID:1>","restore_from":"<OID:2>"}]}
+--- stderr
+--- exit 0

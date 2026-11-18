@@ -1,0 +1,11 @@
+$ noda rm meeting-notes
+removed  02def567  meeting-notes  [work, q3]
+--- stderr
+--- exit 0
+$ noda status
+notebook  default  (main)
+notes     1
+changes   clean
+remote    none — set one with `noda remote set <url>`
+--- stderr
+--- exit 0

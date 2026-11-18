@@ -1,0 +1,9 @@
+$ noda blame 01abc234
+<OID:1>  2023-11-15 02:13  the q3 budget is late again
+<OID:2>  2023-11-15 00:13
+<OID:2>  2023-11-15 00:13  - first line
+<OID:1>  2023-11-15 02:13  - second line changed
+<OID:2>  2023-11-15 00:13  - third line
+<OID:1>  2023-11-15 02:13  - fourth line
+--- stderr
+--- exit 0

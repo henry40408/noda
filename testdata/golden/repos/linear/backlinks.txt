@@ -1,0 +1,4 @@
+$ noda backlinks 01abc234
+02def567  Meeting notes
+--- stderr
+--- exit 0

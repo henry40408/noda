@@ -1,0 +1,234 @@
+[
+ {
+  "name": "q00",
+  "line": "budget"
+ },
+ {
+  "name": "q01",
+  "line": "tag:work"
+ },
+ {
+  "name": "q02",
+  "line": "tag:Work"
+ },
+ {
+  "name": "q03",
+  "line": "-tag:work"
+ },
+ {
+  "name": "q04",
+  "line": "title:review"
+ },
+ {
+  "name": "q05",
+  "line": "-title:review"
+ },
+ {
+  "name": "q06",
+  "line": "id:01"
+ },
+ {
+  "name": "q07",
+  "line": "id:O1"
+ },
+ {
+  "name": "q08",
+  "line": "id:zz"
+ },
+ {
+  "name": "q09",
+  "line": "pinned:true"
+ },
+ {
+  "name": "q10",
+  "line": "pinned:false"
+ },
+ {
+  "name": "q11",
+  "line": "pinned:maybe"
+ },
+ {
+  "name": "q12",
+  "line": "text:agenda"
+ },
+ {
+  "name": "q13",
+  "line": "-text:agenda"
+ },
+ {
+  "name": "q14",
+  "line": "budget tag:work"
+ },
+ {
+  "name": "q15",
+  "line": "budget OR book"
+ },
+ {
+  "name": "q16",
+  "line": "tag:q3 OR tag:work"
+ },
+ {
+  "name": "q17",
+  "line": "budget tag:q3 OR tag:work"
+ },
+ {
+  "name": "q18",
+  "line": "tag:x OR"
+ },
+ {
+  "name": "q19",
+  "line": "OR tag:x"
+ },
+ {
+  "name": "q20",
+  "line": "OR"
+ },
+ {
+  "name": "q21",
+  "line": "-"
+ },
+ {
+  "name": "q22",
+  "line": "tag:"
+ },
+ {
+  "name": "q23",
+  "line": ":x"
+ },
+ {
+  "name": "q24",
+  "line": "unknown:x"
+ },
+ {
+  "name": "q25",
+  "line": "-text:--flag"
+ },
+ {
+  "name": "q26",
+  "line": "text:--flag"
+ },
+ {
+  "name": "q27",
+  "line": "\"two words\""
+ },
+ {
+  "name": "q28",
+  "line": "'two words'"
+ },
+ {
+  "name": "q29",
+  "line": "tag:\"has space\""
+ },
+ {
+  "name": "q30",
+  "line": "tag:'has space'"
+ },
+ {
+  "name": "q31",
+  "line": "a b c"
+ },
+ {
+  "name": "q32",
+  "line": "BUDGET"
+ },
+ {
+  "name": "q33",
+  "line": "日本"
+ },
+ {
+  "name": "q34",
+  "line": "title:日本"
+ },
+ {
+  "name": "q35",
+  "line": "tag:日本語"
+ },
+ {
+  "name": "q36",
+  "line": "-a -b"
+ },
+ {
+  "name": "q37",
+  "line": "tag:work -tag:q3"
+ },
+ {
+  "name": "q38",
+  "line": "tag:work OR -tag:q3"
+ },
+ {
+  "name": "q39",
+  "line": ""
+ },
+ {
+  "name": "q40",
+  "line": "   "
+ },
+ {
+  "name": "q41",
+  "line": "OR OR"
+ },
+ {
+  "name": "q42",
+  "line": "a OR b OR c"
+ },
+ {
+  "name": "q43",
+  "line": "title:"
+ },
+ {
+  "name": "q44",
+  "line": "id:"
+ },
+ {
+  "name": "q45",
+  "line": "pinned:"
+ },
+ {
+  "name": "q46",
+  "line": "or"
+ },
+ {
+  "name": "q47",
+  "line": "Or tag:x"
+ },
+ {
+  "name": "q48",
+  "line": "ID:01"
+ },
+ {
+  "name": "q49",
+  "line": "TAG:work"
+ },
+ {
+  "name": "q50",
+  "line": "tag:work tag:q3"
+ },
+ {
+  "name": "q51",
+  "line": "\"unclosed"
+ },
+ {
+  "name": "q52",
+  "line": "tag:\"unclosed"
+ },
+ {
+  "name": "q53",
+  "line": "budget -title:review"
+ },
+ {
+  "name": "q54",
+  "line": "-pinned:true"
+ },
+ {
+  "name": "q55",
+  "line": "-id:01"
+ },
+ {
+  "name": "q56",
+  "line": "text:the"
+ },
+ {
+  "name": "q57",
+  "line": "title:meeting text:budget"
+ }
+]

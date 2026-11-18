@@ -1,62 +1,52 @@
 # syntax=docker/dockerfile:1
 
-# ---- build: cross-compile a static musl binary with cargo-zigbuild ----------
-# The builder runs on the native platform and zig cross-compiles, so arm64
-# builds at native speed instead of under qemu.
-# No Rust version here: rust-toolchain.toml pins it. Not `rust:1.97` either —
-# the un-suffixed tag resolves to trixie, a silent Debian major bump.
-FROM --platform=$BUILDPLATFORM rust:bookworm AS build
-
-# cmake for libgit2-sys, perl + make for openssl-src, curl + xz for zig.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake curl xz-utils perl make \
-    && rm -rf /var/lib/apt/lists/*
-
-# 0.15+ requires libc++-19 for bindgen.
-ARG ZIG_VERSION=0.14.1
-# 0.23.0+ filters `-Wl,--fix-cortex-a53-843419`, which rustc 1.98 added as a
-# default aarch64-unknown-linux-musl linker arg and zig's linker rejects.
-# https://github.com/rust-cross/cargo-zigbuild/pull/452
-ARG ZIGBUILD_VERSION=0.23.2
-RUN cargo install cargo-zigbuild --version "${ZIGBUILD_VERSION}" --locked
-RUN set -eux; \
-    case "$(uname -m)" in \
-      x86_64) zarch=x86_64 ;; \
-      aarch64) zarch=aarch64 ;; \
-      *) echo "unsupported build arch $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${zarch}-linux-${ZIG_VERSION}.tar.xz" \
-      | tar -xJ -C /opt; \
-    ln -s "/opt/zig-${zarch}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+# ---- build: cross-compile a static Go binary --------------------------------
+# Runs on the native build platform; Go cross-compiles to the target with
+# CGO off, so no qemu and no C toolchain.
+# Pinned by version and digest (pushed 2026-11-10, past the 168-hour cooldown);
+# dependabot's docker ecosystem moves both. GOTOOLCHAIN=auto below fetches
+# go.mod's `toolchain` line when it is newer than this image's Go. Keep the
+# `bookworm` suffix: a bare tag resolves to trixie, a silent Debian major bump.
+FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
 
 WORKDIR /app
 
-# A layer keyed on rust-toolchain.toml alone, so editing source does not
-# re-download the compiler; any rustup proxy call installs it.
-COPY rust-toolchain.toml .
-RUN cargo --version
+# The official image sets GOTOOLCHAIN=local, which ignores go.mod's toolchain
+# line. Fetch a newer toolchain in a layer keyed on go.mod/go.sum alone, so
+# source edits do not re-download it.
+ENV GOTOOLCHAIN=auto
+COPY go.mod go.sum ./
+RUN go version
 
 COPY . .
 
+# `vendor/` ships in the repository, so the build needs no network. The
+# workflow passes the version in, because `.dockerignore` excludes `.git`.
+ARG TARGETOS
 ARG TARGETARCH
-# build.rs cannot `git describe` here (`.dockerignore` excludes `.git`), so the
-# workflow passes the version in; unset falls back to the manifest version.
-ARG NODA_VERSION
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target,sharing=locked \
-    set -eux; \
-    case "$TARGETARCH" in \
-      amd64) target=x86_64-unknown-linux-musl ;; \
-      arm64) target=aarch64-unknown-linux-musl ;; \
-      *) echo "unsupported target arch $TARGETARCH" >&2; exit 1 ;; \
-    esac; \
-    rustup target add "$target"; \
-    cargo zigbuild --release --target "$target"; \
-    install -Dm755 "target/${target}/release/noda" /out/noda
+ARG NODA_VERSION=dev
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+    go build -mod=vendor -trimpath \
+      -ldflags "-s -w -X github.com/henry40408/noda/internal/version.version=${NODA_VERSION}" \
+      -o /out/noda ./cmd/noda
 
-# ---- runtime: minimal static image (CA certs, no shell) --------------------
-# The CA bundle is what the vendored OpenSSL verifies HTTPS `noda sync` against.
-FROM gcr.io/distroless/static-debian12
+# ---- runtime: Debian slim with git and ssh ----------------------------------
+# Not distroless: noda runs the system `git` for every repository operation, so
+# git is a runtime dependency (bookworm ships 2.39.5, noda's minimum).
+# openssh-client is what git runs for ssh remotes, ca-certificates is what
+# it verifies HTTPS remotes against, and tini is PID 1. gnupg is left out: as before, commits made
+# in the container are not signed.
+#
+# The digest pins the image; dependabot's docker ecosystem moves it.
+#
+# Set NODA_LOG_LEVEL (debug, info, warn or error; default info) with
+# `docker run -e`. The Rust build's logging variable is retired; noda refuses to
+# start while it is set.
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git openssh-client ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/noda /noda
 
 # noda honours XDG on every platform, so HOME on the volume puts notebooks,
@@ -65,7 +55,9 @@ ENV HOME=/data
 VOLUME /data
 WORKDIR /data
 
-# Exec form, so `noda` is PID 1 and receives `docker stop`'s SIGTERM: `noda web`
-# then waits for a running sync instead of being SIGKILLed with git's
-# `index.lock` left behind.
-ENTRYPOINT ["/noda"]
+# tini is PID 1: it forwards `docker stop`'s SIGTERM to noda, so `noda web`
+# waits for a running sync instead of being SIGKILLed with git's `index.lock`
+# left behind, and it reaps the grandchildren (ssh, credential helpers) that
+# are re-parented to PID 1 when their git exits or is killed. noda only waits
+# for its direct children.
+ENTRYPOINT ["/usr/bin/tini", "--", "/noda"]

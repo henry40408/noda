@@ -1,0 +1,18 @@
+$ noda diff
+diff --git a/03ghj890-reading-list.md b/03ghj890-reading-list.md
+deleted file mode 100644
+index <OID:1>..0000000
+--- a/03ghj890-reading-list.md
++++ /dev/null
+@@ -1,8 +0,0 @@
+----
+-title: Reading list
+-created: 2024-01-05T00:00:00Z
+-updated: 2024-01-05T00:00:00Z
+----
+-
+-a book
+-another book
+
+--- stderr
+--- exit 0

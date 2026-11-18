@@ -1,0 +1,5 @@
+$ noda push
+--- stderr
+noda: push rejected — cannot push because a reference that you are trying to update on the remote contains commits that are not present locally.
+the remote has commits you do not: run `noda pull` first
+--- exit 1

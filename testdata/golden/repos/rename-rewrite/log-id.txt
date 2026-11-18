@@ -1,0 +1,6 @@
+$ noda log 01abc234
+  <OID:1>  2023-11-15 02:13  edit: Q3 budget review
+  <OID:2>  2023-11-15 01:13  mv: Q3 budget review, rewritten
+  <OID:3>  2023-11-15 00:13  add: Budget review
+--- stderr
+--- exit 0

@@ -11,8 +11,7 @@ updates:
         patterns:
           - "*"
 
-  # `e2e/` is its own workspace with its own lockfile.
-  - package-ecosystem: "cargo"
+  - package-ecosystem: "gomod"
     directories:
       - "/"
       - "/e2e"
@@ -21,11 +20,12 @@ updates:
     cooldown:
       default-days: 7
     groups:
-      cargo:
+      gomod:
         patterns:
           - "*"
 
-  - package-ecosystem: "rust-toolchain"
+  # Tracks the runtime image's digest.
+  - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"

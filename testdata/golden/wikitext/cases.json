@@ -1,0 +1,334 @@
+[
+ {
+  "name": "w00",
+  "text": "! Heading 1\n!! Heading 2\n!!!!!! Heading 6\n"
+ },
+ {
+  "name": "w01",
+  "text": "This is ''italic'' and '''bold''' and ''''bold-italic''''.\n"
+ },
+ {
+  "name": "w02",
+  "text": "//italic// __underline__ ^^sup^^ ,,sub,, ~~strike~~\n"
+ },
+ {
+  "name": "w03",
+  "text": "`code` and ``code with ` tick``\n"
+ },
+ {
+  "name": "w04",
+  "text": "@@highlight@@\n"
+ },
+ {
+  "name": "w05",
+  "text": "* a\n* b\n** nested\n*** deeper\n"
+ },
+ {
+  "name": "w06",
+  "text": "# one\n# two\n## nested\n"
+ },
+ {
+  "name": "w07",
+  "text": "#* mixed\n*# mixed\n"
+ },
+ {
+  "name": "w08",
+  "text": "> quote\n> more\n\n<<<\nblock quote\n<<<\n"
+ },
+ {
+  "name": "w09",
+  "text": "---\n"
+ },
+ {
+  "name": "w10",
+  "text": "[[Other Tiddler]]\n"
+ },
+ {
+  "name": "w11",
+  "text": "[[label|Other Tiddler]]\n"
+ },
+ {
+  "name": "w12",
+  "text": "[[label|https://example.com]]\n"
+ },
+ {
+  "name": "w13",
+  "text": "https://example.com/bare\n"
+ },
+ {
+  "name": "w14",
+  "text": "[[Missing]]\n"
+ },
+ {
+  "name": "w15",
+  "text": "{{Embedded}}\n"
+ },
+ {
+  "name": "w16",
+  "text": "{{Embedded||Template}}\n"
+ },
+ {
+  "name": "w17",
+  "text": "<<macro param>>\n"
+ },
+ {
+  "name": "w18",
+  "text": "<<macro \"quoted param\" name:\"x\">>\n"
+ },
+ {
+  "name": "w19",
+  "text": "<$widget attr=\"x\">content</$widget>\n"
+ },
+ {
+  "name": "w20",
+  "text": "<div class=\"x\">html block</div>\n"
+ },
+ {
+  "name": "w21",
+  "text": "<span>inline html</span>\n"
+ },
+ {
+  "name": "w22",
+  "text": "|a|b|\n|c|d|\n"
+ },
+ {
+  "name": "w23",
+  "text": "|!h1|!h2|\n|c|d|f\n"
+ },
+ {
+  "name": "w24",
+  "text": "; term\n: definition\n"
+ },
+ {
+  "name": "w25",
+  "text": "```\ncode block\n```\n"
+ },
+ {
+  "name": "w26",
+  "text": "{{{ inline preformatted }}}\n"
+ },
+ {
+  "name": "w27",
+  "text": "{{{\npreformatted block\n}}}\n"
+ },
+ {
+  "name": "w28",
+  "text": "\"\"\"\nverbatim\n\"\"\"\n"
+ },
+ {
+  "name": "w29",
+  "text": "/*\ncomment\n*/\n"
+ },
+ {
+  "name": "w30",
+  "text": "<!-- html comment -->\n"
+ },
+ {
+  "name": "w31",
+  "text": "[img[pic.png]]\n"
+ },
+ {
+  "name": "w32",
+  "text": "[img[tooltip|pic.png]]\n"
+ },
+ {
+  "name": "w33",
+  "text": "[img width=10 [pic.png]]\n"
+ },
+ {
+  "name": "w34",
+  "text": "[img[pic.png][Other Tiddler]]\n"
+ },
+ {
+  "name": "w35",
+  "text": "@@.cls\ncontent\n@@\n"
+ },
+ {
+  "name": "w36",
+  "text": "@@color:red;text@@\n"
+ },
+ {
+  "name": "w37",
+  "text": "\\define mymacro()\nbody\n\\end\n"
+ },
+ {
+  "name": "w38",
+  "text": "\\import [[x]]\n"
+ },
+ {
+  "name": "w39",
+  "text": "\\procedure p()\n\\end\n"
+ },
+ {
+  "name": "w40",
+  "text": "<<<.tc-quote\ntext\n<<< cite\n"
+ },
+ {
+  "name": "w41",
+  "text": "line one\nline two\n\nline three\n"
+ },
+ {
+  "name": "w42",
+  "text": "text with | pipe and * star not at start\n"
+ },
+ {
+  "name": "w43",
+  "text": "*not a list\n"
+ },
+ {
+  "name": "w44",
+  "text": " * leading space\n"
+ },
+ {
+  "name": "w45",
+  "text": "* item with ''bold'' and [[Other Tiddler]]\n"
+ },
+ {
+  "name": "w46",
+  "text": "# [[Other Tiddler]]\n"
+ },
+ {
+  "name": "w47",
+  "text": "<<list-links \"[tag[x]]\">>\n"
+ },
+ {
+  "name": "w48",
+  "text": "<$link to=\"x\">y</$link>\n"
+ },
+ {
+  "name": "w49",
+  "text": "''unclosed bold\n"
+ },
+ {
+  "name": "w50",
+  "text": "[[unclosed link\n"
+ },
+ {
+  "name": "w51",
+  "text": "日本語 ''強調'' [[Other Tiddler]]\n"
+ },
+ {
+  "name": "w52",
+  "text": "~WikiWord ~NotLinked\n"
+ },
+ {
+  "name": "w53",
+  "text": "&nbsp; &amp; &lt;\n"
+ },
+ {
+  "name": "w54",
+  "text": "line ending with backslash\\\n"
+ },
+ {
+  "name": "w55",
+  "text": "\\*escaped star\n"
+ },
+ {
+  "name": "w56",
+  "text": ""
+ },
+ {
+  "name": "w57",
+  "text": "   \n"
+ },
+ {
+  "name": "w58",
+  "text": "! \n"
+ },
+ {
+  "name": "w59",
+  "text": "!Heading no space\n"
+ },
+ {
+  "name": "w60",
+  "text": "* \n"
+ },
+ {
+  "name": "w61",
+  "text": "|a|\n|b|c|\n"
+ },
+ {
+  "name": "w62",
+  "text": "|a|b|h\n"
+ },
+ {
+  "name": "w63",
+  "text": "|a|b|k\n"
+ },
+ {
+  "name": "w64",
+  "text": "|^a|v|\n"
+ },
+ {
+  "name": "w65",
+  "text": "|>a|\n|<b|\n"
+ },
+ {
+  "name": "w66",
+  "text": "|a|>|\n"
+ },
+ {
+  "name": "w67",
+  "text": "|~a|\n"
+ },
+ {
+  "name": "w68",
+  "text": "<<macro>> inline in text\n"
+ },
+ {
+  "name": "w69",
+  "text": "text <<macro>> text\n"
+ },
+ {
+  "name": "w70",
+  "text": "[[a|b|c]]\n"
+ },
+ {
+  "name": "w71",
+  "text": "[[Other Tiddler]]]\n"
+ },
+ {
+  "name": "w72",
+  "text": "[[ Other Tiddler ]]\n"
+ },
+ {
+  "name": "w73",
+  "text": "[[other tiddler]]\n"
+ },
+ {
+  "name": "w74",
+  "text": "{{{ a }}} then ``b``\n"
+ },
+ {
+  "name": "w75",
+  "text": "''' not closed ''\n"
+ },
+ {
+  "name": "w76",
+  "text": "x ^^up^^ y ,,down,, z\n"
+ },
+ {
+  "name": "w77",
+  "text": "__under__ and //it//\n"
+ },
+ {
+  "name": "w78",
+  "text": "http://insecure.example\n"
+ },
+ {
+  "name": "w79",
+  "text": "ftp://example.com\n"
+ },
+ {
+  "name": "w80",
+  "text": "<http://angle>\n"
+ },
+ {
+  "name": "w81",
+  "text": "mailto:a@b.c\n"
+ },
+ {
+  "name": "w82",
+  "text": "[[Other Tiddler|Missing]]\n"
+ }
+]

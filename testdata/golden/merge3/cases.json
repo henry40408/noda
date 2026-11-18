@@ -1,0 +1,224 @@
+[
+ {
+  "name": "m00",
+  "base": "a\nb\nc\n",
+  "ours": "a\nb\nc\n",
+  "theirs": "a\nb\nc\n"
+ },
+ {
+  "name": "m01",
+  "base": "a\nb\nc\n",
+  "ours": "a\nB\nc\n",
+  "theirs": "a\nb\nc\n"
+ },
+ {
+  "name": "m02",
+  "base": "a\nb\nc\n",
+  "ours": "a\nb\nc\n",
+  "theirs": "a\nb\nC\n"
+ },
+ {
+  "name": "m03",
+  "base": "a\nb\nc\n",
+  "ours": "A\nb\nc\n",
+  "theirs": "a\nb\nC\n"
+ },
+ {
+  "name": "m04",
+  "base": "a\nb\nc\n",
+  "ours": "a\nX\nc\n",
+  "theirs": "a\nY\nc\n"
+ },
+ {
+  "name": "m05",
+  "base": "a\nb\nc\n",
+  "ours": "a\nX\nc\n",
+  "theirs": "a\nX\nc\n"
+ },
+ {
+  "name": "m06",
+  "base": "a\nb\nc\n",
+  "ours": "a\nc\n",
+  "theirs": "a\nb\nc\n"
+ },
+ {
+  "name": "m07",
+  "base": "a\nb\nc\n",
+  "ours": "a\nc\n",
+  "theirs": "a\nB\nc\n"
+ },
+ {
+  "name": "m08",
+  "base": "a\nb\nc\n",
+  "ours": "a\nb\nc\nd\n",
+  "theirs": "z\na\nb\nc\n"
+ },
+ {
+  "name": "m09",
+  "base": "a\nb\nc\n",
+  "ours": "a\nb\nc\nd\n",
+  "theirs": "a\nb\nc\ne\n"
+ },
+ {
+  "name": "m10",
+  "base": "",
+  "ours": "x\n",
+  "theirs": "y\n"
+ },
+ {
+  "name": "m11",
+  "base": "",
+  "ours": "x\n",
+  "theirs": ""
+ },
+ {
+  "name": "m12",
+  "base": "",
+  "ours": "",
+  "theirs": "y\n"
+ },
+ {
+  "name": "m13",
+  "base": "a\n",
+  "ours": "a",
+  "theirs": "a\n"
+ },
+ {
+  "name": "m14",
+  "base": "a\nb",
+  "ours": "a\nb\nc",
+  "theirs": "A\nb"
+ },
+ {
+  "name": "m15",
+  "base": "a\nb\n",
+  "ours": "a\nb\n\n",
+  "theirs": "a\nb\n"
+ },
+ {
+  "name": "m16",
+  "base": "one\ntwo\nthree\nfour\nfive\n",
+  "ours": "one\n2\nthree\nfour\nfive\n",
+  "theirs": "one\ntwo\nthree\n4\nfive\n"
+ },
+ {
+  "name": "m17",
+  "base": "one\ntwo\nthree\nfour\nfive\n",
+  "ours": "one\n2\nthree\nfour\nfive\n",
+  "theirs": "one\ntwo\n3\nfour\nfive\n"
+ },
+ {
+  "name": "m18",
+  "base": "one\ntwo\nthree\n",
+  "ours": "ONE\ntwo\nthree\n",
+  "theirs": "one\ntwo\nTHREE\n"
+ },
+ {
+  "name": "m19",
+  "base": "日本語\n二行目\n",
+  "ours": "日本語!\n二行目\n",
+  "theirs": "日本語\n二行目!\n"
+ },
+ {
+  "name": "m20",
+  "base": "日本語\n二行目\n",
+  "ours": "日本語!\n二行目\n",
+  "theirs": "日本語?\n二行目\n"
+ },
+ {
+  "name": "m21",
+  "base": "a\r\nb\r\n",
+  "ours": "a\r\nB\r\n",
+  "theirs": "A\r\nb\r\n"
+ },
+ {
+  "name": "m22",
+  "base": "a\r\nb\r\n",
+  "ours": "a\nB\n",
+  "theirs": "a\r\nb\r\n"
+ },
+ {
+  "name": "m23",
+  "base": "x\n",
+  "ours": "x\nours\n",
+  "theirs": "x\ntheirs\n"
+ },
+ {
+  "name": "m24",
+  "base": "a\n\nb\n",
+  "ours": "a\n\nB\n",
+  "theirs": "A\n\nb\n"
+ },
+ {
+  "name": "m25",
+  "base": "a\nb\nc\nd\ne\nf\ng\n",
+  "ours": "a\nB\nc\nd\ne\nF\ng\n",
+  "theirs": "A\nb\nc\nd\ne\nf\nG\n"
+ },
+ {
+  "name": "m26",
+  "base": "a\nb\nc\nd\ne\nf\ng\n",
+  "ours": "a\nb\nc\nX\ne\nf\ng\n",
+  "theirs": "a\nb\nc\nY\ne\nf\ng\n"
+ },
+ {
+  "name": "m27",
+  "base": "shared\n",
+  "ours": "shared\nshared\n",
+  "theirs": "shared\n"
+ },
+ {
+  "name": "m28",
+  "base": "a b c\n",
+  "ours": "a B c\n",
+  "theirs": "a b C\n"
+ },
+ {
+  "name": "m29",
+  "base": "a b c\n",
+  "ours": "a X c\n",
+  "theirs": "a Y c\n"
+ },
+ {
+  "name": "m30",
+  "base": "l1\nl2\nl3\nl4\n",
+  "ours": "l1\nl2\nl3\nl4\nl5\n",
+  "theirs": "l0\nl1\nl2\nl3\nl4\n"
+ },
+ {
+  "name": "m31",
+  "base": "x\n",
+  "ours": "x\n",
+  "theirs": "y\n"
+ },
+ {
+  "name": "m32",
+  "base": "x\n",
+  "ours": "y\n",
+  "theirs": "x\n"
+ },
+ {
+  "name": "m33",
+  "base": "\n",
+  "ours": "\n\n",
+  "theirs": "\n"
+ },
+ {
+  "name": "m34",
+  "base": "\n\n\n",
+  "ours": "a\n\n\n",
+  "theirs": "\n\nb\n"
+ },
+ {
+  "name": "m35",
+  "base": "# Title\n\ntext\n",
+  "ours": "# Title\n\nmy text\n",
+  "theirs": "# Title\n\ntheir text\n"
+ },
+ {
+  "name": "m36",
+  "base": "# Title\n\ntext\n",
+  "ours": "# Mine\n\ntext\n",
+  "theirs": "# Title\n\ntext changed\n"
+ }
+]

@@ -1,0 +1,342 @@
+[
+ {
+  "name": "r00",
+  "markdown": "plain paragraph"
+ },
+ {
+  "name": "r01",
+  "markdown": "# H1\n\n## H2\n\n### H3\n"
+ },
+ {
+  "name": "r02",
+  "markdown": "*em* **strong** ~~strike~~ `code`"
+ },
+ {
+  "name": "r03",
+  "markdown": "line one\nline two"
+ },
+ {
+  "name": "r04",
+  "markdown": "line one  \nhard break"
+ },
+ {
+  "name": "r05",
+  "markdown": "- a\n- b\n  - c\n"
+ },
+ {
+  "name": "r06",
+  "markdown": "1. a\n2. b\n"
+ },
+ {
+  "name": "r07",
+  "markdown": "3. starts at three\n4. next\n"
+ },
+ {
+  "name": "r08",
+  "markdown": "- [ ] todo\n- [x] done\n"
+ },
+ {
+  "name": "r09",
+  "markdown": "| a | b |\n|---|:-:|\n| 1 | 2 |\n| 3 | 4 |\n"
+ },
+ {
+  "name": "r10",
+  "markdown": "| l | c | r | n |\n|:--|:-:|--:|---|\n| 1 | 2 | 3 | 4 |\n"
+ },
+ {
+  "name": "r11",
+  "markdown": "> quote\n> more\n"
+ },
+ {
+  "name": "r12",
+  "markdown": "```rust\nfn main() {}\n```\n"
+ },
+ {
+  "name": "r13",
+  "markdown": "```\nno lang\n```\n"
+ },
+ {
+  "name": "r14",
+  "markdown": "~~~\ntilde fence\n~~~\n"
+ },
+ {
+  "name": "r15",
+  "markdown": "    indented code\n"
+ },
+ {
+  "name": "r16",
+  "markdown": "---\n"
+ },
+ {
+  "name": "r17",
+  "markdown": "<script>alert(1)</script>"
+ },
+ {
+  "name": "r18",
+  "markdown": "<script>alert(1)</script>\n\ntext"
+ },
+ {
+  "name": "r19",
+  "markdown": "text <b>inline html</b> text"
+ },
+ {
+  "name": "r20",
+  "markdown": "<div onclick=\"x()\">block</div>\n"
+ },
+ {
+  "name": "r21",
+  "markdown": "<!-- comment -->\n\ntext"
+ },
+ {
+  "name": "r22",
+  "markdown": "<img src=x onerror=alert(1)>"
+ },
+ {
+  "name": "r23",
+  "markdown": "[x](javascript:alert(1))"
+ },
+ {
+  "name": "r24",
+  "markdown": "[x](JaVaScRiPt:alert(1))"
+ },
+ {
+  "name": "r25",
+  "markdown": "[x](data:text/html,<script>alert(1)</script>)"
+ },
+ {
+  "name": "r26",
+  "markdown": "[x](vbscript:x)"
+ },
+ {
+  "name": "r27",
+  "markdown": "[x](file:///etc/passwd)"
+ },
+ {
+  "name": "r28",
+  "markdown": "[x](https://example.com)"
+ },
+ {
+  "name": "r29",
+  "markdown": "[x](http://example.com/a?b=1&c=2)"
+ },
+ {
+  "name": "r30",
+  "markdown": "[x](mailto:a@b.c)"
+ },
+ {
+  "name": "r31",
+  "markdown": "[x](tel:+886)"
+ },
+ {
+  "name": "r32",
+  "markdown": "[x](ftp://example.com)"
+ },
+ {
+  "name": "r33",
+  "markdown": "[x](#frag)"
+ },
+ {
+  "name": "r34",
+  "markdown": "[x](01abc234-hello.md)"
+ },
+ {
+  "name": "r35",
+  "markdown": "[x](./01abc234-hello.md#frag)"
+ },
+ {
+  "name": "r36",
+  "markdown": "[x](unknown.md)"
+ },
+ {
+  "name": "r37",
+  "markdown": "[x](sub/dir.md)"
+ },
+ {
+  "name": "r38",
+  "markdown": "[x](notes.txt)"
+ },
+ {
+  "name": "r39",
+  "markdown": "[x](01abc234-hello.md \"a title\")"
+ },
+ {
+  "name": "r40",
+  "markdown": "[x][r]\n\n[r]: https://example.com \"T\"\n"
+ },
+ {
+  "name": "r41",
+  "markdown": "[r]\n\n[r]: 01abc234-hello.md\n"
+ },
+ {
+  "name": "r42",
+  "markdown": "![alt](pic.png)"
+ },
+ {
+  "name": "r43",
+  "markdown": "![alt](https://example.com/p.png)"
+ },
+ {
+  "name": "r44",
+  "markdown": "![alt](01abc234-hello.md)"
+ },
+ {
+  "name": "r45",
+  "markdown": "![alt *em*](x.png \"title\")"
+ },
+ {
+  "name": "r46",
+  "markdown": "![alt](javascript:x)"
+ },
+ {
+  "name": "r47",
+  "markdown": "https://example.com/bare"
+ },
+ {
+  "name": "r48",
+  "markdown": "see https://example.com/bare. next"
+ },
+ {
+  "name": "r49",
+  "markdown": "(https://example.com/bare)"
+ },
+ {
+  "name": "r50",
+  "markdown": "https://example.com/a?b=1&c=<2>"
+ },
+ {
+  "name": "r51",
+  "markdown": "ftp://example.com/nope"
+ },
+ {
+  "name": "r52",
+  "markdown": "http://example.com and https://two.example"
+ },
+ {
+  "name": "r53",
+  "markdown": "[x](https://a.com) https://a.com"
+ },
+ {
+  "name": "r54",
+  "markdown": "`https://example.com/in-code`"
+ },
+ {
+  "name": "r55",
+  "markdown": "<https://example.com/angle>"
+ },
+ {
+  "name": "r56",
+  "markdown": "<a@b.c>"
+ },
+ {
+  "name": "r57",
+  "markdown": "&amp; &lt; &copy; &#35;"
+ },
+ {
+  "name": "r58",
+  "markdown": "\"quotes\" 'single' <angle> &amp"
+ },
+ {
+  "name": "r59",
+  "markdown": "日本語 **強調** [リンク](01abc234-hello.md)"
+ },
+ {
+  "name": "r60",
+  "markdown": "emoji 😀 text"
+ },
+ {
+  "name": "r61",
+  "markdown": "[x](<with space.md>)"
+ },
+ {
+  "name": "r62",
+  "markdown": "[x](with%20space.md)"
+ },
+ {
+  "name": "r63",
+  "markdown": "[x](https://example.com/a b)"
+ },
+ {
+  "name": "r64",
+  "markdown": "[x](\"quoted\")"
+ },
+ {
+  "name": "r65",
+  "markdown": "[x](https://example.com/\"onmouseover=\"x)"
+ },
+ {
+  "name": "r66",
+  "markdown": "[](https://example.com)"
+ },
+ {
+  "name": "r67",
+  "markdown": "[ ](01abc234-hello.md)"
+ },
+ {
+  "name": "r68",
+  "markdown": "footnote[^1]\n\n[^1]: the note\n"
+ },
+ {
+  "name": "r69",
+  "markdown": "term\n: def\n"
+ },
+ {
+  "name": "r70",
+  "markdown": "a\\*b\\_c"
+ },
+ {
+  "name": "r71",
+  "markdown": "* * *\n"
+ },
+ {
+  "name": "r72",
+  "markdown": "Setext\n======\n"
+ },
+ {
+  "name": "r73",
+  "markdown": "| a |\n|---|\n| <b>x</b> |\n"
+ },
+ {
+  "name": "r74",
+  "markdown": "- item\n\n  para in item\n"
+ },
+ {
+  "name": "r75",
+  "markdown": "> - quoted list\n"
+ },
+ {
+  "name": "r76",
+  "markdown": "[x](https://example.com)\n\n[y](01abc234-hello.md)\n"
+ },
+ {
+  "name": "r77",
+  "markdown": "<a href=\"javascript:x\">raw</a>"
+ },
+ {
+  "name": "r78",
+  "markdown": "<iframe src=//evil></iframe>"
+ },
+ {
+  "name": "r79",
+  "markdown": "<style>*{display:none}</style>"
+ },
+ {
+  "name": "r80",
+  "markdown": "</p><script>x</script>"
+ },
+ {
+  "name": "r81",
+  "markdown": "\u0000null"
+ },
+ {
+  "name": "r82",
+  "markdown": "![](x.png)"
+ },
+ {
+  "name": "r83",
+  "markdown": "[x](https://example.com \"ti\"tle\")"
+ },
+ {
+  "name": "r84",
+  "markdown": "<details><summary>s</summary>\n\nbody\n\n</details>"
+ }
+]

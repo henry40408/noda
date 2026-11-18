@@ -1,0 +1,19 @@
+$ noda tag meeting-notes +new -q3 --no-touch
+--- stderr
+noda: `--no-touch` is being read as a tag: the tags take everything after them, so a flag has to come before them — `noda tag meeting-notes --no-touch +tag`
+--- exit 1
+$ noda show meeting-notes
+---
+title: Meeting notes
+tags: [work, q3]
+created: 2024-01-02T00:00:00Z
+updated: 2024-01-02T00:00:00Z
+---
+
+# Agenda
+
+the budget, again
+
+see [the budget](01abc234-budget-review.md)
+--- stderr
+--- exit 0

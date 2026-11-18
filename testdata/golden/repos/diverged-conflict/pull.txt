@@ -1,0 +1,4 @@
+$ noda pull
+--- stderr
+noda: pull: `main` conflicts with the remote in 01abc234-budget-review.md — the merge was rolled back; resolve it with git in <ROOT>/data/noda/notebooks/default
+--- exit 1

@@ -1,0 +1,6 @@
+$ noda doctor --links
+1 stale link
+  02def567-meeting-notes.md -> 01abc234-budget-review.md
+    now 01abc234-q3-budget-review.md
+--- stderr
+--- exit 0

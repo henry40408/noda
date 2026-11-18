@@ -1,0 +1,1120 @@
+[
+  {
+    "name": "slugify-00",
+    "out": "hello-world"
+  },
+  {
+    "name": "slugify-01",
+    "out": "leading-and-trailing"
+  },
+  {
+    "name": "slugify-02",
+    "out": "weird-punctuation"
+  },
+  {
+    "name": "slugify-03",
+    "out": "upper-lower"
+  },
+  {
+    "name": "slugify-04",
+    "out": "中文標題"
+  },
+  {
+    "name": "slugify-05",
+    "out": "日本語-タイトル"
+  },
+  {
+    "name": "slugify-06",
+    "out": "emoji-title"
+  },
+  {
+    "name": "slugify-07",
+    "out": "note"
+  },
+  {
+    "name": "slugify-08",
+    "out": "note"
+  },
+  {
+    "name": "slugify-09",
+    "out": "note"
+  },
+  {
+    "name": "slugify-10",
+    "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "name": "slugify-11",
+    "out": "word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word"
+  },
+  {
+    "name": "slugify-12",
+    "out": "ünïcödé-wörds"
+  },
+  {
+    "name": "slugify-13",
+    "out": "tab-separated"
+  },
+  {
+    "name": "slugify-14",
+    "out": "dash-ed-title"
+  },
+  {
+    "name": "slugify-15",
+    "out": "under-score"
+  },
+  {
+    "name": "slugify-16",
+    "out": "dots-in-name"
+  },
+  {
+    "name": "slugify-17",
+    "out": "a-b-c"
+  },
+  {
+    "name": "slugify-18",
+    "out": "etc-passwd"
+  },
+  {
+    "name": "slugify-19",
+    "out": "con"
+  },
+  {
+    "name": "slugify-20",
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+    "name": "slugify-21",
+    "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+    "name": "slugify-22",
+    "out": "ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab-cd-ab"
+  },
+  {
+    "name": "slugify-23",
+    "out": "日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日"
+  },
+  {
+    "name": "slugify-24",
+    "out": "日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日"
+  },
+  {
+    "name": "slugify-25",
+    "out": "日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日"
+  },
+  {
+    "name": "slugify-26",
+    "out": "100-sure"
+  },
+  {
+    "name": "slugify-27",
+    "out": "c-c"
+  },
+  {
+    "name": "slugify-28",
+    "out": "what-why"
+  },
+  {
+    "name": "slugify-29",
+    "out": "trailing"
+  },
+  {
+    "name": "slugify-30",
+    "out": "leading"
+  },
+  {
+    "name": "slugify-31",
+    "out": "a-b"
+  },
+  {
+    "name": "slugify-32",
+    "out": "a-b"
+  },
+  {
+    "name": "slugify-33",
+    "out": "été"
+  },
+  {
+    "name": "slugify-34",
+    "out": "i̇stanbul"
+  },
+  {
+    "name": "slugify-35",
+    "out": "ǆ"
+  },
+  {
+    "name": "slugify-36",
+    "out": "ﬁne"
+  },
+  {
+    "name": "normalize_id-00",
+    "out": "01abc234"
+  },
+  {
+    "name": "normalize_id-01",
+    "out": "01abc234"
+  },
+  {
+    "name": "normalize_id-02",
+    "out": "01011234"
+  },
+  {
+    "name": "normalize_id-03",
+    "out": "11110001"
+  },
+  {
+    "name": "normalize_id-04",
+    "out": "abcdefgh"
+  },
+  {
+    "name": "normalize_id-05",
+    "out": "abcdefgh"
+  },
+  {
+    "name": "normalize_id-06",
+    "out": ""
+  },
+  {
+    "name": "normalize_id-07",
+    "out": "0"
+  },
+  {
+    "name": "normalize_id-08",
+    "out": "110"
+  },
+  {
+    "name": "normalize_id-09",
+    "out": "u"
+  },
+  {
+    "name": "normalize_id-10",
+    "out": "zzzzzzzz"
+  },
+  {
+    "name": "normalize_id-11",
+    "out": "12345678extra"
+  },
+  {
+    "name": "normalize_id-12",
+    "out": "0-1"
+  },
+  {
+    "name": "normalize_id-13",
+    "out": " 01ab"
+  },
+  {
+    "name": "normalize_id-14",
+    "out": "01ab "
+  },
+  {
+    "name": "normalize_id-15",
+    "out": "ü"
+  },
+  {
+    "name": "normalize_id-16",
+    "out": "ｏ"
+  },
+  {
+    "name": "file_name-00",
+    "out": "01abc234-hello.md"
+  },
+  {
+    "name": "file_name-01",
+    "out": "01abc234-.md"
+  },
+  {
+    "name": "file_name-02",
+    "out": "01abc234-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md"
+  },
+  {
+    "name": "file_name-03",
+    "out": "01abc234-日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日.md"
+  },
+  {
+    "name": "file_name-04",
+    "out": "01abc234-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.md"
+  },
+  {
+    "name": "file_name-05",
+    "out": "01abc234-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.md"
+  },
+  {
+    "name": "file_name-06",
+    "out": "01abc234-日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日.md"
+  },
+  {
+    "name": "file_name-07",
+    "out": "01abc234-日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日日.md"
+  },
+  {
+    "name": "file_name-08",
+    "out": "01abc234-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-日本語-.md"
+  },
+  {
+    "name": "split_stem-00",
+    "out": [
+      "01abc234",
+      "hello"
+    ]
+  },
+  {
+    "name": "split_stem-01",
+    "out": null
+  },
+  {
+    "name": "split_stem-02",
+    "out": null
+  },
+  {
+    "name": "split_stem-03",
+    "out": null
+  },
+  {
+    "name": "split_stem-04",
+    "out": null
+  },
+  {
+    "name": "split_stem-05",
+    "out": null
+  },
+  {
+    "name": "split_stem-06",
+    "out": null
+  },
+  {
+    "name": "split_stem-07",
+    "out": [
+      "01abc234",
+      "-x"
+    ]
+  },
+  {
+    "name": "split_stem-08",
+    "out": null
+  },
+  {
+    "name": "split_stem-09",
+    "out": [
+      "01ABC234",
+      "x"
+    ]
+  },
+  {
+    "name": "split_stem-10",
+    "out": [
+      "01abc234",
+      "日本語"
+    ]
+  },
+  {
+    "name": "split_stem-11",
+    "out": [
+      "01abc234",
+      "a-b-c"
+    ]
+  },
+  {
+    "name": "01abc234-hello.md",
+    "out": true
+  },
+  {
+    "name": "01abc234-hello.txt",
+    "out": false
+  },
+  {
+    "name": "README.md",
+    "out": false
+  },
+  {
+    "name": "01abc234.md",
+    "out": false
+  },
+  {
+    "name": "01abc234-.md",
+    "out": false
+  },
+  {
+    "name": ".md",
+    "out": false
+  },
+  {
+    "name": "a.md",
+    "out": false
+  },
+  {
+    "name": "01abc234-hello.MD",
+    "out": false
+  },
+  {
+    "name": "x/01abc234-hello.md",
+    "out": false
+  },
+  {
+    "name": "is_id_shaped-00",
+    "out": true
+  },
+  {
+    "name": "is_id_shaped-01",
+    "out": false
+  },
+  {
+    "name": "is_id_shaped-02",
+    "out": true
+  },
+  {
+    "name": "is_id_shaped-03",
+    "out": false
+  },
+  {
+    "name": "is_id_shaped-04",
+    "out": false
+  },
+  {
+    "name": "is_id_shaped-05",
+    "out": false
+  },
+  {
+    "name": "is_id_shaped-06",
+    "out": false
+  },
+  {
+    "name": "is_id_shaped-07",
+    "out": false
+  },
+  {
+    "name": "validate_title-00",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-01",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-02",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-03",
+    "out": {
+      "err": "a title has to fit on one line"
+    }
+  },
+  {
+    "name": "validate_title-04",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-05",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-06",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-07",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-08",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-09",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-10",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_title-11",
+    "out": {
+      "err": "a title has to fit on one line"
+    }
+  },
+  {
+    "name": "validate_tag-00",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-01",
+    "out": {
+      "err": "a tag needs a name"
+    }
+  },
+  {
+    "name": "validate_tag-02",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-03",
+    "out": {
+      "err": "a tag cannot contain `,`: a,b"
+    }
+  },
+  {
+    "name": "validate_tag-04",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-05",
+    "out": {
+      "err": "a tag cannot contain `[`: [x]"
+    }
+  },
+  {
+    "name": "validate_tag-06",
+    "out": {
+      "err": "a tag cannot contain `]`: a]"
+    }
+  },
+  {
+    "name": "validate_tag-07",
+    "out": {
+      "err": "a tag cannot contain `[`: [a"
+    }
+  },
+  {
+    "name": "validate_tag-08",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-09",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-10",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-11",
+    "out": {
+      "err": "a tag cannot contain a line break: a\nb"
+    }
+  },
+  {
+    "name": "validate_tag-12",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-13",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-14",
+    "out": {
+      "ok": true
+    }
+  },
+  {
+    "name": "validate_tag-15",
+    "out": {
+      "err": "a tag cannot contain `,`: a,"
+    }
+  },
+  {
+    "name": "roundtrip-00",
+    "out": {
+      "ok": {
+        "body": "body\n",
+        "created": "2024-01-01T00:00:00Z",
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\n---\n\nbody\n",
+        "tags": [
+          "a",
+          "b"
+        ],
+        "title": "T",
+        "updated": "2024-01-02T00:00:00Z"
+      }
+    }
+  },
+  {
+    "name": "roundtrip-01",
+    "out": {
+      "ok": {
+        "body": "body",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\nbody\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-02",
+    "out": {
+      "ok": {
+        "body": "",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-03",
+    "out": {
+      "ok": {
+        "body": "",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: \n---\n\n",
+        "tags": [],
+        "title": "",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-04",
+    "out": {
+      "ok": {
+        "body": "body\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: \n---\n\nbody\n",
+        "tags": [],
+        "title": "",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-05",
+    "out": {
+      "err": "note has no frontmatter block"
+    }
+  },
+  {
+    "name": "roundtrip-06",
+    "out": {
+      "err": "note has no frontmatter block"
+    }
+  },
+  {
+    "name": "roundtrip-07",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": true,
+        "pinned": "true",
+        "rendered": "---\ntitle: T\npinned: true\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-08",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": true,
+        "pinned": "TRUE",
+        "rendered": "---\ntitle: T\npinned: TRUE\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-09",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": "yes",
+        "rendered": "---\ntitle: T\npinned: yes\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-10",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": "false",
+        "rendered": "---\ntitle: T\npinned: false\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-11",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": "2024-01-01T00:00:00+08:00",
+        "extra": [
+          "author: someone",
+          "aliases: [x]"
+        ],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ncreated: 2024-01-01T00:00:00+08:00\nauthor: someone\naliases: [x]\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-12",
+    "out": {
+      "err": "note has no frontmatter block"
+    }
+  },
+  {
+    "name": "roundtrip-13",
+    "out": {
+      "ok": {
+        "body": "body\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ntags: [a]\n---\n\nbody\n",
+        "tags": [
+          "a"
+        ],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-14",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: spaced\ntags: [a, b, c]\n---\n\nb\n",
+        "tags": [
+          "a",
+          "b",
+          "c"
+        ],
+        "title": "spaced",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-15",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-16",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ntags: [a, b]\n---\n\nb\n",
+        "tags": [
+          "a",
+          "b"
+        ],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-17",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ntags: [a, b]\n---\n\nb\n",
+        "tags": [
+          "a",
+          "b"
+        ],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-18",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [
+          "not a pair"
+        ],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\nnot a pair\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-19",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [
+          "  indented: x"
+        ],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n  indented: x\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-20",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: A: B\n---\n\nb\n",
+        "tags": [],
+        "title": "A: B",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-21",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": "c",
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ntags: [z]\ncreated: c\nupdated: u\n---\n\nb\n",
+        "tags": [
+          "z"
+        ],
+        "title": "T",
+        "updated": "u"
+      }
+    }
+  },
+  {
+    "name": "roundtrip-22",
+    "out": {
+      "ok": {
+        "body": "---\nnot frontmatter\n---\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\n---\nnot frontmatter\n---\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-23",
+    "out": {
+      "ok": {
+        "body": "  indented body\n\nlast",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\n  indented body\n\nlast\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-24",
+    "out": {
+      "ok": {
+        "body": "本文\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: 日本語\ntags: [中文, emoji😀]\n---\n\n本文\n",
+        "tags": [
+          "中文",
+          "emoji😀"
+        ],
+        "title": "日本語",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-25",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [
+          "unconverted: [table, macro]"
+        ],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\nunconverted: [table, macro]\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-26",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: U\n---\n\nb\n",
+        "tags": [],
+        "title": "U",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-27",
+    "out": {
+      "ok": {
+        "body": "---\n\nb\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\n---\n\nb\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-28",
+    "out": {
+      "err": "note has no frontmatter block"
+    }
+  },
+  {
+    "name": "roundtrip-29",
+    "out": {
+      "err": "note has no frontmatter block"
+    }
+  },
+  {
+    "name": "roundtrip-30",
+    "out": {
+      "ok": {
+        "body": "immediately\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\n---\n\nimmediately\n",
+        "tags": [],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-31",
+    "out": {
+      "ok": {
+        "body": "b\n",
+        "created": null,
+        "extra": [],
+        "is_pinned": false,
+        "pinned": null,
+        "rendered": "---\ntitle: T\ntags: [b]\n---\n\nb\n",
+        "tags": [
+          "b"
+        ],
+        "title": "T",
+        "updated": null
+      }
+    }
+  },
+  {
+    "name": "roundtrip-32",
+    "out": {
+      "err": "note has no frontmatter block"
+    }
+  },
+  {
+    "name": "set_field-00",
+    "out": "---\ntitle: New\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\n---\n\nbody\n"
+  },
+  {
+    "name": "set_field-01",
+    "out": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2025-01-01T00:00:00Z\n---\n\nbody\n"
+  },
+  {
+    "name": "set_field-02",
+    "out": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\npinned: true\n---\n\nbody\n"
+  },
+  {
+    "name": "set_field-03",
+    "out": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\nmissing: x\n---\n\nbody\n"
+  },
+  {
+    "name": "set_field-04",
+    "out": "---\ntitle: T\ntags: [x]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\n---\n\nbody\n"
+  },
+  {
+    "name": "set_field-05",
+    "out": null
+  },
+  {
+    "name": "set_field-06",
+    "out": "---\ntitle: T\ncreated: c\n---\n"
+  },
+  {
+    "name": "set_field-07",
+    "out": "---\ntitle: T\nauthor: z\n---\n\nb\n"
+  },
+  {
+    "name": "set_field-08",
+    "out": "---\ntitle: multi\nline\n---\n\nb\n"
+  },
+  {
+    "name": "set_field-09",
+    "out": null
+  },
+  {
+    "name": "set_body-00",
+    "out": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\n---\n\nnew body\n"
+  },
+  {
+    "name": "set_body-01",
+    "out": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\n---\n\nnew body\n"
+  },
+  {
+    "name": "set_body-02",
+    "out": "---\ntitle: T\ntags: [a, b]\ncreated: 2024-01-01T00:00:00Z\nupdated: 2024-01-02T00:00:00Z\n---\n\n"
+  },
+  {
+    "name": "set_body-03",
+    "out": null
+  },
+  {
+    "name": "set_body-04",
+    "out": "---\ntitle: T\n---\n\nb\n"
+  },
+  {
+    "name": "set_body-05",
+    "out": "---\ntitle: T\n---\n\n---\nlooks like fm\n---\n"
+  },
+  {
+    "name": "set_body-06",
+    "out": null
+  }
+]

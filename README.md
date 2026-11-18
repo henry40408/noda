@@ -1,4 +1,4 @@
-# noda - Git-native Notebook in Rust
+# noda - Git-native Notebook
 
 > A git-native notebook for your terminal. Your notes are plain Markdown in an ordinary
 > git repository — versioned, syncable, and yours.
@@ -6,7 +6,7 @@
 [![CI](https://github.com/henry40408/noda/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/noda/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/henry40408/noda)](https://github.com/henry40408/noda/releases/latest)
 [![License](https://img.shields.io/github/license/henry40408/noda)](LICENSE.txt)
-[![Rust toolchain](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/henry40408/noda/main/rust-toolchain.toml&query=$.toolchain.channel&label=rust%20toolchain&logo=rust)](https://www.rust-lang.org/)
+[![Go version](https://img.shields.io/github/go-mod/go-version/henry40408/noda)](go.mod)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/noda)
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
 [![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
@@ -36,8 +36,8 @@ Local-first, plain-text, and built to start fast. No account, no index file, no 
 - **Action items** - `- [ ]` boxes found across notes, read from the Markdown, never grepped
 - **Import** - Bring in a TiddlyWiki 5 export
 - **Signed commits** - Follows your git config's `commit.gpgsign` (OpenPGP)
-- **One static binary** - Self-contained for macOS and Linux (incl. arm64/musl), plus a
-  container image
+- **One static binary** - A single Go binary for macOS and Linux (amd64 and arm64), plus a
+  container image. It runs your system's `git`
 
 ## Quick Start
 
@@ -61,22 +61,39 @@ UTC, and a `due:` date counts as passed hours late for anyone east of Greenwich.
 <summary>The three things a container cannot do for you</summary>
 
 `add` and `edit` open an editor, which the image does not carry — write notes with `-c`, or
-mount one in. `sync` over SSH needs a key: pass your agent through with
+mount one in. `sync` over SSH needs a key: the image carries the OpenSSH client, so pass your agent through with
 `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent`, or use an HTTPS remote with a
 token. `noda tui` needs the `-it` the alias already carries; without a terminal, the command
 says so.
 
 </details>
 
-### Building from Source
+### Installing with Go
 
-There is no crates.io package and no Homebrew formula:
+There is no Homebrew formula:
 
 ```sh
-git clone https://github.com/henry40408/noda.git
-cd noda
-cargo build --release        # target/release/noda
+go install github.com/henry40408/noda/cmd/noda@latest
 ```
+
+### Requirements
+
+noda runs the `git` on your `PATH`, so it needs:
+
+- **git 2.39 or newer.** Every repository operation goes through it.
+- **An OpenSSH client**, for `ssh` remotes.
+- **gpg**, only if you sign commits (`commit.gpgsign`).
+
+Because git does the work, noda now behaves the way git does: it reads `~/.ssh/config`, your ssh
+key files, the credential helper you configured, and `[include]` / `[includeIf]` in your git
+config. Earlier releases carried their own libgit2 and ignored all of these.
+
+### Upgrading from the Rust releases
+
+noda is now written in Go; commands, output and notebooks are unchanged. One variable changed:
+the Rust build read `RUST_LOG`, and noda now refuses to start while `RUST_LOG` is set, naming
+`NODA_LOG_LEVEL` as its replacement. If you export `RUST_LOG` in your shell profile, unset it, or
+set it only for the programs that need it.
 
 ### First Notes
 
@@ -193,6 +210,14 @@ Every command, with its flags and what it prints, is in the **[command reference
 | [Importing](docs/commands.md#importing) | `import tiddlywiki` |
 | [Terminal UI](docs/tui.md) / [Browser](docs/web.md) | `tui` `web` |
 
+## Environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `NODA_LOG_LEVEL` | Log level: `debug`, `info`, `warn` or `error`. Default `info`. Environment only, no flag. |
+| `NODA_LOG_FORMAT` | `text` or `json`; the fallback for `noda web --log-format`. |
+| `RUST_LOG` | Retired. noda refuses to start while it is set; use `NODA_LOG_LEVEL`. |
+
 ## Roadmap
 
 Encrypted notebooks are under consideration.
@@ -200,33 +225,33 @@ Encrypted notebooks are under consideration.
 ## Building from source
 
 ```sh
-cargo build --release
-# Cross-compile static Linux binaries (requires zig + cargo-zigbuild):
-cargo zigbuild --release --target x86_64-unknown-linux-musl
-cargo zigbuild --release --target aarch64-unknown-linux-musl
+git clone https://github.com/henry40408/noda.git
+cd noda
+go build -mod=vendor -o bin/noda ./cmd/noda
+# Cross-compile a static Linux binary:
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor -trimpath -o noda ./cmd/noda
 
-cargo nextest run
+go test -mod=vendor -race ./...
 scripts/bench-coldstart.sh                # times whole processes, not in-process code
 ```
 
-`noda --version` reports the tag the build came from via `git describe` at compile time (`0.2.0`,
-or `0.2.0-3-gabc1234` three commits later), not `Cargo.toml`'s placeholder `0.1.0`. The container
-build has no `.git`, so it is passed a `NODA_VERSION` build argument instead.
+`noda --version` reports the version injected at link time (`-X .../internal/version.version`), else
+the VCS revision Go stamped into the binary. The container build has no `.git`, so it is passed a
+`NODA_VERSION` build argument.
 
-libgit2, OpenSSL and libssh2 are vendored into one static binary. Startup time is a feature, so
-the release profile is tuned for size and cold start is measured. How the crate fits together:
+The binary is static (`CGO_ENABLED=0`) and dependencies are vendored. Startup time is a feature,
+so cold start is measured. How the code fits together:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Tech Stack
 
-- **Git**: git2 (libgit2, OpenSSL and libssh2 vendored)
-- **CLI**: clap
-- **Terminal UI**: ratatui
-- **Web**: axum on tokio
-- **Markdown**: pulldown-cmark
-- **Config**: toml_edit
-- **Import**: serde_json
-- **Time**: jiff
+- **Git**: the system `git` (2.39+), driven through `internal/gitx`
+- **CLI**: a hand-written parser over a command table
+- **Terminal UI**: tcell
+- **Web**: `net/http`
+- **Markdown**: goldmark
+- **Config**: go-toml
+- **Logging**: `log/slog`
 
 ## License
 

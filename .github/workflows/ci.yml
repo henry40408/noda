@@ -1,5 +1,5 @@
-# The build job guards the PRFAQ's claim that noda builds for musl on x86_64 and
-# aarch64: the vendored C libraries are what break silently there.
+# The build job guards the claim that noda is one static binary on
+# x86_64 and aarch64: a cgo dependency is what breaks that silently.
 #
 # Actions are pinned to commit SHAs, which cannot be repointed the way a tag can;
 # the trailing comment names the release.
@@ -19,117 +19,223 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -mod=vendor -trimpath -o noda ./cmd/noda
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+      # noda ships as one file that needs nothing installed but git.
+      - name: the binary must be static
+        run: |
+          file noda
+          file noda | grep -Eq 'statically linked' || {
+            echo "::error::noda is not statically linked"
+            exit 1
+          }
+
+  deps:
+    name: deps
+    runs-on: ubuntu-latest
+    env:
+      # The root module allows only these. `e2e/` additionally allows MPL-2.0
+      # (godog's go-memdb and friends); MPL-2.0 must not reach the root module,
+      # which ships in the image.
+      ALLOWED_LICENSES: Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MIT,MIT-0,Zlib,Unlicense,CC0-1.0,Unicode-3.0,BSL-1.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod tidy -diff
+      - run: |
+          go mod vendor
+          test -z "$(git status --porcelain -- vendor go.mod go.sum)"
+      - run: scripts/check-dep-age.sh
+      # go-licenses needs GOROOT set explicitly, else it fails on the standard
+      # library with "does not have module info". The module's own LICENSE is
+      # not a dependency, so it is ignored.
+      - run: |
+          GOROOT="$(go env GOROOT)" go run github.com/google/go-licenses/v2@v2.0.1 check ./... \
+            --include_tests --ignore github.com/henry40408/noda \
+            --allowed_licenses="$ALLOWED_LICENSES"
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # e2e/ is its own module, so none of the above reached it.
+      - name: e2e module
+        working-directory: e2e
+        run: |
+          go mod tidy -diff
+          go mod vendor
+          test -z "$(git status --porcelain -- vendor go.mod go.sum)"
+          ../scripts/check-dep-age.sh
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - run: |
+          GOROOT="$(go env GOROOT)" go run github.com/google/go-licenses/v2@v2.0.1 check ./... \
+            --include_tests --ignore github.com/henry40408/noda/e2e \
+            --allowed_licenses="$ALLOWED_LICENSES,MPL-2.0"
+        working-directory: e2e
+
   lint:
     name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-
-  lint-e2e:
-    name: lint-e2e
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # `e2e/` is its own workspace; unnamed, its dependencies go uncached.
-          workspaces: e2e
-      - run: cargo fmt --check --manifest-path e2e/Cargo.toml
-      - run: cargo clippy --manifest-path e2e/Cargo.toml --all-targets -- -D warnings
+          go-version-file: go.mod
+      - run: |
+          unformatted="$(git ls-files -z '*.go' | grep -zvE '(^|/)vendor/' | xargs -0 gofmt -l 2>&1)"
+          echo "$unformatted"
+          test -z "$unformatted"
+      - run: go vet -mod=vendor ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: e2e module
+        working-directory: e2e
+        run: |
+          go vet -mod=vendor ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      # One toolchain for both modules, or a bump in one is missed in the other.
+      - name: e2e uses the root go and toolchain lines
+        run: |
+          for key in go toolchain; do
+            test "$(grep "^$key " go.mod)" = "$(grep "^$key " e2e/go.mod)"
+          done
 
   test:
     name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          tool: cargo-nextest
-      - run: cargo nextest run
+          go-version-file: go.mod
+      - run: go test -mod=vendor -race ./...
 
   e2e:
     name: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          workspaces: |
-            .
-            e2e
-      # Built first so a compile error in noda reads as one, not as a browser
-      # finding nothing listening.
-      - run: cargo build
-      # The runner has Chrome; only the matching chromedriver is downloaded.
-      - run: cargo test --manifest-path e2e/Cargo.toml --test e2e
+          go-version-file: go.mod
+      # chromedp's own search prefers a chromium on PATH over google-chrome, so
+      # the browser the runner reports is pinned.
+      - name: Pin the browser
+        run: echo "E2E_CHROME=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - run: go test -mod=vendor -count=1 -timeout 25m ./...
+        working-directory: e2e
 
   coverage:
     name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # cargo-llvm-cov installs llvm-tools-preview itself.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          tool: cargo-llvm-cov,nextest
-      - name: Collect coverage (llvm source-based, via nextest)
-        run: cargo llvm-cov nextest --lcov --output-path lcov.info
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+          go-version-file: go.mod
+      # `-coverprofile` ignores the binary cmd/noda's tests exec; with
+      # NODA_COVERDIR set they build that binary with `-cover`.
+      - run: |
+          NODA_COVERDIR="$PWD/covdata" go test -mod=vendor -coverprofile=coverage.out ./...
+          go tool covdata textfmt -i=covdata -o coverage-bin.out
+          tail -n +2 coverage-bin.out >> coverage.out
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
-          # Coverage is a signal, not a gate.
+          slug: henry40408/noda
+          files: coverage.out
+          # Coverage is a signal, not a gate. Dependabot PRs cannot read
+          # repository secrets.
           fail_ci_if_error: false
 
-  deny:
-    name: deny
+  # Pushes mutate the whole module; pull requests mutate only the lines changed
+  # against the base branch. The efficacy threshold and the `e2e/` and
+  # `vendor/` exclusions live in `.gremlins.yaml`: gremlins v0.6.0 silently
+  # ignores `--threshold-efficacy` on the command line.
+  mutation:
+    name: mutation
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-deny
-      # Can fail with no change here, when a new advisory is published.
-      - run: cargo deny check
-
-  build:
-    name: build (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          # `--diff` needs the base branch's history, not a shallow clone.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          key: ${{ matrix.target }}
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-zigbuild
-      - run: cargo zigbuild --release --target ${{ matrix.target }}
-      # Vendoring exists to ship one file that needs nothing installed.
-      - name: the binary must be self-contained
+          go-version-file: go.mod
+      # A cached test result makes gremlins' per-mutant timeout near zero, so
+      # nearly every mutant "times out" and the job would pass untested.
+      - run: go clean -testcache
+      - name: Mutate the whole module (push)
+        if: github.event_name != 'pull_request'
         run: |
-          binary=target/${{ matrix.target }}/release/noda
-          file "$binary"
-          file "$binary" | grep -Eq 'static' || {
-            echo "::error::$binary is not statically linked"
-            exit 1
-          }
+          go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash .
+      - name: Mutate the changed lines (pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # Stream the output so a killed runner still leaves a log. Capping
+          # workers and CPUs per test run keeps a whole-module diff within the
+          # runner's resources: the default (one worker per CPU) was killed
+          # with SIGTERM.
+          status=0
+          set -o pipefail
+          go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
+            --workers 2 --test-cpu 2 \
+            --diff "origin/$BASE_REF" . 2>&1 | tee "$RUNNER_TEMP/mutation.log" || status=$?
+          set +o pipefail
+          # A diff with no mutable Go line (docs, CI only) yields zero mutants,
+          # which gremlins scores as 0% and so fails the threshold. That is not
+          # a low score, so treat it as a pass.
+          if [ "$status" -ne 0 ] \
+            && grep -q '^Killed: 0, Lived: 0, Not covered: 0$' "$RUNNER_TEMP/mutation.log" \
+            && grep -q '^Timed out: 0, ' "$RUNNER_TEMP/mutation.log"; then
+            echo "No mutants in the changed lines; nothing to test."
+            exit 0
+          fi
+          exit "$status"
+
+  # noda supports git 2.39 (Debian bookworm) and up; the other jobs run the
+  # runner's newer git, so this one builds the floor and runs the suites on it.
+  min-git:
+    name: min-git (git 2.39)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build git 2.39.5
+        run: |
+          # libcurl is git-remote-http, which the HTTPS credential tests need;
+          # NO_CURL would build a git that cannot speak HTTP at all.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libcurl4-openssl-dev
+          git clone --quiet --depth 1 --branch v2.39.5 https://github.com/git/git "$RUNNER_TEMP/git-src"
+          # -std=gnu17: git 2.39 defines its own unreachable(), which a newer
+          # compiler's C23 default turns into a macro clash.
+          make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" CFLAGS="-g -O2 -std=gnu17" prefix="$RUNNER_TEMP/git-2.39" NO_GETTEXT=1 NO_TCLTK=1 NO_EXPAT=1 NO_PERL=1 NO_PYTHON=1 install
+          echo "$RUNNER_TEMP/git-2.39/bin" >> "$GITHUB_PATH"
+      - name: The floor is what runs
+        run: test "$(git --version)" = "git version 2.39.5"
+      - run: go test -mod=vendor ./internal/gitx/... ./internal/notebook/...
 
   lint-workflow:
     name: lint-workflow

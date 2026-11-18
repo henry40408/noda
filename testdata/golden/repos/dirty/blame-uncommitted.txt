@@ -1,0 +1,9 @@
+$ noda blame budget-review
+0000000  not committed     the q3 budget is late again
+<OID:1>  2023-11-15 00:13
+<OID:1>  2023-11-15 00:13  - first line
+0000000  not committed     - second line changed
+<OID:1>  2023-11-15 00:13  - third line
+0000000  not committed     - fourth line
+--- stderr
+--- exit 0
