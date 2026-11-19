@@ -1,10 +1,8 @@
 module github.com/henry40408/noda
 
-go 1.26.0
+go 1.27.0
 
-toolchain go1.26.11
-
-require github.com/yuin/goldmark v1.8.7
+toolchain go1.27.4
 
 require (
 	github.com/creack/pty v1.1.24
@@ -13,6 +11,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.31
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/rivo/uniseg v0.4.7
+	github.com/yuin/goldmark v1.8.7
 	golang.org/x/term v0.48.0
 )
 
