@@ -419,7 +419,7 @@ func TestBlameOfAnUncommittedEditAndRename(t *testing.T) {
 	if err := os.WriteFile(renamed, append(text, []byte("typed just now\n")...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(path)
+	_ = os.Remove(path)
 	lines, err := nb.Blame("02def567", "retitled")
 	if err != nil {
 		t.Fatal(err)

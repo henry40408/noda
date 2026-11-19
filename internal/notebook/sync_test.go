@@ -310,12 +310,12 @@ func sshArgs(t *testing.T, record string) string {
 func TestSSHIsKeptFromPromptingUnlessTheNotebookIsInteractive(t *testing.T) {
 	nb := fixture(t, "ahead")
 	record := fakeSSH(t, nb)
-	nb.Fetch()
+	_, _, _ = nb.Fetch()
 	if !strings.Contains(sshArgs(t, record), "BatchMode=yes") {
 		t.Fatalf("ssh was started with %q", sshArgs(t, record))
 	}
 	nb.Interactive = true
-	nb.Fetch()
+	_, _, _ = nb.Fetch()
 	if strings.Contains(sshArgs(t, record), "BatchMode") {
 		t.Fatalf("ssh was started with %q", sshArgs(t, record))
 	}
@@ -325,7 +325,7 @@ func TestAUsersOwnSSHCommandIsLeftAlone(t *testing.T) {
 	nb := fixture(t, "ahead")
 	record := fakeSSH(t, nb)
 	gitOut(t, nb, "config", "core.sshCommand", "ssh -o Mine=1")
-	nb.Fetch()
+	_, _, _ = nb.Fetch()
 	args := sshArgs(t, record)
 	if !strings.Contains(args, "Mine=1") || strings.Contains(args, "BatchMode") {
 		t.Fatalf("ssh was started with %q", args)

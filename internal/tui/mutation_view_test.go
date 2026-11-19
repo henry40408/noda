@@ -187,7 +187,7 @@ func TestACardIsAsWideAsItsWidestLineOrItsTitle(t *testing.T) {
 			t.Fatalf("%s: %q", c.name, got)
 		}
 		for i, row := range got {
-			if width := runeCount(row); width != c.width && !(i == 1 && width == c.width) {
+			if width := runeCount(row); width != c.width && (i != 1 || width != c.width) {
 				t.Fatalf("%s: row %d is %d wide, want %d: %q", c.name, i, width, c.width, row)
 			}
 		}

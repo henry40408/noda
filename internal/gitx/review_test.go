@@ -117,7 +117,7 @@ func TestBatchTellsAMissingPathWithSpacesFromAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 	for _, spec := range []string{"HEAD:my file.md", "HEAD:a b c.md"} {
 		_, _, ok, err := batch.Read(spec)
 		if err != nil || ok {
@@ -132,7 +132,7 @@ func TestBatchOutsideARepositoryExplainsAndStaysBroken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 	_, _, _, first := batch.Read("HEAD:a.md")
 	if first == nil || !strings.Contains(first.Error(), "not a git repository") {
 		t.Fatalf("first read: %v", first)

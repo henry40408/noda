@@ -362,7 +362,7 @@ func TestAnOpenEditorIsToldTheNoteMovedUnderItAndIsNotCompressed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != 200 || response.Header.Get("Content-Type") != "text/event-stream" ||
 		response.Header.Get("Content-Encoding") != "" {
 		t.Fatalf("%d %v", response.StatusCode, response.Header)
@@ -383,7 +383,7 @@ func TestAStopDoesNotWaitForAWatchThatNeverEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	site.web.watching.Stop()
 	ended := make(chan struct{})
 	go func() {
@@ -406,14 +406,14 @@ func TestAWatchEndsWhenItsReaderHangsUpAndStopThenFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	hangUp()
 	time.Sleep(watchEvery + time.Second)
 	site.web.watching.Stop()
 	closed := make(chan struct{})
 	go func() {
 		site.server.CloseClientConnections()
-		site.server.Config.Shutdown(context.Background())
+		_ = site.server.Config.Shutdown(context.Background())
 		close(closed)
 	}()
 	select {

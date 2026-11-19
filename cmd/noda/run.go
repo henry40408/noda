@@ -82,14 +82,14 @@ func (p process) fail(err error) int {
 	text := err.Error()
 	var usage usageError
 	if errors.As(err, &usage) {
-		fmt.Fprintln(p.stderr, text)
+		_, _ = fmt.Fprintln(p.stderr, text)
 		return exitUsage
 	}
 	// An error may quote coloured output, and a pipe must not receive escapes.
 	if !style.Wanted(p.stderrIsTerminal, p.lookupEnv) {
 		text = style.Strip(text)
 	}
-	fmt.Fprintf(p.stderr, "noda: %s\n", text)
+	_, _ = fmt.Fprintf(p.stderr, "noda: %s\n", text)
 	return exitFailure
 }
 

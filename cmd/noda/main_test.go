@@ -326,14 +326,14 @@ func TestBinaryTreatsABrokenPipeAsSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read.Close()
+	_ = read.Close()
 	command := exec.Command(binary, "--help")
 	command.Env = withCoverage(withoutRustLog(os.Environ()))
 	command.Stdout = write
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	runErr := command.Run()
-	write.Close()
+	_ = write.Close()
 	if runErr != nil || stderr.Len() != 0 {
 		t.Fatalf("%v, stderr %q", runErr, stderr.String())
 	}

@@ -102,7 +102,7 @@ func TestAWatchKeepsSendingAfterTheFirstChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	reader := bufio.NewReader(response.Body)
 	for _, hash := range []string{"first", "second"} {
 		site.web.watching.tell(watchKey{"default", id}, hash)
@@ -225,7 +225,7 @@ func TestFlushPendingWritesOnlyOnceTheStateIsDecided(t *testing.T) {
 	}
 
 	passing := httptest.NewRecorder()
-	(&gzipWriter{ResponseWriter: passing, state: gzipPassing, pending: []byte("abc")}).flushPending()
+	_ = (&gzipWriter{ResponseWriter: passing, state: gzipPassing, pending: []byte("abc")}).flushPending()
 	if passing.Body.String() != "abc" {
 		t.Errorf("passing wrote %q", passing.Body.String())
 	}
@@ -233,8 +233,10 @@ func TestFlushPendingWritesOnlyOnceTheStateIsDecided(t *testing.T) {
 	compressed := httptest.NewRecorder()
 	zipping := &gzipWriter{ResponseWriter: compressed, state: gzipCompressing, pending: []byte("abc")}
 	zipping.zip = gzip.NewWriter(compressed)
-	zipping.flushPending()
-	zipping.zip.Close()
+	_ = zipping.flushPending()
+	if err := zipping.zip.Close(); err != nil {
+		t.Fatal(err)
+	}
 	reader, err := gzip.NewReader(compressed.Body)
 	if err != nil {
 		t.Fatal(err)

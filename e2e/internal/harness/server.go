@@ -244,7 +244,7 @@ func freeAddress() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	return listener.Addr().String(), nil
 }
 
@@ -253,7 +253,7 @@ func waitUntilListening(address string) error {
 	for time.Now().Before(deadline) {
 		connection, err := net.DialTimeout("tcp", address, time.Second)
 		if err == nil {
-			connection.Close()
+			_ = connection.Close()
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
