@@ -653,7 +653,7 @@ func TestACommandReachesWhatNoKeyDoes(t *testing.T) {
 
 	// More than a line, so it goes on a card.
 	after := screen(env, app)
-	if !hasLineWith(after, "3 notes") || !(hasLineWith(after, "branch") || hasLineWith(after, "clean")) {
+	if !hasLineWith(after, "3 notes") || (!hasLineWith(after, "branch") && !hasLineWith(after, "clean")) {
 		t.Fatalf("%q", after)
 	}
 }

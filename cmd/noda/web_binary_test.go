@@ -157,7 +157,7 @@ func (p *serverProcess) healthy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if body, _ := io.ReadAll(response.Body); response.StatusCode != 200 || string(body) != "ok\n" {
 		t.Fatalf("%d %q", response.StatusCode, body)
 	}
@@ -183,7 +183,7 @@ func TestAnIdleConnectionDoesNotHoldItOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer kept.Close()
+	defer func() { _ = kept.Close() }()
 	if _, err := kept.Write([]byte("GET /health HTTP/1.1\r\nHost: " + server.address + "\r\n\r\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestAnIdleConnectionDoesNotHoldItOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer silent.Close()
+	defer func() { _ = silent.Close() }()
 	if _, err := server.stop(t, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestAnAddressThatCannotBeBoundIsNamedAndFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer taken.Close()
+	defer func() { _ = taken.Close() }()
 	box := newSandbox(t)
 	box.ok(t, "init")
 	got := box.run("web", "--listen", taken.Addr().String())

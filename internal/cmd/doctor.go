@@ -76,7 +76,7 @@ func Doctor(e Env, options DoctorOptions) (string, error) {
 	if err := adoptUnnamed(active, scan.Unnamed, fmt.Sprintf("doctor: adopt %d %s", count, noun)); err != nil {
 		return "", err
 	}
-	out.WriteString(fmt.Sprintf("adopted %d %s", count, noun))
+	fmt.Fprintf(&out, "adopted %d %s", count, noun)
 	return trimEnd(out.String()), nil
 }
 

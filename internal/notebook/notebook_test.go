@@ -98,7 +98,7 @@ func TestDeletionIsStagedAndHooksDoNotRun(t *testing.T) {
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(filepath.Join(nb.Path, "abc10001-one.md"))
+	_ = os.Remove(filepath.Join(nb.Path, "abc10001-one.md"))
 	if err := nb.Commit([]string{"abc10001-one.md"}, "rm"); err != nil {
 		t.Fatal(err)
 	}

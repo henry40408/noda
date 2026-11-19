@@ -44,7 +44,7 @@ func Clone(g *gitx.Git, p paths.Paths, opts CloneOptions) (*Notebook, error) {
 		cmd.Credentials = &credentials
 	}
 	if _, err := g.Run(context.Background(), cmd); err != nil {
-		os.RemoveAll(path)
+		_ = os.RemoveAll(path)
 		return nil, explain(err, opts.URL)
 	}
 	notebook := newNotebook(g, p, opts.Name)
@@ -52,12 +52,12 @@ func Clone(g *gitx.Git, p paths.Paths, opts CloneOptions) (*Notebook, error) {
 	// The remote is kept as given, as it is for a notebook set up with `remote set`.
 	if hasLogin {
 		if err := notebook.SetRemote(opts.URL); err != nil {
-			os.RemoveAll(path)
+			_ = os.RemoveAll(path)
 			return nil, err
 		}
 	}
 	if err := notebook.adoptRemoteBranch(); err != nil {
-		os.RemoveAll(path)
+		_ = os.RemoveAll(path)
 		return nil, err
 	}
 	return notebook, nil

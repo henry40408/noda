@@ -27,7 +27,7 @@ func MergeFile(ctx context.Context, g *Git, in MergeInput) (MergeResult, error) 
 	if err != nil {
 		return MergeResult{}, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	texts := map[string]string{"base": in.Base, "ours": in.Ours, "theirs": in.Theirs}
 	for name, text := range texts {

@@ -18,17 +18,21 @@ Features, Quick Start, a command overview — and changes when those do.
 ```sh
 go test -mod=vendor -race ./...            # the suite
 go test -mod=vendor ./internal/cmd -run TestAddWritesTheId   # one test by name
-gofmt -l cmd internal                      # before committing
-go vet -mod=vendor ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+golangci-lint fmt --diff ./...             # formatting; `run` does not check it
+golangci-lint run ./...                    # errcheck, govet, ineffassign, staticcheck, unused
 scripts/bench-coldstart.sh                 # times whole processes, not in-process code
 ```
 
 Dependencies are vendored (`go mod vendor`; CI fails on drift) and `scripts/check-dep-age.sh`
 rejects one younger than 168 hours.
 
+Lint config lives in `.golangci.yml`. Suppress a finding with `//nolint:<linter> // reason`.
+`golangci-lint run` does not check formatting, so `golangci-lint fmt --diff` is a separate command.
+CI installs the linter through `golangci/golangci-lint-action` with no pinned version, so the linter
+release comes from the action and dependabot tracks only the action.
+
 `e2e/` is **its own Go module** (own `go.mod` and `vendor/`), so root `./...` never compiles it and
-root vet and staticcheck do not cover it; run those inside `e2e/` too (CI does). Its `go` and
+root lint does not cover it; run both `golangci-lint` commands inside `e2e/` too (CI does). Its `go` and
 `toolchain` lines must equal the root's. It drives the real binary in Chrome through godog and
 chromedp:
 

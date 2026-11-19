@@ -51,7 +51,7 @@ func anEditorThatEdits(t *testing.T, box sandbox) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := fmt.Fprintf(file, "editor = %q\n", script); err != nil {
 		t.Fatal(err)
 	}
@@ -403,14 +403,14 @@ func TestThePtyEditorScreenGoesToTheTerminalWhenStderrIsRedirected(t *testing.T)
 	if _, err := fmt.Fprintf(file, "editor = %q\n", script); err != nil {
 		t.Fatal(err)
 	}
-	file.Close()
+	_ = file.Close()
 
 	logPath := filepath.Join(t.TempDir(), "stderr.log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 	b := openBrowserWithStderr(t, box, 90, 28, logFile)
 	b.waitFor("Budget review")
 	b.send("e")

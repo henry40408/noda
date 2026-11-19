@@ -93,7 +93,7 @@ func Serve(opts Options) error {
 		server.watching.Stop()
 		return err
 	case first := <-signals:
-		fmt.Fprintf(opts.Stdout, "%s — finishing what is in flight\n", signalName(first))
+		_, _ = fmt.Fprintf(opts.Stdout, "%s — finishing what is in flight\n", signalName(first))
 		// Before the wait: a watch never finishes by itself, so shutdown would
 		// wait on it forever.
 		server.watching.Stop()
@@ -110,7 +110,7 @@ func Serve(opts Options) error {
 
 func (s *Server) abandonOnSecond(signals <-chan os.Signal, out io.Writer) {
 	second := <-signals
-	fmt.Fprintf(out, "%s again — not waiting\n", signalName(second))
+	_, _ = fmt.Fprintf(out, "%s again — not waiting\n", signalName(second))
 	s.errands.Abandon()
 }
 
@@ -118,7 +118,7 @@ func (s *Server) abandonOnSecond(signals <-chan os.Signal, out io.Writer) {
 // failure, not a clean stop.
 func (s *Server) settle(out io.Writer) error {
 	for _, left := range s.errands.Running() {
-		fmt.Fprintf(out, "waiting for %s in %s — signal again to leave it unfinished\n", left.Job.Name(), left.Book)
+		_, _ = fmt.Fprintf(out, "waiting for %s in %s — signal again to leave it unfinished\n", left.Job.Name(), left.Book)
 	}
 	left := s.errands.Settle()
 	if len(left) == 0 {
@@ -132,10 +132,10 @@ func (s *Server) settle(out io.Writer) error {
 }
 
 func announce(out io.Writer, address net.Addr) {
-	fmt.Fprintf(out, "noda is at http://%s\n", address)
+	_, _ = fmt.Fprintf(out, "noda is at http://%s\n", address)
 	if tcp, ok := address.(*net.TCPAddr); ok {
 		if ip, ok := netip.AddrFromSlice(tcp.IP); ok && !ip.Unmap().IsLoopback() {
-			fmt.Fprintln(out, "reachable from the network — there is no password on it")
+			_, _ = fmt.Fprintln(out, "reachable from the network — there is no password on it")
 		}
 	}
 }
