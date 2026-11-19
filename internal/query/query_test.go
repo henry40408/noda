@@ -289,3 +289,9 @@ func TestOnlyTextTermsAreWorthQuotingALineFor(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestScopedQuotesATagThatStartsWithASpace(t *testing.T) {
+	if got := Scoped(" lead"); got != `tag:" lead"` {
+		t.Fatal(got)
+	}
+}

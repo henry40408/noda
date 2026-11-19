@@ -157,3 +157,35 @@ func TestLocalNowIsNow(t *testing.T) {
 		t.Fatalf("offset %d", offset)
 	}
 }
+
+// Before the one transition, which lies far in the past, the standard offset
+// applies: a mistake in reading it shows only there, because the footer rule
+// decides every ordinary time.
+func TestBeforeTheFirstTransitionTheStandardOffsetApplies(t *testing.T) {
+	beginning := time.Unix(-1<<60, 0)
+	cases := []struct {
+		tz   string
+		want int
+	}{
+		{"CST-8", 8 * 3600},
+		{"EST5", -5 * 3600},
+		{"<+0530>-5:30", 5*3600 + 1800},
+		{"XXX-8:30:15", 8*3600 + 30*60 + 15},
+		{"XXX-24", 24 * 3600},
+		{"XXX-0:59", 59 * 60},
+	}
+	for _, c := range cases {
+		if _, got := offsetAt(t, Location(c.tz, true), beginning); got != c.want {
+			t.Errorf("%q: got %d, want %d", c.tz, got, c.want)
+		}
+	}
+}
+
+func TestAnOffsetPartPastItsLimitIsNotPOSIX(t *testing.T) {
+	now := time.Date(2025, 7, 15, 12, 0, 0, 0, time.UTC)
+	for _, tz := range []string{"XXX-0:60", "XXX-8:60", "XXX-25"} {
+		if _, got := offsetAt(t, Location(tz, true), now); got != 0 {
+			t.Errorf("%q: got %d, want the UTC fallback", tz, got)
+		}
+	}
+}

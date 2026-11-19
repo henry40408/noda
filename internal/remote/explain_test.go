@@ -56,3 +56,9 @@ func TestNameFromURL(t *testing.T) {
 		}
 	}
 }
+
+func TestNameFromURLOfAnAbsolutePath(t *testing.T) {
+	if got := NameFromURL("/notes.git"); got != "notes" {
+		t.Errorf("got %q", got)
+	}
+}

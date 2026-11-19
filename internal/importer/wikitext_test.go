@@ -328,3 +328,42 @@ func TestSplitLinesIsRustLines(t *testing.T) {
 		}
 	}
 }
+
+func TestAPassedThroughSpanEndsAtItsCloseAndNotBefore(t *testing.T) {
+	expectText(t, "{{a''}} and ''b''\n", "{{a''}} and **b**\n")
+}
+
+func TestAnEmptyLinkStaysAsWritten(t *testing.T) {
+	expectText(t, "[[]]\n", "[[]]\n")
+}
+
+func TestARowEndingInAFlagIsNotPlain(t *testing.T) {
+	for _, row := range []string{"|h", "|x|h", "|x|f ", "|x|c", "|x|k"} {
+		if plainRow(row) {
+			t.Errorf("%q is plain", row)
+		}
+	}
+	if !plainRow("|x|y|") {
+		t.Error("an ordinary row is not plain")
+	}
+}
+
+func TestACamelCaseWordAtTheEndOfTheTextLinks(t *testing.T) {
+	out := convertWith("CamelCase", "CamelCase")
+	if out.Text != "[CamelCase](k3f9m2p1-camelcase.md)\n" {
+		t.Fatalf("%q", out.Text)
+	}
+}
+
+func TestAnHTMLTagStartsWithAnASCIILetter(t *testing.T) {
+	for _, tag := range []string{"<a>", "<z>", "<A>", "<Z>", "<M>", "</b>", "<m x>"} {
+		if !isHTMLTag(tag) {
+			t.Errorf("%q is a tag", tag)
+		}
+	}
+	for _, text := range []string{"<`>", "<{>", "<@>", "<[>", "<1>", "<a", "< a>", "<>"} {
+		if isHTMLTag(text) {
+			t.Errorf("%q is not a tag", text)
+		}
+	}
+}

@@ -116,3 +116,20 @@ func TestAnExportThatIsNotAnArrayOrJSONIsRefused(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestAnEmptyStoreDoesNotHideTheNext(t *testing.T) {
+	const open = `<script class="tiddlywiki-tiddler-store" type="application/json">`
+	export := mustRead(t, open+"</script>"+open+`[{"title":"Real","text":"x"}]`+"</script>")
+	if len(export.Notes) != 1 || export.Notes[0].Title != "Real" {
+		t.Fatalf("%+v", export.Notes)
+	}
+}
+
+func TestOfTwoStoresOfTheSameSizeTheFirstIsTheWiki(t *testing.T) {
+	const open = `<script class="tiddlywiki-tiddler-store" type="application/json">`
+	wiki := open + `[{"title":"AAA","text":"x"}]</script>` + open + `[{"title":"BBB","text":"x"}]</script>`
+	export := mustRead(t, wiki)
+	if len(export.Notes) != 1 || export.Notes[0].Title != "AAA" {
+		t.Fatalf("%+v", export.Notes)
+	}
+}

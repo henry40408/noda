@@ -30,3 +30,17 @@ func TestSplitCredentialsLeavesWhatHoldsNoSecretOverHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestAnEmptyUserinfoIsStillTakenOut(t *testing.T) {
+	clean, credentials, found := SplitCredentials("https://@example.com/a")
+	if !found || clean != "https://example.com/a" || credentials != (Credentials{}) {
+		t.Errorf("%q %+v %v", clean, credentials, found)
+	}
+}
+
+func TestAnAtSignInThePathOfAHostlessURLIsNotUserinfo(t *testing.T) {
+	const raw = "https:///x@y"
+	if clean, _, found := SplitCredentials(raw); found || clean != raw {
+		t.Errorf("%q %v", clean, found)
+	}
+}
