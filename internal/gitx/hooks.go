@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -34,7 +34,7 @@ func Hooks(ctx context.Context, g *Git, dir string) ([]string, error) {
 			found = append(found, entry.Name())
 		}
 	}
-	sort.Strings(found)
+	slices.Sort(found)
 	return found, nil
 }
 

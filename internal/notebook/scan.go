@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -100,7 +101,7 @@ func appendGroup(groups []ProblemGroup, kind Problem, subjects []string) []Probl
 		return groups
 	}
 	subjects = append([]string(nil), subjects...)
-	sort.Strings(subjects)
+	slices.Sort(subjects)
 	deduped := subjects[:1]
 	for _, subject := range subjects[1:] {
 		if subject != deduped[len(deduped)-1] {
@@ -173,9 +174,9 @@ func (n *Notebook) Scan() (Scan, error) {
 		a, b := scan.Notes[i], scan.Notes[j]
 		return a.ID < b.ID || (a.ID == b.ID && a.Slug < b.Slug)
 	})
-	sort.Strings(scan.Unnamed)
-	sort.Strings(scan.Suspicious)
-	sort.Strings(scan.Files)
+	slices.Sort(scan.Unnamed)
+	slices.Sort(scan.Suspicious)
+	slices.Sort(scan.Files)
 	return scan, nil
 }
 
@@ -213,7 +214,7 @@ func (n *Notebook) Inventory() ([]NoteFile, []string, error) {
 		}
 	}
 	sort.SliceStable(notes, func(i, j int) bool { return notes[i].Slug < notes[j].Slug })
-	sort.Strings(files)
+	slices.Sort(files)
 	return notes, files, nil
 }
 

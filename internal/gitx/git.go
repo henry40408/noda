@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"syscall"
 	"time"
@@ -147,7 +146,7 @@ func (g *Git) Environ() []string {
 	for name, value := range g.env {
 		pairs = append(pairs, name+"="+value)
 	}
-	sort.Strings(pairs)
+	slices.Sort(pairs)
 	return pairs
 }
 

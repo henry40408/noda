@@ -18,6 +18,7 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -906,7 +907,7 @@ func (a *App) markedKeys() []string {
 	for id := range a.Marks {
 		keys = append(keys, id)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 

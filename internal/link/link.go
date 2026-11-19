@@ -6,7 +6,7 @@
 package link
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -32,7 +32,7 @@ func Targets(body string) []string {
 	for path := range found {
 		paths = append(paths, path)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths
 }
 

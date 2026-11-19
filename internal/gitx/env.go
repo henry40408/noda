@@ -1,7 +1,7 @@
 package gitx
 
 import (
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -59,7 +59,7 @@ func sanitizedEnv(base map[string]string, readOnly bool, extra map[string]string
 	for name := range env {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	list := make([]string, 0, len(names))
 	for _, name := range names {
 		list = append(list, name+"="+env[name])

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -140,7 +140,7 @@ func carriedFields(tiddler any) []string {
 	for name := range fields {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var extra []string
 	for _, name := range names {
