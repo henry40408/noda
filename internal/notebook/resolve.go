@@ -2,7 +2,7 @@ package notebook
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/henry40408/noda/internal/note"
@@ -33,9 +33,7 @@ func (n *Notebook) Resolve(key string) (IDSlug, error) {
 	if len(bySlug) > 0 {
 		matched = bySlug
 	}
-	sort.Slice(matched, func(i, j int) bool {
-		return matched[i].ID < matched[j].ID || (matched[i].ID == matched[j].ID && matched[i].Slug < matched[j].Slug)
-	})
+	slices.SortFunc(matched, compareIDSlug)
 
 	switch len(matched) {
 	case 1:

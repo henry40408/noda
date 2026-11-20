@@ -1,10 +1,11 @@
 package notebook
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -63,6 +64,11 @@ type ProblemGroup struct {
 // IDSlug is a note's name taken apart.
 type IDSlug struct{ ID, Slug string }
 
+// compareIDSlug orders by id, then slug.
+func compareIDSlug(a, b IDSlug) int {
+	return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Slug, b.Slug))
+}
+
 // Scan sorts every file into the four cases a filename and a frontmatter block
 // produce: the block says "a note", the id prefix says "adopted", and a file
 // with neither is left alone.
@@ -100,7 +106,7 @@ func appendGroup(groups []ProblemGroup, kind Problem, subjects []string) []Probl
 		return groups
 	}
 	subjects = append([]string(nil), subjects...)
-	sort.Strings(subjects)
+	slices.Sort(subjects)
 	deduped := subjects[:1]
 	for _, subject := range subjects[1:] {
 		if subject != deduped[len(deduped)-1] {
@@ -169,13 +175,10 @@ func (n *Notebook) Scan() (Scan, error) {
 			scan.Files = append(scan.Files, file.name)
 		}
 	}
-	sort.Slice(scan.Notes, func(i, j int) bool {
-		a, b := scan.Notes[i], scan.Notes[j]
-		return a.ID < b.ID || (a.ID == b.ID && a.Slug < b.Slug)
-	})
-	sort.Strings(scan.Unnamed)
-	sort.Strings(scan.Suspicious)
-	sort.Strings(scan.Files)
+	slices.SortFunc(scan.Notes, compareIDSlug)
+	slices.Sort(scan.Unnamed)
+	slices.Sort(scan.Suspicious)
+	slices.Sort(scan.Files)
 	return scan, nil
 }
 
@@ -212,8 +215,8 @@ func (n *Notebook) Inventory() ([]NoteFile, []string, error) {
 			files = append(files, file.name)
 		}
 	}
-	sort.SliceStable(notes, func(i, j int) bool { return notes[i].Slug < notes[j].Slug })
-	sort.Strings(files)
+	slices.SortStableFunc(notes, func(a, b NoteFile) int { return cmp.Compare(a.Slug, b.Slug) })
+	slices.Sort(files)
 	return notes, files, nil
 }
 
@@ -247,9 +250,7 @@ func (n *Notebook) NamedFiles() ([]IDSlug, error) {
 			found = append(found, IDSlug{ID: id, Slug: slug})
 		}
 	}
-	sort.Slice(found, func(i, j int) bool {
-		return found[i].ID < found[j].ID || (found[i].ID == found[j].ID && found[i].Slug < found[j].Slug)
-	})
+	slices.SortFunc(found, compareIDSlug)
 	return found, nil
 }
 

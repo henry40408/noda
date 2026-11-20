@@ -90,6 +90,20 @@ func TestStampsSortByInstantNotByText(t *testing.T) {
 	}
 }
 
+func TestAnUnreadableStampSortsAfterARealOneWhicheverCameFirst(t *testing.T) {
+	for _, order := range [][2]string{{"aaaa1111", "bbbb2222"}, {"bbbb2222", "aaaa1111"}} {
+		byID := map[string]notebook.NoteFile{
+			"aaaa1111": aNote("aaaa1111", "Alpha", "not a stamp", false),
+			"bbbb2222": aNote("bbbb2222", "Bravo", "2026-01-01T00:00:00Z", false),
+		}
+		notes := []notebook.NoteFile{byID[order[0]], byID[order[1]]}
+		SortNotes(notes, SortUpdated)
+		if notes[0].ID != "bbbb2222" {
+			t.Fatalf("from %v the real stamp must come first: %s", order, notes[0].ID)
+		}
+	}
+}
+
 func TestDeriveTitleSkipsBlankLinesAndHeadingMarkers(t *testing.T) {
 	if title, ok := deriveTitle("\n\n## Deep Work\nbody"); !ok || title != "Deep Work" {
 		t.Fatalf("got %q, %v", title, ok)

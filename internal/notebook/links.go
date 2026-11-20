@@ -1,7 +1,8 @@
 package notebook
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/henry40408/noda/internal/link"
@@ -63,14 +64,11 @@ func (n *Notebook) AuditLinks() (Audit, error) {
 			audit.Orphans = append(audit.Orphans, file)
 		}
 	}
-	sort.Slice(audit.Stale, func(i, j int) bool {
-		a, b := audit.Stale[i], audit.Stale[j]
-		return a.Note < b.Note || (a.Note == b.Note && (a.Destination < b.Destination ||
-			(a.Destination == b.Destination && a.Current < b.Current)))
+	slices.SortFunc(audit.Stale, func(a, b Stale) int {
+		return cmp.Or(cmp.Compare(a.Note, b.Note), cmp.Compare(a.Destination, b.Destination), cmp.Compare(a.Current, b.Current))
 	})
-	sort.Slice(audit.Broken, func(i, j int) bool {
-		a, b := audit.Broken[i], audit.Broken[j]
-		return a.Note < b.Note || (a.Note == b.Note && a.Destination < b.Destination)
+	slices.SortFunc(audit.Broken, func(a, b Broken) int {
+		return cmp.Or(cmp.Compare(a.Note, b.Note), cmp.Compare(a.Destination, b.Destination))
 	})
 	return audit, nil
 }
@@ -139,11 +137,8 @@ func TagTally(notes []NoteFile) []TagCount {
 	for tag, count := range counted {
 		tallies = append(tallies, TagCount{Tag: tag, Notes: count})
 	}
-	sort.Slice(tallies, func(i, j int) bool {
-		if tallies[i].Notes != tallies[j].Notes {
-			return tallies[i].Notes > tallies[j].Notes
-		}
-		return tallies[i].Tag < tallies[j].Tag
+	slices.SortFunc(tallies, func(a, b TagCount) int {
+		return cmp.Or(cmp.Compare(b.Notes, a.Notes), cmp.Compare(a.Tag, b.Tag))
 	})
 	return tallies
 }

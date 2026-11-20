@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -265,19 +265,22 @@ func instant(stamp *string) (time.Time, bool) {
 func SortNotes(notes []notebook.NoteFile, by Sort) {
 	switch by {
 	case SortTitle:
-		sort.SliceStable(notes, func(i, j int) bool {
-			if notes[i].Note.Title != notes[j].Note.Title {
-				return notes[i].Note.Title < notes[j].Note.Title
-			}
-			return notes[i].ID < notes[j].ID
+		slices.SortStableFunc(notes, func(a, b notebook.NoteFile) int {
+			return cmp.Or(cmp.Compare(a.Note.Title, b.Note.Title), cmp.Compare(a.ID, b.ID))
 		})
 	case SortCreated, SortUpdated:
 		sortNewestFirst(notes, by)
 	}
 	// Last and stable: pins float to the top, keeping their order among
 	// themselves.
-	sort.SliceStable(notes, func(i, j int) bool {
-		return notes[i].Note.IsPinned() && !notes[j].Note.IsPinned()
+	slices.SortStableFunc(notes, func(a, b notebook.NoteFile) int {
+		switch {
+		case a.Note.IsPinned() && !b.Note.IsPinned():
+			return -1
+		case !a.Note.IsPinned() && b.Note.IsPinned():
+			return 1
+		}
+		return 0
 	})
 }
 
@@ -288,17 +291,20 @@ func sortNewestFirst(notes []notebook.NoteFile, by Sort) {
 		}
 		return file.Note.Updated
 	}
-	sort.SliceStable(notes, func(i, j int) bool {
-		left, leftOK := instant(stampOf(notes[i]))
-		right, rightOK := instant(stampOf(notes[j]))
+	slices.SortStableFunc(notes, func(a, b notebook.NoteFile) int {
+		left, leftOK := instant(stampOf(a))
+		right, rightOK := instant(stampOf(b))
 		// A missing or unreadable stamp goes past every real instant.
 		if leftOK != rightOK {
-			return leftOK
+			if leftOK {
+				return -1
+			}
+			return 1
 		}
 		if leftOK && !left.Equal(right) {
-			return left.After(right)
+			return right.Compare(left)
 		}
-		return notes[i].ID < notes[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 }
 

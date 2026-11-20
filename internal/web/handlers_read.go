@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/henry40408/noda/internal/clock"
 	"github.com/henry40408/noda/internal/cmd"
@@ -347,8 +347,8 @@ func (s *Server) todo(r *http.Request) (answer, error) {
 			entries = append(entries, entry{file.ID, file.Slug, file.Note.Title, item})
 		}
 	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		return todo.Compare(entries[i].slug, entries[i].item, entries[j].slug, entries[j].item) < 0
+	slices.SortStableFunc(entries, func(a, b entry) int {
+		return todo.Compare(a.slug, a.item, b.slug, b.item)
 	})
 	tasks := make([]Task, len(entries))
 	for i, each := range entries {

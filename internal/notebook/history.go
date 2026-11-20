@@ -1,9 +1,10 @@
 package notebook
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -249,11 +250,8 @@ func (n *Notebook) Deleted() ([]Deleted, error) {
 		}
 		found = append(found, kept...)
 	}
-	sort.SliceStable(found, func(i, j int) bool {
-		if found[i].RemovedAt != found[j].RemovedAt {
-			return found[i].RemovedAt > found[j].RemovedAt
-		}
-		return found[i].ID < found[j].ID
+	slices.SortStableFunc(found, func(a, b Deleted) int {
+		return cmp.Or(cmp.Compare(b.RemovedAt, a.RemovedAt), cmp.Compare(a.ID, b.ID))
 	})
 	return found, nil
 }

@@ -3,7 +3,7 @@ package importer
 import (
 	"bytes"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -50,7 +50,7 @@ func Convert(text string, resolve Resolve) Converted {
 	for name := range b.left {
 		left = append(left, name)
 	}
-	sort.Strings(left)
+	slices.Sort(left)
 	return Converted{Text: b.out.String(), Left: left}
 }
 

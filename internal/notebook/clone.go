@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/henry40408/noda/internal/gitx"
@@ -116,7 +116,7 @@ func (n *Notebook) remoteBranches() ([]string, error) {
 			branches = append(branches, branch)
 		}
 	}
-	sort.Strings(branches)
+	slices.Sort(branches)
 	return branches, nil
 }
 

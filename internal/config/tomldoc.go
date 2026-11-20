@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -110,7 +110,7 @@ func withLFEndings(text string, lay layout) string {
 			drop = append(drop, end-2)
 		}
 	}
-	sort.Ints(drop)
+	slices.Sort(drop)
 	var out strings.Builder
 	previous := 0
 	for _, at := range drop {

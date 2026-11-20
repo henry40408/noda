@@ -1,9 +1,10 @@
 package notebook
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/henry40408/noda/internal/gitx"
@@ -98,11 +99,8 @@ func (n *Notebook) Snapshots() ([]Snapshot, error) {
 			found = append(found, snapshot)
 		}
 	}
-	sort.SliceStable(found, func(i, j int) bool {
-		if found[i].Seconds != found[j].Seconds {
-			return found[i].Seconds > found[j].Seconds
-		}
-		return found[i].Name < found[j].Name
+	slices.SortStableFunc(found, func(a, b Snapshot) int {
+		return cmp.Or(cmp.Compare(b.Seconds, a.Seconds), cmp.Compare(a.Name, b.Name))
 	})
 	return found, nil
 }
