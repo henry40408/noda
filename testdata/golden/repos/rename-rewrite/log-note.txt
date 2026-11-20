@@ -1,4 +1,0 @@
-$ noda log budget-review
---- stderr
-noda: note not found: budget-review
---- exit 1

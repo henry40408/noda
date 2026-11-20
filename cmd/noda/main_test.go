@@ -252,7 +252,7 @@ func TestPrintStripsColourOffATerminalAndKeepsItWhenForced(t *testing.T) {
 	}
 }
 
-// The golden helper in internal/notebook trims trailing newlines, so nothing
+// The notebook tests trim trailing newlines, so nothing
 // else pins the blank line a plain `noda diff` ends with in the Rust build.
 func TestPlainDiffEndsWithABlankLineAsInRust(t *testing.T) {
 	s := newSandbox(t)

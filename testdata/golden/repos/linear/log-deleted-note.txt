@@ -1,4 +1,0 @@
-$ noda log reading-list
---- stderr
-noda: note not found: reading-list
---- exit 1

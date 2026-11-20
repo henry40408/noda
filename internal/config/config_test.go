@@ -1,8 +1,8 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,127 +12,182 @@ import (
 	"github.com/henry40408/noda/internal/paths"
 )
 
-type goldenCase struct {
-	Name    string     `json:"name"`
-	Initial *string    `json:"initial"`
-	Ops     [][]string `json:"ops"`
+type editOp struct{ verb, key, value string }
+
+func set(key, value string) editOp { return editOp{"set", key, value} }
+func unset(key string) editOp      { return editOp{"unset", key, ""} }
+
+// parseErrorResult stands for a TOML parse error: its wording is the TOML
+// library's, so only the path and the hint around it are compared.
+const parseErrorResult = "<parse error>"
+
+const unknownColor = "unknown setting: color — noda knows editor, author, notebook, sign"
+
+type editCase struct {
+	name        string
+	noFile      bool // the config file does not exist before the first op
+	initial     string
+	ops         []editOp
+	want        string
+	wantNoFile  bool // no op may have created the file
+	wantResults []string
 }
 
-type goldenExpected struct {
-	Name string `json:"name"`
-	Out  struct {
-		File    *string          `json:"file"`
-		Results []map[string]any `json:"results"`
-	} `json:"out"`
-}
-
-func readJSON(t *testing.T, path string, into any) {
+func runEdits(t *testing.T, c editCase) (string, bool, []string) {
 	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func runOps(t *testing.T, c goldenCase) (*string, []map[string]any) {
-	root := t.TempDir()
-	p := paths.Rooted(root)
+	p := paths.Rooted(t.TempDir())
 	file := filepath.Join(p.ConfigDir(), "config.toml")
-	if c.Initial != nil {
-		text := *c.Initial
-		if text == "@template" {
-			text = template
-		}
+	if !c.noFile {
 		if err := os.MkdirAll(p.ConfigDir(), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(file, []byte(c.initial), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var results []map[string]any
-	for _, op := range c.Ops {
-		results = append(results, runOp(p, op))
+	var results []string
+	for _, op := range c.ops {
+		results = append(results, runEdit(p, op))
 	}
 	raw, err := os.ReadFile(file)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, results
+		return "", false, results
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(raw)
-	return &text, results
+	return string(raw), true, results
 }
 
-func runOp(p paths.Paths, op []string) map[string]any {
+func runEdit(p paths.Paths, op editOp) string {
 	config, err := Load(p)
 	if err != nil {
-		return map[string]any{"err": strings.ReplaceAll(err.Error(), p.ConfigDir(), "<ROOT>/config/noda")}
+		return describeLoadError(p, err)
 	}
-	if op[0] == "set" {
-		if err := config.Set(op[1], op[2]); err != nil {
-			return map[string]any{"err": err.Error()}
+	if op.verb == "set" {
+		if err := config.Set(op.key, op.value); err != nil {
+			return "err: " + err.Error()
 		}
-		return map[string]any{"ok": "set"}
+		return "set"
 	}
-	removed, err := config.Unset(op[1])
+	removed, err := config.Unset(op.key)
 	if err != nil {
-		return map[string]any{"err": err.Error()}
+		return "err: " + err.Error()
 	}
-	return map[string]any{"ok": removed}
+	return fmt.Sprintf("removed=%v", removed)
 }
 
-func TestConfigEditsMatchTheRustGolden(t *testing.T) {
-	var cases []goldenCase
-	var expected []goldenExpected
-	readJSON(t, "../../testdata/golden/config/cases.json", &cases)
-	readJSON(t, "../../testdata/golden/config/expected.json", &expected)
-	if len(cases) != len(expected) || len(cases) != 49 {
-		t.Fatalf("%d cases, %d expected", len(cases), len(expected))
+func describeLoadError(p paths.Paths, err error) string {
+	const hint = "\nfix it by hand, or start over with `noda config --edit`"
+	text := err.Error()
+	if strings.HasPrefix(text, p.ConfigDir()+"/config.toml: ") && strings.HasSuffix(text, hint) {
+		return parseErrorResult
 	}
-	for i, c := range cases {
-		if expected[i].Name != c.Name {
-			t.Fatalf("case %d is %s, expected %s", i, c.Name, expected[i].Name)
-		}
-		file, results := runOps(t, c)
-		if !reflect.DeepEqual(file, expected[i].Out.File) {
-			t.Errorf("%s: file\n got  %q\n want %q", c.Name, deref(file), deref(expected[i].Out.File))
-		}
-		if len(results) != len(expected[i].Out.Results) {
-			t.Fatalf("%s: %d results", c.Name, len(results))
-		}
-		for j, got := range results {
-			assertResult(t, c.Name, got, expected[i].Out.Results[j])
-		}
-	}
+	return "load error: " + text
 }
 
-func deref(text *string) string {
-	if text == nil {
-		return "<absent>"
+func TestConfigEdits(t *testing.T) {
+	cases := []editCase{
+		{name: "a first set creates the file", noFile: true, ops: []editOp{set("editor", "vi")},
+			want: "editor = \"vi\"\n", wantResults: []string{"set"}},
+		{name: "author and sign are written in their own types", noFile: true,
+			ops:  []editOp{set("author", "A B <a@b.c>"), set("sign", "true")},
+			want: "author = \"A B <a@b.c>\"\nsign = true\n", wantResults: []string{"set", "set"}},
+		{name: "a bad sign is refused and creates no file", noFile: true,
+			ops: []editOp{set("sign", "no"), set("sign", "Yes"), set("sign", "off"), set("sign", "1"), set("sign", "0")}, wantNoFile: true,
+			wantResults: []string{
+				"err: sign must be `true` or `false`, not `no`", "err: sign must be `true` or `false`, not `Yes`",
+				"err: sign must be `true` or `false`, not `off`", "err: sign must be `true` or `false`, not `1`",
+				"err: sign must be `true` or `false`, not `0`",
+			}},
+		{name: "an author without an email is refused", noFile: true, ops: []editOp{set("author", "nobody")}, wantNoFile: true,
+			wantResults: []string{"err: author must be `Name <email>`, not `nobody`"}},
+		{name: "an unknown key is refused by set and unset", noFile: true,
+			ops: []editOp{set("color", "red"), unset("color")}, wantNoFile: true,
+			wantResults: []string{"err: " + unknownColor, "err: " + unknownColor}},
+		{name: "unsetting an absent key reports false and creates no file", noFile: true,
+			ops: []editOp{unset("editor")}, wantNoFile: true, wantResults: []string{"removed=false"}},
+		{name: "a second key is added after the first", noFile: true,
+			ops:  []editOp{set("editor", "vi"), set("notebook", "work")},
+			want: "editor = \"vi\"\nnotebook = \"work\"\n", wantResults: []string{"set", "set"}},
+		{name: "unsetting the only key leaves an empty file", noFile: true,
+			ops: []editOp{set("editor", "vi"), unset("editor")}, want: "", wantResults: []string{"set", "removed=true"}},
+		{name: "a value with quotes and a backslash is a literal string", noFile: true,
+			ops: []editOp{set("editor", `vi "x" \ y`)}, want: "editor = 'vi \"x\" \\ y'\n", wantResults: []string{"set"}},
+		{name: "unicode is written as is", noFile: true, ops: []editOp{set("editor", "編輯器")},
+			want: "editor = \"編輯器\"\n", wantResults: []string{"set"}},
+		{name: "a newline makes a multi-line string", noFile: true, ops: []editOp{set("editor", "a\nb")},
+			want: "editor = \"\"\"\na\nb\"\"\"\n", wantResults: []string{"set"}},
+		{name: "a tab is escaped", noFile: true, ops: []editOp{set("editor", "a\tb")},
+			want: "editor = \"a\\tb\"\n", wantResults: []string{"set"}},
+		{name: "an empty value is written", noFile: true, ops: []editOp{set("editor", "")},
+			want: "editor = \"\"\n", wantResults: []string{"set"}},
+		{name: "the starter template keeps its comments around a set", initial: template, ops: []editOp{set("editor", "nvim"), set("sign", "true")},
+			want: template + "editor = \"nvim\"\nsign = true\n", wantResults: []string{"set", "set"}},
+		{name: "setting a key twice replaces the first value", initial: template, ops: []editOp{set("editor", "nvim"), set("editor", "vim")},
+			want: template + "editor = \"vim\"\n", wantResults: []string{"set", "set"}},
+		{name: "unsetting the only key drops the template's comments too", initial: template,
+			ops: []editOp{set("editor", "nvim"), unset("editor")}, want: "", wantResults: []string{"set", "removed=true"}},
+		{name: "unsetting a key the template only mentions in a comment changes nothing", initial: template,
+			ops: []editOp{unset("editor")}, want: template, wantResults: []string{"removed=false"}},
+		{name: "a replaced value drops its trailing comment", initial: "editor = \"vi\" # my editor\n",
+			ops: []editOp{set("editor", "nvim")}, want: "editor = \"nvim\"\n", wantResults: []string{"set"}},
+		{name: "a replaced value keeps the key's indent and normalises the spacing", initial: "  editor   =   \"vi\"\n",
+			ops: []editOp{set("editor", "nvim")}, want: "  editor   = \"nvim\"\n", wantResults: []string{"set"}},
+		{name: "a single-quoted value is replaced", initial: "editor = 'vi'\n",
+			ops: []editOp{set("editor", "nvim")}, want: "editor = \"nvim\"\n", wantResults: []string{"set"}},
+		{name: "a new key goes above the first table", initial: "editor = \"vi\"\n\n[other]\nx = 1\n",
+			ops: []editOp{set("notebook", "work")}, want: "editor = \"vi\"\nnotebook = \"work\"\n\n[other]\nx = 1\n", wantResults: []string{"set"}},
+		{name: "a new key goes above a table that has the same key", initial: "[git]\neditor = \"x\"\n",
+			ops: []editOp{set("editor", "vi")}, want: "editor = \"vi\"\n[git]\neditor = \"x\"\n", wantResults: []string{"set"}},
+		{name: "a new key goes after an inline table", initial: "other = { a = 1 }\n",
+			ops: []editOp{set("editor", "vi")}, want: "other = { a = 1 }\neditor = \"vi\"\n", wantResults: []string{"set"}},
+		{name: "a header comment is kept", initial: "# my config\neditor = \"vi\"\n",
+			ops: []editOp{set("sign", "true")}, want: "# my config\neditor = \"vi\"\nsign = true\n", wantResults: []string{"set"}},
+		{name: "unknown keys are left alone", initial: "color = \"red\"\neditor = \"vi\"\n",
+			ops: []editOp{set("notebook", "w")}, want: "color = \"red\"\neditor = \"vi\"\nnotebook = \"w\"\n", wantResults: []string{"set"}},
+		{name: "blank lines around the settings are kept", initial: "\n\neditor = \"vi\"\n\n\n",
+			ops: []editOp{set("notebook", "w")}, want: "\n\neditor = \"vi\"\nnotebook = \"w\"\n\n\n", wantResults: []string{"set"}},
+		{name: "a missing final newline is supplied", initial: "editor = \"vi\"",
+			ops: []editOp{set("notebook", "w")}, want: "editor = \"vi\"\nnotebook = \"w\"\n", wantResults: []string{"set"}},
+		{name: "CRLF line endings become LF", initial: "editor = \"vi\"\r\n",
+			ops: []editOp{set("notebook", "w")}, want: "editor = \"vi\"\nnotebook = \"w\"\n", wantResults: []string{"set"}},
+		{name: "an empty file takes the first key", initial: "", ops: []editOp{set("editor", "vi")},
+			want: "editor = \"vi\"\n", wantResults: []string{"set"}},
+		{name: "a comment-only file keeps its comment", initial: "# just a comment",
+			ops: []editOp{set("editor", "vi")}, want: "# just a comment\neditor = \"vi\"\n", wantResults: []string{"set"}},
+		{name: "a string sign becomes a boolean", initial: "sign = \"true\"\n",
+			ops: []editOp{set("sign", "false")}, want: "sign = false\n", wantResults: []string{"set"}},
+		{name: "an array value is replaced by a string", initial: "editor = [\"a\"]\n",
+			ops: []editOp{set("editor", "vi")}, want: "editor = \"vi\"\n", wantResults: []string{"set"}},
+		{name: "unsetting the first of two keys keeps the second", initial: "editor = \"vi\"\nnotebook = \"w\"\n",
+			ops: []editOp{unset("editor")}, want: "notebook = \"w\"\n", wantResults: []string{"removed=true"}},
+		{name: "unsetting the last of two keys keeps the first", initial: "editor = \"vi\"\nnotebook = \"w\"\n",
+			ops: []editOp{unset("notebook")}, want: "editor = \"vi\"\n", wantResults: []string{"removed=true"}},
+		{name: "unsetting a key takes its leading comment with it", initial: "# about editor\neditor = \"vi\"\n",
+			ops: []editOp{unset("editor")}, want: "", wantResults: []string{"removed=true"}},
+		{name: "unsetting a key takes its trailing comment with it", initial: "editor = \"vi\" # c\n",
+			ops: []editOp{unset("editor")}, want: "", wantResults: []string{"removed=true"}},
+		{name: "a missing value is a parse error and the file is untouched", initial: "editor = \n",
+			ops: []editOp{set("editor", "vi")}, want: "editor = \n", wantResults: []string{parseErrorResult}},
+		{name: "an unterminated string is a parse error", initial: "editor = \"vi\n",
+			ops: []editOp{unset("editor")}, want: "editor = \"vi\n", wantResults: []string{parseErrorResult}},
+		{name: "a duplicate key is a parse error", initial: "editor = \"a\"\neditor = \"b\"\n",
+			ops: []editOp{set("editor", "c")}, want: "editor = \"a\"\neditor = \"b\"\n", wantResults: []string{parseErrorResult}},
 	}
-	return *text
-}
-
-// A parse error's wording is the TOML library's, so only its frame is compared.
-func assertResult(t *testing.T, name string, got, want map[string]any) {
-	t.Helper()
-	wantErr, isErr := want["err"].(string)
-	if !isErr || !strings.Contains(wantErr, "TOML parse error") {
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: got %v, want %v", name, got, want)
-		}
-		return
-	}
-	gotErr, _ := got["err"].(string)
-	const suffix = "\nfix it by hand, or start over with `noda config --edit`"
-	prefix := "<ROOT>/config/noda/config.toml: "
-	if !strings.HasPrefix(gotErr, prefix) || !strings.HasSuffix(gotErr, suffix) {
-		t.Errorf("%s: error %q lacks the path and the hint", name, gotErr)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			file, exists, results := runEdits(t, c)
+			if exists == c.wantNoFile {
+				t.Errorf("file exists = %v, want %v", exists, !c.wantNoFile)
+			}
+			if file != c.want {
+				t.Errorf("file\n got  %q\n want %q", file, c.want)
+			}
+			if !reflect.DeepEqual(results, c.wantResults) {
+				t.Errorf("results\n got  %q\n want %q", results, c.wantResults)
+			}
+		})
 	}
 }
 

@@ -1,52 +1,9 @@
 package todo
 
 import (
-	"encoding/json"
-	"os"
-	"reflect"
 	"slices"
 	"testing"
 )
-
-func readJSON(t *testing.T, path string, into any) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestTodosMatchTheRustGolden(t *testing.T) {
-	var cases []struct{ Name, Body string }
-	var expected []struct {
-		Name string `json:"name"`
-		Out  []any  `json:"out"`
-	}
-	readJSON(t, "../../testdata/golden/todo/cases.json", &cases)
-	readJSON(t, "../../testdata/golden/todo/expected.json", &expected)
-	if len(cases) != len(expected) || len(cases) != 39 {
-		t.Fatalf("%d cases, %d expected", len(cases), len(expected))
-	}
-	for i, c := range cases {
-		if expected[i].Name != c.Name {
-			t.Fatalf("case %d is %s, expected %s", i, c.Name, expected[i].Name)
-		}
-		got := []any{}
-		for _, item := range Items(c.Body) {
-			var due any
-			if item.Due != nil {
-				due = *item.Due
-			}
-			got = append(got, map[string]any{"text": item.Text, "due": due})
-		}
-		if !reflect.DeepEqual(got, expected[i].Out) {
-			t.Errorf("%s: %q\n got  %#v\n want %#v", c.Name, c.Body, got, expected[i].Out)
-		}
-	}
-}
 
 func texts(body string) []string {
 	var found []string

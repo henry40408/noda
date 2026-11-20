@@ -1,8 +1,6 @@
 package query
 
 import (
-	"encoding/json"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -11,73 +9,118 @@ import (
 	"github.com/henry40408/noda/internal/note"
 )
 
-func readJSON(t *testing.T, path string, into any) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
+func pinnedAs(value string) *string { return &value }
+
+// searchableNotes is the notebook the table below searches. The ids differ
+// only by prefix so an id: term picks one; the last note is deliberately odd.
+func searchableNotes() map[string]note.Note {
+	return map[string]note.Note{
+		"01abc234": {Title: "Budget review", Tags: []string{"work"}, Body: "the q3 budget is late"},
+		"02def567": {Title: "Meeting notes", Tags: []string{"work", "q3"}, Pinned: pinnedAs("true"), Body: "# Agenda\n\nthe budget, again"},
+		"03ghj890": {Title: "Reading list", Tags: []string{}, Pinned: pinnedAs("false"), Body: "a book"},
+		"04kmn123": {Title: "\u65e5\u672c\u8a9e\u30e1\u30e2", Tags: []string{"\u65e5\u672c\u8a9e", "has space"}, Pinned: pinnedAs("TRUE"), Body: "\u672c\u6587 text"},
+		"05pqr456": {Title: "Odd one", Tags: []string{"Work"}, Pinned: pinnedAs("yes"), Body: "--flag and OR"},
 	}
 }
 
-func asAny[T any](values []T) []any {
-	out := []any{}
-	for _, v := range values {
-		out = append(out, v)
+func matchingIDs(q *Query) []string {
+	ids := []string{}
+	for id, n := range searchableNotes() {
+		if q.Matches(id, n) {
+			ids = append(ids, id)
+		}
 	}
-	return out
+	slices.Sort(ids)
+	return ids
 }
 
-func TestQueriesMatchTheRustGolden(t *testing.T) {
-	var cases []struct{ Name, Line string }
-	var expected []struct {
-		Name string         `json:"name"`
-		Out  map[string]any `json:"out"`
+func TestParsedQueryTable(t *testing.T) {
+	cases := []struct {
+		name     string
+		line     string
+		grouping [][]string
+		excerpts []string
+		matches  []string
+	}{
+		{"bare word searches title and body", "budget", [][]string{{"budget"}}, []string{"budget"}, []string{"01abc234", "02def567"}},
+		{"bare word is case folded and the excerpt term is lowercased", "BUDGET", [][]string{{"BUDGET"}}, []string{"budget"}, []string{"01abc234", "02def567"}},
+		{"tag matches whole and case sensitively", "tag:Work", [][]string{{"tag:Work"}}, []string{}, []string{"05pqr456"}},
+		{"negated tag keeps the rest", "-tag:work", [][]string{{"-tag:work"}}, []string{}, []string{"03ghj890", "04kmn123", "05pqr456"}},
+		{"title does not search the body", "title:review", [][]string{{"title:review"}}, []string{"review"}, []string{"01abc234"}},
+		{"negated title is not an excerpt term", "-title:review", [][]string{{"-title:review"}}, []string{}, []string{"02def567", "03ghj890", "04kmn123", "05pqr456"}},
+		{"id matches a prefix", "id:01", [][]string{{"id:01"}}, []string{}, []string{"01abc234"}},
+		{"id folds the Crockford look-alike O to 0", "id:O1", [][]string{{"id:O1"}}, []string{}, []string{"01abc234"}},
+		{"id with no prefix match finds nothing", "id:zz", [][]string{{"id:zz"}}, []string{}, []string{}},
+		{"negated id excludes the prefix", "-id:01", [][]string{{"-id:01"}}, []string{}, []string{"02def567", "03ghj890", "04kmn123", "05pqr456"}},
+		{"pinned true is case insensitive in the note", "pinned:true", [][]string{{"pinned:true"}}, []string{}, []string{"02def567", "04kmn123"}},
+		{"pinned false includes a note with an odd value", "pinned:false", [][]string{{"pinned:false"}}, []string{}, []string{"01abc234", "03ghj890", "05pqr456"}},
+		{"negated pinned is the other state", "-pinned:true", [][]string{{"-pinned:true"}}, []string{}, []string{"01abc234", "03ghj890", "05pqr456"}},
+		{"text searches the body", "text:agenda", [][]string{{"text:agenda"}}, []string{"agenda"}, []string{"02def567"}},
+		{"negated text is not an excerpt term", "-text:agenda", [][]string{{"-text:agenda"}}, []string{}, []string{"01abc234", "03ghj890", "04kmn123", "05pqr456"}},
+		{"text prefix escapes a leading hyphen", "text:--flag", [][]string{{"text:--flag"}}, []string{"--flag"}, []string{"05pqr456"}},
+		{"negated escaped hyphen excludes it", "-text:--flag", [][]string{{"-text:--flag"}}, []string{}, []string{"01abc234", "02def567", "03ghj890", "04kmn123"}},
+		{"separate groups are anded", "budget tag:work", [][]string{{"budget"}, {"tag:work"}}, []string{"budget"}, []string{"01abc234", "02def567"}},
+		{"a positive and a negative group", "tag:work -tag:q3", [][]string{{"tag:work"}, {"-tag:q3"}}, []string{}, []string{"01abc234"}},
+		{"OR joins two terms in one group", "budget OR book", [][]string{{"budget", "book"}}, []string{"budget", "book"}, []string{"01abc234", "02def567", "03ghj890"}},
+		{"OR binds tighter than the space", "budget tag:q3 OR tag:work", [][]string{{"budget"}, {"tag:q3", "tag:work"}}, []string{"budget"}, []string{"01abc234", "02def567"}},
+		{"OR chains into one group", "a OR b OR c", [][]string{{"a", "b", "c"}}, []string{"a", "b", "c"}, []string{"01abc234", "02def567", "03ghj890", "04kmn123", "05pqr456"}},
+		{"OR with a negated side", "tag:work OR -tag:q3", [][]string{{"tag:work", "-tag:q3"}}, []string{}, []string{"01abc234", "02def567", "03ghj890", "04kmn123", "05pqr456"}},
+		{"excerpt terms keep title and text order", "title:meeting text:budget", [][]string{{"title:meeting"}, {"text:budget"}}, []string{"meeting", "budget"}, []string{"02def567"}},
+		{"lowercase or is a word", "or", [][]string{{"or"}}, []string{"or"}, []string{"01abc234", "02def567", "05pqr456"}},
+		{"capitalised Or is a word too", "Or tag:x", [][]string{{"Or"}, {"tag:x"}}, []string{"or"}, []string{}},
+		{"field names are case sensitive so the prefix stays text", "TAG:work", [][]string{{"TAG:work"}}, []string{"tag:work"}, []string{}},
+		{"unknown prefix is text", "unknown:x", [][]string{{"unknown:x"}}, []string{"unknown:x"}, []string{}},
+		{"empty field name is text", ":x", [][]string{{":x"}}, []string{":x"}, []string{}},
+		{"bare CJK is a substring", "\u65e5\u672c", [][]string{{"\u65e5\u672c"}}, []string{"\u65e5\u672c"}, []string{"04kmn123"}},
+		{"title CJK is a substring", "title:\u65e5\u672c", [][]string{{"title:\u65e5\u672c"}}, []string{"\u65e5\u672c"}, []string{"04kmn123"}},
+		{"tag CJK matches whole", "tag:\u65e5\u672c\u8a9e", [][]string{{"tag:\u65e5\u672c\u8a9e"}}, []string{}, []string{"04kmn123"}},
+		{"double quotes keep a tag with a space in one term", `tag:"has space"`, [][]string{{"tag:has space"}}, []string{}, []string{"04kmn123"}},
+		{"single quotes keep a tag with a space in one term", "tag:'has space'", [][]string{{"tag:has space"}}, []string{}, []string{"04kmn123"}},
+		{"quoted words are one term", `"two words"`, [][]string{{"two words"}}, []string{"two words"}, []string{}},
+		{"unclosed quote runs to the end", `tag:"unclosed`, [][]string{{"tag:unclosed"}}, []string{}, []string{}},
+		{"every bare word must match", "a b c", [][]string{{"a"}, {"b"}, {"c"}}, []string{"a", "b", "c"}, []string{}},
 	}
-	var fixtures []struct {
-		ID     string   `json:"id"`
-		Title  string   `json:"title"`
-		Tags   []string `json:"tags"`
-		Pinned *string  `json:"pinned"`
-		Body   string   `json:"body"`
-	}
-	readJSON(t, "../../testdata/golden/query/cases.json", &cases)
-	readJSON(t, "../../testdata/golden/query/expected.json", &expected)
-	readJSON(t, "../../testdata/golden/query/notes.json", &fixtures)
-	if len(cases) != len(expected) || len(cases) != 58 || len(fixtures) != 5 {
-		t.Fatalf("%d cases, %d expected, %d notes", len(cases), len(expected), len(fixtures))
-	}
-	for i, c := range cases {
-		if expected[i].Name != c.Name {
-			t.Fatalf("case %d is %s, expected %s", i, c.Name, expected[i].Name)
-		}
-		tokens := Split(c.Line)
-		got := map[string]any{"tokens": asAny(tokens), "parse": nil}
-		parsed, err := Parse(tokens)
-		if err != nil {
-			got["parse"] = map[string]any{"err": err.Error()}
-		} else {
-			matches := []any{}
-			for _, f := range fixtures {
-				n := note.Note{Title: f.Title, Tags: f.Tags, Pinned: f.Pinned, Body: f.Body}
-				if parsed.Matches(f.ID, n) {
-					matches = append(matches, f.ID)
-				}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q, err := Parse(Split(c.line))
+			if err != nil {
+				t.Fatalf("%q: %v", c.line, err)
 			}
-			grouping := [][]string(parsed.Grouping())
-			said := []any{}
-			for _, group := range grouping {
-				said = append(said, asAny(group))
+			if got := q.Grouping(); !reflect.DeepEqual(got, c.grouping) {
+				t.Errorf("grouping: got %q, want %q", got, c.grouping)
 			}
-			got["parse"] = map[string]any{"ok": map[string]any{
-				"excerpt_terms": asAny(parsed.ExcerptTerms()), "grouping": said, "matches": matches,
-			}}
-		}
-		if !reflect.DeepEqual(got, expected[i].Out) {
-			t.Errorf("%s: %q\n got  %#v\n want %#v", c.Name, c.Line, got, expected[i].Out)
-		}
+			if got := q.ExcerptTerms(); !slices.Equal(got, c.excerpts) {
+				t.Errorf("excerpt terms: got %q, want %q", got, c.excerpts)
+			}
+			if got := matchingIDs(q); !slices.Equal(got, c.matches) {
+				t.Errorf("matches: got %q, want %q", got, c.matches)
+			}
+		})
+	}
+}
+
+func TestParseErrorTable(t *testing.T) {
+	cases := []struct{ name, line, want string }{
+		{"empty line", "", "search needs something to look for"},
+		{"blank line", "   ", "search needs something to look for"},
+		{"lone OR", "OR", "`OR` needs a term on both sides"},
+		{"OR at the start", "OR tag:x", "`OR` needs a term on both sides"},
+		{"OR at the end", "tag:x OR", "`OR` needs a term on both sides"},
+		{"two ORs in a row", "a OR OR b", "`OR` needs a term on both sides"},
+		{"lone hyphen", "-", "`-` needs something after it"},
+		{"tag with no value", "tag:", "`tag:` has nothing to look for"},
+		{"title with no value", "title:", "`title:` has nothing to look for"},
+		{"id with no value", "id:", "`id:` has nothing to look for"},
+		{"pinned with no value", "pinned:", "`pinned:` has nothing to look for"},
+		{"pinned with a typo", "pinned:maybe", "`pinned:` takes `true` or `false`, not `maybe`"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Parse(Split(c.line))
+			if err == nil || err.Error() != c.want {
+				t.Errorf("%q: got %v, want %q", c.line, err, c.want)
+			}
+		})
 	}
 }
 

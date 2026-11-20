@@ -1,7 +1,0 @@
-$ noda search budget
-02def567  Meeting notes  [work, q3]
-          the budget, again
-01abc234  Q3 budget review  [work, urgent]
-          the q3 budget is late again
---- stderr
---- exit 0

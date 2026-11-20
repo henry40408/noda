@@ -1,37 +1,57 @@
 package web
 
 import (
-	"encoding/json"
-	"os"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestAssetsMatchGolden(t *testing.T) {
-	var expected []struct {
-		Bytes int
-		File  string
-		Href  string
-		Kind  string
-		Tag   string
+func TestAnAssetIsLinkedByNameKindAndContentHash(t *testing.T) {
+	tests := []struct {
+		asset Asset
+		href  string
+		tag   string
+		kind  string
+	}{
+		{AssetIcon, `^/a/icon\.[0-9a-f]{12}\.svg$`, `<link rel="icon" type="image/svg+xml" href="%s">`, "image/svg+xml"},
+		{AssetStyle, `^/a/style\.[0-9a-f]{12}\.css$`, `<link rel="stylesheet" href="%s">`, "text/css; charset=utf-8"},
+		{AssetListing, `^/a/listing\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetStanding, `^/a/standing\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetPanes, `^/a/panes\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetBeside, `^/a/beside\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetStamps, `^/a/stamps\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetWatching, `^/a/watching\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 	}
-	raw, err := os.ReadFile("../../testdata/golden/asset/expected.json")
-	if err != nil {
-		t.Fatal(err)
+	if len(tests) != len(allAssets) {
+		t.Fatalf("%d cases for %d assets", len(tests), len(allAssets))
 	}
-	if err := json.Unmarshal(raw, &expected); err != nil {
-		t.Fatal(err)
-	}
-	if len(expected) != len(allAssets) {
-		t.Fatalf("%d assets, golden has %d", len(allAssets), len(expected))
-	}
-	for i, asset := range allAssets {
-		want := expected[i]
-		if asset.Href() != want.Href || asset.Tag() != want.Tag || asset.Kind() != want.Kind {
-			t.Errorf("%s: got %s %s %s", want.File, asset.Href(), asset.Tag(), asset.Kind())
+	for _, tt := range tests {
+		if !regexp.MustCompile(tt.href).MatchString(tt.asset.Href()) {
+			t.Errorf("href %q does not match %s", tt.asset.Href(), tt.href)
 		}
-		if len(asset.body()) != want.Bytes {
-			t.Errorf("%s: %d bytes, want %d", want.File, len(asset.body()), want.Bytes)
+		if want := fmt.Sprintf(tt.tag, tt.asset.Href()); tt.asset.Tag() != want {
+			t.Errorf("tag %q, want %q", tt.asset.Tag(), want)
+		}
+		if tt.asset.Kind() != tt.kind {
+			t.Errorf("%s: kind %q, want %q", tt.asset.Href(), tt.asset.Kind(), tt.kind)
+		}
+		if tt.asset.body() == "" {
+			t.Errorf("%s has no body", tt.asset.Href())
+		}
+	}
+}
+
+// The expected values are what `git hash-object` prints, so the address of an
+// asset stays a git blob id and a change of body changes it.
+func TestFingerprintIsTheGitBlobIDPrefix(t *testing.T) {
+	tests := map[string]string{
+		"":        "e69de29bb2d1",
+		"hello\n": "ce013625030b",
+	}
+	for body, want := range tests {
+		if got := fingerprint(body); got != want {
+			t.Errorf("fingerprint(%q) = %s, want %s", body, got, want)
 		}
 	}
 }

@@ -1,8 +1,0 @@
-$ noda pin meeting-notes
-02def567  meeting-notes  [work, q3]  pinned
---- stderr
---- exit 0
-$ noda unpin meeting-notes
-02def567  meeting-notes  [work, q3]  unpinned
---- stderr
---- exit 0

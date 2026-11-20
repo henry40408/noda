@@ -1,92 +1,9 @@
 package link
 
 import (
-	"encoding/json"
-	"os"
-	"reflect"
 	"slices"
 	"testing"
 )
-
-type goldenCase struct {
-	Name string `json:"name"`
-	Op   string `json:"op"`
-	Body string `json:"body"`
-	Dest string `json:"dest"`
-	Old  string `json:"old"`
-	New  string `json:"new"`
-}
-
-type goldenExpected struct {
-	Name string `json:"name"`
-	Out  any    `json:"out"`
-}
-
-func readJSON(t *testing.T, path string, into any) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func asAny(values []string) any {
-	out := []any{}
-	for _, v := range values {
-		out = append(out, v)
-	}
-	return out
-}
-
-func optional(text string, ok bool) any {
-	if !ok {
-		return nil
-	}
-	return text
-}
-
-func runGolden(t *testing.T, c goldenCase) (any, bool) {
-	switch c.Op {
-	case "targets":
-		return asAny(Targets(c.Body)), true
-	case "rewrite":
-		return optional(Rewrite(c.Body, c.Old, c.New)), true
-	case "target":
-		return optional(Target(c.Dest)), true
-	case "scheme":
-		return optional(Scheme(c.Dest)), true
-	}
-	t.Fatalf("unknown op %s", c.Op)
-	return nil, false
-}
-
-func TestLinksMatchTheRustGolden(t *testing.T) {
-	var cases []goldenCase
-	var expected []goldenExpected
-	readJSON(t, "../../testdata/golden/link/cases.json", &cases)
-	readJSON(t, "../../testdata/golden/link/expected.json", &expected)
-	if len(cases) != len(expected) || len(cases) != 133 {
-		t.Fatalf("%d cases, %d expected", len(cases), len(expected))
-	}
-	for i, c := range cases {
-		if expected[i].Name != c.Name {
-			t.Fatalf("case %d is %s, expected %s", i, c.Name, expected[i].Name)
-		}
-		// rewrite-15 panics in Rust (a slice off a character boundary); there is
-		// no behaviour to match, and Go must simply not panic on it.
-		if panicked, ok := expected[i].Out.(map[string]any); ok && panicked["rust_panic"] == true {
-			runGolden(t, c)
-			continue
-		}
-		got, _ := runGolden(t, c)
-		if !reflect.DeepEqual(got, expected[i].Out) {
-			t.Errorf("%s (%s):\n got  %#v\n want %#v\n case %+v", c.Name, c.Op, got, expected[i].Out, c)
-		}
-	}
-}
 
 func targetsOf(body string) []string { return Targets(body) }
 

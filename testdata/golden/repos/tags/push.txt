@@ -1,5 +1,0 @@
-$ noda push
-push: main (1 commit, 1 snapshot) -> file://<ROOT>/remote.git
-snapshot `clash` was not sent — the remote already has that name for another commit; rename yours, or drop it with `git tag -d clash`
---- stderr
---- exit 0

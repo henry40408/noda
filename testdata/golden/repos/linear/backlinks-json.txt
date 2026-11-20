@@ -1,4 +1,0 @@
-$ noda backlinks 01abc234 --json
-{"notebook":"default","target":"01abc234-q3-budget-review.md","backlinks":[{"id":"02def567","slug":"meeting-notes","file":"02def567-meeting-notes.md","title":"Meeting notes"}]}
---- stderr
---- exit 0
