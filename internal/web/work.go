@@ -1,7 +1,8 @@
 package web
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"sync"
 	"time"
 
@@ -147,7 +148,7 @@ func (e *Errands) running() []Left {
 			left = append(left, Left{Book: book, Job: current.errand})
 		}
 	}
-	sort.Slice(left, func(i, j int) bool { return left[i].Book < left[j].Book })
+	slices.SortFunc(left, func(a, b Left) int { return cmp.Compare(a.Book, b.Book) })
 	return left
 }
 

@@ -19,7 +19,6 @@ package tui
 import (
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -730,9 +729,8 @@ func (a *App) derive(view View) *Content {
 			}
 		}
 		// todo.Compare, so this matches `noda todo`.
-		sort.SliceStable(tasks, func(i, j int) bool {
-			left, right := tasks[i], tasks[j]
-			return todo.Compare(a.notes[left.Note].Slug, left.Item, a.notes[right.Note].Slug, right.Item) < 0
+		slices.SortStableFunc(tasks, func(left, right Task) int {
+			return todo.Compare(a.notes[left.Note].Slug, left.Item, a.notes[right.Note].Slug, right.Item)
 		})
 		return &Content{Kind: ContentTodo, Tasks: tasks}
 	case ViewTags:

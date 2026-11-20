@@ -1,10 +1,11 @@
 package cmd
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/henry40408/noda/internal/note"
@@ -247,11 +248,9 @@ func describeUnconverted(notes []notebook.NoteFile) string {
 	if len(found) == 0 {
 		return ""
 	}
-	sort.Slice(found, func(i, j int) bool {
-		if found[i].file != found[j].file {
-			return found[i].file < found[j].file
-		}
-		return found[i].what < found[j].what
+	// Ties are equal in both fields, so the unstable sort shows nothing.
+	slices.SortFunc(found, func(a, b unconverted) int {
+		return cmp.Or(cmp.Compare(a.file, b.file), cmp.Compare(a.what, b.what))
 	})
 
 	var out strings.Builder
@@ -296,11 +295,8 @@ func countKinds(found []unconverted) []kindCount {
 	for name, count := range counts {
 		kinds = append(kinds, kindCount{name, count})
 	}
-	sort.Slice(kinds, func(i, j int) bool {
-		if kinds[i].count != kinds[j].count {
-			return kinds[i].count > kinds[j].count
-		}
-		return kinds[i].name < kinds[j].name
+	slices.SortFunc(kinds, func(a, b kindCount) int {
+		return cmp.Or(cmp.Compare(b.count, a.count), cmp.Compare(a.name, b.name))
 	})
 	return kinds
 }
