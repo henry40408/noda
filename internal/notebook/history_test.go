@@ -2,42 +2,13 @@ package notebook
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/henry40408/noda/internal/clock"
-	"github.com/henry40408/noda/internal/gitx"
-	"github.com/henry40408/noda/internal/gitx/gittest"
-	"github.com/henry40408/noda/internal/paths"
 )
-
-// fixture builds one of testdata/repos' scenarios and opens its notebook.
-func fixture(t *testing.T, scenario string) *Notebook {
-	t.Helper()
-	root := t.TempDir()
-	script, err := filepath.Abs("../../testdata/repos/build.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("sh", script, root, scenario).CombinedOutput(); err != nil {
-		t.Fatalf("build.sh %s: %v\n%s", scenario, err, out)
-	}
-	env := gittest.Isolate(t)
-	env["TZ"] = "UTC"
-	git, err := gitx.New(gitx.Options{Env: env})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nb, err := Open(git, paths.Rooted(root), "default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return nb
-}
 
 // numbered replaces each distinct short id with <OID:n> in order of appearance,
 // in order of first appearance.
