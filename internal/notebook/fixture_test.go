@@ -158,9 +158,7 @@ func (b *builder) commit(dir, message string) {
 
 func (b *builder) newNotebook(dir string) {
 	b.t.Helper()
-	if out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput(); err != nil {
-		b.t.Fatalf("git init: %v\n%s", err, out)
-	}
+	b.git(b.root, "init", "--quiet", dir)
 	b.tick()
 	b.git(dir, "commit", "--quiet", "--allow-empty", "--no-verify", "-m", "chore: initialize notebook")
 }
@@ -264,9 +262,7 @@ func (b *builder) remotePair() (other string) {
 	b.t.Helper()
 	remote := filepath.Join(b.root, "remote.git")
 	other = filepath.Join(b.root, "other")
-	if out, err := exec.Command("git", "init", "--quiet", "--bare", remote).CombinedOutput(); err != nil {
-		b.t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
+	b.git(b.root, "init", "--quiet", "--bare", remote)
 	url := "file://" + remote
 	b.newNotebook(b.nb)
 	b.note(b.nb, noteFile{noteBudget, "Budget review", "work", day(1), day(1), bodyBudget})
@@ -274,9 +270,7 @@ func (b *builder) remotePair() (other string) {
 	b.commit(b.nb, "add: two notes")
 	b.git(b.nb, "remote", "add", "origin", url)
 	b.git(b.nb, "push", "--quiet", "--no-verify", "origin", "main")
-	if out, err := exec.Command("git", "clone", "--quiet", url, other).CombinedOutput(); err != nil {
-		b.t.Fatalf("git clone: %v\n%s", err, out)
-	}
+	b.git(b.root, "clone", "--quiet", url, other)
 	return other
 }
 
