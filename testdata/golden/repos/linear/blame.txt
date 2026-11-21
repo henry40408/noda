@@ -1,8 +1,0 @@
-$ noda blame meeting-notes
-<OID:1>  2023-11-15 05:13  # Agenda
-<OID:1>  2023-11-15 05:13
-<OID:1>  2023-11-15 05:13  the budget, again
-<OID:1>  2023-11-15 05:13
-<OID:1>  2023-11-15 05:13  see [the budget](01abc234-budget-review.md)
---- stderr
---- exit 0

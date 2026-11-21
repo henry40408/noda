@@ -39,33 +39,8 @@ func fixture(t *testing.T, scenario string) *Notebook {
 	return nb
 }
 
-// golden is the output of one command in testdata/golden/repos/<scenario>/<file>.
-func golden(t *testing.T, scenario, file, command string) []string {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("../../testdata/golden/repos", scenario, file+".txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	in := false
-	for _, line := range strings.Split(string(raw), "\n") {
-		switch {
-		case line == "$ "+command:
-			in = true
-		case strings.HasPrefix(line, "$ "), line == "--- stderr":
-			in = false
-		case in:
-			out = append(out, strings.TrimRight(line, " "))
-		}
-	}
-	for len(out) > 0 && out[len(out)-1] == "" {
-		out = out[:len(out)-1]
-	}
-	return out
-}
-
 // numbered replaces each distinct short id with <OID:n> in order of appearance,
-// as the goldens do.
+// in order of first appearance.
 type numbered map[string]int
 
 func (n numbered) label(oid string) string {
@@ -112,7 +87,7 @@ func renderBlame(lines []BlameLine) []string {
 
 var indexLine = regexp.MustCompile(`(?m)^index ([0-9a-f]{7})\.\.([0-9a-f]{7})`)
 
-// renderDiff numbers the blob ids as the goldens do; the all-zero id of a file
+// renderDiff numbers the blob ids in order of first appearance; the all-zero id of a file
 // that did not exist is not an object and stays as it is.
 func renderDiff(text string) []string {
 	ids := map[string]int{}
@@ -132,7 +107,7 @@ func renderDiff(text string) []string {
 	return strings.Split(strings.TrimRight(text, "\n"), "\n")
 }
 
-// trimmed ignores trailing blanks: the goldens keep none, while a diff's blank
+// trimmed ignores trailing blanks: expectations here keep none, while a diff's blank
 // context line is one space.
 func trimmed(lines []string) string {
 	out := make([]string, len(lines))
@@ -149,19 +124,35 @@ func same(t *testing.T, what string, got, want []string) {
 	}
 }
 
-func TestLinearLogMatchesTheRustGolden(t *testing.T) {
+func TestLinearLog(t *testing.T) {
 	nb := fixture(t, "linear")
 	all, err := nb.Log("", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "log", renderLog(all), golden(t, "linear", "log", "noda log"))
+	same(t, "log", renderLog(all), []string{
+		"  <OID:1>  2023-11-15 08:13  rm: Reading list",
+		"  <OID:2>  2023-11-15 07:13  tag: Q3 budget review",
+		"  <OID:3>  2023-11-15 06:13  add: Reading list",
+		"  <OID:4>  2023-11-15 05:13  restore: Meeting notes",
+		"  <OID:5>  2023-11-15 04:13  rm: Meeting notes",
+		"  <OID:6>  2023-11-15 03:13  mv: Q3 budget review",
+		"  <OID:7>  2023-11-15 02:13  edit: Budget review",
+		"  <OID:8>  2023-11-15 01:13  add: Meeting notes",
+		"  <OID:9>  2023-11-15 00:13  add: Budget review",
+		"  <OID:10>  2023-11-14 23:13  chore: initialize notebook",
+	})
 
 	one, err := nb.Log("01abc234", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "log by id", renderLog(one), golden(t, "linear", "log-note-id", "noda log 01abc234"))
+	same(t, "log by id", renderLog(one), []string{
+		"  <OID:1>  2023-11-15 07:13  tag: Q3 budget review",
+		"  <OID:2>  2023-11-15 03:13  mv: Q3 budget review",
+		"  <OID:3>  2023-11-15 02:13  edit: Budget review",
+		"  <OID:4>  2023-11-15 00:13  add: Budget review",
+	})
 
 	limited, err := nb.Log("", 2)
 	if err != nil || len(limited) != 2 {
@@ -180,7 +171,7 @@ func TestLinearDeletedAndLastChanged(t *testing.T) {
 	}
 	got := gone[0]
 	line := got.ID + "  " + got.Slug + "  " + clock.FormatTime(got.RemovedAt, got.OffsetMinutes) + "  <OID:1>  " + got.Title
-	same(t, "deleted", []string{line}, golden(t, "linear", "deleted", "noda deleted")[:1])
+	same(t, "deleted", []string{line}, []string{"03ghj890  reading-list  2023-11-15 08:13  <OID:1>  Reading list"})
 	if got.RemovedIn == got.RestoreFrom || got.RestoreFromShort() != Short(got.RestoreFrom) {
 		t.Errorf("%+v", got)
 	}
@@ -197,13 +188,19 @@ func TestLinearDeletedAndLastChanged(t *testing.T) {
 	}
 }
 
-func TestLinearBlameMatchesTheRustGolden(t *testing.T) {
+func TestLinearBlame(t *testing.T) {
 	nb := fixture(t, "linear")
 	lines, err := nb.Blame("02def567", "meeting-notes")
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "blame", renderBlame(lines), golden(t, "linear", "blame", "noda blame meeting-notes"))
+	same(t, "blame", renderBlame(lines), []string{
+		"<OID:1>  2023-11-15 05:13  # Agenda",
+		"<OID:1>  2023-11-15 05:13",
+		"<OID:1>  2023-11-15 05:13  the budget, again",
+		"<OID:1>  2023-11-15 05:13",
+		"<OID:1>  2023-11-15 05:13  see [the budget](01abc234-budget-review.md)",
+	})
 }
 
 func TestLinearDiffOfACleanNotebookIsTheLastCommit(t *testing.T) {
@@ -212,7 +209,22 @@ func TestLinearDiffOfACleanNotebookIsTheLastCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "diff", renderDiff(text), golden(t, "linear", "diff", "noda diff"))
+	same(t, "diff", renderDiff(text), []string{
+		"diff --git a/03ghj890-reading-list.md b/03ghj890-reading-list.md",
+		"deleted file mode 100644",
+		"index <OID:1>..0000000",
+		"--- a/03ghj890-reading-list.md",
+		"+++ /dev/null",
+		"@@ -1,8 +0,0 @@",
+		"----",
+		"-title: Reading list",
+		"-created: 2024-01-05T00:00:00Z",
+		"-updated: 2024-01-05T00:00:00Z",
+		"----",
+		"-",
+		"-a book",
+		"-another book",
+	})
 }
 
 func TestDirtyDiffLeavesUntrackedFilesOut(t *testing.T) {
@@ -221,12 +233,54 @@ func TestDirtyDiffLeavesUntrackedFilesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "diff", renderDiff(all), golden(t, "dirty", "diff", "noda diff"))
+	same(t, "diff", renderDiff(all), []string{
+		"diff --git a/01abc234-budget-review.md b/01abc234-budget-review.md",
+		"index <OID:1>..<OID:2> 100644",
+		"--- a/01abc234-budget-review.md",
+		"+++ b/01abc234-budget-review.md",
+		"@@ -2,11 +2,12 @@",
+		" title: Budget review",
+		" tags: [work]",
+		" created: 2024-01-01T00:00:00Z",
+		"-updated: 2024-01-01T00:00:00Z",
+		"+updated: 2024-01-09T00:00:00Z",
+		" ---",
+		" ",
+		"-the q3 budget is late",
+		"+the q3 budget is late again",
+		" ",
+		" - first line",
+		"-- second line",
+		"+- second line changed",
+		" - third line",
+		"+- fourth line",
+	})
 	one, err := nb.Diff("01abc234-budget-review.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "diff note", renderDiff(one), golden(t, "dirty", "diff-note", "noda diff budget-review"))
+	same(t, "diff note", renderDiff(one), []string{
+		"diff --git a/01abc234-budget-review.md b/01abc234-budget-review.md",
+		"index <OID:1>..<OID:2> 100644",
+		"--- a/01abc234-budget-review.md",
+		"+++ b/01abc234-budget-review.md",
+		"@@ -2,11 +2,12 @@",
+		" title: Budget review",
+		" tags: [work]",
+		" created: 2024-01-01T00:00:00Z",
+		"-updated: 2024-01-01T00:00:00Z",
+		"+updated: 2024-01-09T00:00:00Z",
+		" ---",
+		" ",
+		"-the q3 budget is late",
+		"+the q3 budget is late again",
+		" ",
+		" - first line",
+		"-- second line",
+		"+- second line changed",
+		" - third line",
+		"+- fourth line",
+	})
 	none, err := nb.Diff("04kmn123-fresh-idea.md")
 	if err != nil || none != "" {
 		t.Errorf("%q %v", none, err)
@@ -239,23 +293,61 @@ func TestMergeLogBlameAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "log", renderLog(all), golden(t, "merge", "log", "noda log"))
+	same(t, "log", renderLog(all), []string{
+		"  <OID:1>  2023-11-15 04:13  edit: Budget review after merge",
+		"  <OID:2>  2023-11-15 03:13  merge: side",
+		"  <OID:3>  2023-11-15 02:13  edit: Budget review on main",
+		"  <OID:4>  2023-11-15 01:13  edit: Meeting notes on side",
+		"  <OID:5>  2023-11-15 00:13  add: two notes",
+		"  <OID:6>  2023-11-14 23:13  chore: initialize notebook",
+	})
 	two, err := nb.Log("", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "log -n 3", renderLog(two), golden(t, "merge", "log-2", "noda log -n 3"))
+	same(t, "log -n 3", renderLog(two), []string{
+		"  <OID:1>  2023-11-15 04:13  edit: Budget review after merge",
+		"  <OID:2>  2023-11-15 03:13  merge: side",
+		"  <OID:3>  2023-11-15 02:13  edit: Budget review on main",
+	})
 
 	lines, err := nb.Blame("01abc234", "budget-review")
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "blame", renderBlame(lines), golden(t, "merge", "blame", "noda blame budget-review"))
+	same(t, "blame", renderBlame(lines), []string{
+		"<OID:1>  2023-11-15 02:13  the q3 budget is late again",
+		"<OID:2>  2023-11-15 00:13",
+		"<OID:2>  2023-11-15 00:13  - first line",
+		"<OID:1>  2023-11-15 02:13  - second line changed",
+		"<OID:2>  2023-11-15 00:13  - third line",
+		"<OID:1>  2023-11-15 02:13  - fourth line",
+		"<OID:3>  2023-11-15 04:13  - after the merge",
+	})
 	text, err := nb.Diff("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "diff", renderDiff(text), golden(t, "merge", "diff", "noda diff"))
+	same(t, "diff", renderDiff(text), []string{
+		"diff --git a/01abc234-budget-review.md b/01abc234-budget-review.md",
+		"index <OID:1>..<OID:2> 100644",
+		"--- a/01abc234-budget-review.md",
+		"+++ b/01abc234-budget-review.md",
+		"@@ -2,7 +2,7 @@",
+		" title: Budget review",
+		" tags: [work]",
+		" created: 2024-01-01T00:00:00Z",
+		"-updated: 2024-01-04T00:00:00Z",
+		"+updated: 2024-01-05T00:00:00Z",
+		" ---",
+		" ",
+		" the q3 budget is late again",
+		"@@ -11,3 +11,4 @@ the q3 budget is late again",
+		" - second line changed",
+		" - third line",
+		" - fourth line",
+		"+- after the merge",
+	})
 }
 
 func TestRenameRewriteFollowsTheNoteById(t *testing.T) {
@@ -264,34 +356,63 @@ func TestRenameRewriteFollowsTheNoteById(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "log by id", renderLog(entries), golden(t, "rename-rewrite", "log-id", "noda log 01abc234"))
+	same(t, "log by id", renderLog(entries), []string{
+		"  <OID:1>  2023-11-15 02:13  edit: Q3 budget review",
+		"  <OID:2>  2023-11-15 01:13  mv: Q3 budget review, rewritten",
+		"  <OID:3>  2023-11-15 00:13  add: Budget review",
+	})
 	text, err := nb.Diff("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "diff", renderDiff(text), golden(t, "rename-rewrite", "diff", "noda diff"))
+	same(t, "diff", renderDiff(text), []string{
+		"diff --git a/01abc234-q3-budget-review.md b/01abc234-q3-budget-review.md",
+		"index <OID:1>..<OID:2> 100644",
+		"--- a/01abc234-q3-budget-review.md",
+		"+++ b/01abc234-q3-budget-review.md",
+		"@@ -2,7 +2,7 @@",
+		" title: Q3 budget review",
+		" tags: [work]",
+		" created: 2024-01-01T00:00:00Z",
+		"-updated: 2024-01-02T00:00:00Z",
+		"+updated: 2024-01-03T00:00:00Z",
+		" ---",
+		" ",
+		" one",
+		"@@ -17,3 +17,4 @@ eight",
+		" nine",
+		" ten",
+		" lima",
+		"+eleven",
+	})
 }
 
 // Rust follows a rename by id and so credits `golf` and `lima` to the note's
-// first commit. git follows by content, and a rewrite this large is not one
-// file to it. The user accepted the difference (CLAUDE.md, "Accepted differences
-// from the Rust version"), so the golden is kept as the Rust record and this test
-// pins what git does instead.
+// first commit (<OID:2> in its record, the other kept lines being <OID:1>).
+// git follows by content, and a rewrite this large is not one file to it. The
+// user accepted the difference (CLAUDE.md, "Accepted differences from the Rust
+// version"); this test pins what git does instead.
 func TestRenameRewriteBlameDiffersFromRustAsKnown(t *testing.T) {
 	nb := fixture(t, "rename-rewrite")
 	lines, err := nb.Blame("01abc234", "q3-budget-review")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := renderBlame(lines)
-	want := golden(t, "rename-rewrite", "blame", "noda blame 01abc234")
-	if len(got) != len(want) {
-		t.Fatalf("%d lines, want %d", len(got), len(want))
-	}
-	// git credits `golf` and `lima` to the commit that rewrote the file.
-	if lines[6].Commit != lines[0].Commit || lines[11].Commit != lines[0].Commit {
-		t.Errorf("the known difference moved:\n%s", strings.Join(got, "\n"))
-	}
+	same(t, "blame", renderBlame(lines), []string{
+		"<OID:1>  2023-11-15 01:13  one",
+		"<OID:1>  2023-11-15 01:13  two",
+		"<OID:1>  2023-11-15 01:13  three",
+		"<OID:1>  2023-11-15 01:13  four",
+		"<OID:1>  2023-11-15 01:13  five",
+		"<OID:1>  2023-11-15 01:13  six",
+		"<OID:1>  2023-11-15 01:13  golf",
+		"<OID:1>  2023-11-15 01:13  seven",
+		"<OID:1>  2023-11-15 01:13  eight",
+		"<OID:1>  2023-11-15 01:13  nine",
+		"<OID:1>  2023-11-15 01:13  ten",
+		"<OID:1>  2023-11-15 01:13  lima",
+		"<OID:2>  2023-11-15 02:13  eleven",
+	})
 }
 
 func TestSnapshotsReadFromTheTagsFixture(t *testing.T) {
@@ -305,7 +426,11 @@ func TestSnapshotsReadFromTheTagsFixture(t *testing.T) {
 	for _, snapshot := range snapshots {
 		got = append(got, strings.TrimRight(pad(snapshot.Name, 10)+"  "+clock.FormatTime(snapshot.Seconds, snapshot.OffsetMinutes)+"  "+ids.label(snapshot.Target)+"  "+snapshot.Message, " "))
 	}
-	same(t, "snapshots", got, golden(t, "tags", "snapshot-list", "noda snapshot"))
+	same(t, "snapshots", got, []string{
+		"clash       2023-11-15 01:13  <OID:1>  here it is the new commit",
+		"local-only  2023-11-15 01:13  <OID:1>  only here",
+		"shared      2023-11-15 00:13  <OID:2>  on both",
+	})
 }
 
 func pad(text string, width int) string {
@@ -350,8 +475,23 @@ func TestDiffRemoteNeedsASyncedBranchAndShowsWhatAPushCarries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := golden(t, "ahead", "diff-remote", "noda diff --remote")
-	same(t, "diff --remote", renderDiff(text), want)
+	same(t, "diff --remote", renderDiff(text), []string{
+		"diff --git a/03ghj890-reading-list.md b/03ghj890-reading-list.md",
+		"new file mode 100644",
+		"index 0000000..<OID:1>",
+		"--- /dev/null",
+		"+++ b/03ghj890-reading-list.md",
+		"@@ -0,0 +1,9 @@",
+		"+---",
+		"+title: Reading list",
+		"+tags: [books]",
+		"+created: 2024-01-05T00:00:00Z",
+		"+updated: 2024-01-06T00:00:00Z",
+		"+---",
+		"+",
+		"+a book",
+		"+another book",
+	})
 }
 
 func TestRevisionNoteAtAndIDAt(t *testing.T) {
@@ -399,13 +539,20 @@ func TestRevisionNoteAtAndIDAt(t *testing.T) {
 	}
 }
 
-func TestBlameOfUncommittedLinesMatchesTheRustGolden(t *testing.T) {
+func TestBlameOfUncommittedLines(t *testing.T) {
 	nb := fixture(t, "dirty")
 	lines, err := nb.Blame("01abc234", "budget-review")
 	if err != nil {
 		t.Fatal(err)
 	}
-	same(t, "blame", renderBlame(lines), golden(t, "dirty", "blame-uncommitted", "noda blame budget-review"))
+	same(t, "blame", renderBlame(lines), []string{
+		"0000000  not committed     the q3 budget is late again",
+		"<OID:1>  2023-11-15 00:13",
+		"<OID:1>  2023-11-15 00:13  - first line",
+		"0000000  not committed     - second line changed",
+		"<OID:1>  2023-11-15 00:13  - third line",
+		"0000000  not committed     - fourth line",
+	})
 }
 
 func TestBlameOfAnUncommittedEditAndRename(t *testing.T) {

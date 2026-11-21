@@ -1,4 +1,0 @@
-$ noda snapshot
-no snapshots — take one with `noda snapshot <name>`
---- stderr
---- exit 0

@@ -1,3 +1,0 @@
-$ noda diff meeting-notes
---- stderr
---- exit 0

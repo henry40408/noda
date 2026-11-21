@@ -1,4 +1,0 @@
-$ noda ls --json
-{"notebook":"default","notes":[{"id":"02def567","slug":"meeting-notes","file":"02def567-meeting-notes.md","title":"Meeting notes","created":"2024-01-02T00:00:00Z","updated":"2024-01-02T00:00:00Z","pinned":false,"tags":["work","q3"]},{"id":"01abc234","slug":"q3-budget-review","file":"01abc234-q3-budget-review.md","title":"Q3 budget review","created":"2024-01-01T00:00:00Z","updated":"2024-01-06T00:00:00Z","pinned":false,"tags":["work","urgent"]}],"files":[]}
---- stderr
---- exit 0

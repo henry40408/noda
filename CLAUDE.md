@@ -160,8 +160,7 @@ Six layers: unit tests next to the code; the CLI tests in `internal/cmd` and `cm
 command layer; `internal/tui` Buffer tests for screens (a character buffer, no terminal); the pty
 tests in `cmd/noda` for *layout* (a real pty and `vt10x`, catching what a character buffer is blind
 to); `internal/web` and `cmd/noda` web tests for the real handlers and the real binary on a real
-socket; and `e2e/` for a real browser. `testdata/golden` pins output byte for byte.
-`docs/ARCHITECTURE.md` says what each catches; put a new test in the cheapest layer that can
+socket; and `e2e/` for a real browser.`docs/ARCHITECTURE.md` says what each catches; put a new test in the cheapest layer that can
 actually fail on the bug.
 
 Two things are not optional:
@@ -205,8 +204,8 @@ Two things are not optional:
 - **`noda blame` across a rename that also rewrites the file.** The Rust version followed a note by id, so
   it credited lines kept through a large rewrite to the note's first commit. Go delegates to
   `git blame`, which follows by content and credits them to the rewriting commit. The user accepted
-  this and no boundary mapping is implemented. `testdata/golden/repos/rename-rewrite/blame.txt`
-  stays the Rust record; `TestRenameRewriteBlameDiffersFromRustAsKnown` pins the Go result.
+  this and no boundary mapping is implemented. `TestRenameRewriteBlameDiffersFromRustAsKnown`
+  pins the Go result and its comment records what Rust credited.
 - **ssh may prompt in the CLI.** The command line sets `Interactive` when stdin is a terminal, so
   ssh can ask for a passphrase or host key; the web server and the TUI never do.
 

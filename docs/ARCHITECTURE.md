@@ -184,7 +184,7 @@ Six layers, each catching what the ones above it cannot:
 
 | | what it exists to catch |
 | --- | --- |
-| unit tests next to the code | units, and the goldens in `testdata/golden` that pin output byte for byte |
+| unit tests next to the code | units, each case with its input and expected output written inline |
 | `internal/cmd` and `cmd/noda` CLI tests | the command layer, each test in its own XDG root |
 | `internal/tui` Buffer tests | what is on a screen — a character buffer, no terminal |
 | pty tests in `cmd/noda` | *layout*: a real pty and `vt10x`. A padding on the wrong side, a column sliding left, a card outgrowing 24 rows — each passed every assertion on the buffer |

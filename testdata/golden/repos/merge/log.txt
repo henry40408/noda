@@ -1,9 +1,0 @@
-$ noda log
-  <OID:1>  2023-11-15 04:13  edit: Budget review after merge
-  <OID:2>  2023-11-15 03:13  merge: side
-  <OID:3>  2023-11-15 02:13  edit: Budget review on main
-  <OID:4>  2023-11-15 01:13  edit: Meeting notes on side
-  <OID:5>  2023-11-15 00:13  add: two notes
-  <OID:6>  2023-11-14 23:13  chore: initialize notebook
---- stderr
---- exit 0

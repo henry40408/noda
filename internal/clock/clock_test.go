@@ -1,46 +1,64 @@
 package clock
 
 import (
-	"encoding/json"
 	"math"
-	"os"
 	"testing"
 	"time"
 )
 
-func TestFormatTimeMatchesTheRustGolden(t *testing.T) {
-	var cases []struct {
-		Name    string `json:"name"`
-		Seconds int64  `json:"seconds"`
-		Offset  int    `json:"offset"`
+func TestFormatTimeTable(t *testing.T) {
+	cases := []struct {
+		name    string
+		seconds int64
+		offset  int
+		want    string
+	}{
+		{"epoch", 0, 0, "1970-01-01 00:00"},
+		{"seconds are truncated, not rounded", 59, 0, "1970-01-01 00:00"},
+		{"a full minute ticks over", 60, 0, "1970-01-01 00:01"},
+		{"one second before the epoch is the previous minute", -1, 0, "1969-12-31 23:59"},
+		{"a whole day before the epoch", -86400, 0, "1969-12-31 00:00"},
+		{"a negative second inside a day floors to that day", -86399, 0, "1969-12-31 00:00"},
+		{"last second of the first day", 86399, 0, "1970-01-01 23:59"},
+		{"first second of the second day", 86400, 0, "1970-01-02 00:00"},
+		{"2000 is a leap year (divisible by 400)", 951782400, 0, "2000-02-29 00:00"},
+		{"day after the 2000 leap day", 951868800, 0, "2000-03-01 00:00"},
+		{"2100 is not a leap year", 4107542400, 0, "2100-03-01 00:00"},
+		{"1900 is not a leap year", -2203891200, 0, "1900-03-01 00:00"},
+		{"2024 leap day starts", 1709164800, 0, "2024-02-29 00:00"},
+		{"2024 leap day ends", 1709251199, 0, "2024-02-29 23:59"},
+		{"new year starts the next year", 1735689600, 0, "2025-01-01 00:00"},
+		{"a day before new year is still the old year", 1735603200, 0, "2024-12-31 00:00"},
+		{"a typical time after the epoch", 1234567890, 0, "2009-02-13 23:31"},
+		{"a time well past 2030", 2000000000, 0, "2033-05-18 03:33"},
+		{"a time before the epoch", -1000000000, 0, "1938-04-24 22:13"},
+		{"positive offset moves forward", 1700000000, 480, "2023-11-15 06:13"},
+		{"negative offset moves back", 1700000000, -480, "2023-11-14 14:13"},
+		{"half-hour offset", 1700000000, 330, "2023-11-15 03:43"},
+		{"negative half-hour offset", 1700000000, -570, "2023-11-14 12:43"},
+		{"offset not a multiple of 15 minutes", 1700000000, 765, "2023-11-15 10:58"},
+		{"largest offset carries into the next day", 1700000000, 1439, "2023-11-15 22:12"},
+		{"smallest offset reaches two days back", 1700000000, -1439, "2023-11-13 22:14"},
+		{"a one hour offset crosses midnight backwards", -3600, 60, "1970-01-01 00:00"},
+		{"year zero starts at its first second", -62167219200, 0, "0000-01-01 00:00"},
+		{"one second before year zero is out of range", -62167219201, 0, "---------- --:--"},
+		{"an offset can bring year zero back in range", -62167219201, 1, "0000-01-01 00:00"},
+		{"an offset can push year zero out of range", -62167219200, -1, "---------- --:--"},
+		{"last second of year 9999", 253402300799, 0, "9999-12-31 23:59"},
+		{"first second after year 9999 is out of range", 253402300800, 0, "---------- --:--"},
+		{"an offset can bring year 9999 back in range", 253402300800, -1, "9999-12-31 23:59"},
+		{"an offset can push year 9999 out of range", 253402300799, 1, "---------- --:--"},
+		{"max int64 saturates to out of range", math.MaxInt64, 0, "---------- --:--"},
+		{"min int64 saturates to out of range", math.MinInt64, 0, "---------- --:--"},
+		{"max int64 plus an offset does not wrap", math.MaxInt64, 1439, "---------- --:--"},
+		{"min int64 minus an offset does not wrap", math.MinInt64, -1439, "---------- --:--"},
 	}
-	var expected []struct {
-		Name string `json:"name"`
-		Out  string `json:"out"`
-	}
-	readJSON(t, "../../testdata/golden/clock/cases.json", &cases)
-	readJSON(t, "../../testdata/golden/clock/expected.json", &expected)
-	if len(cases) != len(expected) || len(cases) < 30 {
-		t.Fatalf("%d cases, %d expected", len(cases), len(expected))
-	}
-	for i, c := range cases {
-		if expected[i].Name != c.Name {
-			t.Fatalf("case %d is %s, expected %s", i, c.Name, expected[i].Name)
-		}
-		if got := FormatTime(c.Seconds, c.Offset); got != expected[i].Out {
-			t.Errorf("%s (%d, %d): got %q, want %q", c.Name, c.Seconds, c.Offset, got, expected[i].Out)
-		}
-	}
-}
-
-func readJSON(t *testing.T, path string, into any) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := FormatTime(c.seconds, c.offset); got != c.want {
+				t.Errorf("FormatTime(%d, %d) = %q, want %q", c.seconds, c.offset, got, c.want)
+			}
+		})
 	}
 }
 

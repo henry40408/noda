@@ -18,7 +18,7 @@ import (
 	"github.com/henry40408/noda/internal/paths"
 )
 
-// rootOf is the fixture directory, which the goldens write as <ROOT>.
+// rootOf is the fixture directory, which the expectations write as <ROOT>.
 func rootOf(nb *Notebook) string {
 	return strings.TrimSuffix(nb.Path, "/data/noda/notebooks/default")
 }
@@ -37,14 +37,14 @@ func mustSync(t *testing.T, text string, err error) string {
 
 func TestPullMergesDivergedHistoryAndPushSendsTheMerge(t *testing.T) {
 	nb := fixture(t, "diverged-clean")
-	want := golden(t, "diverged-clean", "sync", "noda sync")
 	pulled, err := nb.Pull()
-	if got := mustSync(t, pulled, err); got != want[0] {
-		t.Fatalf("pull = %q, want %q", got, want[0])
+	if got, want := mustSync(t, pulled, err), "pull: merged 1 commit from origin/main"; got != want {
+		t.Fatalf("pull = %q, want %q", got, want)
 	}
 	pushed, err := nb.Push()
-	if got := masked(nb, mustSync(t, pushed, err)); got != want[1] {
-		t.Fatalf("push = %q, want %q", got, want[1])
+	const wantPush = "push: main (2 commits) -> file://<ROOT>/remote.git"
+	if got := masked(nb, mustSync(t, pushed, err)); got != wantPush {
+		t.Fatalf("push = %q, want %q", got, wantPush)
 	}
 	parents := strings.Fields(gitOut(t, nb, "log", "-1", "--format=%P"))
 	if len(parents) != 2 {
@@ -65,7 +65,7 @@ func TestPullConflictLeavesTheNotebookUntouched(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a conflict")
 	}
-	// The Rust golden's stderr, after its `noda: ` prefix.
+	// The text the Rust version printed, after its `noda: ` prefix.
 	const expected = "pull: `main` conflicts with the remote in 01abc234-budget-review.md — the merge was rolled back; resolve it with git in <ROOT>/data/noda/notebooks/default"
 	if text := masked(nb, err.Error()); text != expected {
 		t.Fatalf("error = %q", text)
@@ -92,9 +92,9 @@ func TestPullFastForwardsAndPushThenMatches(t *testing.T) {
 		t.Fatalf("second pull = %q", got)
 	}
 	pushed, err := nb.Push()
-	want := golden(t, "behind", "sync", "noda sync")
-	if got := masked(nb, mustSync(t, pushed, err)); got != want[1] {
-		t.Fatalf("push = %q, want %q", got, want[1])
+	const want = "push: main matches file://<ROOT>/remote.git — nothing to send"
+	if got := masked(nb, mustSync(t, pushed, err)); got != want {
+		t.Fatalf("push = %q, want %q", got, want)
 	}
 }
 
@@ -109,9 +109,9 @@ func TestPullRefusesWithUncommittedChanges(t *testing.T) {
 func TestPushCountsCommitsAndSnapshotsAndKeepsTheTrackingRef(t *testing.T) {
 	nb := fixture(t, "ahead")
 	pushed, err := nb.Push()
-	want := golden(t, "ahead", "push", "noda push")
-	if got := masked(nb, mustSync(t, pushed, err)); got != want[0] {
-		t.Fatalf("push = %q, want %q", got, want[0])
+	const want = "push: main (2 commits, 1 snapshot) -> file://<ROOT>/remote.git"
+	if got := masked(nb, mustSync(t, pushed, err)); got != want {
+		t.Fatalf("push = %q, want %q", got, want)
 	}
 	drift, err := nb.Drift("main")
 	if err != nil || drift.Ahead != 0 {
@@ -126,15 +126,17 @@ func TestPushCountsCommitsAndSnapshotsAndKeepsTheTrackingRef(t *testing.T) {
 func TestPushHoldsBackASnapshotTheRemoteHasElsewhere(t *testing.T) {
 	nb := fixture(t, "tags")
 	pushed, err := nb.Push()
-	want := golden(t, "tags", "push", "noda push")
 	got := strings.Split(masked(nb, mustSync(t, pushed, err)), "\n")
-	same(t, "push", got, want)
+	same(t, "push", got, []string{
+		"push: main (1 commit, 1 snapshot) -> file://<ROOT>/remote.git",
+		"snapshot `clash` was not sent — the remote already has that name for another commit; rename yours, or drop it with `git tag -d clash`",
+	})
 }
 
 func TestPushRejectedAsksForAPull(t *testing.T) {
 	nb := fixture(t, "diverged-clean")
 	_, err := nb.Push()
-	// The same text the Rust golden has, which libgit2 wrote and git does not.
+	// The same text the Rust version had, which libgit2 wrote and git does not.
 	const expected = "push rejected — " + nonFastForward + "\nthe remote has commits you do not: run `noda pull` first"
 	if err == nil || err.Error() != expected {
 		t.Fatalf("err = %v", err)

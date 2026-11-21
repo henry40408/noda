@@ -1,9 +1,0 @@
-$ noda ls
-01abc234  Budget review  [work]
-04kmn123  Fresh idea
-02def567  Meeting notes  [work]
-
-files
-  diagram.png
---- stderr
---- exit 0

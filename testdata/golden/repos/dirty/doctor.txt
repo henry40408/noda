@@ -1,4 +1,0 @@
-$ noda doctor
-the notebook is in order
---- stderr
---- exit 0

@@ -1,3 +1,0 @@
-$ noda diff --remote
---- stderr
---- exit 0
