@@ -15,18 +15,20 @@
   const root = document.documentElement;
   const wide = matchMedia("(min-width:1024px)");
 
-  // Storage can be refused (a private window, a file:// page), and a refusal
-  // must cost a preference, never the keys.
+  // Storage can be refused (a private window, a file:// page, all cookies
+  // blocked), and a refusal must cost a preference, never the keys. The store
+  // is named, not passed: with cookies blocked, reading `localStorage` itself
+  // throws, so it has to happen inside the try.
   const kept = (store, name, value) => {
     try {
-      if (value === undefined) return store.getItem(name);
-      if (value === null) store.removeItem(name);
-      else store.setItem(name, value);
+      if (value === undefined) return window[store].getItem(name);
+      if (value === null) window[store].removeItem(name);
+      else window[store].setItem(name, value);
     } catch {}
     return null;
   };
-  let off = kept(localStorage, "noda.keys") === "off";
-  if (kept(sessionStorage, "noda.keyed")) root.classList.add("keyed");
+  let off = kept("localStorage", "noda.keys") === "off";
+  if (kept("sessionStorage", "noda.keyed")) root.classList.add("keyed");
 
   const visible = (el) => el.getClientRects().length > 0 && !el.disabled;
   const typing = (el) =>
@@ -124,9 +126,9 @@
   const place = "noda.row:" + location.pathname + location.search;
   addEventListener("click", (event) => {
     const row = event.target.closest && event.target.closest("main.rows a[href]");
-    if (row) kept(sessionStorage, place, row.getAttribute("href"));
+    if (row) kept("sessionStorage", place, row.getAttribute("href"));
   }, true);
-  const left = kept(sessionStorage, place);
+  const left = kept("sessionStorage", place);
   if (left && root.classList.contains("keyed") && !document.querySelector("[autofocus]")) {
     const row = rows().find((each) => each.getAttribute("href") === left);
     if (row) row.focus();
@@ -223,7 +225,7 @@
     toggle.textContent = off ? "Turn single keys on" : "Turn single keys off";
     toggle.addEventListener("click", () => {
       off = !off;
-      kept(localStorage, "noda.keys", off ? "off" : null);
+      kept("localStorage", "noda.keys", off ? "off" : null);
       draw();
       card.querySelector("form button").focus();
     });
@@ -356,7 +358,7 @@
       event.preventDefault();
       if (!root.classList.contains("keyed")) {
         root.classList.add("keyed");
-        kept(sessionStorage, "noda.keyed", "1");
+        kept("sessionStorage", "noda.keyed", "1");
       }
     };
     if (prefix) {

@@ -28,6 +28,16 @@ Feature: Pressing keys
       | s      | /nb/default/status |
       | h      | /                  |
 
+  # Chrome set to block all cookies throws from the very reading of
+  # `localStorage`, before any call that could be guarded. What is lost is the
+  # preference to switch the keys off, never the keys.
+  @scripted
+  Scenario: The keys work in a browser that refuses to store anything
+    Given the browser refuses to store anything
+    And I open the notebook on a desktop
+    When I hit the keys "n"
+    Then I am at "/nb/default/new"
+
   @scripted
   Scenario: g alone waits for the letter that says where
     Given I open the notebook on a desktop

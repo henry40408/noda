@@ -14,6 +14,13 @@ func registerNotebookSteps(scenario *godog.ScenarioContext, w *world) {
 		_, err := w.server.Run("add", title, "-c", body.Content)
 		return err
 	})
+	// What Chrome does with all cookies blocked: reading the storage object
+	// itself throws, as well as using it.
+	scenario.Step(`^the browser refuses to store anything$`, func() error {
+		return w.browser.BeforeEveryPage(`for (const name of ['localStorage', 'sessionStorage']) {
+			Object.defineProperty(window, name, {get() { throw new DOMException('The operation is insecure.', 'SecurityError'); }});
+		}`)
+	})
 	// A screen left open while the notebook was removed: the press then goes to
 	// an address the server answers with a refusal, which no fixture produces.
 	scenario.Step(`^the errand buttons lead to a notebook that is gone$`, func() error {

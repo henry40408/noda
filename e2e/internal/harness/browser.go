@@ -14,6 +14,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 )
@@ -209,6 +210,14 @@ func (b *Browser) KeyDownDuringComposition(key, code string) error {
 	return send(b, input.DispatchKeyEvent, input.DispatchKeyEventParams{
 		Type: input.DispatchKeyEventTypeKeyDown, Key: key, Code: code, WindowsVirtualKeyCode: 229,
 	})
+}
+
+// BeforeEveryPage runs a script in each page this browser opens from now on,
+// ahead of the page's own scripts.
+func (b *Browser) BeforeEveryPage(source string) error {
+	_, err := chromedp.Call(b.ctx, page.AddScriptToEvaluateOnNewDocument,
+		page.AddScriptToEvaluateOnNewDocumentParams{Source: source})
+	return err
 }
 
 // PointerTo moves the mouse, with no button down, so that what answers to
