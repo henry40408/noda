@@ -116,9 +116,10 @@ Feature: Writing from a phone
     And the page does not say "did not answer"
 
   # Both versions are kept and the page opens on a notice saying so. Scrolled to
-  # the top of the page, the sticky bar covers the notice's first line.
-  Scenario: A save that clashes with one made since opens on its notice
-    Given I open the notebook
+  # the top of the page, the sticky bar covers the notice's first line. The
+  # desktop is a page of its own: the rail, and a bar over each pane.
+  Scenario Outline: A save that clashes with one made since opens on its notice
+    Given I open the notebook on a <screen>
     When I press "Budget review"
     And I press "Edit"
     And another machine changes the line "the q3 budget is late" of "budget-review" to "the q3 budget is very late"
@@ -126,6 +127,11 @@ Feature: Writing from a phone
     And I submit "Save"
     Then the page says "Someone else saved while you were writing"
     And the notice is not under the bar
+
+    Examples:
+      | screen  |
+      | phone   |
+      | desktop |
 
   Scenario: Saving more than the server takes says so
     Given I open the notebook

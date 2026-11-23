@@ -94,20 +94,24 @@ Feature: Pressing keys
   # Every one of these letters is a shortcut on this page.
   @scripted
   Scenario: Letters typed into the search field are text
-    Given I open the notebook on a desktop
+    Given the browser notes what the keys press
+    And I open the notebook on a desktop
     When I type "gntdf?" into the search field
     Then the field named "q" holds "gntdf?"
+    And no key pressed anything
     And I am at "/nb/default"
     And the shortcut card is not open
 
   @scripted
   Scenario: Letters typed into a form are text
-    Given I open the notebook on a desktop
+    Given the browser notes what the keys press
+    And I open the notebook on a desktop
     When I press the button to write
     And I write "gtdfs" as the title
     And I write "n?pDej" as the body
     Then the field named "title" holds "gtdfs"
     And the field named "body" holds "n?pDej"
+    And no key pressed anything
     And I am at "/nb/default/new"
     And the shortcut card is not open
 
@@ -147,11 +151,13 @@ Feature: Pressing keys
   # round: it sends from a field, not from a link.
   @scripted
   Scenario: Ctrl and Enter do not delete a note from the button that keeps it
-    Given I open the notebook on a desktop
+    Given the browser notes what the keys press
+    And I open the notebook on a desktop
     When I press "Budget review"
     And I press "Delete"
     And I hit Ctrl and Enter
-    Then the notebook still holds "Budget review" after a moment
+    Then no key pressed anything
+    And the notebook still holds "Budget review"
 
   # Safari sends key code 229 for the keydown that ends a composition, with the
   # letter that was pressed.

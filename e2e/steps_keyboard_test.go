@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/chromedp/chromedp/kb"
 	"github.com/cucumber/godog"
@@ -31,10 +30,31 @@ func registerKeyboardSteps(scenario *godog.ScenarioContext, w *world) {
 			if (event.key === 'Escape' && event.target.type === 'search') event.preventDefault();
 		}, true);`)
 	})
-	// A write sent in error is on its way the moment the key is hit, and a
-	// second is far longer than it takes; only the failing case pays the wait.
-	scenario.Step(`^the notebook still holds `+quoted+` after a moment$`, func(title string) error {
-		time.Sleep(time.Second)
+	// A key acts by clicking a control or sending a form from the script, never
+	// as a person does, and both happen inside the key's own handler. So the count
+	// of them, read once the key has been delivered, is the whole answer: waiting
+	// for the address to move would pass before it did. It is kept in
+	// sessionStorage because a send ends in a navigation that takes the page's own
+	// variables with it.
+	scenario.Step(`^the browser notes what the keys press$`, func() error {
+		return w.browser.BeforeEveryPage(`for (const kind of ['click', 'submit']) {
+			addEventListener(kind, (event) => {
+				if (kind === 'click' && event.isTrusted) return;
+				sessionStorage.setItem('pressed', String(Number(sessionStorage.getItem('pressed') || 0) + 1));
+			}, true);
+		}`)
+	})
+	scenario.Step(`^no key pressed anything$`, func() error {
+		pressed, err := harness.Eval[string](w.browser, `sessionStorage.getItem('pressed') || '0'`)
+		if err != nil {
+			return err
+		}
+		if pressed != "0" {
+			return fmt.Errorf("a key pressed a control %s time(s) that no one meant it to", pressed)
+		}
+		return nil
+	})
+	scenario.Step(`^the notebook still holds `+quoted+`$`, func(title string) error {
 		listing, err := w.server.Run("ls")
 		if err != nil {
 			return err
