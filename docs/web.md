@@ -46,12 +46,17 @@ Every notebook is named in the URL — `/nb/work` for the listing, `/nb/work/n/k
 note — so the terminal's active-notebook pointer never changes what a tab shows. A note's slug
 and any prefix of its id redirect to the id, so a bookmark survives a retitle.
 
-**The front page lists the notebooks**, without the rail or the bar. A row is `noda status` in
-one line: the name (a link to the notebook), what it holds, the day it was last committed to,
-and its standing against the remote (a link to its network screen; plain words when there is no
-remote). The notebook your terminal is pointed at gets an uncoloured dot in the margin, as in
-`noda notebook ls` — the only place the pointer is read. Below 1024px the day goes; on a phone
-the file count goes too.
+**The front page lists the notebooks**, without the rail. A row is `noda status` in a few
+words: the name (a link to the notebook), what it holds, the day it was last committed to, and
+its standing against the remote (a link to its network screen; plain words when there is no
+remote). The notebook your terminal is pointed at ends its facts with `active`, as in
+`noda notebook ls` — the only place the pointer is read.
+
+**A notebook and a note each have a colour**, a stripe down the row and a dot in a link. It is
+`style.Hue` of the notebook's name or the note's id, one of twelve, so it is nothing that is
+stored: the same note is the same colour in the listing, in a link from another note and in the
+margin, on every machine, for as long as its id lives. `web/theme.go` writes the twelve, for
+light and dark both; colour is never the only thing that says which is which.
 
 ## Security
 
@@ -109,13 +114,16 @@ A note can be started, rewritten, retitled, tagged, pinned and deleted. Each run
 `add`, `mv`, `tag`, `pin` or `rm` the terminal calls, and lands as its own commit with the same
 message.
 
-**A note's bar is Edit, Tags, Rename, Links, Pin and Delete.** Delete is the only coloured item
-on any bar, and leads to a confirmation page, so a mis-tap costs a page and never a note.
+**A note's bar is Edit, Tags, Rename, Pin and Delete.** Delete is the only coloured item on any
+bar, and leads to a confirmation page that offers to keep the note first, so a mis-tap costs a
+page and never a note.
 
 **Pin is the one write with no page in between**, and the only item that is a button rather
 than a link: a write has to be a `POST` for the `Origin` check to mean anything. It says `Pin`
 or `Unpin`, and the two are separate addresses, so a retried `POST` lands where you asked. A
-pinned row on the listing says `pinned` after its tags.
+pinned row on the listing says `pinned` after its tags. With a script the label flips at
+once, to the word the server will send next; if the server does not answer, the old word comes
+back with a line saying so.
 
 **The tags form** ticks off what should go and takes new tags in one field, space-separated and
 quoted the way the `:` prompt and the search box quote (`ops docs "24.04 Dark patterns"` adds
@@ -139,6 +147,19 @@ closes when you leave the page, and all of them close when the server stops. Wit
 off nothing appears and Save behaves the same.
 
 ## Reading a note
+
+**What is about the note, not in it, is its margin.** The bar, the tags (each a link to the
+listing narrowed to it), when it was updated and created, and **Linked from**: the notes that
+point at it, each in its own colour. Below 1440px the margin follows the text; from there it
+stands to the side and stays in view as the note scrolls. The backlinks come with the note, so
+the margin is never empty on first sight, at the cost of reading every note once for each note
+opened. `/nb/<book>/n/<id>/backlinks` is still an address and still answers, but nothing on a
+note links to it.
+
+**A ticked item is struck through and dimmed**, and an item nested under it says its own state:
+an unticked one is not struck. A line through an item runs through everything inside it, so the
+nested list is drawn as a box the line does not enter. A link in a ticked item is struck but not
+dimmed, since it may be what you came to read.
 
 **Links go where they went on disk.** A relative link to another note —
 `[the plan](k3f9m2p1-the-plan.md)` — opens that note's page and is coloured like an id, so a link
@@ -173,24 +194,36 @@ order has a direction it means first. They are plain links, so they work without
 order rides in the address (`/nb/work?sort=updated`, `&r=1` for reversed), and the default writes
 nothing. The search form carries the order in hidden inputs, and the chips carry the query.
 
+**Under the search field, how it grouped your query**, at every width: `tag:work OR tag:q3
+budget` draws as two pills, `tag:work or tag:q3` and `budget`, joined by `and`.
+
 **A row's day is the stamp the listing is ordered by**: `created` in `created` order, `updated`
 otherwise.
 
+**Rows come in runs under a heading.** Pinned notes are a run of their own, first. When the
+order is `created` or `updated`, the rest are cut a month at a time (`November 2026`), and a note
+with no usable stamp is under `Undated`. In any other order there is nothing to cut by, and the
+heading `Notes` says that on purpose. The month is the one in the **server's** zone (`TZ`), as
+`noda todo` judges today, so a heading and the same note in a terminal agree; with scripts on
+the day on a row is restated in the reader's zone, so a note near midnight may sit under a
+month its row's day does not name. A heading changes how the list is drawn and never what it
+holds, so a reversed listing, which puts the pinned notes last, reads right too.
+
 ## Other screens
 
-On a bar along the bottom (a rail on wider screens):
+On the rail, which is a bar along the bottom of a phone:
 
 - `/nb/<book>/files` — everything that is not a note: size, type, and how many notes link to it.
   A file nothing links to is what `doctor --links` calls an orphan.
-- `/nb/<book>/tags` — every tag with its count, commonest first. Pressing one narrows the listing
-  to it, quoted if it has a space.
-- `/nb/<book>/todo` — `noda todo`: every unticked box, soonest due first, a passed date in red,
-  each row linking to its note. There is no way to tick one, for the reason there is no
-  `noda done`.
+- `/nb/<book>/tags` — every tag with its count, commonest first, and a bar for its weight
+  against the commonest. Pressing one narrows the listing to it, quoted if it has a space.
+- `/nb/<book>/todo` — `noda todo`: every unticked box, in three runs (overdue, with the date in
+  red; dated; and whenever), soonest due first inside each, every row linking to its note. There
+  is no way to tick one, for the reason there is no `noda done`.
 
-`/nb/<book>/n/<id>/backlinks`, reached from **Links**, lists what points at a note. Like the
-files page's counts, it matches on the id in the destination, so a retitle does not silence it.
-It is its own screen because it parses every note, where reading a note opens one file.
+**Backlinks** are matched on the id in the destination, so a retitle does not silence them. A
+note's come with its page, in the margin. A file has no page of its own, so the files page's
+counts link to `/nb/<book>/f/<name>/backlinks`, which lists the notes that point at it.
 
 **Times.** The page carries each stamp as the frontmatter spells it (`Z` or `+08:00` and all),
 in a `<time>`. With scripts on, it is restated in the reader's zone — the one fact the server
@@ -203,27 +236,62 @@ only, never anything by class.
 
 The same interface at a higher density, not a second design:
 
-- **Under 640px** it is a phone: one screen at a time, the bar along the bottom.
-- **From 640px** the bar becomes a rail on the left, and a row's day and tags move to the right
-  of the title. Rows gain the id column, in `noda ls -l` order (id, title, updated, tags), and
-  the search field shows how it grouped your query: `tag:work OR tag:q3 budget` draws as
-  `(tag:work or tag:q3) and (budget)`.
-- **From 1024px** the notes screen splits: listing on the left, the note on the right, and
-  picking a note replaces only the right half. With no note picked, the notebook's `README.md`
-  stands there.
-- **From 1440px** the note's backlinks sit in its margin.
+- **Under 640px** it is a phone: one screen at a time, the rail along the bottom as a dock
+  with the new-note button above it. A note's own actions follow its text. Every control has a
+  hit area of at least 48 by 48px, and a field's text is 16px so a phone does not zoom into it.
+- **From 640px** the dock becomes a rail on the left, icons over their words, and a note's
+  actions move to the head of the note.
+- **From 1024px** the notes screen splits: listing beside the note, and picking a note replaces
+  only the note. With no note picked, the notebook's `README.md` stands there.
+- **From 1280px** the rail has words: the notebook's name with a way to all notebooks, the new
+  note button as a button, and each screen named.
+- **From 1440px** the margin stands to the side of the note instead of under it.
+- **From 1800px** the listing and the margin are given more room.
 
-The listing beside a note and the margin backlinks are fetched by the script, not sent with the
-page. Without scripts a note on a wide screen is the note and the way back; the Links button
-reaches the backlinks at every width.
+The listing beside a note is fetched by the script, not sent with the page, since a phone never
+draws it. Without scripts a note on a wide screen is the note and the way back to the listing.
+
+## The keyboard
+
+With a script on, the keys below work. **A key only presses a control that is already on the
+page**: the server marks a link, a button or a field with the key it answers to, and the script
+clicks the visible one. So a key never does what the page cannot, a screen's keys are decided by
+its markup, and without the script the control is the link or button it always was. `?` opens a
+card of what the keys do *on this screen*, built from the page as it opens; where there is a
+rail, its foot has a Shortcuts button for a pointer.
+
+| Key | Does |
+| --- | --- |
+| `g` then `n` `t` `d` `f` `s` `h` | go to Notes, Tags, Todo, Files, Status, all notebooks |
+| `n` · `/` | a new note · the search field |
+| `o` · `O` | the next order · reverse this one |
+| `e` `t` `r` `p` `D` | on a note: Edit, Tags, Rename, Pin or Unpin, Delete (Shift-d) |
+| `j` `k` | the next row, the previous row; on a note, scroll |
+| `J` `K` | with the listing beside the note: open the next note, the previous |
+| `gg` · `G` | top · bottom |
+| `Esc` | one step back: leave a field, clear the search, then go up a level |
+| `Ctrl`/`⌘` `⏎` | send the form being written |
+
+After `g`, a strip names what it is waiting for and lets go after two and a half seconds. A
+form has no `Esc` for the way back, since it would take what was typed with it.
+
+**Keys wait whenever they could be somebody's text.** Not while a field, a text area or a menu
+has the focus, and not while an input method is composing (the keydown with `isComposing`, or
+the `229` that Safari reports for the one that ends a composition). A chord with `Ctrl`, `⌘` or
+`Alt` is the browser's. A key is the letter on the keycap, so a Dvorak or AZERTY layout follows
+what it prints, and only a layout with no Latin letter on the key falls back to its position.
+
+Single keys can be turned off from the card, and then `Esc`, `Ctrl ⏎` and `?` still answer. The
+choice is kept in the browser's local storage; where storage is refused it costs the choice,
+never the keys.
 
 ## Sync
 
-The corner of the listing's bar shows where the notebook stands — `2 to push`, `in sync`,
-`never synced` — and opens `/nb/<book>/status`: what `noda status` prints, nothing fetched, with
-`Sync`, `Pull` and `Push` below. Its last row is the version answering, as `noda --version`
-prints it, so a bug report can name the build. The same version is in small type at the foot of
-the rail, on screens wide enough to have one.
+The sync line at the foot of the rail, and the pill above a listing on a phone, show where the
+notebook stands — `2 to push`, `in sync`, `never synced` — and open `/nb/<book>/status`: what
+`noda status` prints, nothing fetched, with `Sync`, `Pull` and `Push` below. Its last row is the
+version answering, as `noda --version` prints it, so a bug report can name the build. The same
+version is in small type at the foot of the rail, on screens wide enough to have one.
 
 Pressing starts the errand and answers at once; the screen checks back every two seconds until
 it finishes (`<meta http-equiv="refresh">` without scripts, a fetch with them).
@@ -262,34 +330,33 @@ A clean stop exits `0`; leaving an errand unfinished does not.
 
 The stylesheet and scripts are separate files at hashed addresses (`/a/style.<hash>.css`, one per
 script), served `immutable` for a year; the pages naming them are `no-cache`. A first view costs
-the same bytes as a self-contained page would, in up to four requests; every view after costs
+the same bytes as a self-contained page would, in up to six requests; every view after costs
 the page alone — which matters because fragments cannot cover a note opened from a link, a form
 page, or any screen on a phone.
 
 | | first view | first, gzip | every view after | after, gzip |
 | --- | ---: | ---: | ---: | ---: |
-| the notebooks page | 40,503 | 12,934 | 905 | 445 |
-| a listing | 75,194 | 25,250 | 7,138 | 2,531 |
-| a note | 62,708 | 20,684 | 4,336 | 1,432 |
-| the network screen | 43,416 | 14,050 | 2,509 | 925 |
-| a backlinks page | 40,426 | 12,962 | 828 | 473 |
-| an edit form | 40,663 | 13,095 | 1,065 | 606 |
+| the notebooks page | 46,928 | 14,240 | 891 | 480 |
+| a listing | 76,532 | 24,319 | 5,632 | 1,827 |
+| a note | 67,857 | 21,342 | 5,543 | 1,858 |
+| the network screen | 52,545 | 16,377 | 3,235 | 1,272 |
+| a backlinks page | 48,604 | 14,808 | 2,567 | 1,048 |
+| an edit form | 55,497 | 17,787 | 1,469 | 812 |
 
-Bytes, against a notebook of five notes. The order chips cost 701 bytes on a listing and nothing
+Bytes, against a notebook of five notes. The order chips cost 574 bytes on a listing and nothing
 on a note, which carries no rows to order.
 
 **Every answer is gzipped.** A listing is rows differing by a few words, so at two hundred notes
-an ordered listing falls from 74,163 bytes to 4,043. It was chosen by costing a sort switch:
+an ordered listing falls from 61,781 bytes to 6,076. It was chosen by costing a sort switch:
 
 | a sort switch, 200 notes | bytes | |
 | --- | ---: | ---: |
-| as it was | 74,163 | |
-| a fragment narrower than the column | 73,164 | −1.3% |
-| gzip | 4,043 | −94.6% |
-| sending the order rather than the rows | 4,704 | −93.7% |
-| both | 1,640 | −97.8% |
+| as it was | 61,781 | |
+| a fragment narrower than the column | 59,360 | −3.9% |
+| gzip | 6,076 | −90.2% |
+| both | 5,108 | −91.7% |
 
-Sending only the new order would have saved 2.4 KB more at the cost of a new fragment vocabulary
+Sending only the new order would have saved more still, at the cost of a new fragment vocabulary
 and a client that rewrites rows, so the protocol stayed as it was. The script cannot reorder the
 rows itself: a row lacks the slug and the second stamp, and the server (UTF-8) and JavaScript (UTF-16)
 order titles differently above the BMP.
@@ -302,26 +369,33 @@ Not compressed: bodies under 32 bytes (`/health`'s `ok`), images, PDFs,
 
 Every screen works without it. With it:
 
+- the keys of [the keyboard](#the-keyboard);
 - the listing filters as you type;
 - the network screen fetches its own news instead of reloading whole;
 - on a two-pane screen, picking a note, sending the search and pressing back replace the reading
   half instead of the page;
+- a write is sent where it was made: the form goes by `fetch` and the answer lands on the page
+  that is already there, so the scroll and the focus stay and a dropped connection leaves what
+  was typed in the box;
 - every stamp is restated in the reader's zone.
 
-The first three only remove a wait. The fourth adds a fact the server cannot know; without it
-the stamp is unconverted, not wrong.
+All but the last only remove a wait or a reload, and what arrives is the page the scriptless form
+would have shown. The last adds a fact the server cannot know; without it the stamp is
+unconverted, not wrong.
 
 **Fetches ask for part of a page.** A fetch names the region it wants in an `x-noda-fragment`
-header, and the server sends that region from the same function that builds the whole page:
-49,751 bytes down to 1,579 for a note, 41,418 to 876 for a network-screen poll, and 67,591 to
-4,723 for a search from the listing (the address still gets the query, so back works). The
-search box in a note page's index column is left alone, since ⏎ there means going to the
-listing. The part is a substring of the page (the page tests assert it), and the whole page is always
-a correct answer: no header, or a name the server does not know, gets the page, and every fetch
-picks the element it wants out of whatever arrives.
+header (`read`, `index`, `screen` or `news`), and the server sends that region from the same
+function that builds the whole page: 5,543 bytes down to 2,238 for a note, 3,235 to 1,165 for a
+network-screen poll, and 5,771 to 3,350 for a search from the listing (the address still gets the
+query, so back works), against five notes. The search box in a note page's index column is left
+alone, since ⏎ there means going to the listing. The part is a substring of the page (the page
+tests assert it), and the whole page is always a correct answer: no header, or a name the server
+does not know, gets the page, and every fetch picks the element it wants out of whatever arrives.
 
 **The filter may be narrower than the server, never wider.** Every row is on the page, the
 excluded ones `hidden`, so filtering is the server's operation on the same markup. It cannot read
 bodies: when a query holds a bare word or `text:`, the listing says it filtered by title and tag, and ⏎
 finishes the job — a title or tag hit is always a text hit too. A *negated* one would keep
-rows the server drops, so there, and for a half-typed query, the filter stands aside until ⏎.
+rows the server drops, so there, and for a half-typed query, the filter stands aside until ⏎, and
+the remark under the field says so ("Not filtered yet — press ⏎ to search.") rather than go on
+claiming a filter that is not happening.

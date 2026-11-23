@@ -111,6 +111,13 @@ and knowing nothing about requests. Both exist so what goes on screen can be tes
 to the screen and `web/theme.go` restates it in CSS, for light and dark both, because a browser
 brings no theme of its own. An id is the same yellow in `noda ls`, the TUI and a browser.
 
+**A note's colour is `style.Hue`, not a stored field.** It maps a note's id, or a notebook's name,
+to one of twelve indices by arithmetic on the text, so the same note wears the same colour in a
+list, in a link and in a margin, and a note needs nothing written to be coloured. `style` decides
+which index; `web/theme.go` writes `.h0`–`.h11` for light and dark, and the markup carries only
+the class (`hueClass`). It is invariant 8 again: a front end that wants a colour per note asks
+`style`, and does not hash on its own.
+
 ## Concurrency, which exists only in the web server
 
 **A handler opens its own `Notebook`.** A `Notebook` is a directory and a few cached reads, with no
@@ -169,10 +176,18 @@ sooner, never differently.
 hash in the name, served for a year. The pages are `no-cache` so they always name addresses this
 build wrote; the two halves are one decision, and either alone serves a page whose stylesheet 404s.
 
+**A key.** Declared by the markup: `keyed("<key>", …)` in `page*.go` writes `data-key` on the link,
+button or field that does the thing, and `assets/keys.js` presses the visible one. The script holds
+no table of what a key does, so a key cannot do what the page cannot, and what a screen answers to
+is read off that screen's markup. Only movement, Esc, the `g` prefix and the card that lists the
+keys live in the script. Two controls may carry one key when only one is ever visible (the rail's
+and the index pane's `gs`); a test allows exactly those.
+
 **A part of a page.** When the script fetches a page to take one region out of it, that region gets
 a name as a `fragment` in `internal/web/answer.go`, its own function in `page*.go`, and a branch in the handler; the fetch sends
 `x-noda-fragment: <name>`. One route may answer several parts, chosen by what the reader is doing,
-never by the route. Two rules: the whole page is *built from* the part (asserted by containment in the
+never by the route. A part carries everything the reader sees with it: a note's backlinks arrive
+with the `read` part, so a margin is never filled by a second fetch. Two rules: the whole page is *built from* the part (asserted by containment in the
 page tests, never two renderings that look alike), and the whole page stays a correct answer for an
 unknown name or a missing header. The script queries what arrives for the element it wants, so a
 server ignoring the header would still be answering — the header is an optimisation, not a
