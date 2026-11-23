@@ -23,10 +23,7 @@ code{font-family:var(--mono);font-size:.88em;padding:1px 5px;border-radius:4px;b
 kbd{display:inline-block;min-width:1.55em;padding:2px 5px;font:11.5px/1.2 var(--mono);text-align:center;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--sunk);color:var(--ink);white-space:nowrap}
 mark{background:var(--mark);color:inherit;border-radius:2px}
 
-/* The twelve. Lightness comes from the theme, so one list serves both. */
-.h0{--s:oklch(var(--sl) .15 20)}.h1{--s:oklch(var(--sl) .15 50)}.h2{--s:oklch(var(--sl) .14 80)}.h3{--s:oklch(var(--sl) .15 125)}
-.h4{--s:oklch(var(--sl) .14 155)}.h5{--s:oklch(var(--sl) .12 185)}.h6{--s:oklch(var(--sl) .12 215)}.h7{--s:oklch(var(--sl) .15 245)}
-.h8{--s:oklch(var(--sl) .17 270)}.h9{--s:oklch(var(--sl) .18 300)}.h10{--s:oklch(var(--sl) .18 330)}.h11{--s:oklch(var(--sl) .17 355)}
+/* .h0 to .h11, the twelve note colours, are written by theme.go and nowhere else. */
 
 /* ------------------------------------------------------------------ phone */
 .app{min-height:100dvh;display:flex;flex-direction:column;padding-bottom:calc(var(--dock) + env(safe-area-inset-bottom))}

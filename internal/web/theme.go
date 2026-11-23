@@ -86,8 +86,8 @@ func (t terminal) properties() string {
 }
 
 // hueAngles is each note colour's chroma and angle in OKLCH. style.Hue picks the
-// index; the array's length is checked against style.Hues at compile time, so a
-// colour added there and forgotten here does not build.
+// index. Fewer than style.Hues entries still compiles, so a colour added there
+// and forgotten here is caught by asset_test, not by the build.
 var hueAngles = [style.Hues][2]string{
 	{".15", "20"}, {".15", "50"}, {".14", "80"}, {".15", "125"},
 	{".14", "155"}, {".12", "185"}, {".12", "215"}, {".15", "245"},

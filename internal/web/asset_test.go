@@ -69,11 +69,16 @@ func TestWhatAPageLinksIsWhatTheRouteAnswers(t *testing.T) {
 	}
 }
 
-func TestTheStylesheetDefinesEveryHueAndNoOther(t *testing.T) {
+// Exactly one rule a colour: theme.go writes them and no other file does, so
+// deleting the list there takes the colours away rather than leaving a copy
+// to answer. A colour added to style and not to hueAngles compiles (a shorter
+// array literal does) and writes a rule with no angle, which this rejects too.
+func TestTheStylesheetDefinesEveryHueOnceAndNoOther(t *testing.T) {
 	sheet := AssetStyle.body()
 	for index := range style.Hues {
-		if rule := ".h" + strconv.Itoa(index) + "{--s:oklch(var(--sl) "; !strings.Contains(sheet, rule) {
-			t.Errorf("no rule %q", rule)
+		rule := regexp.MustCompile(`\.h` + strconv.Itoa(index) + `\{--s:oklch\(var\(--sl\) \.\d+ \d+\)\}`)
+		if found := len(rule.FindAllString(sheet, -1)); found != 1 {
+			t.Errorf("%d rules for .h%d, want one", found, index)
 		}
 	}
 	if past := ".h" + strconv.Itoa(style.Hues) + "{"; strings.Contains(sheet, past) {

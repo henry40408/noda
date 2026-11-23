@@ -114,9 +114,9 @@ brings no theme of its own. An id is the same yellow in `noda ls`, the TUI and a
 **A note's colour is `style.Hue`, not a stored field.** It maps a note's id, or a notebook's name,
 to one of twelve indices by arithmetic on the text, so the same note wears the same colour in a
 list, in a link and in a margin, and a note needs nothing written to be coloured. `style` decides
-which index; `web/theme.go` writes `.h0`–`.h11` for light and dark, and the markup carries only
-the class (`hueClass`). It is invariant 8 again: a front end that wants a colour per note asks
-`style`, and does not hash on its own.
+which index; `web/theme.go` writes `.h0`–`.h11` once, with the lightness a variable that light and
+dark each set, and the markup carries only the class (`hueClass`). It is invariant 8 again: a front
+end that wants a colour per note asks `style`, and does not hash on its own.
 
 ## Concurrency, which exists only in the web server
 
