@@ -66,6 +66,19 @@ func (p Page) Press(what string) error {
 	return p.click("a link naming "+quote(what), `//a[contains(., `+xpathString(what)+`)]`)
 }
 
+// PressOrder presses the order chip of that name, "title" for one that sorts
+// by title: a row's title is also a link, and Press would find it first.
+func (p Page) PressOrder(name string) error {
+	return p.click("the order chip "+quote(name),
+		`//nav[contains(@class, 'sortbar')]//a[normalize-space(.)=`+xpathString(name)+`]`)
+}
+
+// NothingIsWaiting is true when no pane of the screen is marked as waiting for
+// an answer: the mark the page puts on a pane while a press is on its way.
+func (p Page) NothingIsWaiting() (bool, error) {
+	return Exec[bool](p.Browser, `return document.querySelector('[aria-busy]') === null;`)
+}
+
 // PressInMargin is Press within the margin note, whose titles usually also
 // appear in the listing, where Press would find them first.
 func (p Page) PressInMargin(what string) error {

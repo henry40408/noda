@@ -50,6 +50,7 @@ func registerNavigationSteps(scenario *godog.ScenarioContext, w *world) {
 	scenario.Step(`^I press `+quoted+` in the margin note$`, func(what string) error {
 		return w.page().PressInMargin(what)
 	})
+	scenario.Step(`^I press the order `+quoted+`$`, func(name string) error { return w.page().PressOrder(name) })
 	scenario.Step(`^I press back$`, func() error { return w.page().TapBack() })
 	scenario.Step(`^I go back$`, func() error { return w.page().GoBack() })
 	scenario.Step(`^I remember this page$`, func() error { return w.page().Remember() })

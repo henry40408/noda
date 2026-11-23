@@ -105,3 +105,26 @@ Feature: Answering without asking
     When I submit "Sync"
     Then the page is not reloading itself
     And the page says "Synced"
+
+  # A pane is marked as waiting while its press is on the way. A press made
+  # meanwhile in the other pane overtakes it and its answer is dropped, so the
+  # mark has to come off without that answer.
+  @scripted
+  Scenario: A note overtaken by an order does not leave its pane waiting
+    Given the browser can hold back an answer
+    And I open the notebook on a desktop
+    And the next answer to a press is held back
+    When I press "Reading list"
+    And I press the order "title"
+    And the held answer arrives
+    Then no pane is waiting for an answer
+
+  @scripted
+  Scenario: An order overtaken by a note does not leave its pane waiting
+    Given the browser can hold back an answer
+    And I open the notebook on a desktop
+    And the next answer to a press is held back
+    When I press the order "title"
+    And I press "Reading list"
+    And the held answer arrives
+    Then no pane is waiting for an answer

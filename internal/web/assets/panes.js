@@ -108,6 +108,9 @@
     // note on screen stays until the next one has arrived whole.
     const mine = ++turn;
     mark();
+    // An order still on its way has just been overtaken and its answer will be
+    // dropped, so nothing else would take its mark off.
+    busy(".pane.index", false);
     busy(".pane.read", true);
     let text;
     try {
@@ -163,6 +166,8 @@
     history.pushState(null, "", where);
     listed = where;
     const mine = ++turn;
+    // The same, for a note still on its way.
+    busy(".pane.read", false);
     busy(".pane.index", true);
     let text;
     try {

@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"fmt"
+
 	"github.com/cucumber/godog"
 
 	"github.com/henry40408/noda/e2e/internal/harness"
@@ -33,6 +35,39 @@ func registerNotebookSteps(scenario *godog.ScenarioContext, w *world) {
 			return moved;
 		})()`)
 		return err
+	})
+	// A slow server: the first answer a row press or an order press asks for
+	// waits until the scenario lets it through, so the next press can overtake it.
+	scenario.Step(`^the browser can hold back an answer$`, func() error {
+		return w.browser.BeforeEveryPage(`const fetched = window.fetch;
+			window.heldBack = [];
+			window.holdNext = false;
+			window.fetch = (url, init) => {
+				const kind = init && init.headers && init.headers['x-noda-fragment'];
+				if (!window.holdNext || (kind !== 'read' && kind !== 'index')) return fetched(url, init);
+				window.holdNext = false;
+				return new Promise((resolve, reject) => {
+					window.heldBack.push(() => fetched(url, init).then(resolve, reject));
+				});
+			};`)
+	})
+	scenario.Step(`^the next answer to a press is held back$`, func() error {
+		_, err := harness.Eval[bool](w.browser, `window.holdNext = true`)
+		return err
+	})
+	scenario.Step(`^the held answer arrives$`, func() error {
+		released, err := harness.Eval[int](w.browser, `(function() {
+			const sends = window.heldBack.splice(0);
+			sends.forEach((send) => send());
+			return sends.length;
+		})()`)
+		if err == nil && released == 0 {
+			return fmt.Errorf("no answer was held back, so nothing was overtaken")
+		}
+		return err
+	})
+	scenario.Step(`^no pane is waiting for an answer$`, func() error {
+		return harness.Eventually("no pane to wait for an answer", w.page().NothingIsWaiting)
 	})
 	// What another machine's sync does to a note this browser has open.
 	scenario.Step(`^the note `+quoted+` is deleted from another machine$`, func(key string) error {
