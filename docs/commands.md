@@ -368,7 +368,8 @@ waits for a running `sync`. A second signal stops the waiting.
 Under the search field are four order chips — the default `slug` order and the three `--sort`
 accepts. Pressing the one in force reverses it, like `-r`. The order rides in the address
 (`?sort=updated`); the default writes nothing. Ordered by `created` or `updated`, the rows are
-cut into runs by month, with the pinned notes first.
+cut into runs by month, with the pinned notes first. A reversed order reverses the runs too, as
+`-r` reverses pins, so the pinned notes come last.
 
 A relative link to another note opens that note, and a bare `https://` address is a link too. A
 link off the notebook opens in a new tab and is sent no referrer, since the address holds a note
