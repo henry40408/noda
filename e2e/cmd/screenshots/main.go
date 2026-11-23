@@ -181,7 +181,14 @@ func take(server *harness.Server, scheme, output string) error {
 		if err := page.Go("/nb/" + harness.Notebook + shot.path); err != nil {
 			return err
 		}
-		// The panes and stamps are scripts that run after the page has loaded.
+		// A note's listing beside it is fetched by the panes script after the
+		// page has loaded, and the stamps are restated after that.
+		if err := harness.Eventually("the listing to be on the screen", func() (bool, error) {
+			rows, err := page.Rows()
+			return len(rows) > 0, err
+		}); err != nil {
+			return err
+		}
 		time.Sleep(400 * time.Millisecond)
 		if err := browser.Screenshot(filepath.Join(output, shot.name+suffix+".png")); err != nil {
 			return err
