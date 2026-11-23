@@ -240,6 +240,35 @@ func TestARefusedChangeIsHandedBackWithTheReason(t *testing.T) {
 	}
 }
 
+// A note whose frontmatter was broken by hand since the form was drawn can be
+// found by its address but not read. The refusal is still the answer, with the
+// id where the title would be: a 500 would hide why the write was refused.
+func TestARefusalForANoteThatCannotBeReadIsStillAForm(t *testing.T) {
+	for _, change := range []struct{ route, field, value string }{
+		{"/edit", "body", "new text"},
+		{"/rename", "title", "A new title"},
+	} {
+		t.Run(change.route, func(t *testing.T) {
+			site := serving(t)
+			id := site.idOf("budget-review")
+			path := site.notePath("budget-review")
+			if err := os.WriteFile(path, []byte("no frontmatter any more\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The form's own fingerprint, so an edit is not turned away as stale
+			// before it is refused.
+			fingerprint, err := blobID(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refused := site.post("/nb/default/n/"+id+change.route, change.field, change.value, "fingerprint", fingerprint)
+			if refused.status != 200 || !refused.says("<form") || !refused.says(`aria-label="Back to `+id+`"`) {
+				t.Fatalf("%d %s", refused.status, refused.body)
+			}
+		})
+	}
+}
+
 func TestANoteCanBeDeletedButAskingToDeleteOnlyAsks(t *testing.T) {
 	site := serving(t)
 	id := site.idOf("reading-list")

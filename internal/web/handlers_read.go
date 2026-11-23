@@ -221,13 +221,15 @@ type located struct {
 
 // about is the note a form is about, titled by what the file says now: the form's
 // way back is named after the note, which a refused form's own fields (the
-// title being typed, say) do not say.
-func (at located) about() (About, error) {
+// title being typed, say) do not say. A note that cannot be read is named by
+// its id: it is called on the way to showing why a write was refused, and a
+// label is not worth hiding that reason behind a 500.
+func (at located) about() About {
 	parsed, _, err := readNote(at.opened, at.id, at.slug)
 	if err != nil {
-		return About{}, err
+		return About{ID: at.id, Slug: at.slug, Title: at.id}
 	}
-	return About{ID: at.id, Slug: at.slug, Title: parsed.Title}, nil
+	return About{ID: at.id, Slug: at.slug, Title: parsed.Title}
 }
 
 // aim finds the note a key names. tail is what follows the id in the address a
