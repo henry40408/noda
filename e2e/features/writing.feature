@@ -88,6 +88,18 @@ Feature: Writing from a phone
     Then the page says "No such note"
     And the page does not say "did not answer"
 
+  # Both versions are kept and the page opens on a notice saying so. Scrolled to
+  # the top of the page, the sticky bar covers the notice's first line.
+  Scenario: A save that clashes with one made since opens on its notice
+    Given I open the notebook
+    When I press "Budget review"
+    And I press "Edit"
+    And another machine changes the line "the q3 budget is late" of "budget-review" to "the q3 budget is very late"
+    And I write "the q3 budget is nearly done\n\n- [ ] chase the marketing line due:2000-01-01\n" as the body
+    And I submit "Save"
+    Then the page says "Someone else saved while you were writing"
+    And the notice is not under the bar
+
   Scenario: Saving more than the server takes says so
     Given I open the notebook
     When I press "Budget review"

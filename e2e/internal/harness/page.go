@@ -538,6 +538,24 @@ func (p Page) HasProblem() (string, bool, error) {
 	return p.optionalText(`const p = document.querySelector('.problem'); return p ? p.innerText : null;`)
 }
 
+// ClearOfTheBar is whether the first element matching selector starts below
+// the sticky bar: a screen scrolled to its top edge puts what is first on it
+// under the bar, where its first line cannot be read.
+func (p Page) ClearOfTheBar(selector string) (bool, error) {
+	below, err := Exec[*bool](p.Browser, `
+		const el = document.querySelector(arguments[0]);
+		const bar = document.querySelector('.topbar');
+		if (!el || !bar) return null;
+		return el.getBoundingClientRect().top >= bar.getBoundingClientRect().bottom - 0.5;`, selector)
+	if err != nil {
+		return false, err
+	}
+	if below == nil {
+		return false, fmt.Errorf("no %s, or no bar, on the page", selector)
+	}
+	return *below, nil
+}
+
 // ControlsSmallerThan lists every control smaller than a thumb, with its
 // measurements: only a laid-out page knows whether the minimum height held.
 // It measures the hit area, not the ink (a 24px chevron in a 48px target).

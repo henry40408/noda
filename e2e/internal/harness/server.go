@@ -88,6 +88,30 @@ func (w Workspace) NoteFile(key string) (string, error) {
 	return filepath.Base(strings.TrimSpace(path)), nil
 }
 
+// ChangeLine is what a pull from another machine leaves in a note: one line of
+// its text replaced, and committed. The open web page does not know.
+func (w Workspace) ChangeLine(key, from, to string) error {
+	path, err := w.Run("path", key)
+	if err != nil {
+		return err
+	}
+	path = strings.TrimSpace(path)
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(text), from) {
+		return fmt.Errorf("%s has no line %q to change", key, from)
+	}
+	changed := strings.Replace(string(text), from, to, 1)
+	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+		return err
+	}
+	_, err = git(w.notebookDir(), "-c", "user.name=elsewhere", "-c", "user.email=elsewhere@example.com",
+		"commit", "-aq", "-m", "changed elsewhere")
+	return err
+}
+
 // Server is a running `noda web` and its workspace.
 type Server struct {
 	Workspace

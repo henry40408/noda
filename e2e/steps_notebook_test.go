@@ -93,6 +93,16 @@ func registerNotebookSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	scenario.Step(`^another machine changes the line `+quoted+` of `+quoted+` to `+quoted+`$`, func(from, key, to string) error {
+		return w.server.ChangeLine(key, from, to)
+	})
+	scenario.Step(`^the notice is not under the bar$`, func() error {
+		below, err := w.page().ClearOfTheBar(".said")
+		if err == nil && !below {
+			err = fmt.Errorf("the notice starts under the bar, so its first line cannot be read")
+		}
+		return err
+	})
 	scenario.Step(`^the notebook is also kept under the name `+quoted+`$`, func(name string) error {
 		return w.server.CopyNotebook(name)
 	})
