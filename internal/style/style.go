@@ -1,6 +1,12 @@
 // Package style is the palette. Colour marks what a line is, never what it
 // means, and never a note's own text.
 //
+// The one colour that is neither a line's kind nor a warning is Hue: which of a
+// fixed set of colours an identity (a note's id, a notebook's name) wears, so
+// the web page can show the same note in the same colour wherever it is named.
+// It is decided here, once, as an index; the web theme turns the index into a
+// colour for its own background, and the terminal never uses it.
+//
 // Whether colour is wanted is not decided where text is built: commands always
 // emit escapes, and the output path calls Wanted and Strip, so a piped
 // `noda show` writes exactly the bytes on disk.
