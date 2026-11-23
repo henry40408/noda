@@ -239,6 +239,20 @@ Feature: The same pages on a wider screen
       | desktop |
       | monitor |
 
+  # A mouse needs less than a finger: from 640px, with one, a tag is the pill and
+  # no more. A phone and a touch screen give a finger its 48, which touch.feature
+  # holds.
+  Scenario Outline: A tag is only as tall as its pill under a mouse
+    Given I open the notebook on a <screen>
+    When I press "Budget review"
+    Then the tag "work" is no taller than 32 pixels
+
+    Examples:
+      | screen  |
+      | tablet  |
+      | desktop |
+      | monitor |
+
   # An empty answer is said; a column gone quiet reads as broken.
   Scenario: A note nothing points at says so
     Given I open the notebook on a monitor

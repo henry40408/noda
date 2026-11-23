@@ -120,6 +120,15 @@ func (p Page) tagChipBox(name string) (*[4]float64, error) {
 		return [box.left, box.top, box.width, box.height];`, name)
 }
 
+// TagChipHeight is the height of the displayed tag chip with this name.
+func (p Page) TagChipHeight(name string) (height float64, present bool, err error) {
+	box, err := p.tagChipBox(name)
+	if err != nil || box == nil {
+		return 0, false, err
+	}
+	return box[3], true, nil
+}
+
 // RestOnTag puts the pointer on the middle of the note's tag chip.
 func (p Page) RestOnTag(name string) error {
 	return Eventually("resting the pointer on the tag "+quote(name), func() (bool, error) {

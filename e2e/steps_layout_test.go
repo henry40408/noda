@@ -32,6 +32,21 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	scenario.Step(`^the tag `+quoted+` is no taller than (\d+) pixels$`, func(name string, most int) error {
+		var last float64
+		err := harness.Eventually(fmt.Sprintf("the tag %q to be drawn", name), func() (bool, error) {
+			height, present, err := w.page().TagChipHeight(name)
+			last = height
+			return present, err
+		})
+		if err != nil {
+			return err
+		}
+		if last > float64(most) {
+			return fmt.Errorf("the tag %q is %gpx tall: a pointer needs no more than %dpx", name, last, most)
+		}
+		return nil
+	})
 	scenario.Step(`^the search field's text is at least (\d+) pixels$`, func(least int) error {
 		size, err := w.page().SearchFieldFontSize()
 		if err != nil {

@@ -139,8 +139,8 @@ main.note{padding:22px 20px 40px}
 .about div{display:grid;grid-template-columns:5em minmax(0,1fr);gap:10px;align-items:baseline}
 .about dt{color:var(--soft)}
 .about dd{margin:0}
-a.tag{position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;min-width:var(--tap);min-height:var(--tap);margin-right:2px;padding:0 8px;overflow-wrap:anywhere}
-a.tag::before{content:"";position:absolute;z-index:-1;inset:12px 0;border:1px solid var(--line);border-radius:6px}
+a.tag{position:relative;isolation:isolate;display:inline-block;margin:0 5px 5px 0;padding:1px 8px;overflow-wrap:anywhere}
+a.tag::before{content:"";position:absolute;z-index:-1;inset:0;border:1px solid var(--line);border-radius:6px}
 a.tag:hover::before{background:var(--sunk)}
 .none{margin:0;color:var(--soft);font-size:13px}
 .beside{margin-top:24px}
@@ -381,8 +381,6 @@ main.note{grid-template-columns:minmax(0,1fr) 236px;column-gap:44px;padding:0 32
 html.keyed .read .actionbar [data-key]::after{margin-left:auto}
 .about{margin-top:0;padding-top:0;border:0;gap:12px}
 .about div{grid-template-columns:minmax(0,1fr);gap:2px}
-a.tag{display:inline-block;min-width:0;min-height:0;margin:0 5px 5px 0;padding:1px 8px}
-a.tag::before{inset:0}
 .beside{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
 }
 @media (min-width:1800px){
@@ -390,13 +388,17 @@ a.tag::before{inset:0}
 main.note{grid-template-columns:minmax(0,1fr) 280px;column-gap:64px}
 }
 
-/* A tablet is as wide as a desktop and has no mouse. The rail, the tags and the shortcut card are drawn
-   tighter for a pointer above; a finger gets its --tap back at any width. A tag's pill is its ::before, so
-   the hit area grows and what is drawn does not. */
+/* A tablet is as wide as a desktop and has no mouse. The rail and the shortcut card are drawn tighter for
+   a pointer above; a finger gets its --tap back at any width. */
 @media (pointer:coarse){
 .rail .book,.rail .actionbar a,.rail .sync,.keys-open{min-height:var(--tap)}
 .fab{height:var(--tap)}
-a.tag{display:inline-flex;min-width:var(--tap);min-height:var(--tap);margin:0 2px 0 0;padding:0 8px}
-a.tag::before{inset:12px 0}
 dialog.keys form button{min-height:var(--tap)}
+}
+
+/* A tag is a pill and no more under a mouse. A finger, on a phone or at any width, gets --tap around it:
+   the pill is the ::before, so the hit area grows and what is drawn does not. */
+@media (max-width:639px),(pointer:coarse){
+a.tag{display:inline-flex;align-items:center;justify-content:center;min-width:var(--tap);min-height:var(--tap);margin:0 2px 0 0;padding:0 8px}
+a.tag::before{inset:12px 0}
 }
