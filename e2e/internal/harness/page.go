@@ -102,6 +102,12 @@ func (p Page) Untick(tag string) error {
 	return p.clickCSS("the box for "+quote(tag), fmt.Sprintf("input[name='keep'][value=%s]", cssString(tag)))
 }
 
+// TagBoxFocused is whether the focus is on the box for a tag.
+func (p Page) TagBoxFocused(tag string) (bool, error) {
+	return Exec[bool](p.Browser, `return document.activeElement.matches(arguments[0]);`,
+		fmt.Sprintf("input[name='keep'][value=%s]", cssString(tag)))
+}
+
 // tagChipBox is the box of the displayed tag chip with this name, in the
 // viewport after the chip was scrolled to its middle: left, top, width, height.
 func (p Page) tagChipBox(name string) (*[4]float64, error) {

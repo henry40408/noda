@@ -323,10 +323,11 @@
     }
 
     // The one chord: Ctrl or ⌘ with Enter sends the form being written, from
-    // a field only. On the page that asks whether to delete, the focus rests on
-    // "Keep it", and the chord there must not send that form.
+    // any of its fields, a tag's box included. On the page that asks whether to
+    // delete, the focus rests on "Keep it", a link, and the chord there must not
+    // send that form.
     if (key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      const form = typing(target) && target.closest("form.write");
+      const form = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) && target.closest("form.write");
       if (!form) return;
       event.preventDefault();
       return form.requestSubmit();

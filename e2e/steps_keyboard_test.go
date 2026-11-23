@@ -73,6 +73,11 @@ func registerKeyboardSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	scenario.Step(`^the box for `+quoted+` has the focus$`, func(tag string) error {
+		return harness.Eventually("the box for "+tag+" to have the focus", func() (bool, error) {
+			return w.page().TagBoxFocused(tag)
+		})
+	})
 	scenario.Step(`^the search field has the focus$`, func() error {
 		return harness.Eventually("the search field to have the focus", w.page().SearchFieldFocused)
 	})

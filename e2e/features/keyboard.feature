@@ -129,6 +129,19 @@ Feature: Pressing keys
     And I hit Ctrl and Enter
     Then the note is headed "Sent by chord"
 
+  # A tag's box is a field of the form like any other, and the chord sends from
+  # it, with the focus where the click left it.
+  @scripted
+  Scenario: Ctrl and Enter send the tags from one of their boxes
+    Given I open the notebook
+    When I press "Meeting notes"
+    And I press "Tags"
+    And I untick "work"
+    And the box for "work" has the focus
+    And I hit Ctrl and Enter
+    Then the note is headed "Meeting notes"
+    And the page does not say "work"
+
   # The page asking whether to delete rests its focus on "Keep it", so that a
   # plain Enter keeps the note. The chord that sends a form must not turn that
   # round: it sends from a field, not from a link.
