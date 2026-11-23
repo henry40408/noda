@@ -341,15 +341,16 @@ page, or any screen on a phone.
 
 | | first view | first, gzip | every view after | after, gzip |
 | --- | ---: | ---: | ---: | ---: |
-| the notebooks page | 46,928 | 14,240 | 891 | 480 |
-| a listing | 76,532 | 24,319 | 5,632 | 1,827 |
-| a note | 67,857 | 21,342 | 5,543 | 1,858 |
-| the network screen | 52,545 | 16,377 | 3,235 | 1,272 |
-| a backlinks page | 48,604 | 14,808 | 2,567 | 1,048 |
-| an edit form | 55,497 | 17,787 | 1,469 | 812 |
+| the notebooks page | 47,799 | 14,712 | 910 | 486 |
+| a listing | 79,591 | 25,639 | 5,385 | 1,795 |
+| a note | 71,377 | 22,784 | 5,757 | 1,948 |
+| the network screen | 53,540 | 16,910 | 3,243 | 1,277 |
+| a backlinks page | 49,456 | 15,273 | 2,567 | 1,047 |
+| an edit form | 58,527 | 19,060 | 1,573 | 867 |
 
-Bytes, against a notebook of five notes. The order chips cost 574 bytes on a listing and nothing
-on a note, which carries no rows to order.
+Bytes, against the five notes `e2e/` seeds, with no remote set. A first view is the page and what
+it links, the 314-byte icon aside; gzip is what the server sends, not `gzip -9`. The order chips
+cost 574 bytes on a listing and nothing on a note, which carries no rows to order.
 
 **Every answer is gzipped.** A listing is rows differing by a few words, so at two hundred notes
 an ordered listing falls from 61,781 bytes to 6,076. It was chosen by costing a sort switch:
@@ -406,9 +407,9 @@ unconverted, not wrong.
 
 **Fetches ask for part of a page.** A fetch names the region it wants in an `x-noda-fragment`
 header (`read`, `index`, `screen` or `news`), and the server sends that region from the same
-function that builds the whole page: 5,543 bytes down to 2,238 for a note, 3,235 to 1,165 for a
-network-screen poll, and 5,771 to 3,350 for a search from the listing (the address still gets the
-query, so back works), against five notes. The search box in a note page's index column is left
+function that builds the whole page: 5,757 bytes down to 2,452 for a note, 3,243 to 1,173 for a
+network-screen poll, and 5,510 to 3,089 for a search from the listing (the address still gets the
+query, so back works), against the same five notes. The search box in a note page's index column is left
 alone, since ⏎ there means going to the listing. The part is a substring of the page (the page
 tests assert it), and the whole page is always a correct answer: no header, or a name the server
 does not know, gets the page, and every fetch picks the element it wants out of whatever arrives.
