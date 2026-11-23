@@ -102,6 +102,21 @@ func TestTheDarkThemeLivesInsideTheMediaQuery(t *testing.T) {
 	}
 }
 
+// The three inks are asked of style, so a page and a terminal agree on what is
+// muted and what is red.
+func TestTheInksFollowTheStyleTheyAreAskedFor(t *testing.T) {
+	for name, theme := range map[string]terminal{"light": lightTheme, "dark": darkTheme} {
+		properties := theme.properties()
+		for _, ink := range []struct{ property, colour string }{
+			{"--ink", theme.text}, {"--soft", theme.dim}, {"--go", theme.text}, {"--bad", theme.red},
+		} {
+			if want := ink.property + ":" + ink.colour + ";"; !strings.Contains(properties, want) {
+				t.Errorf("%s theme: no %s in %s", name, want, properties)
+			}
+		}
+	}
+}
+
 func TestAnAddressThisBuildDidNotWriteIsNotAnswered(t *testing.T) {
 	for _, file := range []string{"style.000000000000.css", "style.css", "../../etc/passwd"} {
 		if _, ok := FindAsset(file); ok {

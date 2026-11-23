@@ -49,10 +49,10 @@ var darkTheme = terminal{
 // fill is a style as this theme draws it. Only foreground and dim cross over;
 // bold is left to the markup, so it is said in one place.
 func (t terminal) fill(s style.Style) string {
-	switch {
-	case s.Fg == style.Red:
+	if s.Fg == style.Red {
 		return t.red
-	case s.Fg == style.NoColor && s.Dim:
+	}
+	if s.Fg == style.NoColor && s.Dim {
 		return t.dim
 	}
 	return t.text
