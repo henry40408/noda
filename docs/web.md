@@ -416,7 +416,10 @@ does not know, gets the page, and every fetch picks the element it wants out of 
 The one name that is not a region is `sent`, sent with a write: the answer is `204` and an
 `x-noda-location` header instead of the 303, so the server does not build the page the write
 lands on for a fetch to throw away and then build it again when the script goes there. Without
-the header the 303 is followed, and the script goes to where it ended.
+the header the 303 is followed, and the script goes to where it ended. A `204` that arrives with no
+address, because a proxy dropped the header, is still a write that was made: the script goes to the
+notebook's listing, where a note made or changed is and a deleted one is not, and does not say
+"Not sent", which a second press would turn into a second note.
 
 **The filter may be narrower than the server, never wider.** Every row is on the page, the
 excluded ones `hidden`, so filtering is the server's operation on the same markup. It cannot read
