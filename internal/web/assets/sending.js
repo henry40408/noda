@@ -116,12 +116,16 @@
     };
     const answer = await send(form.getAttribute("action"), {
       method: "POST",
-      headers: { accept: "text/html" },
+      // "sent" asks for the address alone: following a redirect here would
+      // have the server build the page twice, here and again on arrival.
+      headers: { accept: "text/html", "x-noda-fragment": "sent" },
       // Urlencoded, as a form sends it: the server reads no multipart.
       body: new URLSearchParams(new FormData(form)),
     });
-    // Accepted: the server redirected, and the browser goes where it said.
-    if (answer && answer.redirected) return location.replace(answer.url);
+    // Accepted: the server said where, and the browser goes there. A server
+    // that ignored the header redirected, which fetch has followed.
+    const where = answer && (answer.headers.get("x-noda-location") || (answer.redirected && answer.url));
+    if (where) return location.replace(where);
     const text = answer && (await read(answer));
     if (text === null) return unsent("The server did not answer. Press " + was + " again.");
     // Refused, or a conflict to settle: whatever page the server sent, its

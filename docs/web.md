@@ -370,6 +370,22 @@ Not compressed: bodies under 32 bytes (`/health`'s `ok`), images, PDFs,
 `application/octet-stream` (a notebook's zips and videos), and the edit form's event stream. A
 `.json` attachment also falls to `octet-stream`, which costs one bigger download.
 
+**A note's backlinks cost a scan of the notebook.** The margin is part of the note, so opening a
+note reads every note and parses its Markdown, on a phone too, which never draws the margin. On a
+notebook of 2,000 notes (server time, `curl`, the median of 40 runs on one laptop):
+
+| | before the redesign | now |
+| --- | ---: | ---: |
+| a note, the whole page | 15.2 ms | 60.9 ms |
+| a note, the `read` fragment (`j` and `k` beside the listing) | 2.3 ms | 47.1 ms |
+| a listing | 41.0 ms | 41.3 ms |
+| a save, the POST and the page it lands on | 64 ms | 116 ms |
+
+So opening a note now costs what a listing costs: about 21 ms to read 2,000 files and 18 ms to
+parse their Markdown, linear in the notebook (200 notes would be a tenth of it). A save was 176 ms
+before the write asked only for the address it went to. Nothing is cached: a table of links would be
+a second record of the notebook, kept right against every pull and every edit from a terminal.
+
 ## And a script on top, that nothing depends on
 
 Every screen works without it. With it:
@@ -396,6 +412,10 @@ query, so back works), against five notes. The search box in a note page's index
 alone, since ⏎ there means going to the listing. The part is a substring of the page (the page
 tests assert it), and the whole page is always a correct answer: no header, or a name the server
 does not know, gets the page, and every fetch picks the element it wants out of whatever arrives.
+The one name that is not a region is `sent`, sent with a write: the answer is `204` and an
+`x-noda-location` header instead of the 303, so the server does not build the page the write
+lands on for a fetch to throw away and then build it again when the script goes there. Without
+the header the 303 is followed, and the script goes to where it ended.
 
 **The filter may be narrower than the server, never wider.** Every row is on the page, the
 excluded ones `hidden`, so filtering is the server's operation on the same markup. It cannot read

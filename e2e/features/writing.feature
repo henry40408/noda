@@ -12,6 +12,21 @@ Feature: Writing from a phone
     Then the note is headed "Written on a train"
     And the body says "the meeting is moved"
 
+  # A note's page carries a scan of the whole notebook for its backlinks, so a
+  # save that followed the redirect by fetch made the server build it, and built
+  # it once more when the script went there.
+  @scripted
+  Scenario: A save is answered with where it went, not with the page there
+    Given the browser notes how each write is answered
+    And I open the notebook
+    When I press "Budget review"
+    And I press "Edit"
+    And I write "saved by the script" as the body
+    And I submit "Save"
+    Then the note is headed "Budget review"
+    And the body says "saved by the script"
+    And no write was answered with the page it led to
+
   Scenario: Every control on the new-note form can be pressed
     Given I open the notebook
     When I press the button to write

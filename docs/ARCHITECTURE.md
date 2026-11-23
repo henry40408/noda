@@ -191,7 +191,8 @@ with the `read` part, so a margin is never filled by a second fetch. Two rules: 
 page tests, never two renderings that look alike), and the whole page stays a correct answer for an
 unknown name or a missing header. The script queries what arrives for the element it wants, so a
 server ignoring the header would still be answering — the header is an optimisation, not a
-protocol.
+protocol. `sent` is the one name that is not a region: a script's write sends it and gets `204` with
+`x-noda-location` for the 303, so the page the write lands on is built once, by the navigation.
 
 ## Testing
 

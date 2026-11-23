@@ -57,6 +57,40 @@ func TestANoteCanBeWrittenFromTheBrowser(t *testing.T) {
 	}
 }
 
+// postedByScript is a form as the script sends it: urlencoded, and asking to be
+// told where the write went rather than shown the page there.
+func (s *site) postedByScript(path string, pairs ...string) reply {
+	form := url.Values{}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		form.Add(pairs[i], pairs[i+1])
+	}
+	return s.send("POST", path, map[string]string{
+		"Content-Type":    "application/x-www-form-urlencoded",
+		"X-Noda-Fragment": "sent",
+	}, form.Encode())
+}
+
+func TestAScriptsSaveIsAnsweredWithWhereItWentNotThePageThere(t *testing.T) {
+	site := serving(t)
+	id := site.idOf("budget-review")
+	edit := "/nb/default/n/" + id + "/edit"
+	saved := site.postedByScript(edit, "fingerprint", site.fingerprintOn(edit), "body", "from the script")
+	if saved.status != 204 || saved.header.Get("X-Noda-Location") != "/nb/default/n/"+id || saved.header.Get("Location") != "" || saved.body != "" {
+		t.Fatalf("%d location %q, x-noda-location %q, body %q", saved.status, saved.header.Get("Location"), saved.header.Get("X-Noda-Location"), saved.body)
+	}
+	if written, err := os.ReadFile(site.notePath("budget-review")); err != nil || !strings.Contains(string(written), "from the script") {
+		t.Fatalf("%v %q", err, written)
+	}
+}
+
+func TestAScriptsRefusedWriteIsStillTheFormThatRefusedIt(t *testing.T) {
+	site := serving(t)
+	got := site.postedByScript("/nb/default/new", "title", "", "tags", "keep", "body", "")
+	if got.status != 200 || !got.says(`value="keep"`) || !got.says("<form") || got.header.Get("X-Noda-Location") != "" {
+		t.Fatalf("%d %q %s", got.status, got.header.Get("X-Noda-Location"), got.body)
+	}
+}
+
 func TestARefusedNewNoteComesBackWithWhatWasTyped(t *testing.T) {
 	site := serving(t)
 	got := site.post("/nb/default/new", "title", "", "tags", "keep", "body", "")

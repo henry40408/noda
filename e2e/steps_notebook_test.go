@@ -69,6 +69,30 @@ func registerNotebookSteps(scenario *godog.ScenarioContext, w *world) {
 	scenario.Step(`^no pane is waiting for an answer$`, func() error {
 		return harness.Eventually("no pane to wait for an answer", w.page().NothingIsWaiting)
 	})
+	// What each write was answered with, kept in sessionStorage because a save
+	// ends in a navigation that takes the page's own variables with it.
+	scenario.Step(`^the browser notes how each write is answered$`, func() error {
+		return w.browser.BeforeEveryPage(`const fetched = window.fetch;
+			window.fetch = async (url, init) => {
+				const answer = await fetched(url, init);
+				if (init && init.method === 'POST') {
+					const seen = JSON.parse(sessionStorage.getItem('answered') || '[]');
+					seen.push({status: answer.status, redirected: answer.redirected});
+					sessionStorage.setItem('answered', JSON.stringify(seen));
+				}
+				return answer;
+			};`)
+	})
+	scenario.Step(`^no write was answered with the page it led to$`, func() error {
+		seen, err := harness.Eval[string](w.browser, `sessionStorage.getItem('answered') || '[]'`)
+		if err != nil {
+			return err
+		}
+		if seen != `[{"status":204,"redirected":false}]` {
+			return fmt.Errorf("the save was answered with %s, not with where it went", seen)
+		}
+		return nil
+	})
 	scenario.Step(`^the notebook is also kept under the name `+quoted+`$`, func(name string) error {
 		return w.server.CopyNotebook(name)
 	})
