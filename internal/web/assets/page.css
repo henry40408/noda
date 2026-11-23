@@ -40,11 +40,14 @@ mark{background:var(--mark);color:inherit;border-radius:2px}
 .back span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .back svg{width:18px;height:18px}
 .back+.place::before{content:"/";margin-right:10px;color:var(--line);font-weight:400}
-.drift{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 10px;border:1px solid var(--line);border-radius:999px;color:var(--soft);font-size:12.5px;white-space:nowrap}
+/* A control's hit area is --tap and what is drawn may be smaller: the pill is a border on a pseudo-element, and the
+   negative margin keeps the hit area from taking room the pill never did. */
+.drift{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;min-height:var(--tap);margin-block:-9px;padding:0 11px;color:var(--soft);font-size:12.5px;white-space:nowrap}
+.drift::before{content:"";position:absolute;inset:9px 0;border:1px solid var(--line);border-radius:999px}
 .drift svg{width:14px;height:14px}
 
 .searchbar{flex:none;padding:12px 16px 0}
-.searchbar input[type=search]{width:100%;height:44px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--sunk);color:inherit;font:16px var(--ui);appearance:none}
+.searchbar input[type=search]{width:100%;height:var(--tap);padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--sunk);color:inherit;font:16px var(--ui);appearance:none}
 .searchbar input:focus{outline:2px solid var(--focus);outline-offset:-1px;background:var(--sheet)}
 .hint,.problem{margin:8px 2px 0;font-size:12.5px;color:var(--soft)}
 .problem{color:var(--bad)}
@@ -54,10 +57,11 @@ mark{background:var(--mark);color:inherit;border-radius:2px}
 .parse i,.parse .and{font-style:normal;font-family:var(--ui);color:var(--soft)}
 .parse i{margin:0 6px}
 /* The order is a line of words, the one in force weighted and arrowed. */
-.sortbar{display:flex;align-items:center;gap:2px;margin:8px -6px 0;padding-bottom:8px;font-size:13px;overflow-x:auto}
+.sortbar{display:flex;align-items:center;gap:2px;margin:0 -6px;font-size:13px;overflow-x:auto}
 .sortbar .lab{margin:0 6px;color:var(--soft)}
-.sortbar a{display:inline-flex;align-items:center;gap:3px;min-height:34px;padding:0 9px;border-radius:8px;color:var(--soft)}
-.sortbar a[aria-current]{background:var(--sunk);color:var(--ink);font-weight:600}
+.sortbar a{--grow:7px;position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:var(--tap);min-height:var(--tap);padding:0 9px;color:var(--soft)}
+.sortbar a[aria-current]{color:var(--ink);font-weight:600}
+.sortbar a[aria-current]::before{content:"";position:absolute;z-index:-1;inset:var(--grow) 0;border-radius:8px;background:var(--sunk)}
 .sortbar svg{width:14px;height:14px}
 
 /* A row. The bar at its left is the note's colour. */
@@ -87,7 +91,7 @@ mark{background:var(--mark);color:inherit;border-radius:2px}
 a.aside:not(.drift){text-decoration:underline;text-underline-offset:3px}
 .empty{margin:56px auto;padding:0 24px;max-width:31em;text-align:center;color:var(--soft)}
 .empty b{display:block;margin-bottom:6px;color:var(--ink);font-size:17px;overflow-wrap:anywhere}
-.empty a{text-decoration:underline;text-underline-offset:3px}
+.empty a{display:inline-flex;align-items:center;min-height:var(--tap);text-decoration:underline;text-underline-offset:3px}
 
 /* ----------------------------------------------------------------- a note */
 main.note{padding:22px 20px 40px}
@@ -137,8 +141,9 @@ main.note{padding:22px 20px 40px}
 .about div{display:grid;grid-template-columns:5em minmax(0,1fr);gap:10px;align-items:baseline}
 .about dt{color:var(--soft)}
 .about dd{margin:0}
-a.tag{display:inline-block;margin:0 5px 5px 0;padding:1px 8px;border:1px solid var(--line);border-radius:6px;overflow-wrap:anywhere}
-a.tag:hover{background:var(--sunk)}
+a.tag{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:var(--tap);min-height:var(--tap);margin-right:2px;padding:0 8px;overflow-wrap:anywhere}
+a.tag::before{content:"";position:absolute;inset:12px 0;border:1px solid var(--line);border-radius:6px}
+a.tag:hover::before{background:var(--sunk)}
 .none{margin:0;color:var(--soft);font-size:13px}
 .beside{margin-top:24px}
 .beside h2{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--soft)}
@@ -158,7 +163,7 @@ a.tag:hover{background:var(--sunk)}
 .rail .actionbar a:nth-child(-n+2){order:1}
 .rail .actionbar a:nth-child(n+3){order:3}
 .rail .actionbar [aria-current]{box-shadow:inset 0 2px var(--ink)}
-.fab{order:2;flex:none;align-self:center;display:flex;align-items:center;justify-content:center;width:46px;height:46px;margin:0 8px;border-radius:23px;background:var(--go);color:var(--go-ink)}
+.fab{order:2;flex:none;align-self:center;display:flex;align-items:center;justify-content:center;width:var(--tap);height:var(--tap);margin:0 8px;border-radius:calc(var(--tap) / 2);background:var(--go);color:var(--go-ink)}
 .fab span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 @media (max-width:639px){.app.split.at-note .rail{display:none}}
 @media (max-width:1023px){.app.split.at-list .read,.app.split.at-note .index{display:none}}
@@ -169,17 +174,17 @@ a.tag:hover{background:var(--sunk)}
 form.write{display:flex;flex-direction:column;gap:16px}
 .write label{display:block;margin-bottom:6px;font-size:13px;color:var(--soft)}
 .write input[type=text],.write textarea{width:100%;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:var(--sheet);color:inherit;font:16px var(--ui)}
-.write input[type=text]{height:46px}
-.write textarea{display:block;min-height:max(260px,calc(100dvh - 230px));padding:14px;font:15px/1.6 var(--mono);resize:vertical}
+.write input[type=text]{height:var(--tap)}
+.write textarea{display:block;min-height:max(260px,calc(100dvh - 230px));padding:14px;font:16px/1.6 var(--mono);resize:vertical}
 .write input:focus,.write textarea:focus{outline:2px solid var(--focus);outline-offset:-1px}
 .pair,.versus{display:grid;gap:16px}
 .form:has(.pair) textarea{min-height:max(260px,calc(100dvh - 320px))}
 .versus textarea,.theirs{min-height:max(200px,calc(50dvh - 150px))}
-.theirs{margin:0;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);font:15px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:break-word}
+.theirs{margin:0;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);font:16px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:break-word}
 small.hint{display:block;margin-top:6px}
 .buttons{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 0;background:var(--sheet);border-top:1px solid var(--line)}
 .buttons .filename{display:none}
-button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:10px;background:var(--sheet);color:var(--ink);font:600 14px var(--ui);cursor:pointer}
+button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:var(--tap);padding:0 18px;border:1px solid var(--line);border-radius:10px;background:var(--sheet);color:var(--ink);font:600 14px var(--ui);cursor:pointer}
 .go{background:var(--go);border-color:var(--go);color:var(--go-ink)}
 button.danger{border-color:currentColor;color:var(--bad)}
 button:disabled{opacity:.5;cursor:default}
@@ -192,7 +197,7 @@ button:disabled{opacity:.5;cursor:default}
 .rows>.said{margin:16px 16px 6px 22px}
 .doomed{margin:0 0 14px;padding:12px 14px;border:1px dashed var(--line);border-radius:8px;text-decoration:line-through;text-decoration-color:var(--bad)}
 .ticks{display:flex;flex-wrap:wrap;gap:8px}
-.write label.tick{display:inline-flex;align-items:center;gap:8px;min-height:44px;margin:0;padding:0 14px 0 10px;border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:15px;cursor:pointer}
+.write label.tick{display:inline-flex;align-items:center;gap:8px;min-height:var(--tap);margin:0;padding:0 14px 0 10px;border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:15px;cursor:pointer}
 .tick input{width:18px;height:18px;margin:0;accent-color:var(--ink)}
 .tick:has(input:not(:checked)) span{text-decoration:line-through;color:var(--soft)}
 .outcome{display:block;margin-top:6px;font:12.5px/1.5 var(--mono);white-space:pre-line;overflow-wrap:anywhere}
@@ -298,7 +303,7 @@ dialog.keys form p{flex:1 1 100%;margin:0;color:var(--soft);font-size:12.5px}
 .keys-open kbd{position:absolute;top:3px;right:3px;min-width:0;padding:1px 4px;font:10.5px/1.3 var(--mono);color:var(--soft)}
 @media (hover:hover){.keys-open:hover{background:var(--press);color:var(--ink)}}
 @media (hover:hover){.rail a:hover{background:var(--press)}.rail .fab:hover{background:var(--go);opacity:.88}}
-.sortbar a{min-height:30px}
+.sortbar a{--grow:0px;min-width:0;min-height:30px}
 /* The note's actions leave the dock for the head of the sheet. */
 main.note{display:grid;grid-template-columns:minmax(0,1fr);padding:0 28px 56px}
 .note article{width:100%;padding-top:28px}
@@ -308,7 +313,7 @@ main.note{display:grid;grid-template-columns:minmax(0,1fr);padding:0 28px 56px}
 .read .actionbar svg{width:17px;height:17px}
 .read .actionbar .danger{margin-left:auto}
 @media (hover:hover){.read .actionbar a:hover,.read .actionbar button:hover{background:var(--sunk);color:var(--ink)}.read .actionbar .danger:hover{color:var(--bad)}}
-@media (pointer:coarse){.read .actionbar a,.read .actionbar button{min-height:var(--tap)}.sortbar a{min-height:44px}}
+@media (pointer:coarse){.read .actionbar a,.read .actionbar button{min-height:var(--tap)}.sortbar a{--grow:9px;min-width:var(--tap);min-height:var(--tap)}}
 .about,.beside{width:100%;max-width:650px;margin-inline:auto}
 .about{margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
 .note h1{font-size:36px}
@@ -378,6 +383,8 @@ main.note{grid-template-columns:minmax(0,1fr) 236px;column-gap:44px;padding:0 32
 html.keyed .read .actionbar [data-key]::after{margin-left:auto}
 .about{margin-top:0;padding-top:0;border:0;gap:12px}
 .about div{grid-template-columns:minmax(0,1fr);gap:2px}
+a.tag{display:inline-block;min-width:0;min-height:0;margin:0 5px 5px 0;padding:1px 8px}
+a.tag::before{inset:0}
 .beside{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
 }
 @media (min-width:1800px){
