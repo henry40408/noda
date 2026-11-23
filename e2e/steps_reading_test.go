@@ -57,12 +57,14 @@ func registerReadingSteps(scenario *godog.ScenarioContext, w *world) {
 		})
 	})
 
-	scenario.Step(`^the listing says it filtered by title and tag$`, func() error {
+	remarkSays := func(words string) error {
 		return harness.Eventually("the remark under the field", func() (bool, error) {
 			hint, present, err := w.page().Hint()
-			return present && strings.Contains(hint, "title and tag"), err
+			return present && strings.Contains(hint, words), err
 		})
-	})
+	}
+	scenario.Step(`^the listing says it filtered by title and tag$`, func() error { return remarkSays("title and tag") })
+	scenario.Step(`^the listing says it has not filtered yet$`, func() error { return remarkSays("Not filtered yet") })
 	scenario.Step(`^the listing says nothing about whose answer it is$`, func() error {
 		hint, present, err := w.page().Hint()
 		if err != nil {
@@ -135,11 +137,11 @@ func registerReadingSteps(scenario *godog.ScenarioContext, w *world) {
 		return nil
 	})
 	scenario.Step(`^the note says when it was made and when it changed$`, func() error {
-		said, err := w.page().Stamps()
+		said, err := w.page().About()
 		if err != nil {
 			return err
 		}
-		for _, stamp := range []string{"created", "updated"} {
+		for _, stamp := range []string{"Created", "Updated"} {
 			if !strings.Contains(said, stamp) {
 				return fmt.Errorf("the note does not say %s: %s", stamp, said)
 			}
@@ -189,6 +191,27 @@ func registerReadingSteps(scenario *godog.ScenarioContext, w *world) {
 		})
 	})
 
+	// A done item is drawn struck and dimmed; whether a nested item inherits it is
+	// the point of the checkbox scenarios, so each reads the text itself.
+	scenario.Step(`^`+quoted+` is struck through$`, func(text string) error {
+		return harness.Eventually(fmt.Sprintf("%q to be struck through", text), func() (bool, error) {
+			struck, err := w.page().IsStruck(text)
+			return struck != nil && *struck, err
+		})
+	})
+	scenario.Step(`^`+quoted+` is not struck through$`, func(text string) error {
+		return harness.Eventually(fmt.Sprintf("%q to be left unstruck", text), func() (bool, error) {
+			struck, err := w.page().IsStruck(text)
+			return struck != nil && !*struck, err
+		})
+	})
+	scenario.Step(`^`+quoted+` is drawn in the colour of `+quoted+`$`, func(text, other string) error {
+		return sameColour(w, text, other, true)
+	})
+	scenario.Step(`^`+quoted+` is not drawn in the colour of `+quoted+`$`, func(text, other string) error {
+		return sameColour(w, text, other, false)
+	})
+
 	scenario.Step(`^the listing is still on screen$`, func() error {
 		return harness.Eventually("the listing to stay on screen", w.page().ListingOnScreen)
 	})
@@ -214,7 +237,15 @@ func registerReadingSteps(scenario *godog.ScenarioContext, w *world) {
 			return present && slices.Contains(lines, what), err
 		})
 	})
-	// "Nothing points here" is said, not shown as a closed column.
+	scenario.Step(`^the margin note does not list `+quoted+`$`, func(what string) error {
+		// Polled for the line that must be there, so a margin still on its way
+		// is not mistaken for one that leaves the title out.
+		return harness.Eventually(fmt.Sprintf("the margin note to leave out %q", what), func() (bool, error) {
+			lines, present, err := w.page().MarginNote()
+			return present && len(lines) > 0 && !slices.Contains(lines, what), err
+		})
+	})
+	// "No other note links here" is said, not shown as a closed column.
 	scenario.Step(`^the margin note says `+quoted+`$`, func(what string) error {
 		return harness.Eventually(fmt.Sprintf("the margin note to say %q", what), func() (bool, error) {
 			lines, present, err := w.page().MarginNote()
@@ -232,4 +263,22 @@ func registerReadingSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+}
+
+func sameColour(w *world, text, other string, want bool) error {
+	colour, found, err := w.page().ColourOf(text)
+	if err != nil {
+		return err
+	}
+	against, foundOther, err := w.page().ColourOf(other)
+	if err != nil {
+		return err
+	}
+	if !found || !foundOther {
+		return fmt.Errorf("the body does not hold both %q and %q", text, other)
+	}
+	if (colour == against) != want {
+		return fmt.Errorf("%q is %s and %q is %s", text, colour, other, against)
+	}
+	return nil
 }

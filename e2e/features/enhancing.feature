@@ -62,7 +62,7 @@ Feature: Answering without asking
     When I type "-budget" into the search field
     Then I see a row for "Budget review"
     And I see a row for "Reading list"
-    And the listing says it filtered by title and tag
+    And the listing says it has not filtered yet
 
   @scripted
   Scenario: Half a query is not a complaint and not a filter

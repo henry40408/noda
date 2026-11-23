@@ -48,6 +48,12 @@ func (p Page) Rows() ([]string, error) {
 		.filter(e => e.offsetParent !== null).map(e => e.innerText);`)
 }
 
+// RunHeadings are the headings the listing's rows are cut under, as drawn.
+func (p Page) RunHeadings() ([]string, error) {
+	return Exec[[]string](p.Browser, `return Array.from(document.querySelectorAll('.index .run h2'))
+		.filter(e => e.offsetParent !== null).map(e => e.textContent.trim());`)
+}
+
 // HiddenRows are rows the query excluded: on the page, not on the screen.
 func (p Page) HiddenRows() ([]string, error) {
 	return Exec[[]string](p.Browser, `return Array.from(document.querySelectorAll('.row'))
@@ -63,7 +69,7 @@ func (p Page) Press(what string) error {
 // appear in the listing, where Press would find them first.
 func (p Page) PressInMargin(what string) error {
 	return p.click("a link naming "+quote(what)+" in the margin note",
-		`//aside[contains(@class, 'beside')]//a[contains(., `+xpathString(what)+`)]`)
+		`//section[contains(@class, 'beside')]//a[contains(., `+xpathString(what)+`)]`)
 }
 
 // Submit presses the button containing what.
@@ -74,9 +80,8 @@ func (p Page) Submit(what string) error {
 // TapBack presses the page's own way back.
 func (p Page) TapBack() error { return p.clickCSS("the way back", ".back") }
 
-// TapWrite presses the new-note button, an icon, by the aria-label a screen
-// reader reads.
-func (p Page) TapWrite() error { return p.clickCSS("the button to write", "[aria-label='New note']") }
+// TapWrite presses the new-note button, the one round button in the rail.
+func (p Page) TapWrite() error { return p.clickCSS("the button to write", ".rail .fab") }
 
 // Untick unticks the box for a tag.
 func (p Page) Untick(tag string) error {
@@ -236,6 +241,47 @@ func (p Page) TypeSearch(query string) error {
 	return p.Browser.Do(actions...)
 }
 
+// HitKeys sends real keystrokes to whatever has the focus, as a keyboard does.
+// Nothing here dispatches an event of its own, so a shortcut is tested through
+// the same listener a reader's key reaches.
+func (p Page) HitKeys(keys string) error {
+	for _, key := range keys {
+		if err := p.Browser.KeyPress(key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HitKeyUnderInputMethod is a letter's keydown that an input method was
+// handling, which a shortcut must leave alone.
+func (p Page) HitKeyUnderInputMethod(letter string) error {
+	return p.Browser.KeyDownDuringComposition(letter, "Key"+strings.ToUpper(letter))
+}
+
+// WaitingForSecondKey reports the strip that follows `g`, which lists the
+// places a second key goes to.
+func (p Page) WaitingForSecondKey() (bool, error) {
+	return Eval[bool](p.Browser, "!!document.querySelector('.keys-next')")
+}
+
+// ShortcutCardOpen reports whether the card that lists the keys is showing.
+func (p Page) ShortcutCardOpen() (bool, error) {
+	return Eval[bool](p.Browser, "!!document.querySelector('dialog.keys[open]')")
+}
+
+// SearchFieldFocused reports whether the search field has the focus.
+func (p Page) SearchFieldFocused() (bool, error) {
+	return Exec[bool](p.Browser, `return document.activeElement === document.querySelector(arguments[0]);`, searchField)
+}
+
+// FieldHolds is what the field with this name holds right now, and whether
+// there is one.
+func (p Page) FieldHolds(name string) (string, bool, error) {
+	return p.optionalText(`const el = document.querySelector('[name="' + arguments[0] + '"]');
+		return el ? el.value : null;`, name)
+}
+
 // GoBack is the browser's own back button, which pops the history entry a
 // press pushed, unlike the page's chevron (a plain link).
 func (p Page) GoBack() error { return p.Browser.Back() }
@@ -250,27 +296,28 @@ func (p Page) Remember() error {
 // Remembered reports whether the document marked by Remember is still loaded.
 func (p Page) Remembered() (bool, error) { return Eval[bool](p.Browser, "!!window.__noda_here") }
 
-// MarkedPlace is the bar item marked aria-current, the attribute the colour
-// also hangs off. Empty and false when none, since the listing marks nothing.
+// MarkedPlace is the rail's place marked aria-current, the attribute the colour
+// also hangs off. Empty and false when none, as on the network screen. The
+// textContent is read because the label is drawn only from 640px up.
 func (p Page) MarkedPlace() (string, bool, error) {
-	text, err := Exec[*string](p.Browser, `const at = document.querySelector('.actionbar a[aria-current]');
-		return at ? at.innerText.trim() : null;`)
+	text, err := Exec[*string](p.Browser, `const at = document.querySelector('.rail .actionbar a[aria-current]');
+		return at ? at.textContent.trim() : null;`)
 	if err != nil || text == nil {
 		return "", false, err
 	}
 	return *text, true, nil
 }
 
-// IsOverdue reports whether this text is drawn as overdue: by class, not
-// colour, which is web/theme's business.
+// IsOverdue reports whether this text is drawn as overdue: by the run it sits
+// in, not by colour, which is web/theme's business.
 func (p Page) IsOverdue(text string) (bool, error) {
-	return Exec[bool](p.Browser, `return Array.from(document.querySelectorAll('.overdue'))
+	return Exec[bool](p.Browser, `return Array.from(document.querySelectorAll('.run.late .due'))
 		.some(e => e.innerText.includes(arguments[0]));`, text)
 }
 
 // optionalText runs a script that returns a string, or null for "not there".
-func (p Page) optionalText(body string) (string, bool, error) {
-	text, err := Exec[*string](p.Browser, body)
+func (p Page) optionalText(body string, arguments ...any) (string, bool, error) {
+	text, err := Exec[*string](p.Browser, body, arguments...)
 	if err != nil || text == nil {
 		return "", false, err
 	}
@@ -283,10 +330,10 @@ func (p Page) Hint() (string, bool, error) {
 		return hint && hint.offsetParent !== null ? hint.innerText : null;`)
 }
 
-// ShownID is the first row's id if drawn. Every row carries it and the
-// stylesheet hides it on a phone, so this asks offsetParent, not the markup.
+// ShownID is the first row's id if drawn, which asks offsetParent and not the
+// markup: a row that was only written is not one that can be read.
 func (p Page) ShownID() (string, bool, error) {
-	return p.optionalText(`const id = document.querySelector('.rows .row .ident .id');
+	return p.optionalText(`const id = document.querySelector('.rows .row .id');
 		return id && id.offsetParent !== null ? id.innerText : null;`)
 }
 
@@ -315,8 +362,12 @@ func (p Page) reads(selector string) (string, error) {
 		return el ? el.innerText : '';`, selector)
 }
 
-// Heading is the page's h1.
-func (p Page) Heading() (string, error) { return p.reads("h1") }
+// Heading is the h1 of what is being read. Beside a note the listing's own h1
+// comes first in the document, so the index pane is passed over.
+func (p Page) Heading() (string, error) {
+	return Exec[string](p.Browser, `const el = document.querySelector('.pane:not(.index) h1') || document.querySelector('h1');
+		return el ? el.innerText : '';`)
+}
 
 // Tab is the tab's title. A pane swap delivers it as a <title> in the
 // fragment, so this checks the server's string reached the tab.
@@ -328,8 +379,48 @@ func (p Page) Filename() (string, error) { return p.reads(".filename") }
 // Body is the note's rendered body.
 func (p Page) Body() (string, error) { return p.reads(".body") }
 
-// Stamps is a note's stamps and tags as one line of text.
-func (p Page) Stamps() (string, error) { return p.reads(".note-meta") }
+// About is what a note says about itself apart from its text: its tags and its
+// two stamps, term and answer.
+func (p Page) About() (string, error) { return p.reads(".about") }
+
+// Stamps is only the times in About, as the script may have restated them.
+func (p Page) Stamps() (string, error) {
+	return Exec[string](p.Browser, `return Array.from(document.querySelectorAll('.about time'))
+		.map(e => e.innerText).join(' | ');`)
+}
+
+// textInBody finds the first text node of the note's body holding text, in the
+// script that follows.
+const textInBody = `const walker = document.createTreeWalker(document.querySelector('.body'), NodeFilter.SHOW_TEXT);
+	let node = null;
+	while ((node = walker.nextNode())) if (node.data.includes(arguments[0])) break;
+	if (!node) return null;`
+
+// IsStruck reports whether the body's text is drawn with a line through it.
+//
+// A computed style only holds the decoration an element sets itself, but a
+// decoration is drawn through everything inside the element too, except what
+// is atomic inline-level, floated or positioned out of flow: those start over.
+// So this walks up from the text to the first element that stops a decoration,
+// which is the rule a browser draws by. The answer is nil when the body does
+// not hold the text.
+func (p Page) IsStruck(text string) (*bool, error) {
+	return Exec[*bool](p.Browser, textInBody+`
+		for (let el = node.parentElement; el; el = el.parentElement) {
+			const style = getComputedStyle(el);
+			if (style.textDecorationLine.includes('line-through')) return true;
+			const startsOver = style.display.startsWith('inline-') || style.cssFloat !== 'none'
+				|| style.position === 'absolute' || style.position === 'fixed';
+			if (startsOver || el.classList.contains('body')) return false;
+		}
+		return false;`, text)
+}
+
+// ColourOf is the colour the body's text is drawn in, as the browser spells it.
+func (p Page) ColourOf(text string) (string, bool, error) {
+	return p.optionalText(textInBody+`
+		return getComputedStyle(node.parentElement).color;`, text)
+}
 
 // Text is the whole page's rendered text.
 func (p Page) Text() (string, error) { return Eval[string](p.Browser, "document.body.innerText") }
@@ -472,17 +563,16 @@ func (p Page) MarkedRow() (string, bool, error) {
 		return row ? row.querySelector('.title').textContent.trim() : null;`)
 }
 
-// MarginNote is the margin note's lines, one per link, or its single "nothing
-// points here" line. It is nil when not drawn (under 1440px, or without
-// scripts), asked via offsetParent since the box is always in the markup. The
-// loading line is not filtered out, so "absent" cannot pass while loading.
+// MarginNote is what the note's margin says links to it: one line per link, or
+// its single "no other note links here" line. It is nil when no note is open,
+// asked via offsetParent since the box is in the markup of a note at any width.
 func (p Page) MarginNote() ([]string, bool, error) {
 	lines, err := Exec[*[]string](p.Browser, `
 		const aside = document.querySelector('.pane.read .beside');
 		if (!aside || aside.offsetParent === null) return null;
 		const minis = [...aside.querySelectorAll('.mini')];
-		if (minis.length) return minis.map((m) => m.childNodes[0].textContent.trim());
-		const one = aside.querySelector('.none,.said');
+		if (minis.length) return minis.map((m) => m.textContent.trim());
+		const one = aside.querySelector('.none');
 		return one ? [one.innerText.trim()] : [];`)
 	if err != nil || lines == nil {
 		return nil, false, err

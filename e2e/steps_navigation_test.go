@@ -30,6 +30,7 @@ func registerNavigationSteps(scenario *godog.ScenarioContext, w *world) {
 	opening(`^I open the front page$`, "/", nil)
 	opening(`^I open the front page on a tablet$`, "/", &harness.Tablet)
 	opening(`^I open the notebook$`, notebook, nil)
+	opening(`^I open the notebook on a phone$`, notebook, &harness.Phone)
 	opening(`^I open the notebook on a tablet$`, notebook, &harness.Tablet)
 	opening(`^I open the notebook on a desktop$`, notebook, &harness.Desktop)
 	opening(`^I open the notebook on a monitor$`, notebook, &harness.Monitor)
