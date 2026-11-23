@@ -30,6 +30,36 @@
     for (const old of within.querySelectorAll(".said[role=alert]")) old.remove();
   };
 
+  // "The server did not answer" is for a request that never completed. A
+  // refusal is an answer, and what it said is what the reader is told.
+  const send = async (action, init) => {
+    try {
+      return await fetch(action, init);
+    } catch {
+      return null;
+    }
+  };
+  const read = async (answer) => {
+    try {
+      return await answer.text();
+    } catch {
+      return null;
+    }
+  };
+  // The server's own sentence from a reply that is not the page asked for: a
+  // failure page says it in its `.empty`, anything else is taken as text.
+  const words = (answer, text) => {
+    const html = (answer.headers.get("content-type") || "").includes("html");
+    const page = html ? parse(text) : null;
+    const empty = page && page.querySelector(".empty");
+    if (empty) {
+      const parts = [...empty.childNodes].map((node) => node.textContent.trim());
+      return parts.filter(Boolean).join(" — ");
+    }
+    const said = (page ? page.body.textContent : text).trim().replace(/\s+/g, " ");
+    return said ? said + " (" + answer.status + ")" : "status " + answer.status;
+  };
+
   const pin = async (form, button) => {
     const pane = button.closest(".pane.read");
     const label = button.querySelector("span");
@@ -40,32 +70,32 @@
     if (button.dataset.then) label.textContent = button.dataset.then;
     button.setAttribute("aria-busy", "true");
     retract(pane);
-    try {
-      const answer = await fetch(form.getAttribute("action"), {
-        method: "POST",
-        headers: { accept: "text/html", "x-noda-fragment": "read" },
-      });
-      if (!answer.ok) throw new Error(answer.status);
-      const next = parse(await answer.text()).querySelector(".pane.read");
-      if (!next) return location.reload();
-      // The server's page replaces the guess. The reader stays where they
-      // were: same scroll, and the focus back on the button if it was there.
-      const held = pane.contains(document.activeElement) && document.activeElement.dataset.key;
-      const tops = [pane.scrollTop, document.scrollingElement.scrollTop];
-      pane.replaceWith(next);
-      next.scrollTop = tops[0];
-      document.scrollingElement.scrollTop = tops[1];
-      const again = held && next.querySelector(`[data-key="${held}"]`);
-      if (again) again.focus();
-      app.dispatchEvent(new CustomEvent("noda:read"));
-      // A pin moves the row: panes.js asks for the rows again.
-      app.dispatchEvent(new CustomEvent("noda:stale"));
-    } catch {
+    const failed = (why) => {
       label.textContent = was;
       button.removeAttribute("aria-busy");
-      const note = pane.querySelector("main");
-      note.prepend(complain("Not " + was.toLowerCase() + "ned.", "The server did not answer. Press " + was + " again to retry."));
-    }
+      pane.querySelector("main").prepend(complain("Not " + was.toLowerCase() + "ned.", why));
+    };
+    const answer = await send(form.getAttribute("action"), {
+      method: "POST",
+      headers: { accept: "text/html", "x-noda-fragment": "read" },
+    });
+    const text = answer && (await read(answer));
+    if (text === null) return failed("The server did not answer. Press " + was + " again to retry.");
+    if (!answer.ok) return failed("The server said: " + words(answer, text));
+    const next = parse(text).querySelector(".pane.read");
+    if (!next) return location.reload();
+    // The server's page replaces the guess. The reader stays where they
+    // were: same scroll, and the focus back on the button if it was there.
+    const held = pane.contains(document.activeElement) && document.activeElement.dataset.key;
+    const tops = [pane.scrollTop, document.scrollingElement.scrollTop];
+    pane.replaceWith(next);
+    next.scrollTop = tops[0];
+    document.scrollingElement.scrollTop = tops[1];
+    const again = held && next.querySelector(`[data-key="${held}"]`);
+    if (again) again.focus();
+    app.dispatchEvent(new CustomEvent("noda:read"));
+    // A pin moves the row: panes.js asks for the rows again.
+    app.dispatchEvent(new CustomEvent("noda:stale"));
   };
 
   const write = async (form, button) => {
@@ -76,37 +106,35 @@
     if (button && button.dataset.busy) button.textContent = button.dataset.busy;
     if (button) button.setAttribute("aria-busy", "true");
     retract(main);
-    try {
-      const answer = await fetch(form.getAttribute("action"), {
-        method: "POST",
-        headers: { accept: "text/html" },
-        // Urlencoded, as a form sends it: the server reads no multipart.
-        body: new URLSearchParams(new FormData(form)),
-      });
-      // Accepted: the server redirected, and the browser goes where it said.
-      if (answer.redirected) return location.replace(answer.url);
-      // Refused, or a conflict to settle: a page with a form on it, whatever
-      // its status. Its <main> takes the place of this one.
-      const sent = parse(await answer.text());
-      const next = sent.querySelector("main");
-      if (!next || !next.querySelector("form")) throw new Error(answer.status);
-      main.replaceChildren(...next.childNodes);
-      document.title = sent.title;
-      const first = main.querySelector("[autofocus]");
-      if (first) first.focus();
-      main.scrollIntoView({ block: "start" });
-      app.dispatchEvent(new CustomEvent("noda:form"));
-    } catch {
+    const unsent = (why) => {
       delete form.dataset.sending;
       if (button) {
         button.textContent = was;
         button.removeAttribute("aria-busy");
       }
-      main.insertBefore(
-        complain("Not sent.", "The server did not answer. What you typed is still here — press " + was + " again."),
-        form,
-      );
-    }
+      main.insertBefore(complain("Not sent.", why + " What you typed is still here."), form);
+    };
+    const answer = await send(form.getAttribute("action"), {
+      method: "POST",
+      headers: { accept: "text/html" },
+      // Urlencoded, as a form sends it: the server reads no multipart.
+      body: new URLSearchParams(new FormData(form)),
+    });
+    // Accepted: the server redirected, and the browser goes where it said.
+    if (answer && answer.redirected) return location.replace(answer.url);
+    const text = answer && (await read(answer));
+    if (text === null) return unsent("The server did not answer. Press " + was + " again.");
+    // Refused, or a conflict to settle: whatever page the server sent, its
+    // <main> takes the place of this one, as the page itself would have.
+    const sent = parse(text);
+    const next = sent.querySelector("main");
+    if (!next) return unsent("The server said: " + words(answer, text) + ".");
+    main.replaceChildren(...next.childNodes);
+    document.title = sent.title;
+    const first = main.querySelector("[autofocus]");
+    if (first) first.focus();
+    main.scrollIntoView({ block: "start" });
+    app.dispatchEvent(new CustomEvent("noda:form"));
   };
 
   document.addEventListener("submit", (event) => {

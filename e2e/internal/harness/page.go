@@ -266,6 +266,17 @@ func (p Page) Fill(name, value string) error {
 	return p.typeInto("[name="+cssString(name)+"]", value)
 }
 
+// FillWithBytes puts this many bytes into the field with this name in one go.
+// Typing is how a reader fills a field, but not two megabytes of it.
+func (p Page) FillWithBytes(name string, size int) error {
+	return Eventually("filling "+name, func() (bool, error) {
+		return Exec[bool](p.Browser, `const field = document.querySelector('[name=' + CSS.escape(arguments[0]) + ']');
+			if (!field) return false;
+			field.value = 'x'.repeat(arguments[1]);
+			return true;`, name, size)
+	})
+}
+
 const searchField = "input[name='q']"
 
 // Search types a query and presses Enter, as a phone keyboard would.

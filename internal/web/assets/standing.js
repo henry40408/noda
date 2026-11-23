@@ -66,7 +66,9 @@
         method: "POST",
         headers: { accept: "text/html", "x-noda-fragment": "news" },
       });
-      if (!answer.ok) throw new Error(answer.status);
+      // Whatever the status, the page the server sent is shown, as a press
+      // without this script would show it; a refusal is an answer, so it is
+      // never reported as silence.
       if (show(await answer.text())) again();
     } catch {
       // The request never arrived, so nothing was started: say so, and give

@@ -60,6 +60,38 @@ Feature: Writing from a phone
     And the words line up with the buttons under them
     And no control is smaller than 48 by 48
 
+  # A save the server refuses is not a save the server missed. Whatever the
+  # script does, the reader is told what the server said, which is what the page
+  # without the script would be showing.
+  Scenario: Saving a note that was deleted in the meantime says so
+    Given I open the notebook
+    When I press "Reading list"
+    And I press "Edit"
+    And the note "reading-list" is deleted from another machine
+    And I write "too late" as the body
+    And I submit "Save"
+    Then the page says "No such note"
+    And the page does not say "did not answer"
+
+  Scenario: Saving more than the server takes says so
+    Given I open the notebook
+    When I press "Budget review"
+    And I press "Edit"
+    And I paste a body longer than the server takes
+    And I submit "Save"
+    Then the page says "length limit exceeded"
+    And the page does not say "did not answer"
+
+  # The pin is the one write the script draws before the server has answered,
+  # so a refusal also has to take the guess back.
+  Scenario: Pinning a note that was deleted in the meantime says so
+    Given I open the notebook
+    When I press "Reading list"
+    And the note "reading-list" is deleted from another machine
+    And I submit "Pin"
+    Then the page says "No such note"
+    And the page does not say "did not answer"
+
   Scenario: Renaming keeps the address
     Given I open the notebook
     When I press "Reading list"

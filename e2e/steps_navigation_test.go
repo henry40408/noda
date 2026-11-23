@@ -97,6 +97,10 @@ func registerNavigationSteps(scenario *godog.ScenarioContext, w *world) {
 	scenario.Step(`^I write `+quoted+` as the body$`, func(text string) error {
 		return w.page().Fill("body", strings.ReplaceAll(text, `\n`, "\n"))
 	})
+	// Over the 2 MiB the server reads of a form.
+	scenario.Step(`^I paste a body longer than the server takes$`, func() error {
+		return w.page().FillWithBytes("body", 2<<20+1024)
+	})
 	scenario.Step(`^I submit `+quoted+`$`, func(what string) error { return w.page().Submit(what) })
 	scenario.Step(`^I untick `+quoted+`$`, func(tag string) error { return w.page().Untick(tag) })
 	scenario.Step(`^I press the button to write$`, func() error { return w.page().TapWrite() })
