@@ -280,8 +280,13 @@
   const escape = (event, target) => {
     if (prefix) return forget();
     if (typing(target)) {
-      // A search field with text in it: the browser's own Esc empties it.
-      if (target.type === "search" && target.value) return;
+      // A search field with text in it is emptied here: Chrome and Safari
+      // would, Firefox does not, and the card promises it.
+      if (target.type === "search" && target.value) {
+        event.preventDefault();
+        target.value = "";
+        return target.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       return target.blur();
     }
     if (beside() && inRead()) {
@@ -317,9 +322,11 @@
       return;
     }
 
-    // The one chord: Ctrl or ⌘ with Enter sends the form being written.
+    // The one chord: Ctrl or ⌘ with Enter sends the form being written, from
+    // a field only. On the page that asks whether to delete, the focus rests on
+    // "Keep it", and the chord there must not send that form.
     if (key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      const form = target.closest && target.closest("form.write");
+      const form = typing(target) && target.closest("form.write");
       if (!form) return;
       event.preventDefault();
       return form.requestSubmit();

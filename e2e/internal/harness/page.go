@@ -342,6 +342,12 @@ func (p Page) HitKeys(keys string) error {
 	return nil
 }
 
+// HitChord sends Ctrl, or Command on a Mac, held with the key: the page tells
+// the two apart no more than the keyboard does, so one is enough.
+func (p Page) HitChord(key rune) error {
+	return p.Browser.KeyPressWith(key, kb.ModifierCtrl)
+}
+
 // HitKeyUnderInputMethod is a letter's keydown that an input method was
 // handling, which a shortcut must leave alone.
 func (p Page) HitKeyUnderInputMethod(letter string) error {

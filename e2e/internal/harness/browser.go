@@ -187,7 +187,11 @@ func (b *Browser) Do(actions ...chromedp.Action[chromedp.Void]) error {
 // character as a separate char event, which Chrome delivers even when the page
 // cancelled the keydown, so a shortcut that rightly swallows its key would
 // appear to leak it into the field it just focused.
-func (b *Browser) KeyPress(key rune) error {
+func (b *Browser) KeyPress(key rune) error { return b.KeyPressWith(key, 0) }
+
+// KeyPressWith is KeyPress with modifier keys held. A chord carries no text:
+// Ctrl and Enter together type nothing.
+func (b *Browser) KeyPressWith(key rune, modifiers kb.Modifier) error {
 	events := kb.Encode(key)
 	if len(events) == 3 {
 		down, char, up := events[0], events[1], events[2]
@@ -195,6 +199,10 @@ func (b *Browser) KeyPress(key rune) error {
 		events = []*input.DispatchKeyEventParams{down, up}
 	}
 	for _, event := range events {
+		event.Modifiers = int64(modifiers)
+		if modifiers != 0 {
+			event.Text, event.UnmodifiedText = "", ""
+		}
 		if err := send(b, input.DispatchKeyEvent, *event); err != nil {
 			return err
 		}

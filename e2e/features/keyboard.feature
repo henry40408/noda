@@ -111,6 +111,35 @@ Feature: Pressing keys
     And I am at "/nb/default/new"
     And the shortcut card is not open
 
+  # Firefox's search field does not empty itself on Escape, so the page does.
+  @scripted
+  Scenario: Escape empties a search field the browser leaves alone
+    Given the browser does not empty a search field on Escape
+    And I open the notebook on a desktop
+    When I type "budget" into the search field
+    And I hit the Escape key
+    Then the field named "q" holds ""
+
+  @scripted
+  Scenario: Ctrl and Enter send the form being written
+    Given I open the notebook
+    When I press the button to write
+    And I write "Sent by chord" as the title
+    And I write "from the keyboard" as the body
+    And I hit Ctrl and Enter
+    Then the note is headed "Sent by chord"
+
+  # The page asking whether to delete rests its focus on "Keep it", so that a
+  # plain Enter keeps the note. The chord that sends a form must not turn that
+  # round: it sends from a field, not from a link.
+  @scripted
+  Scenario: Ctrl and Enter do not delete a note from the button that keeps it
+    Given I open the notebook on a desktop
+    When I press "Budget review"
+    And I press "Delete"
+    And I hit Ctrl and Enter
+    Then the notebook still holds "Budget review" after a moment
+
   # Safari sends key code 229 for the keydown that ends a composition, with the
   # letter that was pressed.
   @scripted
