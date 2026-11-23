@@ -27,6 +27,33 @@ Feature: Writing from a phone
     And the body says "saved by the script"
     And no write was answered with the page it led to
 
+  # A proxy that drops the header leaves an accepted write with nothing to say
+  # where it went. It is still accepted: "Not sent" would be false, and the next
+  # press would write a second note.
+  @scripted
+  Scenario: A new note whose answer lost its address is still a new note
+    Given a proxy strips the address from every answer to a write
+    And I open the notebook
+    When I press the button to write
+    And I write "Written behind a proxy" as the title
+    And I write "once" as the body
+    And I submit "Add note"
+    Then I am at "/nb/default"
+    And I see a row for "Written behind a proxy"
+    And the page does not say "Not sent"
+
+  # The place a deletion leads to is not the note, which is gone.
+  @scripted
+  Scenario: A deletion whose answer lost its address does not lead to the note
+    Given a proxy strips the address from every answer to a write
+    And I open the notebook
+    When I press "Reading list"
+    And I press "Delete"
+    And I submit "Delete"
+    Then I am at "/nb/default"
+    And I do not see a row for "Reading list"
+    And the page does not say "No such note"
+
   Scenario: Every control on the new-note form can be pressed
     Given I open the notebook
     When I press the button to write

@@ -126,6 +126,15 @@
     // that ignored the header redirected, which fetch has followed.
     const where = answer && (answer.headers.get("x-noda-location") || (answer.redirected && answer.url));
     if (where) return location.replace(where);
+    // A 204 with no address is an accepted write whose header a proxy took off.
+    // "Not sent" would be false, and a second press a second note. The
+    // notebook's list is the one place every write can end: a note made or
+    // changed is in it, and a deleted one is not, where the note's own page
+    // (the form's address, one segment up) is what a delete has just removed.
+    if (answer && answer.status === 204) {
+      const book = form.getAttribute("action").match(/^\/nb\/[^/]+/);
+      return location.replace(book ? book[0] : "/");
+    }
     const text = answer && (await read(answer));
     if (text === null) return unsent("The server did not answer. Press " + was + " again.");
     // Refused, or a conflict to settle: whatever page the server sent, its

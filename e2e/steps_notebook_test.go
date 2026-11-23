@@ -93,6 +93,20 @@ func registerNotebookSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	// A proxy that drops a response header it does not know: the server's 204 then
+	// arrives with nothing in it to say where the write went.
+	scenario.Step(`^a proxy strips the address from every answer to a write$`, func() error {
+		return w.browser.BeforeEveryPage(`const fetched = window.fetch;
+			window.fetch = async (url, init) => {
+				const answer = await fetched(url, init);
+				if (!init || init.method !== 'POST') return answer;
+				const headers = new Headers(answer.headers);
+				headers.delete('x-noda-location');
+				// A 204 may not be given a body, even an empty one.
+				const body = answer.status === 204 ? null : answer.body;
+				return new Response(body, {status: answer.status, headers});
+			};`)
+	})
 	scenario.Step(`^another machine changes the line `+quoted+` of `+quoted+` to `+quoted+`$`, func(from, key, to string) error {
 		return w.server.ChangeLine(key, from, to)
 	})
