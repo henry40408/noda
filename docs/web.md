@@ -237,8 +237,8 @@ only, never anything by class.
 The same interface at a higher density, not a second design:
 
 - **Under 640px** it is a phone: one screen at a time, the rail along the bottom as a dock
-  with the new-note button above it. A note's own actions follow its text. Every control has a
-  hit area of at least 48 by 48px, and a field's text is 16px so a phone does not zoom into it.
+  with the new-note button above it. A note's own actions follow its text. A field's text is 16px
+  so a phone does not zoom into it.
 - **From 640px** the dock becomes a rail on the left, icons over their words, and a note's
   actions move to the head of the note.
 - **From 1024px** the notes screen splits: listing beside the note, and picking a note replaces
@@ -247,6 +247,11 @@ The same interface at a higher density, not a second design:
   note button as a button, and each screen named.
 - **From 1440px** the margin stands to the side of the note instead of under it.
 - **From 1800px** the listing and the margin are given more room.
+
+**A control's hit area is at least 48 by 48px** under 640px, and at any width when the primary
+pointer is a finger (`pointer:coarse`, an iPad in landscape for one). With a mouse on a wider
+screen the controls are drawn tighter: a rail item is 40px from 1280px, a note's action 36px, an order chip
+30px, a tag only as tall as its text, and the shortcut card's buttons 38px.
 
 The listing beside a note is fetched by the script, not sent with the page, since a phone never
 draws it. Without scripts a note on a wide screen is the note and the way back to the listing.

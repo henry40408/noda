@@ -43,6 +43,12 @@ func registerNavigationSteps(scenario *godog.ScenarioContext, w *world) {
 	})
 	scenario.Step(`^I open `+quoted+`$`, func(path string) error { return w.page().Go(path) })
 	scenario.Step(`^I open `+quoted+` on a desktop$`, func(path string) error { return openAt(&harness.Desktop, path) })
+	scenario.Step(`^my screen is a touch screen$`, func() error { return w.browser.EmulateTouch() })
+	scenario.Step(`^I open the notebook on a touch screen (\d+) pixels wide$`, func(width int) error {
+		viewport := harness.Desktop
+		viewport.Width = int64(width)
+		return openAt(&viewport, notebook)
+	})
 
 	scenario.Step(`^my phone prefers a dark theme$`, func() error { return w.browser.PreferScheme("dark") })
 	scenario.Step(`^my phone prefers a light theme$`, func() error { return w.browser.PreferScheme("light") })

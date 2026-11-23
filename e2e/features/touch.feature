@@ -52,3 +52,26 @@ Feature: Everything can be pressed with a thumb
     When I press "Budget review"
     Then the page does not scroll sideways
     And no control is smaller than 48 by 48
+
+  # A tablet is as wide as a desktop and has no mouse. The rail, the tags and the
+  # shortcut card are drawn tighter for a pointer, so each must give a finger its
+  # 48 again when the pointer is one. 1024 and 1366 are an iPad Pro's two widths.
+  Scenario Outline: A touch screen as wide as a desktop still has controls big enough for a thumb
+    Given my screen is a touch screen
+    And I open the notebook on a touch screen <width> pixels wide
+    When I press "Budget review"
+    Then no control is smaller than 48 by 48
+
+    Examples:
+      | width |
+      | 1024  |
+      | 1366  |
+      | 1440  |
+      | 1800  |
+
+  @scripted
+  Scenario: The shortcut card's buttons are big enough for a thumb
+    Given my screen is a touch screen
+    And I open the notebook on a touch screen 1366 pixels wide
+    When I hit the keys "?"
+    Then no control is smaller than 48 by 48

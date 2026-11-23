@@ -388,3 +388,14 @@ a.tag::before{inset:0}
 .app.split.indexed{grid-template-columns:var(--rail) 420px minmax(0,1fr)}
 main.note{grid-template-columns:minmax(0,1fr) 280px;column-gap:64px}
 }
+
+/* A tablet is as wide as a desktop and has no mouse. The rail, the tags and the shortcut card are drawn
+   tighter for a pointer above; a finger gets its --tap back at any width. A tag's pill is its ::before, so
+   the hit area grows and what is drawn does not. */
+@media (pointer:coarse){
+.rail .book,.rail .actionbar a,.rail .sync,.keys-open{min-height:var(--tap)}
+.fab{height:var(--tap)}
+a.tag{display:inline-flex;min-width:var(--tap);min-height:var(--tap);margin:0 2px 0 0;padding:0 8px}
+a.tag::before{inset:12px 0}
+dialog.keys form button{min-height:var(--tap)}
+}

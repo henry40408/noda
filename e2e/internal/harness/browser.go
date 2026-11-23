@@ -135,6 +135,15 @@ func (b *Browser) SetViewport(viewport Viewport) error {
 	})
 }
 
+// EmulateTouch makes the page's primary pointer a finger: `pointer:coarse`
+// matches and `hover` does not. A tablet is wide enough for the desktop layout
+// and still has no mouse.
+func (b *Browser) EmulateTouch() error {
+	return send(b, emulation.SetTouchEmulationEnabled, emulation.SetTouchEmulationEnabledParams{
+		Enabled: true, MaxTouchPoints: 5,
+	})
+}
+
 // PreferScheme emulates prefers-color-scheme, with no stored preference.
 func (b *Browser) PreferScheme(scheme string) error {
 	return send(b, emulation.SetEmulatedMedia, emulation.SetEmulatedMediaParams{
