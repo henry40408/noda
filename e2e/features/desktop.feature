@@ -180,6 +180,15 @@ Feature: The same pages on a wider screen
     When I press "Reading list"
     Then the listing marks "Reading list"
 
+  # A row's address carries the notebook's name as it was typed and the browser
+  # reports the same address percent-encoded, so the two are compared as addresses.
+  @scripted
+  Scenario: The listing marks the note being read in a notebook named in Unicode
+    Given the notebook is also kept under the name "日記 2026"
+    And I open "/nb/日記 2026" on a desktop
+    When I press "Reading list"
+    Then the listing marks "Reading list"
+
   Scenario: A phone shows one thing at a time
     Given I open the notebook
     When I press "Budget review"

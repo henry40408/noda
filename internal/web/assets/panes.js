@@ -91,11 +91,13 @@
     return true;
   };
 
-  // Off the address, so it is right after a swap and after a hard load.
+  // Off the address, so it is right after a swap and after a hard load. The
+  // row's `pathname`, not its `href` attribute: the attribute holds the
+  // notebook's name as written, and the address is percent-encoded.
   const mark = () => {
     const at = location.pathname;
     for (const row of app.querySelectorAll(".index main.rows a.row")) {
-      row.classList.toggle("here", row.getAttribute("href") === at);
+      row.classList.toggle("here", row.pathname === at);
     }
   };
 

@@ -69,6 +69,9 @@ func registerNotebookSteps(scenario *godog.ScenarioContext, w *world) {
 	scenario.Step(`^no pane is waiting for an answer$`, func() error {
 		return harness.Eventually("no pane to wait for an answer", w.page().NothingIsWaiting)
 	})
+	scenario.Step(`^the notebook is also kept under the name `+quoted+`$`, func(name string) error {
+		return w.server.CopyNotebook(name)
+	})
 	// What another machine's sync does to a note this browser has open.
 	scenario.Step(`^the note `+quoted+` is deleted from another machine$`, func(key string) error {
 		_, err := w.server.Run("rm", key)
