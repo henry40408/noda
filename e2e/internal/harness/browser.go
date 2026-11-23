@@ -1,9 +1,12 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"net/url"
 	"os"
 	"time"
@@ -208,13 +211,31 @@ func (b *Browser) KeyDownDuringComposition(key, code string) error {
 	})
 }
 
+// PointerTo moves the mouse, with no button down, so that what answers to
+// :hover does.
+func (b *Browser) PointerTo(x, y float64) error {
+	return send(b, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+		Type: input.DispatchMouseEventTypeMouseMoved, X: x, Y: y,
+	})
+}
+
 // Screenshot writes the viewport as a PNG.
 func (b *Browser) Screenshot(path string) error {
-	png, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot())
+	encoded, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot())
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, png, 0o644)
+	return os.WriteFile(path, encoded, 0o644)
+}
+
+// Pixels is the viewport as drawn, one pixel to a CSS pixel: the viewport's
+// device scale factor is 1.
+func (b *Browser) Pixels() (image.Image, error) {
+	encoded, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot())
+	if err != nil {
+		return nil, err
+	}
+	return png.Decode(bytes.NewReader(encoded))
 }
 
 // Eval evaluates a JavaScript expression in the page and decodes the result.

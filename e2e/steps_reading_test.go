@@ -252,6 +252,14 @@ func registerReadingSteps(scenario *godog.ScenarioContext, w *world) {
 			return present && slices.Equal(lines, []string{what}), err
 		})
 	})
+	scenario.Step(`^I rest the pointer on the tag `+quoted+`$`, func(name string) error {
+		return w.page().RestOnTag(name)
+	})
+	scenario.Step(`^the tag `+quoted+` can still be read$`, func(name string) error {
+		return harness.Eventually(fmt.Sprintf("the tag %q to be drawn over its highlight", name), func() (bool, error) {
+			return w.page().TagIsReadable(name)
+		})
+	})
 	// Not drawn at all, not merely empty.
 	scenario.Step(`^the margin note is not on screen$`, func() error {
 		_, present, err := w.page().MarginNote()

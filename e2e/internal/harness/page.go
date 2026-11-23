@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
@@ -86,6 +87,83 @@ func (p Page) TapWrite() error { return p.clickCSS("the button to write", ".rail
 // Untick unticks the box for a tag.
 func (p Page) Untick(tag string) error {
 	return p.clickCSS("the box for "+quote(tag), fmt.Sprintf("input[name='keep'][value=%s]", cssString(tag)))
+}
+
+// tagChipBox is the box of the displayed tag chip with this name, in the
+// viewport after the chip was scrolled to its middle: left, top, width, height.
+func (p Page) tagChipBox(name string) (*[4]float64, error) {
+	return Exec[*[4]float64](p.Browser, `
+		const chip = Array.from(document.querySelectorAll('a.tag'))
+			.find((el) => el.offsetParent !== null && el.textContent.trim() === arguments[0]);
+		if (!chip) return null;
+		chip.scrollIntoView({block: 'center', inline: 'center'});
+		const box = chip.getBoundingClientRect();
+		return [box.left, box.top, box.width, box.height];`, name)
+}
+
+// RestOnTag puts the pointer on the middle of the note's tag chip.
+func (p Page) RestOnTag(name string) error {
+	return Eventually("resting the pointer on the tag "+quote(name), func() (bool, error) {
+		box, err := p.tagChipBox(name)
+		if err != nil || box == nil {
+			return false, err
+		}
+		return true, p.Browser.PointerTo(box[0]+box[2]/2, box[1]+box[3]/2)
+	})
+}
+
+// TagIsReadable reports whether the name of a tag the pointer rests on is drawn
+// over the chip's highlight. A hit test cannot say: a pseudo-element answers as
+// its link whichever way round they are stacked, so the answer is in the
+// pixels. Beside the chip's own fill, the name's ink must show.
+func (p Page) TagIsReadable(name string) (bool, error) {
+	box, err := p.tagChipBox(name)
+	if err != nil || box == nil {
+		return false, err
+	}
+	lit, err := Exec[bool](p.Browser, `return Array.from(document.querySelectorAll('a.tag:hover'))
+		.some((el) => el.textContent.trim() === arguments[0]);`, name)
+	if err != nil {
+		return false, err
+	}
+	if !lit {
+		return false, fmt.Errorf("the pointer is not on the tag %s, so the highlight is not drawn", quote(name))
+	}
+	pixels, err := p.Browser.Pixels()
+	if err != nil {
+		return false, err
+	}
+	middle := int(box[1] + box[3]/2)
+	fill := pixels.At(int(box[0])+3, middle)
+	inked := 0
+	for y := middle - 6; y <= middle+6; y++ {
+		for x := int(box[0]) + 4; x < int(box[0]+box[2])-4; x++ {
+			if differsFrom(fill, pixels.At(x, y)) {
+				inked++
+			}
+		}
+	}
+	return inked >= minInkedPixels, nil
+}
+
+// minInkedPixels is far under the few dozen a short word covers and far over
+// the stray ones a rounded edge could add.
+const minInkedPixels = 12
+
+// differsFrom is whether two pixels are plainly two colours: a channel apart
+// by a fifth of its range, which a glyph's edge is and a fill's noise is not.
+func differsFrom(a, b color.Color) bool {
+	ar, ag, ab, _ := a.RGBA()
+	br, bg, bb, _ := b.RGBA()
+	return channelApart(ar, br) || channelApart(ag, bg) || channelApart(ab, bb)
+}
+
+func channelApart(a, b uint32) bool {
+	const fifth = 0xffff / 5
+	if a > b {
+		return a-b > fifth
+	}
+	return b-a > fifth
 }
 
 // xpathString is a string literal for XPath 1.0, which has no escape

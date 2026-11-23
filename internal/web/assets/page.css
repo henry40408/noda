@@ -141,8 +141,8 @@ main.note{padding:22px 20px 40px}
 .about div{display:grid;grid-template-columns:5em minmax(0,1fr);gap:10px;align-items:baseline}
 .about dt{color:var(--soft)}
 .about dd{margin:0}
-a.tag{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:var(--tap);min-height:var(--tap);margin-right:2px;padding:0 8px;overflow-wrap:anywhere}
-a.tag::before{content:"";position:absolute;inset:12px 0;border:1px solid var(--line);border-radius:6px}
+a.tag{position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;min-width:var(--tap);min-height:var(--tap);margin-right:2px;padding:0 8px;overflow-wrap:anywhere}
+a.tag::before{content:"";position:absolute;z-index:-1;inset:12px 0;border:1px solid var(--line);border-radius:6px}
 a.tag:hover::before{background:var(--sunk)}
 .none{margin:0;color:var(--soft);font-size:13px}
 .beside{margin-top:24px}

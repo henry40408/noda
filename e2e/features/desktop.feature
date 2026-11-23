@@ -213,6 +213,23 @@ Feature: The same pages on a wider screen
     Then the note is headed "Meeting notes"
     And the margin note lists "Reading list"
 
+  # A tag lights up under the pointer, and on a phone stays lit after a tap. The
+  # highlight is the pill's own fill, so it has to sit behind the word: a
+  # hit test cannot tell, since the pill answers as its link, so the step reads
+  # the pixels.
+  Scenario Outline: A tag can still be read while the pointer is on it
+    Given I open the notebook on a <screen>
+    When I press "Budget review"
+    And I rest the pointer on the tag "work"
+    Then the tag "work" can still be read
+
+    Examples:
+      | screen  |
+      | phone   |
+      | tablet  |
+      | desktop |
+      | monitor |
+
   # An empty answer is said; a column gone quiet reads as broken.
   Scenario: A note nothing points at says so
     Given I open the notebook on a monitor
