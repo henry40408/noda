@@ -1,1 +1,386 @@
-*{box-sizing:border-box}/* The user-agent `[hidden]{display:none}` loses to any author `display` rule such as `.row{display:block}`, which drew hidden rows. */[hidden]{display:none!important}:root{--tap:48px;/* The rail's fixed width above 640px, so a pane can be sized against the rest. */--rail:76px;--mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,'Cascadia Mono',Consolas,monospace;--read:ui-serif,Charter,'Iowan Old Style',Georgia,'Songti TC','Noto Serif CJK TC',serif}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:14px;line-height:1.6}svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}/* A phone stacks; wider screens are a grid, declared at their width. `min-width:0` stops one long unbroken line widening a column past the screen. The pane grows to fill the screen because a sticky bar is bounded by its containing block: otherwise a short note leaves it floating mid-screen. */.app{display:flex;flex-direction:column;min-height:100dvh}.pane{display:block;min-width:0;flex:1 1 auto}.foot{flex:0 0 auto}/* The same for the note's own bar: the prose takes the slack. */.read{display:flex;flex-direction:column}.read main{flex:1 1 auto}.topbar{display:flex;align-items:center;gap:4px;min-height:56px;padding-right:16px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--bg);z-index:1}.topbar .back{min-width:var(--tap);min-height:var(--tap);display:inline-flex;align-items:center;justify-content:center;color:var(--muted);flex:0 0 auto;-webkit-tap-highlight-color:transparent}.topbar .back:active{background:var(--press)}.topbar .back svg{width:24px;height:24px}.topbar .lead{padding-left:16px}.topbar .here{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topbar .count{margin-left:auto;color:var(--punct);font-size:13px;flex:0 0 auto;padding-left:12px}.searchbar{padding:10px 12px;border-bottom:1px solid var(--rule)}.searchbar input{width:100%;height:var(--tap);padding:0 14px;border-radius:10px;border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);font-family:var(--mono);font-size:16px}.searchbar input::placeholder{color:var(--punct)}.problem{margin:8px 2px 0;font-size:12.5px;color:var(--alert)}/* Grey rather than a hue: nothing in this palette colours a state. */.searchbar .hint{margin:8px 2px 0;font-size:12.5px;color:var(--muted)}/* ------------------------------------------- SIGNATURE: the query parse *//* See `page::grouping`. Not on a phone, which is short of room. */.parse{display:none;margin:9px 2px 1px;flex-wrap:wrap;align-items:center;gap:7px;font-size:12px}/* A group is a pill: people do not read brackets. */.parse .g{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--rule);border-radius:999px;background:var(--bg-sunk)}.parse .g b{font-weight:400;color:var(--text)}.parse .g b.t{color:var(--tag)}.parse .g i{font-style:normal;color:var(--punct);font-size:11px;letter-spacing:.06em}.parse .and{color:var(--punct);font-size:11px;letter-spacing:.09em;text-transform:uppercase}/* ------------------------------------------------ SIGNATURE: the order *//* `.drift .pill`'s chip: a 32px pill in a 48px press. It wraps rather than scrolling, so no chip is out of sight; the split index is sized to hold the four in a line (see the desktop grid). */.sortbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:2px 2px 0}.sortbar .lab{flex:0 0 auto;display:inline-flex;align-items:center;color:var(--punct);padding-right:2px}.sortbar .lab svg{width:15px;height:15px}.sortbar a{flex:0 0 auto;display:inline-flex;align-items:center;min-height:var(--tap);color:var(--muted);-webkit-tap-highlight-color:transparent}/* 8px, not `.drift .pill`'s 11px: 24px less for the index column to find. */.sortbar a .pill{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:0 8px;border:1px solid var(--rule);border-radius:999px;background:var(--bg-sunk);font-size:12px;white-space:nowrap}.sortbar a:active .pill{background:var(--press)}/* The one in force loses its fill and takes the id's hue on its edge, rather than coloured text: nothing in this palette colours a state. */.sortbar a[aria-current] .pill{background:transparent;border-color:var(--id);color:var(--text)}.sortbar a svg{width:12px;height:12px;flex:0 0 auto;color:var(--id)}a{color:inherit;text-decoration:none}.row{display:block;min-height:64px;padding:12px 16px;border-bottom:1px solid var(--rule);-webkit-tap-highlight-color:transparent}/* A touch's feedback only: a mouse press would flash --press before the swap sets .here. */@media (hover:none){.row:active{background:var(--press)}}/* The note the reading pane shows, where both panes are; a press's grey. */.row.here{background:var(--press)}.row .title{font-family:var(--read);font-size:17px;line-height:1.32}.row .title.mono{font-family:var(--mono);font-size:15px}.row .name{font-size:15px}.row .under{margin-top:4px;font-size:12.5px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.row .under:empty{display:none}/* ------------------------------------------------ SIGNATURE: the id column *//* Written on every row, shown only where there is a column to spare: not on a phone (see 640 and 1024 below). Mono and `--id`, as `noda ls` prints it. */.row .ident{display:none;font-family:var(--mono);font-size:12px;color:var(--id)}.tags{color:var(--tag)}.pin{color:var(--pin)}.sep{color:var(--punct)}.when{color:var(--muted)}/* The one colour marking a state rather than a kind; `style.rs` says why. */.overdue{color:var(--overdue)}.row .in{color:var(--muted)}/* A row with two destinations; the aside is a tap target, so row-tall. */.row.split{display:flex;align-items:stretch;gap:12px;padding:0}.row.split .most{flex:1 1 auto;min-width:0;padding:12px 0 12px 16px}.row.split .aside{flex:0 0 auto;display:flex;align-items:center;padding:0 16px;color:var(--muted);font-size:12.5px;-webkit-tap-highlight-color:transparent}.row.split .aside:active{background:var(--press)}.subject{font-family:var(--read)}.mono{font-family:var(--mono)}mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}.note-head{padding:18px 16px 16px;border-bottom:1px solid var(--rule)}.note-head h1{font-family:var(--read);font-size:24px;line-height:1.24;margin:0 0 10px;font-weight:600;letter-spacing:-0.01em}.filename{font-size:13px}.filename .id{color:var(--id)}.filename .slug{color:var(--id-dim)}.filename .ext{color:var(--punct)}.note-meta{margin-top:8px;font-size:12.5px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.body{padding:16px;font-family:var(--read);font-size:17px;line-height:1.62;overflow-wrap:break-word}/* A rendered note. The measure is set on the wide screen, below. */.body>:first-child{margin-top:0}.body>:last-child{margin-bottom:0}.body h1,.body h2,.body h3,.body h4{font-family:var(--read);font-weight:600;line-height:1.25;letter-spacing:-0.01em;margin:1.5em 0 .5em}.body h1{font-size:1.24em}.body h2{font-size:1.12em}.body h3{font-size:1em}.body h4{font-size:.94em;color:var(--muted)}.body p{margin:0 0 .9em}.body ul,.body ol{margin:0 0 .9em;padding-left:1.4em}.body li{margin:.25em 0}.body li p{margin:0}/* Disabled: ticking one has to be a commit, as the CLI has no `todo done`. */.body li input[type=checkbox]{width:16px;height:16px;margin:0 .45em 0 0;accent-color:var(--tag);vertical-align:-2px}.body a{color:var(--tag);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}/* A link in the id's colour stays in the notebook; the tag's colour leaves. */.body a.note{color:var(--id)}.body code{font-family:var(--mono);font-size:.85em;background:var(--bg-sunk);border:1px solid var(--rule);border-radius:5px;padding:1px 5px}.body pre{background:var(--bg-sunk);border:1px solid var(--rule);border-radius:10px;padding:12px 14px;margin:0 0 .9em;overflow-x:auto}.body pre code{background:none;border:0;padding:0;font-size:14px;line-height:1.55}.body blockquote{margin:0 0 .9em;padding:.1em 0 .1em 14px;border-left:3px solid var(--rule);color:var(--muted)}.body blockquote p:last-child{margin:0}.body img{max-width:100%;height:auto;display:block;border-radius:10px;margin:0 0 .9em}.body hr{border:0;border-top:1px solid var(--rule);margin:1.5em 0}/* A table scrolls inside itself rather than widening the whole note. */.body table{display:block;width:fit-content;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:0 0 .9em;font-size:.92em}.body th,.body td{border-bottom:1px solid var(--rule);padding:8px 12px 8px 0;text-align:left;vertical-align:top}.body th{font-family:var(--mono);font-size:.8em;font-weight:600;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}.empty{padding:28px 18px;color:var(--muted)}.empty b{display:block;font-family:var(--read);font-size:19px;color:var(--text);font-weight:600;margin-bottom:8px}.empty a{color:var(--tag);display:inline-flex;align-items:center;min-height:var(--tap);text-decoration:underline;text-underline-offset:3px}.empty code{color:var(--id)}:focus-visible{outline:2px solid var(--tag);outline-offset:-2px}.actionbar{position:sticky;bottom:0;display:flex;border-top:1px solid var(--rule);background:var(--bg-sunk);padding-bottom:env(safe-area-inset-bottom,0px)}/* A write is a POST, so a button, styled here to look like the links. */.actionbar a,.actionbar button{flex:1;min-height:64px;padding:9px 0 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted);-webkit-tap-highlight-color:transparent}.actionbar button{background:none;border:0;font:inherit;cursor:pointer}.actionbar a:active,.actionbar button:active{background:var(--press)}.actionbar svg{width:26px;height:26px}.actionbar span{font-size:11.5px;letter-spacing:0.02em}/* Brighter rather than another hue: the palette does not colour a state. */.actionbar a[aria-current]{color:var(--text)}/* The only use of the alert colour other than a refusal. */.actionbar a.danger{color:var(--alert)}/* The one action, above the bar at the right where a thumb is, and the only round thing here so it cannot be mistaken for a row. */.foot{position:sticky;bottom:0;z-index:2}.foot .actionbar{position:static}.fab{position:absolute;right:16px;bottom:calc(100% + 16px);width:56px;height:56px;border-radius:28px;background:var(--id);color:var(--bg);display:flex;align-items:center;justify-content:center;/* A ring of background, not a shadow: this sheet never uses depth. */box-shadow:0 0 0 5px var(--bg);-webkit-tap-highlight-color:transparent}.fab svg{width:26px;height:26px;stroke-width:2.4}.fab:active{background:var(--id-dim)}/* Which build this is, for a bug report; only the rail has room for it. */.ver{display:none}/* Room under the last row for the 56px button standing 16px clear. */body:has(.fab) main{padding-bottom:76px}form.write{padding:16px;display:flex;flex-direction:column;gap:16px}form.write label{font-size:12.5px;color:var(--punct);display:block;margin-bottom:6px}form.write .hint{display:block;margin-top:6px;font-size:12.5px;color:var(--muted);line-height:1.45}form.write input[type=text],form.write textarea{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);font-size:16px}form.write input[type=text]{font-family:var(--mono);min-height:var(--tap)}form.write textarea{font-family:var(--read);font-size:17px;line-height:1.6;min-height:300px;resize:vertical}.buttons{display:flex;gap:10px}button,.button{min-height:var(--tap);padding:0 20px;border-radius:10px;border:1px solid var(--rule);background:var(--bg-sunk);color:var(--text);font-family:var(--mono);font-size:15px;display:inline-flex;align-items:center;justify-content:center}button.go{background:var(--id);border-color:var(--id);color:var(--bg);font-weight:600;flex:1}button.danger{background:var(--alert);border-color:var(--alert);color:var(--bg);font-weight:600;flex:1}.ticks{display:flex;flex-direction:column}/* The whole row is the label, so it is the tap target. `form.write` in the selector to outrank `form.write label` above. */form.write label.tick{display:flex;align-items:center;gap:12px;min-height:var(--tap);color:var(--tag);font-size:16px;margin:0;width:100%;padding:0 2px;border-bottom:1px solid var(--rule)}form.write label.tick:last-child{border-bottom:0}.tick input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--tag)}.said{padding:12px 16px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:13px}.said b{color:var(--text);font-weight:600}.said code{font-family:var(--mono)}.said.bad{color:var(--alert)}.said.bad b{color:var(--alert)}/* Drift against the remote: uncoloured, as the palette marks no state, and a link, so target-sized. */.topbar .drift{margin-left:auto;flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;min-height:var(--tap);color:var(--text);-webkit-tap-highlight-color:transparent}.topbar .drift .pill{display:inline-flex;align-items:center;gap:6px;min-width:0;min-height:32px;padding:0 11px;border:1px solid var(--rule);border-radius:999px;font-size:12px}.topbar .drift .pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topbar .drift svg{width:14px;height:14px;flex:0 0 auto;color:var(--muted)}.topbar .drift:active .pill{background:var(--press)}/* `.topbar` to beat `.topbar .count` on specificity, not source order. */.topbar .drift+.count{margin-left:10px;padding-left:0}.abreast{display:flex;gap:10px;padding:18px 16px 22px}.abreast form{flex:1;display:flex}.abreast button{flex:1;padding:0 12px}button[disabled]{opacity:.45}/* What the command printed, line for line. */.outcome{display:block;margin-top:6px;font-family:var(--mono);font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere;color:var(--muted)}.said.bad .outcome{color:var(--alert)}/* The one thing that moves: a self-reloading page must show it is working. */.working b::after{content:"";display:inline-block;width:7px;height:7px;border-radius:4px;background:var(--id);margin-left:9px;vertical-align:1px;animation:breathe 1.4s ease-in-out infinite}@keyframes breathe{0%,100%{opacity:.2}50%{opacity:1}}@media (prefers-reduced-motion:reduce){.working b::after{animation:none;opacity:.8}}.theirs{margin:0;padding:14px;border:1px solid var(--rule);border-radius:10px;background:var(--bg-sunk);font-family:var(--read);font-size:16px;line-height:1.55;white-space:pre-wrap;overflow-wrap:break-word}/* ------------------------------------------------------------ label role *//* Names a region; never inside content. */.pane-head{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--punct);padding:0 0 8px}/* --------------------------------------------------------- the margin note *//* Hidden until it holds something: the `display:block` below is on `:not([hidden])`. Without a script it stays hidden for good. */.beside{display:none}.beside .mini{display:block;padding:8px 0;border-bottom:1px solid var(--rule);font-family:var(--read);font-size:14px;line-height:1.35;color:var(--text)}.beside .mini:last-child{border-bottom:0}.beside .mini:hover{color:var(--tag)}.beside .mini span{display:block;font-family:var(--mono);font-size:11px;color:var(--id);margin-top:3px}.beside .none{margin:0;color:var(--muted);font-size:13px}/* Waiting: the status screen's breathing dot, without its bold. */.beside .said{margin:0;padding:0;border-bottom:0;font-size:13px}.beside .said b{font-weight:400;color:var(--muted)}/* Below two-pane width one pane shows, by route. Its own query, so no two `display` rules fight on source order. */@media (max-width:1023px){.app.split.at-list .read{display:none}}/* A note page is sent without its listing (`script::PANES`). `.indexed` says the pane has rows: set by the server on the listing route and by the script on a note route before first paint, so an empty pane is never a column. */.app.split.at-note .index{display:none}/* A phone reading a note gets one bar, the note's; the rest is up the chevron. */@media (max-width:639px){.app.split.at-note .foot{display:none}.app.split.at-note main{padding-bottom:16px}}/* ================================================================= TABLET *//* The bottom bar becomes a rail. It is last in the markup, so a phone's sticks to the foot, and placed first here. */@media (min-width:640px){.app{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);height:100dvh;overflow:hidden}.foot{grid-column:1;grid-row:1/-1;position:static;display:flex;flex-direction:column;align-items:stretch;background:var(--bg-sunk);border-right:1px solid var(--rule)}.foot .actionbar{flex-direction:column;border-top:0;background:transparent;padding:0}.foot .actionbar a{flex:0 0 auto;min-height:62px}.ver{display:block;margin-top:auto;padding:12px 6px;text-align:center;font-size:10px;line-height:1.3;color:var(--muted);overflow-wrap:anywhere}/* The action first in the rail, and squarish to sit in a column of them. */.fab{order:-1;position:static;width:44px;height:44px;border-radius:13px;margin:14px auto 12px;box-shadow:none}.fab svg{width:22px;height:22px}/* Each pane scrolls on its own, so a listing keeps its place. */.pane{grid-column:2;min-height:0;overflow-y:auto}.app:has(.fab) main{padding-bottom:24px}/* One pane hangs off the rail, uncentred, capped at a readable width. */.app:not(.split) .topbar,.app:not(.split) main{max-width:80em}.topbar,.searchbar{padding-left:24px;padding-right:24px}.topbar .back{margin-left:-12px}.topbar .lead{padding-left:0}.parse{display:flex}/* The row extends into `ls -l`'s columns: id, title, day, tags. Tags last, as the one column a note may lack would shift the rest. */.rows .row{display:flex;align-items:baseline;gap:20px;min-height:0;padding:13px 24px}.rows .row .ident{display:block;flex:0 0 auto}/* The day is at the right, where `-l` prints it; the copy by the id is for the narrow index pane below. */.rows .row .ident .day{display:none}.rows .row .title,.rows .row .name{flex:1 1 auto}.rows .row .under{margin:0;flex:0 0 auto;justify-content:flex-end}.rows .row.split{display:flex}.rows .row.split .most{display:flex;align-items:baseline;gap:20px;padding:13px 0 13px 24px}.rows .row.split .aside{padding:0 24px}/* Short rows in columns; `column-width` rather than a grid for the hairline `column-rule`. */.rows.cols{column-width:270px;column-gap:0;column-rule:1px solid var(--rule)}.rows.cols .row{break-inside:avoid;display:block;padding:13px 24px}.rows.cols .row .under{margin-top:3px;justify-content:flex-start}.rows.cols.wide{column-width:400px}.rows.cols .row.split{display:flex;padding:0}.rows.cols .row.split .most{display:block;padding:13px 0 13px 24px}.rows.cols .row.split .aside{padding:0 24px}.rows.facts .row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:0}.rows.facts .row .under{justify-content:flex-start}.note-head{padding:26px 32px 20px}.note-head h1{font-size:28px}/* The measure is on the body, in its own font: on `main` the `em` would be the chrome's monospace. */.body{font-size:18px;line-height:1.65;max-width:34em;padding:24px 32px 8px}.said{padding:14px 32px}.empty{padding:34px 32px}form.write{padding:24px 32px;max-width:52em}form.write textarea{min-height:min(56vh,560px)}.buttons{justify-content:flex-start}button.go,button.danger{flex:0 0 auto;min-width:190px}.abreast{padding:20px 32px 28px;max-width:52em}/* The note's bar becomes a toolbar at the head, by `order`: one element. */.read{display:flex;flex-direction:column}.read .topbar{order:-2}.read .actionbar{order:-1;position:static;background:var(--bg);border-top:0;border-bottom:1px solid var(--rule);justify-content:flex-start;gap:2px;padding:7px 20px}.read .actionbar a,.read .actionbar button{flex:0 0 auto;flex-direction:row;gap:8px;min-height:38px;padding:0 13px;border-radius:9px;font-size:13px}.read .actionbar a:hover,.read .actionbar button:hover{background:var(--press);color:var(--text)}/* Keeps Delete's colour against the hover rule above. */.read .actionbar a.danger:hover{color:var(--alert)}.read .actionbar svg{width:17px;height:17px}.read main{order:0;flex:1 1 auto}}/* ================================================================ DESKTOP *//* The index stays beside the note. Three columns only with `.indexed`; without a script it is the tablet's two. The 356px floor is measured: 288px of order chips, 40px padding, 2px bar and 24px for a wider monospace. At 300px the fourth chip wrapped. */@media (min-width:1024px){.app.split.indexed{grid-template-columns:var(--rail) clamp(356px,26vw,380px) minmax(0,1fr)}.app.split.indexed .index{grid-column:2;border-right:1px solid var(--rule)}.app.split.indexed .read{grid-column:3}.app.split.indexed.at-note .index{display:block}.app.split.at-list .read{display:flex}/* In the narrow column the row stacks again, tighter than a phone's. */.app.split .index .rows .row{display:block;padding:11px 20px;min-height:0}/* The id line takes the day at its other end; the copy under the title goes. */.app.split .index .rows .row .ident{display:flex;justify-content:space-between;gap:10px}.app.split .index .rows .row .ident .day{display:block;color:var(--muted)}.app.split .index .rows .row .title{font-size:15.5px;line-height:1.34;margin-top:2px}.app.split .index .rows .row .under{margin-top:2px;justify-content:flex-start;font-size:12px}.app.split .index .rows .row .under .when,.app.split .index .rows .row .under .sep{display:none}.app.split .index .searchbar,.app.split .index .topbar{padding-left:20px;padding-right:20px}.app.split .index .empty{padding:26px 20px}/* Head and body share one column, so the title's rule spans the prose. */.app.split .read main.note{width:100%;max-width:44em;margin-inline:auto}.app.split .read .body{max-width:none}/* The note's chevron goes when the listing is beside it. */.app.split.indexed .read .topbar .back{display:none}}/* =================================================================== WIDE *//* Backlinks in the margin. `margined`, like `indexed`, is set by the script before first paint, so the column is reserved and the prose laid out once; without a script the note keeps its centred measure. */@media (min-width:1440px){/* `align-content:start` is load-bearing: the default stretches spare height among the rows, and a short note's body jumped 40px when the margin landed. */.app.split.at-note.margined .read main.note{max-width:none;margin-inline:0;display:grid;grid-template-columns:minmax(0,38em) 236px;column-gap:48px;align-items:start;align-content:start;justify-content:center}/* Head and body share the track, without padding. */.app.split.at-note.margined .read .note-head,.app.split.at-note.margined .read .body{grid-column:1;padding-left:0;padding-right:0}.app.split.at-note.margined .read .beside:not([hidden]){display:block;grid-column:2;grid-row:1/span 2;position:sticky;top:24px;padding:26px 0 0}}/* Extra width goes to the index and the margin, never the measure. */@media (min-width:1800px){.app.split.indexed{grid-template-columns:var(--rail) clamp(340px,22vw,470px) minmax(0,1fr)}.app.split.at-note.margined .read main.note{grid-template-columns:minmax(0,40em) 290px;column-gap:64px}}/* ============================================ SIGNATURE: a row is a notebook *//* Last on purpose: some rules below beat earlier ones of equal weight by source order. The front page has no rail, so no grid (it left an empty 76px column), and no `max-width:80em`: its rows are a table, not prose. */@media (min-width:640px){.app.root{display:block;height:auto;overflow:visible}/* Not its own scroll container, or the sticky bar never sticks. */.app.root .pane{overflow:visible;min-height:0}.app.root .topbar,.app.root main{max-width:none}}/* `.books`, or `.rows .row`'s padding at 640 wins and the row is indented twice. */.books .row.split{position:relative;padding:0}.books .row.split .most{padding:13px 0 13px 28px}.books .most{min-width:0}/* A directory name, so mono. `display:block` because `text-overflow` does nothing to an inline box; a tight line keeps it by the facts under it. */.books .name{display:block;font-family:var(--mono);font-size:16px;line-height:1.3;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}/* `noda notebook ls`'s uncoloured `*`. Absolute, so every name starts at the same x; `top` is padding plus half a line, not `50%`, which slides when the facts wrap. */.books .mark{position:absolute;left:11px;top:23px;transform:translateY(-50%);width:7px;height:7px;border-radius:4px;background:var(--text)}.books .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}/* `.rows` to beat `.rows .row .under`'s `flex-end`. */.rows.books .row .under{justify-content:flex-start;line-height:1.45;row-gap:0}.books .holds{color:var(--muted)}/* At 390px three facts need 250px of about 215 and wrap into loose bands, so a phone drops the file count, and `:has` its separator. */@media (max-width:639px){.books .under .files,.books .under .sep:has(+ .files){display:none}}.books .aside .pill{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 11px;border:1px solid var(--rule);border-radius:999px;font-size:12px;white-space:nowrap}.books .aside svg{width:14px;height:14px;flex:0 0 auto;color:var(--muted)}.books a.aside:active .pill{background:var(--press)}.books .row .aside{align-items:center}.count .more,.books .stamp{display:none}@media (min-width:640px){.count .more{display:inline}/* The name column has a floor and a ceiling, for short and long names. */.books .row.split .most{display:grid;grid-template-columns:minmax(9em,15em) minmax(0,1fr);gap:20px;align-items:baseline;padding:15px 0 15px 36px}.books .mark{left:19px;top:25px}/* A floor under the chip, so `.most` is one width in every row. `align-self:stretch` keeps the chip row-tall (a 48px target): at this width `.rows .row{align-items:baseline}` outranks `.row.split`'s `stretch`. */.books .row.split .aside{min-width:15em;justify-content:flex-end;padding:0 24px;align-self:stretch}}/* The last commit's day, at the right where `-l` prints a date, where it fits. */@media (min-width:1024px){.books .row.split .most{grid-template-columns:minmax(9em,16em) minmax(0,1fr) auto}.books .stamp{display:block;color:var(--muted);font-size:12.5px;justify-self:end}}
+/* noda web, second design. Written from nothing; the first design's sheet was not the start.
+
+   Three rules hold the look together:
+   1. A note has a colour, one of twelve, taken from its id. Wherever that note
+      is named (a row, a link, a margin) it wears the same colour. Nothing
+      else on the page is coloured, except red for what destroys or failed.
+   2. The text of a note is set in a book face. Everything around it is the
+      system's own face, so tool and text never look alike.
+   3. Three bands, left to right: where you are (rail), what is here (list),
+      the thing itself (sheet, with its margin). A narrower screen drops bands
+      from the left; it never rearranges one. */
+*{box-sizing:border-box}
+:root{--ui:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang TC","Noto Sans TC",sans-serif;--read:"Iowan Old Style",Charter,"Palatino Linotype",Palatino,"Songti TC","Noto Serif TC",Georgia,serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--tap:48px;--dock:62px;--s:transparent;--top:53px}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--desk);color:var(--ink);font:15px/1.45 var(--ui)}
+a{color:inherit;text-decoration:none}
+svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:6px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.mono,.id,.filename{font-family:var(--mono)}
+code{font-family:var(--mono);font-size:.88em;padding:1px 5px;border-radius:4px;background:var(--sunk)}
+kbd{display:inline-block;min-width:1.55em;padding:2px 5px;font:11.5px/1.2 var(--mono);text-align:center;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--sunk);color:var(--ink);white-space:nowrap}
+mark{background:var(--mark);color:inherit;border-radius:2px}
+
+/* The twelve. Lightness comes from the theme, so one list serves both. */
+.h0{--s:oklch(var(--sl) .15 20)}.h1{--s:oklch(var(--sl) .15 50)}.h2{--s:oklch(var(--sl) .14 80)}.h3{--s:oklch(var(--sl) .15 125)}
+.h4{--s:oklch(var(--sl) .14 155)}.h5{--s:oklch(var(--sl) .12 185)}.h6{--s:oklch(var(--sl) .12 215)}.h7{--s:oklch(var(--sl) .15 245)}
+.h8{--s:oklch(var(--sl) .17 270)}.h9{--s:oklch(var(--sl) .18 300)}.h10{--s:oklch(var(--sl) .18 330)}.h11{--s:oklch(var(--sl) .17 355)}
+
+/* ------------------------------------------------------------------ phone */
+.app{min-height:100dvh;display:flex;flex-direction:column;padding-bottom:calc(var(--dock) + env(safe-area-inset-bottom))}
+.app.solo{padding-bottom:0}
+.pane{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--sheet)}
+.topbar{position:sticky;top:0;z-index:2;flex:none;display:flex;align-items:center;gap:10px;min-height:52px;padding:0 16px;background:var(--sheet);border-bottom:1px solid var(--line)}
+.place{flex:1;min-width:0;margin:0;font-size:17px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.place .sec{display:none}
+.count{flex:none;color:var(--soft);font-size:13px;font-variant-numeric:tabular-nums}
+.back{flex:0 1 auto;min-width:0;max-width:45%;display:inline-flex;align-items:center;gap:2px;min-height:var(--tap);margin-left:-8px;padding-right:6px;color:var(--soft);font-size:13.5px}
+.back span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.back svg{width:18px;height:18px}
+.back+.place::before{content:"/";margin-right:10px;color:var(--line);font-weight:400}
+.drift{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 10px;border:1px solid var(--line);border-radius:999px;color:var(--soft);font-size:12.5px;white-space:nowrap}
+.drift svg{width:14px;height:14px}
+
+.searchbar{flex:none;padding:12px 16px 0}
+.searchbar input[type=search]{width:100%;height:44px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--sunk);color:inherit;font:16px var(--ui);appearance:none}
+.searchbar input:focus{outline:2px solid var(--focus);outline-offset:-1px;background:var(--sheet)}
+.hint,.problem{margin:8px 2px 0;font-size:12.5px;color:var(--soft)}
+.problem{color:var(--bad)}
+.parse{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 0;font-size:12.5px}
+.parse .g{padding:2px 8px;border-radius:6px;background:var(--sunk);font-family:var(--mono)}
+.parse b{font-weight:400}
+.parse i,.parse .and{font-style:normal;font-family:var(--ui);color:var(--soft)}
+.parse i{margin:0 6px}
+/* The order is a line of words, the one in force weighted and arrowed. */
+.sortbar{display:flex;align-items:center;gap:2px;margin:8px -6px 0;padding-bottom:8px;font-size:13px;overflow-x:auto}
+.sortbar .lab{margin:0 6px;color:var(--soft)}
+.sortbar a{display:inline-flex;align-items:center;gap:3px;min-height:34px;padding:0 9px;border-radius:8px;color:var(--soft)}
+.sortbar a[aria-current]{background:var(--sunk);color:var(--ink);font-weight:600}
+.sortbar svg{width:14px;height:14px}
+
+/* A row. The bar at its left is the note's colour. */
+.rows{flex:1}
+.index .rows{border-top:1px solid var(--line)}
+.run h2{margin:0;padding:16px 16px 6px 22px;font-size:12px;font-weight:600;color:var(--soft)}
+.run h2 span{font-weight:400}
+/* A run whose every row the filter hid has nothing to head. */
+.run:not(:has(.row:not([hidden]))){display:none}
+.row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:2px 12px;min-height:var(--tap);padding:10px 16px 10px 22px;scroll-margin:70px 0}
+.row::before{content:"";position:absolute;left:10px;top:11px;bottom:11px;width:3px;border-radius:2px;background:var(--s)}
+.row .title{font-weight:600;overflow-wrap:anywhere}
+.row .id{grid-column:2;grid-row:1;font-size:11.5px;color:var(--soft)}
+.row .under{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:2px 10px;min-width:0;font-size:12.5px;color:var(--soft)}
+.tags{display:flex;flex-wrap:wrap;gap:2px 8px;min-width:0}
+.tags span{overflow-wrap:anywhere}
+.tags span::before{content:"#";opacity:.55}
+.pin{font-weight:600;color:var(--ink)}
+.row.here{background:color-mix(in oklch,var(--s) 13%,var(--sheet))}
+.row.here::before{left:0;top:0;bottom:0;width:4px;border-radius:0}
+@media (hover:hover){a.row:not(.here):hover,.row>.most:hover,.mini:hover{background:var(--sunk)}}
+@media (hover:none){a.row:active{background:var(--press)}}
+.row.split{display:flex;align-items:center;gap:12px;padding:0 16px 0 0}
+.row.split::before{display:none}
+.most{flex:1;min-width:0;display:grid;gap:2px;padding:10px 0 10px 22px}
+.aside{flex:none;max-width:40%;font-size:13px;color:var(--soft)}
+a.aside:not(.drift){text-decoration:underline;text-underline-offset:3px}
+.empty{margin:56px auto;padding:0 24px;max-width:31em;text-align:center;color:var(--soft)}
+.empty b{display:block;margin-bottom:6px;color:var(--ink);font-size:17px;overflow-wrap:anywhere}
+.empty a{text-decoration:underline;text-underline-offset:3px}
+
+/* ----------------------------------------------------------------- a note */
+main.note{padding:22px 20px 40px}
+.note article,.note .margin{max-width:650px;margin-inline:auto}
+.note>.said{max-width:650px;margin-inline:auto}
+.note-head::before{content:"";display:block;width:44px;height:5px;margin-bottom:16px;border-radius:3px;background:var(--s)}
+.filename{font-size:12.5px;color:var(--soft);overflow-wrap:anywhere}
+.filename .id{color:var(--ink);font-weight:600}
+.filename .pin{margin-left:10px;font-family:var(--ui)}
+.note h1{margin:8px 0 22px;font:600 30px/1.18 var(--read);letter-spacing:-.01em;text-wrap:balance;overflow-wrap:anywhere}
+.body{font:18px/1.66 var(--read);overflow-wrap:break-word}
+.body>:first-child{margin-top:0}
+.body p,.body ul,.body ol,.body pre,.body blockquote,.body table{margin:0 0 1em}
+.body h1,.body h2,.body h3,.body h4{margin:1.5em 0 .5em;line-height:1.25;font-weight:600}
+.body h1{font-size:1.45em}.body h2{font-size:1.25em}.body h3{font-size:1.08em}.body h4{font-size:1em}
+.body a{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-style:dotted}
+/* A link to a note is underlined in that note's colour. */
+.body a.note{padding:0;text-decoration-style:solid;text-decoration-thickness:2px;text-decoration-color:var(--s)}
+.body ul,.body ol{padding-left:1.3em}
+.body li{margin:.2em 0}
+.body li>:is(ul,ol){margin:0}
+/* A task item is an li whose checkbox is its first thing. A loose list wraps the item's text in a
+   paragraph, which puts the checkbox one level down, so every rule below says both shapes. */
+.body li:has(>input),.body li:has(>p:first-child>input){list-style:none;margin-left:-1.3em}
+.body li:has(>input)>:is(ul,ol),.body li:has(>p:first-child>input)>:is(ul,ol){padding-left:2.8em}
+/* Done is struck and dimmed. A text decoration reaches every block inside the item and cannot be
+   turned off from there, so a list nested in a done item is made an atomic inline, which a
+   decoration does not enter; it then takes its own colour back. The negative margin stands in for
+   the margin collapse an inline block does not do. Links keep their own colour. */
+.body li:has(>input:checked),.body li:has(>p:first-child>input:checked){color:var(--soft);text-decoration:line-through}
+.body li:has(>input:checked)>:is(ul,ol),.body li:has(>p:first-child>input:checked)>:is(ul,ol){display:inline-block;width:100%;box-sizing:border-box;margin-bottom:-.2em;vertical-align:top;color:var(--ink);text-decoration:none}
+.body li:has(>input:checked) a,.body li:has(>p:first-child>input:checked) a{color:var(--ink)}
+.body input[type=checkbox]{width:1em;height:1em;margin:0 .5em 0 0;vertical-align:-.08em;accent-color:var(--ink)}
+.body pre{padding:12px 14px;border-radius:8px;background:var(--sunk);overflow-x:auto;font-size:14px;line-height:1.5}
+.body pre code{padding:0;background:none;font-size:inherit}
+.body blockquote{padding:2px 0 2px 16px;border-left:3px solid var(--line);color:var(--soft)}
+.body blockquote p{margin:0}
+.body table{display:block;width:fit-content;max-width:100%;overflow-x:auto;border-collapse:collapse;font:14px/1.45 var(--ui)}
+.body th,.body td{padding:6px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.body th{color:var(--soft);font-weight:600}
+.body img{max-width:100%}
+
+/* The margin: everything about a note that is not its text. On a phone it
+   follows the text, and its actions are the dock. */
+.note .margin{margin-top:36px;padding-top:20px;border-top:1px solid var(--line)}
+.about{display:grid;gap:10px;margin:0;font-size:13px}
+.about div{display:grid;grid-template-columns:5em minmax(0,1fr);gap:10px;align-items:baseline}
+.about dt{color:var(--soft)}
+.about dd{margin:0}
+a.tag{display:inline-block;margin:0 5px 5px 0;padding:1px 8px;border:1px solid var(--line);border-radius:6px;overflow-wrap:anywhere}
+a.tag:hover{background:var(--sunk)}
+.none{margin:0;color:var(--soft);font-size:13px}
+.beside{margin-top:24px}
+.beside h2{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--soft)}
+.beside h2 span{font-weight:400}
+.mini{position:relative;display:block;margin:0 -8px;padding:7px 8px 7px 20px;border-radius:6px;font-size:14px;line-height:1.35;overflow-wrap:anywhere}
+.mini::before{content:"";position:absolute;left:8px;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--s)}
+
+.actionbar a,.actionbar button{display:flex;align-items:center;gap:8px;min-height:var(--tap);padding:0 10px;border:0;border-radius:8px;background:none;color:var(--soft);font:inherit;cursor:pointer}
+.actionbar .danger{color:var(--bad)}
+.actionbar [aria-current]{color:var(--ink);font-weight:600}
+.read .actionbar,.rail{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;height:calc(var(--dock) + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--sheet);border-top:1px solid var(--line)}
+.read .actionbar a,.read .actionbar button,.rail .actionbar a{flex:1 1 0;min-width:0;flex-direction:column;justify-content:center;gap:3px;padding:0;border-radius:0;font-size:11px}
+
+/* The dock: two parts of the notebook, the way to a new note, two more. */
+.rail .book,.rail .sync,.rail .ver,.keys-open{display:none}
+.rail .actionbar{display:contents}
+.rail .actionbar a:nth-child(-n+2){order:1}
+.rail .actionbar a:nth-child(n+3){order:3}
+.rail .actionbar [aria-current]{box-shadow:inset 0 2px var(--ink)}
+.fab{order:2;flex:none;align-self:center;display:flex;align-items:center;justify-content:center;width:46px;height:46px;margin:0 8px;border-radius:23px;background:var(--go);color:var(--go-ink)}
+.fab span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+@media (max-width:639px){.app.split.at-note .rail{display:none}}
+@media (max-width:1023px){.app.split.at-list .read,.app.split.at-note .index{display:none}}
+
+/* ------------------------------------------------------------------ forms */
+.form main,.status{width:100%;max-width:760px;margin:0 auto;padding:20px}
+.form.tall main{max-width:940px}
+form.write{display:flex;flex-direction:column;gap:16px}
+.write label{display:block;margin-bottom:6px;font-size:13px;color:var(--soft)}
+.write input[type=text],.write textarea{width:100%;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:var(--sheet);color:inherit;font:16px var(--ui)}
+.write input[type=text]{height:46px}
+.write textarea{display:block;min-height:max(260px,calc(100dvh - 230px));padding:14px;font:15px/1.6 var(--mono);resize:vertical}
+.write input:focus,.write textarea:focus{outline:2px solid var(--focus);outline-offset:-1px}
+.pair,.versus{display:grid;gap:16px}
+.form:has(.pair) textarea{min-height:max(260px,calc(100dvh - 320px))}
+.versus textarea,.theirs{min-height:max(200px,calc(50dvh - 150px))}
+.theirs{margin:0;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);font:15px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:break-word}
+small.hint{display:block;margin-top:6px}
+.buttons{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 0;background:var(--sheet);border-top:1px solid var(--line)}
+.buttons .filename{display:none}
+button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:10px;background:var(--sheet);color:var(--ink);font:600 14px var(--ui);cursor:pointer}
+.go{background:var(--go);border-color:var(--go);color:var(--go-ink)}
+button.danger{border-color:currentColor;color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+.buttons .settle{margin-left:auto}
+.said{margin:0 0 14px;font-size:14px;color:var(--soft)}
+.said b{color:var(--ink)}
+.said.bad{padding:10px 14px;border-left:3px solid var(--bad);border-radius:0 8px 8px 0;background:var(--bad-wash);color:var(--ink)}
+.said.ask b{font:600 26px/1.2 var(--read);text-wrap:balance}
+.said .subject{color:var(--ink);font-weight:600}
+.rows>.said{margin:16px 16px 6px 22px}
+.doomed{margin:0 0 14px;padding:12px 14px;border:1px dashed var(--line);border-radius:8px;text-decoration:line-through;text-decoration-color:var(--bad)}
+.ticks{display:flex;flex-wrap:wrap;gap:8px}
+.write label.tick{display:inline-flex;align-items:center;gap:8px;min-height:44px;margin:0;padding:0 14px 0 10px;border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:15px;cursor:pointer}
+.tick input{width:18px;height:18px;margin:0;accent-color:var(--ink)}
+.tick:has(input:not(:checked)) span{text-decoration:line-through;color:var(--soft)}
+.outcome{display:block;margin-top:6px;font:12.5px/1.5 var(--mono);white-space:pre-line;overflow-wrap:anywhere}
+.working b::after,button[aria-busy]::after,.actionbar button[aria-busy] span::after{content:"";display:inline-block;width:7px;height:7px;margin-left:9px;border-radius:4px;background:currentColor;animation:breathe 1.4s ease-in-out infinite}
+.actionbar button[aria-busy]::after{content:none}
+@keyframes breathe{0%,100%{opacity:.2}50%{opacity:1}}
+
+/* Status leads with the drift, then what can be done about it, then facts. */
+.status .lead b{display:block;font:600 34px/1.1 var(--read);overflow-wrap:anywhere}
+.status .lead span{color:var(--soft)}
+.abreast{display:grid;gap:14px;margin:24px 0 28px}
+.abreast form{display:flex;flex-direction:column;gap:6px}
+.abreast small{color:var(--soft);font-size:12.5px}
+.facts{margin:0;border-top:1px solid var(--line)}
+.facts div{display:grid;grid-template-columns:6em minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.facts dt{color:var(--soft)}
+.facts dd{margin:0;overflow-wrap:anywhere}
+.facts .mono{font-size:13px}
+
+/* Tags are drawn with their weight; tasks with their date first. */
+.tally{grid-template-columns:minmax(0,9em) minmax(0,1fr) 2.5em;align-items:center;padding-left:16px}
+.tally::before{display:none}
+.tally .name{font-weight:600;overflow-wrap:anywhere}
+.tally .bar{height:8px;border-radius:4px;background:var(--ink);opacity:.75}
+.tally .n{text-align:right;color:var(--soft);font-variant-numeric:tabular-nums}
+.w1{width:10%}.w2{width:20%}.w3{width:30%}.w4{width:40%}.w5{width:50%}.w6{width:60%}.w7{width:70%}.w8{width:80%}.w9{width:90%}.w10{width:100%}
+.task{grid-template-columns:minmax(0,1fr)}
+.task .title{font-weight:500}
+.task .due,.task .in{font-size:12.5px;color:var(--soft)}
+.task .due{font-family:var(--mono)}
+.task .due:empty{display:none}
+.late .due,.late h2{color:var(--bad);font-weight:600}
+.files .title{font-size:13.5px;font-weight:500}
+.files .under{display:flex;gap:10px;font-size:12.5px;color:var(--soft)}
+
+/* The front page: the notebooks, each with a colour of its own. */
+.root .pane>*{width:100%;max-width:780px;margin-inline:auto}
+.root .topbar{position:static;min-height:0;padding:36px 20px 14px;align-items:baseline;flex-wrap:wrap}
+.root .place{flex:1 1 auto;font:600 30px/1.1 var(--read);white-space:normal}
+.book{min-height:86px;border-bottom:1px solid var(--line)}
+.book .most{position:relative;grid-template-columns:minmax(0,1fr);padding:16px 0 16px 34px}
+.book .most::before{content:"";position:absolute;left:16px;top:16px;bottom:16px;width:6px;border-radius:3px;background:var(--s)}
+.book .name{font-size:19px;font-weight:650;overflow-wrap:anywhere}
+.book .mark{font-weight:600;color:var(--ink)}
+.book .under{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:13px;color:var(--soft)}
+.book .dirty{color:var(--ink)}
+.book .stamp{font-size:12.5px;color:var(--soft)}
+
+/* --------------------------------------------- answers that are on the way */
+.pane[aria-busy]::before{content:"";position:sticky;top:0;z-index:4;flex:none;height:2px;margin-bottom:-2px;background:var(--focus);transform-origin:left;animation:arrive 2s 150ms cubic-bezier(.1,.7,.3,1) both}
+@keyframes arrive{from{opacity:0;transform:scaleX(0)}}
+@media (prefers-reduced-motion:reduce){.pane[aria-busy]::before{animation:arrive 0s 150ms both;transform:none}.working b::after,button[aria-busy]::after,.actionbar button[aria-busy] span::after{animation:none;opacity:.8}}
+
+/* ------------------------------------------------------- the shortcut card */
+dialog.keys{width:min(640px,calc(100vw - 32px));max-height:calc(100dvh - 48px);padding:0;border:1px solid var(--line);border-radius:14px;background:var(--sheet);color:var(--ink);font-size:13.5px;overflow-y:auto}
+dialog.keys::backdrop{background:var(--desk);opacity:.85}
+dialog.keys h2{margin:0;padding:18px 22px 4px;font:600 22px var(--read)}
+dialog.keys .cols{padding:0 22px 16px}
+dialog.keys section{break-inside:avoid;padding-top:14px}
+dialog.keys h3{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--soft)}
+dialog.keys dl{display:grid;grid-template-columns:4.8em minmax(0,1fr);gap:7px 12px;align-items:baseline;margin:0}
+dialog.keys dt{display:flex;gap:4px}
+dialog.keys dd{margin:0;color:var(--soft);overflow-wrap:anywhere}
+dialog.keys.off section:not(:last-child){opacity:.45}
+dialog.keys form{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 22px;border-top:1px solid var(--line)}
+dialog.keys form button{min-height:38px;padding:0 14px;font-size:13px}
+dialog.keys form p{flex:1 1 100%;margin:0;color:var(--soft);font-size:12.5px}
+.keys-next{position:fixed;left:50%;bottom:18px;z-index:5;transform:translateX(-50%);display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;width:max-content;max-width:calc(100vw - 32px);padding:10px 14px;border-radius:12px;background:var(--go);color:var(--go-ink);font-size:13px}
+.keys-next span{display:inline-flex;align-items:center;gap:6px}
+
+/* ----------------------------------------------------------- 640: the rail */
+@media (min-width:640px){
+:root{--rail:84px}
+.app{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);height:100dvh;min-height:0;padding:0}
+.app.solo{display:block;height:auto;min-height:100dvh;background:var(--sheet)}
+.pane{grid-column:2;grid-row:1;min-height:0;overflow-y:auto;border-left:1px solid var(--line)}
+.solo .pane{overflow:visible;border:0}
+/* One column of content on a wide sheet sits in the middle of it. */
+.app:not(.split) .pane>*{width:100%;max-width:820px;margin-inline:auto}
+.app:not(.split) .form.tall>*{max-width:940px}
+.topbar{padding:0 24px}
+.row{padding-right:24px}
+.index .back,.index .drift,.place .nb{display:none}
+.place .sec{display:inline}
+.index .place::before{content:none}
+.searchbar{padding:12px 20px 0}
+.rail{position:static;grid-column:1;grid-row:1;flex-direction:column;align-items:stretch;gap:2px;height:auto;padding:14px 8px 10px;border:0;background:none;overflow-y:auto}
+.rail .book{order:0;display:flex;flex-direction:column;align-items:center;gap:6px;min-height:0;padding:6px 2px 10px;border:0;border-radius:8px;font-size:11px;text-align:center}
+.rail .book::before{content:"";flex:none;width:30px;height:6px;border-radius:3px;background:var(--s)}
+.rail .book .name{max-width:100%;font-size:inherit;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rail .book .all{display:none}
+.fab{order:1;margin:4px auto 10px}
+.rail .actionbar a,.rail .sync{order:3;flex:none;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:56px;padding:6px 2px;border-radius:10px;color:var(--soft);font-size:11px;text-align:center}
+.rail .actionbar [aria-current],.rail .sync[aria-current]{background:var(--press);box-shadow:none;color:var(--ink);font-weight:600}
+.rail .sync{order:4;margin-top:auto;line-height:1.25}
+.rail .sync span{overflow-wrap:anywhere}
+.rail .ver{order:6;display:block;padding:8px 2px 0;font-size:10px;line-height:1.3;text-align:center;color:var(--soft);overflow-wrap:anywhere}
+/* The way to the shortcut card is one more line of the rail, shaped like
+   the sync line above it. Its key is always shown: it is the one that
+   teaches the rest. Below 640px there is no rail and no room in the dock,
+   and seldom a keyboard; `?` still answers one that is attached. */
+.keys-open{order:5;flex:none;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:56px;padding:6px 2px;border:0;border-radius:10px;background:none;color:var(--soft);font:11px/1.25 var(--ui);text-align:center}
+.keys-open kbd{position:absolute;top:3px;right:3px;min-width:0;padding:1px 4px;font:10.5px/1.3 var(--mono);color:var(--soft)}
+@media (hover:hover){.keys-open:hover{background:var(--press);color:var(--ink)}}
+@media (hover:hover){.rail a:hover{background:var(--press)}.rail .fab:hover{background:var(--go);opacity:.88}}
+.sortbar a{min-height:30px}
+/* The note's actions leave the dock for the head of the sheet. */
+main.note{display:grid;grid-template-columns:minmax(0,1fr);padding:0 28px 56px}
+.note article{width:100%;padding-top:28px}
+.note .margin{display:contents}
+.read .actionbar{position:sticky;top:var(--top);order:-1;height:auto;margin:0 -28px;padding:6px 18px;flex-wrap:wrap;gap:2px;border:0;border-bottom:1px solid var(--line)}
+.read .actionbar a,.read .actionbar button{flex:none;flex-direction:row;gap:7px;min-height:36px;padding:0 10px;border-radius:8px;font-size:13.5px}
+.read .actionbar svg{width:17px;height:17px}
+.read .actionbar .danger{margin-left:auto}
+@media (hover:hover){.read .actionbar a:hover,.read .actionbar button:hover{background:var(--sunk);color:var(--ink)}.read .actionbar .danger:hover{color:var(--bad)}}
+@media (pointer:coarse){.read .actionbar a,.read .actionbar button{min-height:var(--tap)}.sortbar a{min-height:44px}}
+.about,.beside{width:100%;max-width:650px;margin-inline:auto}
+.about{margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
+.note h1{font-size:36px}
+.form main,.status{padding:28px 24px}
+.pair{grid-template-columns:2fr 1fr}
+.buttons .filename{display:block;flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.abreast{grid-template-columns:repeat(3,minmax(0,1fr))}
+.tally{grid-template-columns:minmax(0,15em) minmax(0,1fr) 3em;padding-left:24px}
+.task{grid-template-columns:7em minmax(0,1fr)}
+.task .due:empty{display:block}
+.task .title,.task .in{grid-column:2}
+.run h2{padding-left:24px}
+.root .topbar{padding-top:64px}
+dialog.keys .cols{columns:2;column-gap:36px}
+/* A key beside the control it presses, once a key has been used at all. */
+html.keyed .rail [data-key]::after,html.keyed .read .actionbar [data-key]::after{content:attr(data-key);padding:1px 4px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--sunk);color:var(--soft);font:10.5px/1.3 var(--mono);letter-spacing:.1em}
+html.keyed .rail [data-key]::after{position:absolute;top:3px;right:3px}
+html.keyed .rail .book,html.keyed .rail .fab{position:relative}
+html.keyed .rail .fab::after{top:-6px;right:-14px}
+}
+
+/* ---------------------------------------- 1024: the list stays by the note */
+@media (min-width:1024px){
+.app.split.indexed{grid-template-columns:var(--rail) 330px minmax(0,1fr)}
+.app.split.indexed .read{grid-column:3}
+.app.split:not(.indexed) .index{display:none}
+/* With the list beside it, the sheet needs no way back and no second title. */
+.app.split.indexed .read{--top:0px}
+.app.split.indexed .read .topbar{display:none}
+.index .row{padding-right:16px}
+.index .searchbar{padding:12px 14px 0}
+.versus{grid-template-columns:1fr 1fr}
+.versus textarea,.versus .theirs{height:calc(100dvh - 300px);min-height:260px;overflow-y:auto}
+/* The pane the keys are in says so, quietly. */
+.read main.note:focus{outline:0}
+.read:has(main.note:focus-visible){box-shadow:inset 3px 0 var(--focus)}
+}
+
+/* ------------------------------------------------- 1280: the rail has words */
+@media (min-width:1280px){
+:root{--rail:216px}
+.rail{padding:16px 12px 12px}
+.rail .book{display:grid;grid-template-columns:6px minmax(0,1fr);gap:0 10px;justify-items:start;padding:8px 10px;margin-bottom:8px;font-size:16px;text-align:left}
+.rail .book::before{grid-row:1/3;width:6px;height:36px}
+.rail .book .name,.rail .book .all{grid-column:2}
+.rail .book .all{display:block;font-size:12px;font-weight:400;color:var(--soft)}
+.fab{align-self:stretch;width:auto;height:40px;margin:0 0 12px;gap:8px;border-radius:10px;font-weight:600;font-size:14px}
+.fab span{position:static;width:auto;height:auto;clip-path:none}
+.rail .actionbar a,.rail .sync{flex-direction:row;justify-content:flex-start;gap:10px;min-height:40px;padding:0 10px;font-size:14px;text-align:left}
+.rail .sync{font-size:13px}
+.rail .ver{text-align:left;padding-left:10px}
+.keys-open{flex-direction:row;justify-content:flex-start;gap:10px;min-height:40px;padding:0 10px;font-size:13px;text-align:left}
+.keys-open kbd{position:static;margin-left:auto}
+html.keyed .rail [data-key]::after{position:static;margin-left:auto}
+html.keyed .rail .book::after{position:absolute;top:8px;right:8px}
+html.keyed .rail .fab::after{margin-left:6px;background:none;color:inherit;border-color:currentColor;opacity:.7}
+.app.split.indexed{grid-template-columns:var(--rail) 360px minmax(0,1fr)}
+}
+
+/* ------------------------------------------ 1440: the margin is a real one */
+@media (min-width:1440px){
+main.note{grid-template-columns:minmax(0,1fr) 236px;column-gap:44px;padding:0 32px 64px 44px}
+.note article{max-width:650px;padding-top:40px}
+.note .margin{display:block;position:sticky;top:calc(var(--top) + 36px);align-self:start;max-width:none;margin:36px 0 0;padding:0;border:0}
+.read .actionbar{position:static;flex-direction:column;align-items:stretch;margin:0 -10px 22px;padding:0 0 14px}
+.read .actionbar .danger{margin-left:0}
+html.keyed .read .actionbar [data-key]::after{margin-left:auto}
+.about{margin-top:0;padding-top:0;border:0;gap:12px}
+.about div{grid-template-columns:minmax(0,1fr);gap:2px}
+.beside{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+}
+@media (min-width:1800px){
+.app.split.indexed{grid-template-columns:var(--rail) 420px minmax(0,1fr)}
+main.note{grid-template-columns:minmax(0,1fr) 280px;column-gap:64px}
+}

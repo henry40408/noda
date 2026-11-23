@@ -4,27 +4,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/henry40408/noda/internal/cmd"
 	"github.com/henry40408/noda/internal/query"
 	"github.com/henry40408/noda/internal/style"
 )
 
-const separator = "<span class=\"sep\">·</span>"
-
-// joinPieces joins what is not empty.
-func joinPieces(pieces ...string) string {
-	kept := make([]string, 0, len(pieces))
-	for _, piece := range pieces {
-		if piece != "" {
-			kept = append(kept, piece)
-		}
-	}
-	return strings.Join(kept, separator)
-}
-
-// Notebooks is the one screen not inside a notebook, so it has no rail or bar;
-// root stops the layout reserving a column for the rail.
+// Notebooks is the one screen not inside a notebook, so it has no rail; root
+// stops the layout reserving a column for it.
 func Notebooks(books []Book) string {
 	var rows strings.Builder
 	if len(books) == 0 {
@@ -33,57 +21,50 @@ func Notebooks(books []Book) string {
 	for _, book := range books {
 		rows.WriteString(bookRow(book))
 	}
-	return shell("noda", "root",
+	return scripted("noda", "root solo", []Asset{AssetKeys},
 		"<section class=\"pane\">"+
-			"<header class=\"topbar\"><span class=\"here lead\">noda</span>"+
+			"<header class=\"topbar\"><h1 class=\"place\">Notebooks</h1>"+
 			"<span class=\"count\">"+tally(books)+"</span></header>"+
 			"<main class=\"rows books\">"+rows.String()+"</main></section>")
 }
 
-// tally's second clause is in a .more span the stylesheet drops on a phone: the
-// server does not know the screen's width.
 func tally(books []Book) string {
 	notes := 0
 	for _, book := range books {
 		notes += book.Notes
 	}
-	return plural(len(books), "notebook") + "<span class=\"more\"> · " + plural(notes, "note") + "</span>"
+	return plural(len(books), "notebook") + ", " + plural(notes, "note")
 }
 
 // bookRow is two links side by side rather than nested: the row goes to the
-// listing, the chip to the network screen. With no remote the chip is plain
+// listing, the pill to the network screen. With no remote the pill is plain
 // words.
 func bookRow(book Book) string {
 	at := escape(book.Name)
-	// A dot for `noda notebook ls`'s `*`, with words for a screen reader.
-	mark := ""
-	if book.Active {
-		mark = "<span class=\"mark\" aria-hidden=\"true\"></span><span class=\"sr\">Active — </span>"
-	}
-
-	// .holds, not .when: a test helper reads stamps by .when.
-	facts := []string{"<span class=\"holds\">" + plural(book.Notes, "note") + "</span>"}
+	facts := "<span>" + plural(book.Notes, "note") + "</span>"
 	if book.Files > 0 {
-		// Classed so a phone can drop it: three facts do not fit beside the
-		// chip at 390px.
-		facts = append(facts, "<span class=\"holds files\">"+plural(book.Files, "file")+"</span>")
+		facts += "<span>" + plural(book.Files, "file") + "</span>"
 	}
 	if book.Uncommitted > 0 {
-		facts = append(facts, "<span class=\"holds\">"+strconv.Itoa(book.Uncommitted)+" uncommitted</span>")
+		facts += "<span class=\"dirty\">" + strconv.Itoa(book.Uncommitted) + " uncommitted</span>"
+	}
+	// One more fact about the notebook, so it closes the line of facts as
+	// "pinned" closes a note's. Nothing beside the name: every row then starts
+	// its name and its facts at the same place.
+	if book.Active {
+		facts += "<span class=\"mark\">active</span>"
 	}
 
 	aside := "<span class=\"aside\">no remote</span>"
 	if book.Drift != nil {
-		aside = "<a class=\"aside\" href=\"/nb/" + at + "/status\" aria-label=\"Status: " + escape(*book.Drift) + "\">" +
-			"<span class=\"pill\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + iconSync + "</svg>" +
-			"<span>" + escape(*book.Drift) + "</span></span></a>"
+		aside = strings.Replace(driftPill(book.Name, *book.Drift, ""), "class=\"drift\"", "class=\"aside drift\"", 1)
 	}
 
-	return "<div class=\"row split book\">" +
+	return "<div class=\"row split book " + hueClass(book.Name) + "\">" +
 		"<a class=\"most\" href=\"/nb/" + at + "\">" +
-		"<span class=\"name\">" + mark + escape(book.Name) + "</span>" +
-		"<div class=\"under\">" + strings.Join(facts, separator) + "</div>" +
-		"<span class=\"stamp\">" + escape(book.Last) + "</span></a>" + aside + "</div>"
+		"<span class=\"name\">" + at + "</span>" +
+		"<span class=\"under\">" + facts + "</span>" +
+		"<span class=\"stamp\">last change " + escape(book.Last) + "</span></a>" + aside + "</div>"
 }
 
 // Asked is the line in the search field, and everything the page has to say
@@ -127,25 +108,26 @@ func (o Order) asked(typed string) string {
 	return "?" + strings.Join(parts, "&")
 }
 
-// Listing is what the listing's index pane is drawn from. Drift is the chip
-// linking to the network screen.
+// Listing is what the listing's index pane is drawn from. Drift is the pill
+// linking to the network screen. Zone is the zone the month runs are cut in: the
+// server's own, as `todo`'s "today" is; nil is UTC.
 type Listing struct {
 	Book  string
 	Rows  []Row
 	Asked Asked
 	Order Order
 	Drift string
+	Zone  *time.Location
 }
 
 // ListingPage is a notebook's notes, narrowed by whatever was typed. front is
 // the front page beside them, when the notebook has one.
 func ListingPage(list Listing, front *string) string {
 	// "indexed": the rows are in the markup, as the script marks a note route
-	// once it has fetched them. Beside is for the note a picked row swaps into
-	// the reading pane.
+	// once it has fetched them.
 	return scripted(listingTitle(list.Book), "split at-list indexed",
-		[]Asset{AssetListing, AssetPanes, AssetBeside, AssetStamps},
-		listingPanes(list, front)+notebookBar(list.Book, atNotes))
+		[]Asset{AssetListing, AssetPanes, AssetStamps, AssetSending, AssetKeys},
+		listingPanes(list, front)+rail(list.Book, list.Drift, atNotes))
 }
 
 // ListingScreen is both of the listing's panes and its title, for a screen
@@ -167,23 +149,80 @@ func listingPanes(list Listing, front *string) string {
 func ListingPane(list Listing) string {
 	total := len(list.Rows)
 	shown := 0
-	var body strings.Builder
 	for _, row := range list.Rows {
 		if row.Shown {
 			shown++
 		}
-		body.WriteString(listingRow(list.Book, row, list.Asked.Terms))
 	}
-	body.WriteString(emptySentence(list.Book, list.Asked, total, shown))
-
 	counted := strconv.Itoa(total)
 	if list.Asked.Typed != "" {
 		counted = fmt.Sprintf("%d of %d", shown, total)
 	}
 	return indexPane(indexParts{
 		book: list.Book, asked: list.Asked, order: &list.Order,
-		counted: counted, drift: list.Drift, rows: body.String(),
+		counted: counted, drift: list.Drift,
+		rows: listingRuns(list) + emptySentence(list.Book, list.Asked, total, shown),
 	})
+}
+
+// listingRuns cuts the rows into runs with a heading each. A run is a stretch of
+// consecutive rows under one heading, so a reversed listing, which puts the
+// pinned notes last, still reads right.
+func listingRuns(list Listing) string {
+	var out strings.Builder
+	current := ""
+	for _, row := range list.Rows {
+		if heading := list.heading(row); heading != current {
+			if current != "" {
+				out.WriteString("</section>")
+			}
+			out.WriteString("<section class=\"run\"><h2>" + escape(heading) + "</h2>")
+			current = heading
+		}
+		out.WriteString(listingRow(list.Book, row, list.Asked.Terms))
+	}
+	if current != "" {
+		out.WriteString("</section>")
+	}
+	return out.String()
+}
+
+// heading is the run a row belongs to: the pinned notes, then, when the order
+// is a date, a month at a time. An order that is not a date has nothing to cut
+// by, and a heading of "Notes" says the list is one run on purpose.
+func (l Listing) heading(row Row) string {
+	switch {
+	case row.Pinned:
+		return "Pinned"
+	case l.Order.Sort != cmd.SortCreated && l.Order.Sort != cmd.SortUpdated:
+		return "Notes"
+	}
+	return monthOf(row.Stamp, l.Zone)
+}
+
+// monthOf names the month a stamp falls in, in zone. The row beside it still
+// shows the stamp's own day, so a note near midnight at the end of a month can
+// sit under a month its day does not name; converting the day too would put the
+// server's zone into the note, which `day` is written to avoid.
+func monthOf(stamp *string, zone *time.Location) string {
+	const undated = "Undated"
+	if stamp == nil {
+		return undated
+	}
+	if zone == nil {
+		zone = time.UTC
+	}
+	if at, err := time.Parse(time.RFC3339, *stamp); err == nil {
+		return at.In(zone).Format("January 2006")
+	}
+	// A stamp written by hand may be a bare date, which names no zone to convert
+	// from.
+	if len(*stamp) >= len("2006-01-02") {
+		if at, err := time.Parse("2006-01-02", (*stamp)[:len("2006-01-02")]); err == nil {
+			return at.Format("January 2006")
+		}
+	}
+	return undated
 }
 
 // listingRow is one note's row in the index pane.
@@ -193,27 +232,19 @@ func listingRow(book string, row Row, terms []string) string {
 	if row.Pinned {
 		pin = "<span class=\"pin\">" + style.PinMark + "</span>"
 	}
-	under := joinPieces(when(row.Stamp), tagLine(row.Tags), pin)
-
 	hidden := ""
 	if !row.Shown {
 		hidden = " hidden"
-	}
-	// The day is written twice, here beside the id and in under, and the
-	// stylesheet shows one, as the server does not know the screen's width.
-	dayBesideID := ""
-	if row.Stamp != nil {
-		dayBesideID = "<span class=\"day\">" + escape(day(*row.Stamp)) + "</span>"
 	}
 	// A hidden row's title is unmarked, as the script would leave it.
 	title := escape(row.Title)
 	if row.Shown {
 		title = highlight(row.Title, terms)
 	}
-	return "<a class=\"row\"" + hidden + " href=\"/nb/" + escape(book) + "/n/" + escape(row.ID) + "\">" +
-		"<div class=\"ident\"><span class=\"id\">" + escape(row.ID) + "</span>" + dayBesideID + "</div>" +
-		"<div class=\"title\">" + title + "</div>" +
-		"<div class=\"under\">" + under + "</div></a>"
+	return "<a class=\"row " + hueClass(row.ID) + "\"" + hidden + " href=\"/nb/" + escape(book) + "/n/" + escape(row.ID) + "\">" +
+		"<span class=\"title\">" + title + "</span>" +
+		"<span class=\"under\">" + when(row.Stamp) + tagLine(row.Tags) + pin + "</span>" +
+		"<span class=\"id\">" + escape(row.ID) + "</span></a>"
 }
 
 // emptySentence: only the no-match sentence is ever hidden; typing cannot fill
@@ -265,14 +296,15 @@ func indexPane(pane indexParts) string {
 		problem = "<p class=\"problem\">" + escape(*pane.asked.Problem) + "</p>"
 	}
 	return "<section class=\"pane index\">" +
-		"<header class=\"topbar\">" + back("/", "the notebooks") + "<span class=\"here\">" + escape(pane.book) + "</span>" +
-		driftChip(pane.book, pane.drift) +
+		"<header class=\"topbar\">" + back("/", "Notebooks", "gh") +
+		"<h1 class=\"place\"><span class=\"nb\">" + escape(pane.book) + "</span><span class=\"sec\">Notes</span></h1>" +
+		driftPill(pane.book, pane.drift, keyed("gs", "Status")) +
 		"<span class=\"count\">" + pane.counted + "</span></header>" +
 		"<form class=\"searchbar\" method=\"get\" action=\"/nb/" + escape(pane.book) + "\">" +
 		"<input type=\"search\" name=\"q\" value=\"" + escape(pane.asked.Typed) + "\" " +
-		"placeholder=\"tag:work OR tag:q3 budget\" " +
+		"placeholder=\"Search — try tag:ops budget\" " +
 		"autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" " +
-		"enterkeyhint=\"search\" aria-label=\"Search this notebook\">" +
+		"enterkeyhint=\"search\" aria-label=\"Search this notebook\"" + keyed("/", "") + ">" +
 		hiddenInput("sort", sortValue) + hiddenInput("r", reversedValue) +
 		// Written by the server and only unhidden by the script, so the
 		// sentence is testable.
@@ -292,22 +324,26 @@ func hiddenInput(name string, value *string) string {
 // sortbar is the four orders `--sort` names as four links, no menu, so it works
 // without the script. Pressing the order in force toggles `-r`, like a sortable
 // heading, and its chip carries the direction arrow. Choosing a different order
-// drops the reversal.
+// drops the reversal. `O` presses the one in force and `o` the one after it, so
+// the keys are written on the chips and move with the order.
 func sortbar(book string, asked Asked, order Order) string {
 	var out strings.Builder
-	out.WriteString("<nav class=\"sortbar\" aria-label=\"Order\">" +
-		"<span class=\"lab\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + iconOrder + "</svg></span>")
+	out.WriteString("<nav class=\"sortbar\" aria-label=\"Order\"><span class=\"lab\">Order</span>")
 	for _, sort := range cmd.AllSorts {
 		here := sort == order.Sort
 		next := Order{Sort: sort, Reversed: here && !order.Reversed}
-		current, label, arrow := "", "Order by "+sort.Name(), ""
-		if here {
+		current, label, arrow, key := "", "Order by "+sort.Name(), "", ""
+		switch {
+		case here:
 			current = " aria-current=\"true\""
 			label = orderedLabel(sort, order.Reversed)
-			arrow = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + arrowFor(order.Reversed) + "</svg>"
+			arrow = svg(arrowFor(order.Reversed))
+			key = keyed("O", "Reverse the order")
+		case sort == order.Sort.Next():
+			key = keyed("o", "Next order")
 		}
 		out.WriteString("<a href=\"/nb/" + escape(book) + escape(next.asked(asked.Typed)) + "\"" + current +
-			" aria-label=\"" + escape(label) + "\"><span class=\"pill\">" + escape(sort.Name()) + arrow + "</span></a>")
+			" aria-label=\"" + escape(label) + "\"" + key + ">" + escape(sort.Name()) + arrow + "</a>")
 	}
 	out.WriteString("</nav>")
 	return out.String()
@@ -366,57 +402,76 @@ func grouping(groups [][]string) string {
 
 // frontPane is the reading pane with no note picked, which only a two-pane
 // screen sees: the notebook's README.md if it has one, otherwise an invitation.
+// The README wears the notebook's colour, as a note wears its own.
 func frontPane(book string, front *string) string {
 	if front == nil {
-		return "<section class=\"pane read\"><header class=\"topbar\">" +
-			"<span class=\"here lead\">Reading</span></header>" +
-			"<main><div class=\"empty\"><b>Pick a note</b>Its text opens here. " +
-			"Narrow the list with a search, or press + to write a new one." +
-			"</div></main></section>"
+		return "<section class=\"pane read\"><main><div class=\"empty\"><b>Pick a note</b>Its text opens here. " +
+			"Narrow the list with a search, or start a new note.</div></main></section>"
 	}
-	return "<section class=\"pane read\"><header class=\"topbar\">" +
-		"<span class=\"here lead\">" + escape(book) + "</span>" +
-		"<span class=\"count mono\">README.md</span></header>" +
-		"<main class=\"note\"><div class=\"body\">" + *front + "</div></main></section>"
+	return "<section class=\"pane read\"><main class=\"note " + hueClass(book) + "\"><article>" +
+		"<div class=\"note-head\"><div class=\"filename\">README.md</div></div>" +
+		"<div class=\"body\">" + *front + "</div></article></main></section>"
 }
 
 // hint is unhidden by the script only when its answer and the server's can
-// differ: a bare word or `text:` reads the body, which is not on the page.
+// differ: a bare word or `text:` reads the body, which is not on the page. It
+// says something else when the filter stands aside altogether (data-aside), as
+// "filtered by title and tag" over rows that were not filtered reads as wrong.
 func hint() string {
-	return "<p class=\"hint\" hidden>Filtered by title and tag — press ⏎ to search the text.</p>"
+	return "<p class=\"hint\" hidden data-aside=\"Not filtered yet — press ⏎ to search.\">" +
+		"Filtered by title and tag — press <kbd>⏎</kbd> to search the text.</p>"
+}
+
+// simpleParts is a screen that is a heading and a list of rows: the way back, a
+// count, and the rail.
+type simpleParts struct {
+	tab       string // the document's title
+	book      string
+	drift     string
+	here      screen
+	backTo    string
+	backLabel string
+	heading   string
+	count     int
+	laid      string
+	body      string
+}
+
+func simplePage(page simpleParts) string {
+	return scripted(page.tab, "", []Asset{AssetKeys},
+		"<section class=\"pane\">"+
+			"<header class=\"topbar\">"+back(page.backTo, page.backLabel, "Escape")+"<h1 class=\"place\">"+escape(page.heading)+"</h1>"+
+			"<span class=\"count\">"+strconv.Itoa(page.count)+"</span></header>"+
+			"<main class=\""+page.laid+"\">"+page.body+"</main></section>"+rail(page.book, page.drift, page.here))
 }
 
 // Files is one row per file: size, type and how many notes point at it (zero
 // being `doctor --links`' orphan).
-func Files(book string, held []Held) string {
-	// Columns (.cols) only when there are rows: the empty sentence poured into
-	// columns would arrive as fragments with a rule through them.
-	laid := "rows"
+func Files(book string, held []Held, drift string) string {
 	body := "<div class=\"empty\"><b>No files yet</b>Run <code>noda file add diagram.png</code> in a terminal to put one here.</div>"
 	if len(held) > 0 {
-		laid, body = "rows cols wide", fileRows(book, held)
+		body = fileRows(book, held)
 	}
-	return shell("Files — "+book+" — noda", "",
-		"<section class=\"pane\">"+
-			"<header class=\"topbar\">"+back("/nb/"+escape(book), book)+"<span class=\"here\">Files</span>"+
-			"<span class=\"count\">"+strconv.Itoa(len(held))+"</span></header>"+
-			"<main class=\""+laid+"\">"+body+"</main></section>"+notebookBar(book, atFiles))
+	return simplePage(simpleParts{
+		tab: "Files — " + book + " — noda", book: book, drift: drift, here: atFiles,
+		backTo: "/nb/" + escape(book), backLabel: book, heading: "Files", count: len(held),
+		laid: "rows files", body: body,
+	})
 }
 
 func fileRows(book string, held []Held) string {
 	var out strings.Builder
 	for _, file := range held {
-		under := size(file.Size) + separator + escape(file.Kind)
 		// Side by side, since links cannot nest: the row goes to the file, the
 		// count to its backlinks. Zero is not a link.
-		asks := "<span class=\"aside\">nothing links to it</span>"
+		asks := "<span class=\"aside lone\">nothing links to it</span>"
 		if file.Used > 0 {
 			asks = "<a class=\"aside\" href=\"/nb/" + escape(book) + "/f/" + escape(file.Name) + "/backlinks\">in " +
 				plural(file.Used, "note") + "</a>"
 		}
 		out.WriteString("<div class=\"row split\">" +
-			"<a class=\"most\" href=\"/nb/" + escape(book) + "/f/" + escape(file.Name) + "\"><div class=\"title mono\">" + escape(file.Name) + "</div>" +
-			"<div class=\"under\">" + under + "</div></a>" + asks + "</div>")
+			"<a class=\"most\" href=\"/nb/" + escape(book) + "/f/" + escape(file.Name) + "\"><span class=\"title mono\">" + escape(file.Name) + "</span>" +
+			"<span class=\"under\"><span>" + size(file.Size) + "</span><span>" + escape(file.Kind) + "</span></span></a>" + asks + "</div>")
 	}
 	return out.String()
 }
@@ -438,108 +493,136 @@ func size(bytes uint64) string {
 // Tags is tags commonest first, alphabetical within a count, each linking to
 // the listing narrowed to it. query.Scoped writes the query, because a tag with
 // a space has to arrive quoted.
-func Tags(book string, tallies []Tally) string {
-	// Columns only when there are rows, as in Files.
-	laid := "rows"
+func Tags(book string, tallies []Tally, drift string) string {
 	body := "<div class=\"empty\"><b>No tags yet</b>Tags come from a note's frontmatter. Open a note and press Tags to add one.</div>"
 	if len(tallies) > 0 {
-		var out strings.Builder
-		for _, tally := range tallies {
-			out.WriteString("<a class=\"row\" href=\"/nb/" + escape(book) + "?q=" + escape(encoded(query.Scoped(tally.Tag))) + "\">" +
-				"<div class=\"name tags\">" + escape(tally.Tag) + "</div>" +
-				"<div class=\"under\"><span class=\"when\">" + plural(tally.Notes, "note") + "</span></div></a>")
-		}
-		laid, body = "rows cols", out.String()
+		body = tagRows(book, tallies)
 	}
-	return shell("Tags — "+book+" — noda", "",
-		"<section class=\"pane\">"+
-			"<header class=\"topbar\">"+back("/nb/"+escape(book), book)+"<span class=\"here\">Tags</span>"+
-			"<span class=\"count\">"+strconv.Itoa(len(tallies))+"</span></header>"+
-			"<main class=\""+laid+"\">"+body+"</main></section>"+notebookBar(book, atTags))
+	return simplePage(simpleParts{
+		tab: "Tags — " + book + " — noda", book: book, drift: drift, here: atTags,
+		backTo: "/nb/" + escape(book), backLabel: book, heading: "Tags", count: len(tallies),
+		laid: "rows tallies", body: body,
+	})
 }
 
-// Todo is everything in the notebook that is not done, in the order `noda todo`
-// prints.
-//
-// No box can be ticked here: an item has no stable address (line numbers move,
-// text collides) and giving it an id would make the file noda-only. The row
-// goes to the note instead.
-func Todo(book string, tasks []Task) string {
-	body := "<div class=\"empty\"><b>Nothing to do</b>An unticked <code>- [ ]</code> in any note " +
-		"turns up here, with a <code>due:2026-08-20</code> if you give it one.</div>"
-	if len(tasks) > 0 {
-		body = taskRows(book, tasks)
+// tagRows draws each tag with its weight against the commonest. The bar is a
+// class in steps of a tenth, not an inline style, so a strict style-src would
+// still hold.
+func tagRows(book string, tallies []Tally) string {
+	most := 1
+	for _, tally := range tallies {
+		most = max(most, tally.Notes)
 	}
-	return shell("Todo — "+book+" — noda", "",
-		"<section class=\"pane\">"+
-			"<header class=\"topbar\">"+back("/nb/"+escape(book), book)+"<span class=\"here\">Todo</span>"+
-			"<span class=\"count\">"+strconv.Itoa(len(tasks))+"</span></header>"+
-			"<main class=\"rows\">"+body+"</main></section>"+notebookBar(book, atTodo))
-}
-
-func taskRows(book string, tasks []Task) string {
 	var out strings.Builder
-	for _, task := range tasks {
-		due := ""
-		switch {
-		case task.Due != nil && task.Overdue:
-			due = "<span class=\"overdue\">" + escape(*task.Due) + "</span>"
-		case task.Due != nil:
-			due = "<span class=\"when\">" + escape(*task.Due) + "</span>"
-		}
-		under := joinPieces(due, "<span class=\"in\">"+escape(task.Title)+"</span>")
-		out.WriteString("<a class=\"row\" href=\"/nb/" + escape(book) + "/n/" + escape(task.ID) + "\"><div class=\"title\">" +
-			escape(task.Text) + "</div><div class=\"under\">" + under + "</div></a>")
+	for _, tally := range tallies {
+		// Rounded half up in integers, so no float decides which step a tag is in.
+		step := max(1, (tally.Notes*20+most)/(2*most))
+		out.WriteString("<a class=\"row tally\" href=\"/nb/" + escape(book) + "?q=" + escape(encoded(query.Scoped(tally.Tag))) + "\">" +
+			"<span class=\"name\">" + escape(tally.Tag) + "</span>" +
+			"<span class=\"bar w" + strconv.Itoa(step) + "\"></span>" +
+			"<span class=\"n\">" + strconv.Itoa(tally.Notes) + "<span class=\"sr\"> " + noun(tally.Notes, "note") + "</span></span></a>")
 	}
 	return out.String()
 }
 
-// Backlinks is what links to a note, or to one of the notebook's files. Inbound
-// only: what a note points at is already in the note.
-func Backlinks(book string, subject Subject, rows []Row) string {
-	return shell("Links to "+subject.What+" — noda", "",
-		"<section class=\"pane\">"+
-			"<header class=\"topbar\">"+back(subject.At, subject.What)+"<span class=\"here\">Backlinks</span>"+
-			"<span class=\"count\">"+strconv.Itoa(len(rows))+"</span></header>"+
-			BacklinksRows(book, subject, rows)+"</section>")
+// Todo is everything in the notebook that is not done, in the order `noda todo`
+// prints, cut into three runs by what the date says about an item.
+//
+// No box can be ticked here: an item has no stable address (line numbers move,
+// text collides) and giving it an id would make the file noda-only. The row
+// goes to the note instead.
+func Todo(book string, tasks []Task, drift string) string {
+	body := "<div class=\"empty\"><b>Nothing to do</b>An unticked <code>- [ ]</code> in any note " +
+		"turns up here, with a <code>due:2026-08-20</code> if you give it one.</div>"
+	if len(tasks) > 0 {
+		body = taskRuns(book, tasks)
+	}
+	return simplePage(simpleParts{
+		tab: "Todo — " + book + " — noda", book: book, drift: drift, here: atTodo,
+		backTo: "/nb/" + escape(book), backLabel: book, heading: "Todo", count: len(tasks),
+		laid: "rows tasks", body: body,
+	})
 }
 
-// BacklinksRows is the part of Backlinks the beside script fetches, per note
-// read on a wide screen, to rebuild the rows in the margin.
-func BacklinksRows(book string, subject Subject, rows []Row) string {
+// taskRuns keeps the order the tasks came in, which is soonest first, so each
+// run is already sorted.
+func taskRuns(book string, tasks []Task) string {
+	var overdue, dated, whenever []Task
+	for _, task := range tasks {
+		switch {
+		case task.Due == nil:
+			whenever = append(whenever, task)
+		case task.Overdue:
+			overdue = append(overdue, task)
+		default:
+			dated = append(dated, task)
+		}
+	}
+	return taskRun(book, "Overdue", " late", overdue) + taskRun(book, "Dated", "", dated) + taskRun(book, "Whenever", "", whenever)
+}
+
+func taskRun(book, heading, class string, tasks []Task) string {
+	if len(tasks) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString("<section class=\"run" + class + "\"><h2>" + heading + " <span>" + strconv.Itoa(len(tasks)) + "</span></h2>")
+	for _, task := range tasks {
+		due := ""
+		if task.Due != nil {
+			due = escape(*task.Due)
+		}
+		out.WriteString("<a class=\"row task " + hueClass(task.ID) + "\" href=\"/nb/" + escape(book) + "/n/" + escape(task.ID) + "\">" +
+			"<span class=\"due\">" + due + "</span><span class=\"title\">" + escape(task.Text) + "</span>" +
+			"<span class=\"in\">" + escape(task.Title) + "</span></a>")
+	}
+	out.WriteString("</section>")
+	return out.String()
+}
+
+// Backlinks is what links to a note, or to one of the notebook's files. Inbound
+// only: what a note points at is already in the note. It is not on the note's own
+// page's way to anywhere any more (the note carries its backlinks), but a file
+// has no page of its own, and the address stays for both.
+func Backlinks(book string, subject Subject, rows []Row, drift string) string {
+	here, backLabel, class := atNotes, subject.What, "subject"
+	if subject.Mono {
+		here, backLabel, class = atFiles, "Files", "mono"
+	}
 	var body strings.Builder
+	body.WriteString("<p class=\"said\">Notes that link to <span class=\"" + class + "\">" + escape(subject.What) + "</span></p>")
 	if len(rows) == 0 {
 		body.WriteString("<div class=\"empty\"><b>Nothing links here</b>No note in " + escape(book) +
 			" points at " + escape(subject.What) + ".</div>")
 	}
 	for _, row := range rows {
-		body.WriteString("<a class=\"row\" href=\"/nb/" + escape(book) + "/n/" + escape(row.ID) + "\"><div class=\"title\">" +
-			escape(row.Title) + "</div><div class=\"under\">" + tagLine(row.Tags) + "</div></a>")
+		body.WriteString("<a class=\"row " + hueClass(row.ID) + "\" href=\"/nb/" + escape(book) + "/n/" + escape(row.ID) + "\">" +
+			"<span class=\"title\">" + escape(row.Title) + "</span>" +
+			"<span class=\"under\">" + tagLine(row.Tags) + "</span>" +
+			"<span class=\"id\">" + escape(row.ID) + "</span></a>")
 	}
-	class := "subject"
-	if subject.Mono {
-		class = "mono"
-	}
-	return "<main class=\"rows\"><p class=\"said\">What links to <span class=\"" + class + "\">" +
-		escape(subject.What) + "</span></p>" + body.String() + "</main>"
+	return simplePage(simpleParts{
+		tab: "Links to " + subject.What + " — noda", book: book, drift: drift, here: here,
+		backTo: subject.At, backLabel: backLabel, heading: "Linked from", count: len(rows),
+		laid: "rows", body: body.String(),
+	})
 }
 
 // NotePage is one note, and, on a wide enough screen, the listing it came from.
-// drift is for the index pane's bar.
+// drift is for the index pane's pill and the rail.
 func NotePage(book string, reading Reading, drift string) string {
 	// No "indexed": the index pane is sent empty, since a listing is ~290 bytes
 	// a note (half a megabyte at two thousand) and none of it is drawn below
 	// 1024px. The panes script fetches it where the column shows. No order
 	// either: 450 bytes of a control over no rows.
 	return scripted(noteTitle(reading), "split at-note",
-		[]Asset{AssetPanes, AssetBeside, AssetStamps},
-		indexPane(indexParts{book: book, drift: drift})+readPane(book, reading)+notebookBar(book, atNotes))
+		[]Asset{AssetPanes, AssetStamps, AssetSending, AssetKeys},
+		indexPane(indexParts{book: book, drift: drift})+readPane(book, reading)+rail(book, drift, atNotes))
 }
 
 // NotePane is the same note, for a reader who already has the page around it:
-// all a swap uses, the rest (48 of 52 KB, measured) being on screen already. No
-// drift, as the swap keeps the index pane, so this costs one file read and no
-// refs.
+// all a swap uses, the rest (48 of 52 KB, measured) being on screen already.
+// The margin is part of it, so the links to the note arrive with the note.
 func NotePane(book string, reading Reading) string {
 	return titled(noteTitle(reading)) + readPane(book, reading)
 }
@@ -548,41 +631,85 @@ func noteTitle(reading Reading) string { return reading.Title + " — noda" }
 
 // readPane is shared by NotePage and NotePane, so the swap is part of the page.
 func readPane(book string, reading Reading) string {
-	at := "/nb/" + escape(book) + "/n/" + escape(reading.ID)
-	meta := joinPieces(tagLine(reading.Tags), stamp("created", reading.Created), stamp("updated", reading.Updated))
-	// The box, not the answer: backlinks walk every note (+8% on `ls`,
-	// measured) for a column no screen under 1440px draws. The beside script
-	// fills it where it shows; scriptless readers have the Links button.
-	beside := "<aside class=\"beside\" hidden><div class=\"pane-head\">Backlinks</div>" +
-		"<div class=\"answer\"></div></aside>"
+	pinned := ""
+	if reading.Pinned {
+		pinned = "<span class=\"pin\">" + style.PinMark + "</span>"
+	}
 	return "<section class=\"pane read\">" +
-		"<header class=\"topbar\">" + back("/nb/"+escape(book), book) +
+		"<header class=\"topbar\">" + back("/nb/"+escape(book), book, "Escape") +
 		// The note's title: the index pane beside it already names the notebook.
-		"<span class=\"here\">" + escape(reading.Title) + "</span></header>" +
-		"<main class=\"note\">" +
-		"<div class=\"note-head\"><h1>" + escape(reading.Title) + "</h1>" +
-		"<div class=\"filename\"><span class=\"id\">" + escape(reading.ID) + "</span>" +
-		"<span class=\"slug\">-" + escape(reading.Slug) + "</span><span class=\"ext\">.md</span></div>" +
-		"<div class=\"note-meta\">" + meta + "</div></div>" +
-		"<div class=\"body\">" + reading.Rendered + "</div>" +
-		beside + "</main>" + readBar(at, reading.Pinned) + "</section>"
+		"<span class=\"place\">" + escape(reading.Title) + "</span></header>" +
+		"<main class=\"note " + hueClass(reading.ID) + "\"><article>" +
+		"<div class=\"note-head\"><div class=\"filename\"><span class=\"id\">" + escape(reading.ID) + "</span>" +
+		"-" + escape(reading.Slug) + ".md" + pinned + "</div><h1>" + escape(reading.Title) + "</h1></div>" +
+		"<div class=\"body\">" + reading.Rendered + "</div></article>" +
+		margin(book, reading) + "</main></section>"
 }
 
-// readBar is what can be done to a note. Things to do to the note, so none is
-// marked current. Delete is safe on the bar because /delete is a confirmation
-// page. Pin is labelled with what a press does, and is the one item that writes
-// without a page in between: it is undone by pressing it again.
+// margin is everything about a note that is not its text: what can be done to
+// it, its tags and stamps, and which notes link to it.
+func margin(book string, reading Reading) string {
+	at := "/nb/" + escape(book) + "/n/" + escape(reading.ID)
+	return "<aside class=\"margin\">" + readBar(at, reading.Pinned) +
+		"<dl class=\"about\">" +
+		aboutRow("Tags", "chips", tagChips(book, reading.Tags)) +
+		aboutRow("Updated", "", fullTime(reading.Updated)) +
+		aboutRow("Created", "", fullTime(reading.Created)) +
+		"</dl>" + linkedFrom(book, reading.LinkedFrom) + "</aside>"
+}
+
+// aboutRow is a term and what it says, or nothing when there is nothing to say.
+func aboutRow(term, class, content string) string {
+	if content == "" {
+		return ""
+	}
+	if class != "" {
+		class = " class=\"" + class + "\""
+	}
+	return "<div><dt>" + term + "</dt><dd" + class + ">" + content + "</dd></div>"
+}
+
+// tagChips link to the listing narrowed to each tag, written by query.Scoped as
+// the tag screen does.
+func tagChips(book string, tags []string) string {
+	if len(tags) == 0 {
+		return "<span class=\"none\">none</span>"
+	}
+	var out strings.Builder
+	for _, tag := range tags {
+		out.WriteString("<a class=\"tag\" href=\"/nb/" + escape(book) + "?q=" + escape(encoded(query.Scoped(tag))) + "\">" + escape(tag) + "</a>")
+	}
+	return out.String()
+}
+
+// linkedFrom is the notes that point at this one, each in its own colour.
+func linkedFrom(book string, rows []Row) string {
+	var out strings.Builder
+	out.WriteString("<section class=\"beside\"><h2>Linked from <span>" + strconv.Itoa(len(rows)) + "</span></h2>")
+	if len(rows) == 0 {
+		out.WriteString("<p class=\"none\">No other note links here.</p>")
+	}
+	for _, row := range rows {
+		out.WriteString("<a class=\"mini " + hueClass(row.ID) + "\" href=\"/nb/" + escape(book) + "/n/" + escape(row.ID) + "\">" + escape(row.Title) + "</a>")
+	}
+	out.WriteString("</section>")
+	return out.String()
+}
+
+// readBar is what can be done to a note: five things, none marked current.
+// Delete is safe on the bar because /delete is a confirmation page. Pin is
+// labelled with what a press does, and is the one item that writes without a
+// page in between: it is undone by pressing it again.
 func readBar(at string, pinned bool) string {
-	pin := barItem{iconPin, "Pin", postTo(at+"/pin", "pin"), markPlain}
+	pin := barItem{icon: iconPin, label: "Pin", act: postTo(at+"/pin", "pin"), key: "p", then: "Unpin"}
 	if pinned {
-		pin = barItem{iconPin, "Unpin", postTo(at+"/unpin", "pin"), markPlain}
+		pin = barItem{icon: iconPin, label: "Unpin", act: postTo(at+"/unpin", "pin"), key: "p", then: "Pin"}
 	}
 	return actionBar([]barItem{
-		{iconEdit, "Edit", goTo(at + "/edit"), markPlain},
-		{iconTags, "Tags", goTo(at + "/tags"), markPlain},
-		{iconRename, "Rename", goTo(at + "/rename"), markPlain},
-		{iconLinks, "Links", goTo(at + "/backlinks"), markPlain},
+		{icon: iconEdit, label: "Edit", act: goTo(at + "/edit"), key: "e"},
+		{icon: iconTags, label: "Tags", act: goTo(at + "/tags"), key: "t"},
+		{icon: iconRename, label: "Rename", act: goTo(at + "/rename"), key: "r"},
 		pin,
-		{iconTrash, "Delete", goTo(at + "/delete"), markDanger},
-	})
+		{icon: iconTrash, label: "Delete", act: goTo(at + "/delete"), mark: markDanger, key: "D"},
+	}, "This note")
 }

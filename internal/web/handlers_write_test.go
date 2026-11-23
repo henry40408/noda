@@ -181,7 +181,7 @@ func TestSavingTagsFromAStalePageDoesNotRemoveATagAddedSince(t *testing.T) {
 	if saved := site.post("/nb/default/n/"+id+"/tags", "saw", "work", "keep", "work", "add", "ops"); saved.status != 303 {
 		t.Fatalf("%d", saved.status)
 	}
-	if note := site.get("/nb/default/n/" + id); !note.says(`<span class="tags">work, q3, ops</span>`) {
+	if note := site.get("/nb/default/n/" + id); !note.says(`<dd class="chips"><a class="tag" href="/nb/default?q=tag%3Awork">work</a><a class="tag" href="/nb/default?q=tag%3Aq3">q3</a><a class="tag" href="/nb/default?q=tag%3Aops">ops</a></dd>`) {
 		t.Fatal(note.body)
 	}
 }
@@ -192,7 +192,7 @@ func TestUntickingATagOnThePageThatOfferedItRemovesIt(t *testing.T) {
 	if saved := site.post("/nb/default/n/"+id+"/tags", "saw", "work"); saved.status != 303 {
 		t.Fatalf("%d", saved.status)
 	}
-	if note := site.get("/nb/default/n/" + id); note.says(`<span class="tags">work</span>`) {
+	if note := site.get("/nb/default/n/" + id); !note.says(`<span class="none">none</span>`) {
 		t.Fatal(note.body)
 	}
 }
@@ -221,7 +221,7 @@ func TestANoteCanBeRenamedAndKeepsItsAddress(t *testing.T) {
 		t.Fatalf("%d %v", saved.status, saved.header)
 	}
 	note := site.get("/nb/default/n/" + id)
-	if !note.says("Budget review 2026") || !note.says(">-budget-review-2026</span>") {
+	if !note.says("Budget review 2026") || !note.says("</span>-budget-review-2026.md</div>") {
 		t.Fatal(note.body)
 	}
 }
@@ -232,6 +232,11 @@ func TestARefusedChangeIsHandedBackWithTheReason(t *testing.T) {
 	refused := site.post("/nb/default/n/"+id+"/rename", "title", "  ")
 	if refused.status != 200 || !refused.says("a note needs a title") || !refused.says("<form") {
 		t.Fatalf("%d %s", refused.status, refused.body)
+	}
+	// The way back is labelled with the note's own title, which the refused
+	// form does not carry.
+	if !refused.says(`aria-label="Back to Budget review"`) {
+		t.Fatal(refused.body)
 	}
 }
 

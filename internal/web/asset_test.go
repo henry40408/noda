@@ -3,8 +3,11 @@ package web
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/henry40408/noda/internal/style"
 )
 
 func TestAnAssetIsLinkedByNameKindAndContentHash(t *testing.T) {
@@ -19,7 +22,8 @@ func TestAnAssetIsLinkedByNameKindAndContentHash(t *testing.T) {
 		{AssetListing, `^/a/listing\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetStanding, `^/a/standing\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetPanes, `^/a/panes\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
-		{AssetBeside, `^/a/beside\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetKeys, `^/a/keys\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetSending, `^/a/sending\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetStamps, `^/a/stamps\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetWatching, `^/a/watching\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 	}
@@ -62,6 +66,39 @@ func TestWhatAPageLinksIsWhatTheRouteAnswers(t *testing.T) {
 		if !ok || found.Body != asset.body() || found.Kind != asset.Kind() {
 			t.Errorf("%s is not answered", asset.Href())
 		}
+	}
+}
+
+func TestTheStylesheetDefinesEveryHueAndNoOther(t *testing.T) {
+	sheet := AssetStyle.body()
+	for index := range style.Hues {
+		if rule := ".h" + strconv.Itoa(index) + "{--s:oklch(var(--sl) "; !strings.Contains(sheet, rule) {
+			t.Errorf("no rule %q", rule)
+		}
+	}
+	if past := ".h" + strconv.Itoa(style.Hues) + "{"; strings.Contains(sheet, past) {
+		t.Errorf("a rule for %q, which nothing wears", past)
+	}
+}
+
+// Whatever a name wears must be styled, or its row would draw with no accent.
+func TestEveryNameWearsAClassTheStylesheetDefines(t *testing.T) {
+	sheet := AssetStyle.body()
+	for _, name := range []string{"01abc234", "default", "", "日本語", strings.Repeat("z", 200)} {
+		if rule := "." + hueClass(name) + "{--s:"; !strings.Contains(sheet, rule) {
+			t.Errorf("%q wears %s, which is not defined", name, hueClass(name))
+		}
+	}
+}
+
+// Dark is only what the reader's device asks for, so the dark surfaces come
+// after the media query opens and the light ones before it.
+func TestTheDarkThemeLivesInsideTheMediaQuery(t *testing.T) {
+	sheet := AssetStyle.body()
+	query := strings.Index(sheet, "@media (prefers-color-scheme:dark){")
+	light, dark := strings.Index(sheet, "--sheet:"+lightTheme.sheet), strings.Index(sheet, "--sheet:"+darkTheme.sheet)
+	if query < 0 || light < 0 || dark < 0 || light >= query || query >= dark {
+		t.Fatalf("light at %d, media query at %d, dark at %d", light, query, dark)
 	}
 }
 

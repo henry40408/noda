@@ -1,4 +1,3 @@
-
 (() => {
   // English: only the zone is the reader's, not the locale.
   const clock = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
@@ -19,15 +18,6 @@
       said.title = raw;
     }
 
-    // A row prints its day twice, drawn one at a time, but only one carries
-    // the stamp (saving thirty bytes a note), so copy the result across.
-    for (const row of root.querySelectorAll("a.row")) {
-      const said = row.querySelector("time.when");
-      const beside = row.querySelector(".ident .day");
-      if (!said || !beside) continue;
-      beside.textContent = said.textContent;
-      beside.title = said.title;
-    }
   };
 
   paint(document);

@@ -169,8 +169,12 @@ func (s *Server) listing(r *http.Request) (answer, error) {
 			return nil, err
 		}
 	}
+	// The server's own zone, as `noda todo` judges "today" in: a month heading
+	// is the one thing a listing says that a stamp's own day does not.
+	tz, set := s.env.Git.Getenv("TZ")
+	zone := clock.Location(tz, set)
 	draw := func(asked Asked) string {
-		list := Listing{Book: book, Rows: rows, Asked: asked, Order: order, Drift: drift}
+		list := Listing{Book: book, Rows: rows, Asked: asked, Order: order, Drift: drift, Zone: zone}
 		switch {
 		case column:
 			return ListingPane(list)
@@ -215,6 +219,17 @@ type located struct {
 	other  answer
 }
 
+// about is the note a form is about, titled by what the file says now: the form's
+// way back is named after the note, which a refused form's own fields (the
+// title being typed, say) do not say.
+func (at located) about() (About, error) {
+	parsed, _, err := readNote(at.opened, at.id, at.slug)
+	if err != nil {
+		return About{}, err
+	}
+	return About{ID: at.id, Slug: at.slug, Title: parsed.Title}, nil
+}
+
 // aim finds the note a key names. tail is what follows the id in the address a
 // slug or prefix redirects to.
 func (s *Server) aim(r *http.Request, tail string) (located, error) {
@@ -251,14 +266,20 @@ func (s *Server) reading(r *http.Request) (answer, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Sent with the note, on the swap too: the margin is part of what the note is.
+	linking, err := at.opened.BacklinksToNote(at.id)
+	if err != nil {
+		return nil, err
+	}
 	shown := Reading{
 		ID: at.id, Slug: at.slug, Title: parsed.Title, Tags: parsed.Tags, Created: parsed.Created,
 		Updated: parsed.Updated, Rendered: Body(parsed.Body, around), Pinned: parsed.IsPinned(),
+		LinkedFrom: rowsOf(linking),
 	}
 	if part {
 		return pageOf(NotePane(book, shown)), nil
 	}
-	// For the chip on the index pane, which is sent empty.
+	// For the pill on the index pane, which is sent empty, and the rail.
 	drift, err := standing(at.opened)
 	if err != nil {
 		return nil, err
@@ -294,7 +315,11 @@ func (s *Server) files(r *http.Request) (answer, error) {
 		kind, _ := holding(name)
 		rows = append(rows, Held{Name: name, Size: size, Kind: withoutCharset(kind), Used: used[name]})
 	}
-	return pageOf(Files(book, rows)), nil
+	drift, err := standing(opened)
+	if err != nil {
+		return nil, err
+	}
+	return pageOf(Files(book, rows, drift)), nil
 }
 
 func withoutCharset(kind string) string {
@@ -321,7 +346,11 @@ func (s *Server) tags(r *http.Request) (answer, error) {
 	for _, count := range notebook.TagTally(notes) {
 		tallies = append(tallies, Tally{Tag: count.Tag, Notes: count.Notes})
 	}
-	return pageOf(Tags(book, tallies)), nil
+	drift, err := standing(opened)
+	if err != nil {
+		return nil, err
+	}
+	return pageOf(Tags(book, tallies, drift)), nil
 }
 
 // todo is noda todo's list, with each note's title. Overdue is judged against
@@ -354,7 +383,11 @@ func (s *Server) todo(r *http.Request) (answer, error) {
 	for i, each := range entries {
 		tasks[i] = Task{ID: each.id, Title: each.title, Text: each.item.Text, Due: each.item.Due, Overdue: each.item.Overdue(today)}
 	}
-	return pageOf(Todo(book, tasks)), nil
+	drift, err := standing(opened)
+	if err != nil {
+		return nil, err
+	}
+	return pageOf(Todo(book, tasks, drift)), nil
 }
 
 // status touches no network, as noda status does not: drift is against the last
@@ -436,7 +469,6 @@ func (s *Server) runErrand(book string, job Job) {
 // the id, so it survives a retitle.
 func (s *Server) noteBacklinks(r *http.Request) (answer, error) {
 	book := r.PathValue("book")
-	part := fragmentRows.wanted(r)
 	at, err := s.aim(r, "/backlinks")
 	if err != nil || at.other != nil {
 		return orMissing(err, at.other)
@@ -450,14 +482,15 @@ func (s *Server) noteBacklinks(r *http.Request) (answer, error) {
 		return nil, err
 	}
 	subject := Subject{What: parsed.Title, At: "/nb/" + book + "/n/" + at.id}
-	return backlinksAnswer(book, subject, rowsOf(linking), part), nil
+	return backlinksAnswer(book, at.opened, subject, rowsOf(linking))
 }
 
-func backlinksAnswer(book string, subject Subject, rows []Row, part bool) answer {
-	if part {
-		return pageOf(BacklinksRows(book, subject, rows))
+func backlinksAnswer(book string, opened *notebook.Notebook, subject Subject, rows []Row) (answer, error) {
+	drift, err := standing(opened)
+	if err != nil {
+		return nil, err
 	}
-	return pageOf(Backlinks(book, subject, rows))
+	return pageOf(Backlinks(book, subject, rows, drift)), nil
 }
 
 // heldName is the file a URL names, or nothing. It is the only place noda opens
@@ -483,7 +516,6 @@ func heldName(opened *notebook.Notebook, name string) (string, bool) {
 // without --update-links would break.
 func (s *Server) fileBacklinks(r *http.Request) (answer, error) {
 	book, name := r.PathValue("book"), r.PathValue("name")
-	part := fragmentRows.wanted(r)
 	opened, found, err := s.openNotebook(r.Context(), book)
 	if err != nil || !found {
 		return orMissing(err, missingNotebook(book))
@@ -497,7 +529,7 @@ func (s *Server) fileBacklinks(r *http.Request) (answer, error) {
 		return nil, err
 	}
 	subject := Subject{What: path, At: "/nb/" + encoded(book) + "/files", Mono: true}
-	return backlinksAnswer(book, subject, rowsOf(linking), part), nil
+	return backlinksAnswer(book, opened, subject, rowsOf(linking))
 }
 
 // heldFile serves a file the notebook holds. Never a note.

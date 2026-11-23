@@ -69,7 +69,6 @@ const (
 	fragmentRead   fragment = "read"
 	fragmentIndex  fragment = "index"
 	fragmentScreen fragment = "screen"
-	fragmentRows   fragment = "rows"
 	fragmentNews   fragment = "news"
 )
 

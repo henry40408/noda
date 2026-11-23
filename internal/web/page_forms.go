@@ -7,30 +7,40 @@ import (
 	"github.com/henry40408/noda/internal/version"
 )
 
-// formParts is the parts of a form page: where it is, where back goes, what to
-// say and the form to say it beside.
+// formParts is the parts of a form page: where the way back goes and what it is
+// called, what to say and the form to say it beside.
 type formParts struct {
-	book   string
-	title  string
-	backTo string
-	said   string
-	form   string
+	title     string
+	backTo    string
+	backLabel string
+	said      string
+	form      string
+	// tall lets the form's text area take the height of the window, for a page
+	// that is mostly the text being written.
+	tall bool
+	// watching adds the script that listens for the note moving under the form:
+	// the three that carry a fingerprint.
+	watching bool
 }
 
 // formPage is a bar with a way back, an optional line saying what went wrong,
 // and the form. Both inside <main>, which the wide layout caps to a column;
 // outside it a textarea would run the monitor's width.
-func formPage(page formParts) string { return laidOut(page, nil) }
-
-// watchingFormPage is a form page that also listens for the note moving under
-// it: the three that carry a fingerprint (the editor and the two answers to a
-// concurrent change).
-func watchingFormPage(page formParts) string { return laidOut(page, []Asset{AssetWatching}) }
-
-func laidOut(page formParts, scripts []Asset) string {
-	return scripted(page.title+" — noda", "", scripts,
-		"<section class=\"pane\">"+
-			"<header class=\"topbar\">"+back(page.backTo, page.book)+"<span class=\"here\">"+escape(page.title)+"</span></header>"+
+//
+// The way back has no key: Escape out of a form would take what was typed with
+// it.
+func formPage(page formParts) string {
+	scripts := []Asset{AssetSending, AssetKeys}
+	if page.watching {
+		scripts = []Asset{AssetWatching, AssetSending, AssetKeys}
+	}
+	class := "pane form"
+	if page.tall {
+		class += " tall"
+	}
+	return scripted(page.title+" — noda", "solo", scripts,
+		"<section class=\""+class+"\">"+
+			"<header class=\"topbar\">"+back(page.backTo, page.backLabel, "")+"<h1 class=\"place\">"+escape(page.title)+"</h1></header>"+
 			"<main>"+page.said+page.form+"</main></section>")
 }
 
@@ -42,25 +52,30 @@ func refusal(problem *string) string {
 	return "<p class=\"said bad\">" + escape(*problem) + "</p>"
 }
 
-const (
-	saveAndCancel = "<div class=\"buttons\"><button class=\"go\" type=\"submit\">Save</button>"
-	cancelOpen    = "<a class=\"button\" href=\""
-)
+// submitButton names what it does while it does it (data-busy), so the press is
+// answered before the server is.
+func submitButton(label, busy string) string {
+	return "<button class=\"go\" type=\"submit\" data-busy=\"" + escape(busy) + "\">" + label + "</button>"
+}
+
+func cancelLink(href, label, extra string) string {
+	return "<a class=\"button\" href=\"" + escape(href) + "\"" + extra + ">" + label + "</a>"
+}
 
 // Composing is a new note.
 func Composing(book string, draft Draft, problem *string) string {
+	at := "/nb/" + escape(book)
 	return formPage(formParts{
-		book: book, title: "New note", backTo: "/nb/" + escape(book), said: refusal(problem),
-		form: "<form class=\"write\" method=\"post\" action=\"/nb/" + escape(book) + "/new\">" +
-			"<div><label for=\"t\">Title</label>" +
+		title: "New note", backTo: at, backLabel: book, said: refusal(problem), tall: true,
+		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/new\">" +
+			"<div class=\"pair\"><div><label for=\"t\">Title</label>" +
 			"<input id=\"t\" type=\"text\" name=\"title\" value=\"" + escape(draft.Title) + "\" " +
 			"placeholder=\"Leave it empty to take the first line\"></div>" +
 			"<div><label for=\"g\">Tags</label>" +
-			"<input id=\"g\" type=\"text\" name=\"tags\" value=\"" + escape(draft.Tags) + "\" placeholder=\"work q3\"></div>" +
-			"<div><label for=\"b\">Note</label>" +
+			"<input id=\"g\" type=\"text\" name=\"tags\" value=\"" + escape(draft.Tags) + "\" placeholder=\"work q3\"></div></div>" +
+			"<div class=\"grow\"><label for=\"b\">Note</label>" +
 			"<textarea id=\"b\" name=\"body\" autofocus>" + escape(draft.Body) + "</textarea></div>" +
-			"<div class=\"buttons\"><button class=\"go\" type=\"submit\">Add note</button>" +
-			cancelOpen + "/nb/" + escape(book) + "\">Cancel</a></div></form>",
+			"<div class=\"buttons\">" + submitButton("Add note", "Adding…") + cancelLink(at, "Cancel", "") + "</div></form>",
 	})
 }
 
@@ -75,16 +90,33 @@ type Edit struct {
 	Problem *string
 }
 
+// editParts is what the three editor pages share: the fingerprint of the file
+// they were drawn from and the field, which is the only thing that differs.
+type editParts struct {
+	book        string
+	about       About
+	fingerprint string
+	said        string
+	fields      string
+}
+
+func editForm(parts editParts) string {
+	at := parts.about.at(parts.book)
+	return formPage(formParts{
+		title: "Edit", backTo: at, backLabel: parts.about.Title, said: parts.said, tall: true, watching: true,
+		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/edit\">" +
+			"<input type=\"hidden\" name=\"fingerprint\" value=\"" + escape(parts.fingerprint) + "\">" + parts.fields +
+			"<div class=\"buttons\">" + submitButton("Save", "Saving…") + cancelLink(at, "Cancel", "") +
+			"<span class=\"filename\"><span class=\"id\">" + escape(parts.about.ID) + "</span>-" + escape(parts.about.Slug) + ".md</span></div></form>",
+	})
+}
+
 // Editing is the body in a textarea, with the fingerprint it was drawn from.
 func Editing(edit Edit) string {
-	at := edit.About.at(edit.Book)
-	return watchingFormPage(formParts{
-		book: edit.Book, title: edit.About.Title, backTo: at,
-		said: refusal(edit.Problem) + "<p class=\"said\">Editing the body. The title and the tags have their own screens.</p>",
-		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/edit\">" +
-			"<input type=\"hidden\" name=\"fingerprint\" value=\"" + escape(edit.Was) + "\">" +
-			"<div><textarea name=\"body\" autofocus>" + escape(edit.Body) + "</textarea></div>" +
-			saveAndCancel + cancelOpen + at + "\">Cancel</a></div></form>",
+	return editForm(editParts{
+		book: edit.Book, about: edit.About, fingerprint: edit.Was, said: refusal(edit.Problem),
+		fields: "<div class=\"grow\"><label for=\"b\">Text of the note — the title and the tags have their own screens</label>" +
+			"<textarea id=\"b\" name=\"body\" autofocus>" + escape(edit.Body) + "</textarea></div>",
 	})
 }
 
@@ -102,19 +134,15 @@ type Clash struct {
 // from (the base is not in the object database, e.g. never committed), so both
 // are handed back whole; otherwise Conflicted shows the merge.
 //
-// What is on disk is shown read-only above what they wrote, which stays
+// What is on disk is shown read-only beside what they wrote, which stays
 // editable: saving is "keep mine", and editing is combining the two.
 func Clashed(clash Clash) string {
-	at := clash.About.at(clash.Book)
-	return watchingFormPage(formParts{
-		book: clash.Book, title: clash.About.Title, backTo: at,
+	return editForm(editParts{
+		book: clash.Book, about: clash.About, fingerprint: clash.Now,
 		said: "<p class=\"said bad\"><b>This note changed while you were writing.</b> Nothing has been overwritten.</p>",
-		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/edit\">" +
-			"<input type=\"hidden\" name=\"fingerprint\" value=\"" + escape(clash.Now) + "\">" +
-			"<div><label>Saved now</label><pre class=\"theirs\">" + escape(clash.Theirs) + "</pre></div>" +
+		fields: "<div class=\"versus grow\"><div><label>Saved now</label><pre class=\"theirs\">" + escape(clash.Theirs) + "</pre></div>" +
 			"<div><label for=\"b\">What you wrote</label>" +
-			"<textarea id=\"b\" name=\"body\" autofocus>" + escape(clash.Mine) + "</textarea></div>" +
-			saveAndCancel + cancelOpen + at + "\">Cancel</a></div></form>",
+			"<textarea id=\"b\" name=\"body\" autofocus>" + escape(clash.Mine) + "</textarea></div></div>",
 	})
 }
 
@@ -122,17 +150,14 @@ func Clashed(clash Clash) string {
 // to be settled in one field, and everything outside the markers is both edits
 // combined.
 func Conflicted(book string, about About, merged, now string) string {
-	at := about.at(book)
-	return watchingFormPage(formParts{
-		book: book, title: about.Title, backTo: at,
+	return editForm(editParts{
+		book: book, about: about, fingerprint: now,
 		said: "<p class=\"said bad\"><b>Someone else saved while you were writing.</b> " +
 			"Both versions are here and nothing has been overwritten. Where the two " +
 			"changed the same lines, they are wrapped in <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> " +
 			"markers — keep what the note should say and delete the rest.</p>",
-		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/edit\">" +
-			"<input type=\"hidden\" name=\"fingerprint\" value=\"" + escape(now) + "\">" +
-			"<div><textarea name=\"body\" autofocus>" + escape(merged) + "</textarea></div>" +
-			saveAndCancel + cancelOpen + at + "\">Cancel</a></div></form>",
+		fields: "<div class=\"grow\"><label for=\"b\">Text of the note, with both versions</label>" +
+			"<textarea id=\"b\" name=\"body\" autofocus>" + escape(merged) + "</textarea></div>",
 	})
 }
 
@@ -140,14 +165,13 @@ func Conflicted(book string, about About, merged, now string) string {
 func Renaming(book string, about About, title string, problem *string) string {
 	at := about.at(book)
 	return formPage(formParts{
-		book: book, title: "Rename", backTo: at,
-		said: refusal(problem) + "<p class=\"said\">The id never moves, so links and bookmarks survive. " +
-			"The filename follows the title.</p>",
+		title: "Rename", backTo: at, backLabel: about.Title, said: refusal(problem),
 		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/rename\">" +
 			"<div><label for=\"t\">Title</label>" +
-			"<input id=\"t\" type=\"text\" name=\"title\" value=\"" + escape(title) + "\" autofocus></div>" +
-			"<div class=\"buttons\"><button class=\"go\" type=\"submit\">Rename</button>" +
-			cancelOpen + at + "\">Cancel</a></div></form>",
+			"<input id=\"t\" type=\"text\" name=\"title\" value=\"" + escape(title) + "\" autofocus>" +
+			"<small class=\"hint\">The id <span class=\"id\">" + escape(about.ID) + "</span> never moves, so links and bookmarks survive. " +
+			"The filename follows the title.</small></div>" +
+			"<div class=\"buttons\">" + submitButton("Rename", "Renaming…") + cancelLink(at, "Cancel", "") + "</div></form>",
 	})
 }
 
@@ -172,32 +196,38 @@ func Tagging(book string, about About, tags []string, problem *string) string {
 				"<input id=\"" + id + "\" type=\"checkbox\" name=\"keep\" value=\"" + escape(tag) + "\" checked>" +
 				"<span>" + escape(tag) + "</span></label>")
 		}
-		held = "<div><label>On this note</label><div class=\"ticks\">" + boxes.String() + "</div></div>"
+		held = "<div><label>On this note — untick one to take it off</label><div class=\"ticks\">" + boxes.String() + "</div></div>"
 	}
 	return formPage(formParts{
-		book: book, title: "Tags", backTo: at, said: refusal(problem),
+		title: "Tags", backTo: at, backLabel: about.Title, said: refusal(problem),
 		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/tags\">" + held +
 			"<div><label for=\"a\">Add tags</label>" +
 			"<input id=\"a\" type=\"text\" name=\"add\" " +
 			"placeholder=\"ops docs &quot;24.04 Dark patterns&quot;\">" +
 			"<small class=\"hint\">Separated by spaces. Quote one that has a space in it.</small></div>" +
-			saveAndCancel + cancelOpen + at + "\">Cancel</a></div></form>",
+			"<div class=\"buttons\">" + submitButton("Save", "Saving…") + cancelLink(at, "Cancel", "") + "</div></form>",
 	})
 }
 
 // Deleting says the note can be brought back, which git makes true: a warning
 // that overstates the danger teaches people to click through warnings.
+//
+// The page opens with the focus on "Keep it" and Escape presses it, so Enter on
+// arrival is the harmless answer. The file that would go is named, because a
+// title alone does not say which of two notes that share one is meant.
 func Deleting(book string, about About) string {
 	at := about.at(book)
 	return formPage(formParts{
-		book: book, title: "Delete", backTo: at,
+		title: "Delete", backTo: at, backLabel: about.Title,
 		// In the said slot, not the form: .said has its own padding and rule,
 		// which a form would inset.
-		said: "<p class=\"said\"><b>Delete " + escape(about.Title) + "?</b> The file goes and the commit that " +
-			"removed it stays, so <code>noda restore</code> brings it back with its id.</p>",
+		said: "<p class=\"said ask\"><b>Delete " + escape(about.Title) + "?</b></p>" +
+			"<p class=\"doomed filename\"><span class=\"id\">" + escape(about.ID) + "</span>-" + escape(about.Slug) + ".md</p>" +
+			"<p class=\"said\">The file goes and the commit that removed it stays, so " +
+			"<code>noda restore</code> brings it back with its id.</p>",
 		form: "<form class=\"write\" method=\"post\" action=\"" + at + "/delete\">" +
-			"<div class=\"buttons\"><button class=\"danger\" type=\"submit\">Delete</button>" +
-			cancelOpen + at + "\">Keep it</a></div></form>",
+			"<div class=\"buttons\">" + cancelLink(at, "Keep it", " autofocus data-key=\"Escape\"") +
+			"<button class=\"danger\" type=\"submit\" data-busy=\"Deleting…\">Delete</button></div></form>",
 	})
 }
 
@@ -246,54 +276,62 @@ func refreshWhile(errand *Errand) int {
 // request open for as long as the network takes; the page is a GET, so a reload
 // asks how it is going. While one runs the page refreshes itself.
 func StandingPage(book string, standing Standing, errand *Errand) string {
-	at := escape(book)
 	return dressed(pageParts{
 		title: "Status — " + book + " — noda", againIn: refreshWhile(errand),
-		scripts: []Asset{AssetStanding},
+		scripts: []Asset{AssetStanding, AssetKeys},
 		body: "<section class=\"pane\">" +
-			"<header class=\"topbar\">" + back("/nb/"+at, book) + "<span class=\"here\">Status</span>" +
-			"<span class=\"count\">" + at + "</span></header>" + networkMain(book, standing, errand) + "</section>" +
-			notebookBar(book, atStatus),
+			"<header class=\"topbar\">" + back("/nb/"+escape(book), book, "Escape") + "<h1 class=\"place\">Status</h1></header>" +
+			networkMain(book, standing, errand) + "</section>" +
+			rail(book, standing.Drift, atStatus),
 	})
 }
 
 // StandingMain is what the standing script polls every againIn seconds while an
-// errand runs: the <main>, led by the refresh meta. The script polls again only
-// if the meta is there, so stopping stays the server's decision.
+// errand runs: the refresh meta, the <main>, and the rail's sync link, which
+// would otherwise keep saying what was true before the errand. The script polls
+// again only if the meta is there, so stopping stays the server's decision.
 func StandingMain(book string, standing Standing, errand *Errand) string {
-	return refresh(refreshWhile(errand)) + networkMain(book, standing, errand)
+	return refresh(refreshWhile(errand)) + networkMain(book, standing, errand) + syncLink(book, standing.Drift, true)
 }
 
+// networkMain leads with the one thing the page is asked for: how far this
+// notebook is from its remote. Each button says what it will do.
 func networkMain(book string, standing Standing, errand *Errand) string {
-	return "<main>" + errandSaid(errand) + "<div class=\"rows facts\">" + facts(standing) + "</div>" +
-		"<div class=\"abreast\">" + networkButtons(book, working(errand)) + "</div></main>"
+	return "<main class=\"status\">" + errandSaid(errand) + lead(standing) +
+		"<div class=\"abreast\">" + networkButtons(book, working(errand)) + "</div>" +
+		"<dl class=\"facts\">" + facts(standing) + "</dl></main>"
 }
 
-// facts is what `noda status` knows, a row each.
+func lead(standing Standing) string {
+	drift := "No remote"
+	if standing.Remote != nil {
+		drift = standing.Drift
+	}
+	return "<div class=\"lead\"><b>" + escape(drift) + "</b><span>" + escape(changesWords(standing.Uncommitted)) + "</span></div>"
+}
+
+// facts is what `noda status` knows that the lead does not, a row each.
 func facts(standing Standing) string {
 	var rows strings.Builder
 	row := func(name, value string, mono bool) {
-		class := "when"
+		class := ""
 		if mono {
-			class = "mono"
+			class = " class=\"mono\""
 		}
-		rows.WriteString("<div class=\"row\"><div class=\"name\">" + escape(name) + "</div>" +
-			"<div class=\"under\"><span class=\"" + class + "\">" + escape(value) + "</span></div></div>")
+		rows.WriteString("<div><dt>" + name + "</dt><dd" + class + ">" + escape(value) + "</dd></div>")
 	}
 	row("Branch", standing.Branch, true)
+	if standing.Remote != nil {
+		row("Remote", *standing.Remote, true)
+	} else {
+		// The remedy, since no screen here sets a remote.
+		row("Remote", "none — set one with `noda remote set <url>`", false)
+	}
 	holds := plural(standing.Notes, "note")
 	if standing.Files > 0 {
 		holds += ", " + plural(standing.Files, "file")
 	}
 	row("Holds", holds, false)
-	row("Changes", changesWords(standing.Uncommitted), false)
-	if standing.Remote != nil {
-		row("Remote", *standing.Remote, true)
-		row("Drift", standing.Drift, false)
-	} else {
-		// The remedy, since no screen here sets a remote.
-		row("Remote", "none — set one with `noda remote set <url>`", false)
-	}
 	for _, problem := range standing.Problems {
 		row("Problem", problem, false)
 	}
@@ -330,15 +368,25 @@ func errandSaid(errand *Errand) string {
 	return "<p class=\"said" + class + "\"><b>" + escape(errand.Done) + "</b><span class=\"outcome\">" + escape(*errand.Said) + "</span></p>"
 }
 
-// networkButtons are the three errands, disabled while one runs.
+// networkErrands are the three ways to move the notebook, and the words for what
+// each does: a button that is only a verb leaves the reader to remember which
+// of the three sends.
+var networkErrands = []struct{ kind, label, doing, does string }{
+	{"sync", "Sync", "Syncing", "Commit what changed, pull, then push."},
+	{"pull", "Pull", "Pulling", "Bring in what the remote has."},
+	{"push", "Push", "Pushing", "Send what is committed here."},
+}
+
+// networkButtons are the three errands, disabled while one runs. data-doing is
+// the line the script draws on the press, before the server has answered.
 func networkButtons(book string, busy bool) string {
 	at := escape(book)
 	var buttons strings.Builder
-	for _, errand := range [][2]string{{"sync", "Sync"}, {"pull", "Pull"}, {"push", "Push"}} {
+	for _, errand := range networkErrands {
 		// Sync is accented by colour, so all three stay one row on a phone.
 		class := ""
-		if errand[0] == "sync" {
-			class = "go"
+		if errand.kind == "sync" {
+			class = " class=\"go\""
 		}
 		// The server already refuses a second press; disabling shows the first
 		// landed.
@@ -346,8 +394,9 @@ func networkButtons(book string, busy bool) string {
 		if busy {
 			disabled = " disabled"
 		}
-		buttons.WriteString("<form method=\"post\" action=\"/nb/" + at + "/status/" + errand[0] + "\">" +
-			"<button class=\"" + class + "\" type=\"submit\"" + disabled + ">" + errand[1] + "</button></form>")
+		buttons.WriteString("<form method=\"post\" action=\"/nb/" + at + "/status/" + errand.kind + "\">" +
+			"<button" + class + " type=\"submit\" data-doing=\"" + errand.doing + "\"" + disabled + ">" + errand.label + "</button>" +
+			"<small>" + errand.does + "</small></form>")
 	}
 	return buttons.String()
 }
