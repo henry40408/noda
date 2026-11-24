@@ -47,6 +47,24 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	scenario.Step(`^the order line has at least (\d+) pixels to spare above and below$`, func(least int) error {
+		var above, below float64
+		err := harness.Eventually("the order line to be drawn", func() (bool, error) {
+			var present bool
+			var err error
+			above, below, present, err = w.page().OrderLineRoom()
+			return present, err
+		})
+		if err != nil {
+			return err
+		}
+		// Layout lands on fractions of a pixel; a whole one is a real change.
+		if above < float64(least)-0.5 || below < float64(least)-0.5 {
+			return fmt.Errorf("the order line has %gpx above, to the search field, and %gpx below, to the list: it needs %dpx of both",
+				above, below, least)
+		}
+		return nil
+	})
 	scenario.Step(`^the search field's text is at least (\d+) pixels$`, func(least int) error {
 		size, err := w.page().SearchFieldFontSize()
 		if err != nil {
