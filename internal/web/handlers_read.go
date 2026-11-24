@@ -269,7 +269,7 @@ func (s *Server) reading(r *http.Request) (answer, error) {
 		return nil, err
 	}
 	// Sent with the note, on the swap too: the margin is part of what the note is.
-	linking, err := at.opened.BacklinksToNote(at.id)
+	linking, err := s.links.BacklinksToNote(at.opened, at.id)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +479,7 @@ func (s *Server) noteBacklinks(r *http.Request) (answer, error) {
 	if err != nil {
 		return nil, err
 	}
-	linking, err := at.opened.BacklinksToNote(at.id)
+	linking, err := s.links.BacklinksToNote(at.opened, at.id)
 	if err != nil {
 		return nil, err
 	}

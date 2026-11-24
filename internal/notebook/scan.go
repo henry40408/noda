@@ -222,7 +222,15 @@ func (n *Notebook) Inventory() ([]NoteFile, []string, error) {
 
 func readNote(path string) (note.Note, bool) {
 	text, err := os.ReadFile(path)
-	if err != nil || !utf8.Valid(text) {
+	if err != nil {
+		return note.Note{}, false
+	}
+	return parseNote(text)
+}
+
+// parseNote is whether text is a note: valid UTF-8 with a frontmatter block.
+func parseNote(text []byte) (note.Note, bool) {
+	if !utf8.Valid(text) {
 		return note.Note{}, false
 	}
 	parsed, err := note.Parse(string(text))

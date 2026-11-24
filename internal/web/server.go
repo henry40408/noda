@@ -40,6 +40,9 @@ type Server struct {
 	writing  locks
 	errands  *Errands
 	watching *Watch
+	// links is the only record of what the notes say that outlives a request:
+	// a note view does not read the whole notebook.
+	links *notebook.LinkIndex
 }
 
 // NewServer is the handler's state. Stop its Watch by Shutdown.
@@ -50,6 +53,7 @@ func NewServer(opts Options) *Server {
 		logger:   NewLogger(opts.Stderr, opts.LogLevel, opts.LogFormat),
 		errands:  NewErrands(),
 		watching: NewWatch(),
+		links:    &notebook.LinkIndex{},
 	}
 }
 

@@ -559,6 +559,52 @@ func TestTheNoteArrivesWithTheNotesThatLinkToIt(t *testing.T) {
 	}
 }
 
+// The server remembers what each file links to between requests, and the
+// margin must still be the notes as they are: one added, one edited by hand
+// with no commit (a commit-keyed record would miss it), one deleted.
+func TestTheMarginFollowsTheNotesAsTheyChange(t *testing.T) {
+	site := serving(t)
+	id := site.idOf("budget-review")
+	margin := func() string {
+		t.Helper()
+		got := site.get("/nb/default/n/" + id)
+		if got.status != 200 {
+			t.Fatalf("%d %s", got.status, got.body)
+		}
+		return got.body
+	}
+	wantCount := func(count string) {
+		t.Helper()
+		if got := margin(); !strings.Contains(got, "<h2>Linked from <span>"+count+"</span></h2>") {
+			t.Fatalf("the margin does not say %s:\n%s", count, got)
+		}
+	}
+	wantCount("0")
+
+	for _, title := range []string{"Pointing back", "Pointing again"} {
+		if _, err := cmd.Add(site.env, cmd.AddOptions{Title: str(title), Content: str("see [the budget](" + id + "-budget-review.md)")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantCount("2")
+
+	file := filepath.Join(site.env.Paths.NotebookDir(config.DefaultNotebook), site.idOf("pointing-back")+"-pointing-back.md")
+	rewrite := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(file, []byte("---\ntitle: Pointing back\n---\n\n"+body+"\n"), 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewrite("nothing here now")
+	wantCount("1")
+	rewrite("back again, see [the budget](" + id + "-budget-review.md) and more")
+	wantCount("2")
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	wantCount("1")
+}
+
 // The backlinks screen stays for a file, which has no margin to put them in.
 func TestTheBacklinksScreenIsAlwaysAWholePage(t *testing.T) {
 	site := serving(t)
