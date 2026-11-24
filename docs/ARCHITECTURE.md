@@ -121,7 +121,8 @@ end that wants a colour per note asks `style`, and does not hash on its own.
 ## Concurrency, which exists only in the web server
 
 **A handler opens its own `Notebook`.** A `Notebook` is a directory and a few cached reads, with no
-shared handle, so every request opens one; nothing is held between requests. `internal/gitx` runs
+shared handle, so every request opens one. The only record of what the notes say that outlives a
+request is `notebook.LinkIndex`, which remembers what each note links to (below). `internal/gitx` runs
 `git` as a child process under the request's context, and a write uses `workContext`, which cannot
 be cancelled by a reader who hangs up: a commit that has begun is finished, never abandoned
 half-way.
@@ -135,6 +136,19 @@ It does not guard against another process — a terminal in another window can a
 what the per-note fingerprint on every edit form is for. Being a git blob id, it also addresses the
 version the edit began from: on a mismatch the handler fetches that version and three-way merges
 with `gitx.MergeFile` (`git merge-file`), so only an overlap is refused.
+
+**The margin of a note is answered from `notebook.LinkIndex`, held by the `Server`.** Opening a
+note asks which notes link to it, which once read and parsed every note: 45 ms at 2,000 notes, on
+every view. The index keeps, per file, the ids it links to, and reads a file again only when its
+size or modification time changed. It is keyed by those and not by HEAD because notes are read
+from the working tree, which an editor changes without a commit; a file read within two seconds of
+its own modification time is read again next time, because a rewrite of the same size inside one
+timestamp tick leaves nothing to compare. It only narrows: a note it names is read again before it
+is returned, so a stale entry can hide a link until the file's size or modification time changes
+(a file restored with its old time, as `cp -p` does) but never invent one. It lives in memory
+and is never written down — the notebook has no index file by design, because a second copy of what
+the notes say could disagree with them. A command that runs once has nothing to remember and uses
+`Notebook.BacklinksToNote`.
 
 **Network errands do not run in a request.** A `POST` to `sync`, `pull` or `push` answers `303`
 immediately; `internal/web/work.go` runs the errand on its own goroutine and keeps its outcome,
