@@ -54,10 +54,12 @@ main{scroll-margin-top:var(--top)}
 .parse b{font-weight:400}
 .parse i,.parse .and{font-style:normal;font-family:var(--ui);color:var(--soft)}
 .parse i{margin:0 6px}
-/* The order is a line of words, the one in force weighted and arrowed. */
-.sortbar{display:flex;align-items:center;gap:2px;margin:0 -6px;font-size:13px;overflow-x:auto}
+/* The order is a line of words, the one in force weighted and arrowed. The pill is drawn --grow inside the hit area,
+   so the margin and the padding are what is left of 8px once that is taken (none, when the hit area alone is more):
+   the room round the pill is at least 8px however big the hit area is. */
+.sortbar{--grow:7px;display:flex;align-items:center;gap:2px;margin:max(0px,calc(8px - var(--grow))) -6px 0;padding-bottom:max(0px,calc(8px - var(--grow)));font-size:13px;overflow-x:auto}
 .sortbar .lab{margin:0 6px;color:var(--soft)}
-.sortbar a{--grow:7px;position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:var(--tap);min-height:var(--tap);padding:0 9px;color:var(--soft)}
+.sortbar a{position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:var(--tap);min-height:var(--tap);padding:0 9px;color:var(--soft)}
 .sortbar a[aria-current]{color:var(--ink);font-weight:600}
 .sortbar a[aria-current]::before{content:"";position:absolute;z-index:-1;inset:var(--grow) 0;border-radius:8px;background:var(--sunk)}
 .sortbar svg{width:14px;height:14px}
@@ -301,7 +303,7 @@ dialog.keys form p{flex:1 1 100%;margin:0;color:var(--soft);font-size:12.5px}
 .keys-open kbd{position:absolute;top:3px;right:3px;min-width:0;padding:1px 4px;font:10.5px/1.3 var(--mono);color:var(--soft)}
 @media (hover:hover){.keys-open:hover{background:var(--press);color:var(--ink)}}
 @media (hover:hover){.rail a:hover{background:var(--press)}.rail .fab:hover{background:var(--go);opacity:.88}}
-.sortbar a{--grow:0px;min-width:0;min-height:30px}
+.sortbar{--grow:0px}.sortbar a{min-width:0;min-height:30px}
 /* The note's actions leave the dock for the head of the sheet. */
 main.note{display:grid;grid-template-columns:minmax(0,1fr);padding:0 28px 56px}
 .note article{width:100%;padding-top:28px}
@@ -311,7 +313,7 @@ main.note{display:grid;grid-template-columns:minmax(0,1fr);padding:0 28px 56px}
 .read .actionbar svg{width:17px;height:17px}
 .read .actionbar .danger{margin-left:auto}
 @media (hover:hover){.read .actionbar a:hover,.read .actionbar button:hover{background:var(--sunk);color:var(--ink)}.read .actionbar .danger:hover{color:var(--bad)}}
-@media (pointer:coarse){.read .actionbar a,.read .actionbar button{min-height:var(--tap)}.sortbar a{--grow:9px;min-width:var(--tap);min-height:var(--tap)}}
+@media (pointer:coarse){.read .actionbar a,.read .actionbar button{min-height:var(--tap)}.sortbar{--grow:9px}.sortbar a{min-width:var(--tap);min-height:var(--tap)}}
 .about,.beside{width:100%;max-width:650px;margin-inline:auto}
 .about{margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
 .note h1{font-size:36px}

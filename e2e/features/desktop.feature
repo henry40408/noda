@@ -253,6 +253,23 @@ Feature: The same pages on a wider screen
       | desktop |
       | monitor |
 
+  # The order line sits between the search field and the list, and its pill
+  # is drawn smaller than its hit area; the room that counts is the pill's.
+  Scenario Outline: The order line is not pressed against its neighbours
+    Given I open the notebook on a <screen>
+    Then the order line has at least 8 pixels to spare above and below
+
+    Examples:
+      | screen  |
+      | phone   |
+      | tablet  |
+      | desktop |
+      | monitor |
+
+  Scenario: The order line is not pressed against its neighbours on a touch screen
+    Given I open the notebook on a touch screen 1366 pixels wide
+    Then the order line has at least 8 pixels to spare above and below
+
   # An empty answer is said; a column gone quiet reads as broken.
   Scenario: A note nothing points at says so
     Given I open the notebook on a monitor

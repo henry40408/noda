@@ -129,6 +129,27 @@ func (p Page) TagChipHeight(name string) (height float64, present bool, err erro
 	return box[3], true, nil
 }
 
+// OrderLineRoom is how much clear space the order line's drawn pill has above
+// it, to the search field, and below it, to the list. The pill is the chip's
+// box less --grow top and bottom, so a bigger hit area does not count as room.
+func (p Page) OrderLineRoom() (above, below float64, present bool, err error) {
+	room, err := Exec[*[2]float64](p.Browser, `
+		const chip = document.querySelector('.index .sortbar a');
+		const field = document.querySelector('.index .searchbar input[type=search]');
+		const rows = document.querySelector('.index .rows');
+		if (!chip || !field || !rows) return null;
+		const grow = parseFloat(getComputedStyle(chip).getPropertyValue('--grow')) || 0;
+		const box = chip.getBoundingClientRect();
+		return [
+			box.top + grow - field.getBoundingClientRect().bottom,
+			rows.getBoundingClientRect().top - (box.bottom - grow),
+		];`)
+	if err != nil || room == nil {
+		return 0, 0, false, err
+	}
+	return room[0], room[1], true, nil
+}
+
 // RestOnTag puts the pointer on the middle of the note's tag chip.
 func (p Page) RestOnTag(name string) error {
 	return Eventually("resting the pointer on the tag "+quote(name), func() (bool, error) {
