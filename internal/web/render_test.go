@@ -81,11 +81,11 @@ func TestBody(t *testing.T) {
 		{"fragment link", "[x](#frag)",
 			"<p><a href=\"#frag\">x</a></p>\n"},
 		{"note link routes to the note page", "[x](01abc234-hello.md)",
-			"<p><a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\">x</a></p>\n"},
+			"<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\">x</a></p>\n"},
 		{"note link drops dot slash and fragment", "[x](./01abc234-hello.md#frag)",
-			"<p><a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\">x</a></p>\n"},
+			"<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\">x</a></p>\n"},
 		{"note link drops its title", "[x](01abc234-hello.md \"a title\")",
-			"<p><a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\">x</a></p>\n"},
+			"<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\">x</a></p>\n"},
 		{"unknown md file routes to the file page", "[x](unknown.md)",
 			"<p><a href=\"/nb/notes%20%26%20more/f/unknown.md\">x</a></p>\n"},
 		{"file path with directory", "[x](sub/dir.md)",
@@ -95,9 +95,9 @@ func TestBody(t *testing.T) {
 		{"reference style link", "[x][r]\n\n[r]: https://example.com \"T\"\n",
 			"<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></p>\n"},
 		{"reference to a note", "[r]\n\n[r]: 01abc234-hello.md\n",
-			"<p><a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\">r</a></p>\n"},
+			"<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\">r</a></p>\n"},
 		{"external and note links side by side", "[x](https://example.com)\n\n[y](01abc234-hello.md)\n",
-			"<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></p>\n<p><a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\">y</a></p>\n"},
+			"<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></p>\n<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\">y</a></p>\n"},
 		{"image of a local file", "![alt](pic.png)",
 			"<p><img src=\"/nb/notes%20%26%20more/f/pic.png\" alt=\"alt\" /></p>\n"},
 		{"image of an external url", "![alt](https://example.com/p.png)",
@@ -135,7 +135,7 @@ func TestBody(t *testing.T) {
 		{"quotes and stray ampersand", "\"quotes\" 'single' <angle> &amp",
 			"<p>\"quotes\" 'single' <code>&lt;angle&gt;</code> &amp;amp</p>\n"},
 		{"japanese text with a note link", "日本語 **強調** [リンク](01abc234-hello.md)",
-			"<p>日本語 <strong>強調</strong> <a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\">リンク</a></p>\n"},
+			"<p>日本語 <strong>強調</strong> <a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\">リンク</a></p>\n"},
 		{"emoji", "emoji 😀 text",
 			"<p>emoji 😀 text</p>\n"},
 		{"angle bracket destination with a space", "[x](<with space.md>)",
@@ -151,7 +151,7 @@ func TestBody(t *testing.T) {
 		{"link with empty text", "[](https://example.com)",
 			"<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\"></a></p>\n"},
 		{"link with blank text", "[ ](01abc234-hello.md)",
-			"<p><a class=\"note\" href=\"/nb/notes%20%26%20more/n/01abc234\"> </a></p>\n"},
+			"<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\"> </a></p>\n"},
 		{"footnotes are not supported", "footnote[^1]\n\n[^1]: the note\n",
 			"<p>footnote[^1]</p>\n<p>[^1]: the note</p>\n"},
 		{"backslash escapes", "a\\*b\\_c",
@@ -164,6 +164,21 @@ func TestBody(t *testing.T) {
 				t.Errorf("markdown %q\n got %q\nwant %q", c.markdown, got, c.want)
 			}
 		})
+	}
+}
+
+// A link to a note carries the hue of the note it names, so it matches that
+// note's row in the listing without asking the server which note it is.
+func TestANoteLinkWearsTheHueOfItsTarget(t *testing.T) {
+	where := AroundOf("work", []Named{{ID: "01abc234", Slug: "a"}, {ID: "04kmn123", Slug: "b"}})
+	for id, slug := range map[string]string{"01abc234": "a", "04kmn123": "b"} {
+		want := `<a class="note ` + hueClass(id) + `" href="/nb/work/n/` + id + `">x</a>`
+		if got := Body("[x]("+id+"-"+slug+".md)", where); !strings.Contains(got, want) {
+			t.Errorf("%s: %q lacks %q", id, got, want)
+		}
+	}
+	if hueClass("01abc234") == hueClass("04kmn123") {
+		t.Fatal("the two ids were chosen to differ")
 	}
 }
 

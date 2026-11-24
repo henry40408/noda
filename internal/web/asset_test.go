@@ -3,8 +3,11 @@ package web
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/henry40408/noda/internal/style"
 )
 
 func TestAnAssetIsLinkedByNameKindAndContentHash(t *testing.T) {
@@ -19,7 +22,8 @@ func TestAnAssetIsLinkedByNameKindAndContentHash(t *testing.T) {
 		{AssetListing, `^/a/listing\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetStanding, `^/a/standing\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetPanes, `^/a/panes\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
-		{AssetBeside, `^/a/beside\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetKeys, `^/a/keys\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
+		{AssetSending, `^/a/sending\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetStamps, `^/a/stamps\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 		{AssetWatching, `^/a/watching\.[0-9a-f]{12}\.js$`, `<script src="%s" defer></script>`, "text/javascript; charset=utf-8"},
 	}
@@ -61,6 +65,59 @@ func TestWhatAPageLinksIsWhatTheRouteAnswers(t *testing.T) {
 		found, ok := FindAsset(strings.TrimPrefix(asset.Href(), "/a/"))
 		if !ok || found.Body != asset.body() || found.Kind != asset.Kind() {
 			t.Errorf("%s is not answered", asset.Href())
+		}
+	}
+}
+
+// Exactly one rule a colour: theme.go writes them and no other file does, so
+// deleting the list there takes the colours away rather than leaving a copy
+// to answer. A colour added to style and not to hueAngles compiles (a shorter
+// array literal does) and writes a rule with no angle, which this rejects too.
+func TestTheStylesheetDefinesEveryHueOnceAndNoOther(t *testing.T) {
+	sheet := AssetStyle.body()
+	for index := range style.Hues {
+		rule := regexp.MustCompile(`\.h` + strconv.Itoa(index) + `\{--s:oklch\(var\(--sl\) \.\d+ \d+\)\}`)
+		if found := len(rule.FindAllString(sheet, -1)); found != 1 {
+			t.Errorf("%d rules for .h%d, want one", found, index)
+		}
+	}
+	if past := ".h" + strconv.Itoa(style.Hues) + "{"; strings.Contains(sheet, past) {
+		t.Errorf("a rule for %q, which nothing wears", past)
+	}
+}
+
+// Whatever a name wears must be styled, or its row would draw with no accent.
+func TestEveryNameWearsAClassTheStylesheetDefines(t *testing.T) {
+	sheet := AssetStyle.body()
+	for _, name := range []string{"01abc234", "default", "", "日本語", strings.Repeat("z", 200)} {
+		if rule := "." + hueClass(name) + "{--s:"; !strings.Contains(sheet, rule) {
+			t.Errorf("%q wears %s, which is not defined", name, hueClass(name))
+		}
+	}
+}
+
+// Dark is only what the reader's device asks for, so the dark surfaces come
+// after the media query opens and the light ones before it.
+func TestTheDarkThemeLivesInsideTheMediaQuery(t *testing.T) {
+	sheet := AssetStyle.body()
+	query := strings.Index(sheet, "@media (prefers-color-scheme:dark){")
+	light, dark := strings.Index(sheet, "--sheet:"+lightTheme.sheet), strings.Index(sheet, "--sheet:"+darkTheme.sheet)
+	if query < 0 || light < 0 || dark < 0 || light >= query || query >= dark {
+		t.Fatalf("light at %d, media query at %d, dark at %d", light, query, dark)
+	}
+}
+
+// The three inks are asked of style, so a page and a terminal agree on what is
+// muted and what is red.
+func TestTheInksFollowTheStyleTheyAreAskedFor(t *testing.T) {
+	for name, theme := range map[string]terminal{"light": lightTheme, "dark": darkTheme} {
+		properties := theme.properties()
+		for _, ink := range []struct{ property, colour string }{
+			{"--ink", theme.text}, {"--soft", theme.dim}, {"--go", theme.text}, {"--bad", theme.red},
+		} {
+			if want := ink.property + ":" + ink.colour + ";"; !strings.Contains(properties, want) {
+				t.Errorf("%s theme: no %s in %s", name, want, properties)
+			}
 		}
 	}
 }

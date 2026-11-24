@@ -67,6 +67,13 @@ const (
 type route struct {
 	kind routeKind
 	url  string
+	id   string // the note's, for routeNote only
+}
+
+// noteLink opens a link to a note in the colour the note wears everywhere else,
+// so a reader who has learned a note by its colour finds it again in a sentence.
+func noteLink(target route) string {
+	return "<a class=\"note " + hueClass(target.id) + "\" href=\"" + escape(target.url) + "\">"
 }
 
 // Body renders markdown as HTML.
@@ -352,7 +359,7 @@ func (w *bodyWriter) link(link *ast.Link) {
 	defer func() { w.links-- }()
 	switch target := w.route(destination, false); target.kind {
 	case routeNote:
-		w.out.WriteString("<a class=\"note\" href=\"" + escape(target.url) + "\">")
+		w.out.WriteString(noteLink(target))
 		w.inlinesOf(link)
 		w.out.WriteString("</a>")
 	case routeTo:
@@ -383,7 +390,7 @@ func (w *bodyWriter) autoLink(auto *ast.AutoLink) {
 	}
 	switch target := w.route(address, false); target.kind {
 	case routeNote:
-		w.out.WriteString("<a class=\"note\" href=\"" + escape(target.url) + "\">" + escapeText(label) + "</a>")
+		w.out.WriteString(noteLink(target) + escapeText(label) + "</a>")
 	case routeTo:
 		w.out.WriteString("<a href=\"" + escapeHref(target.url) + "\">" + escapeText(label) + "</a>")
 	case routeAway:
@@ -458,23 +465,23 @@ func rawHTMLText(raw *ast.RawHTML, source []byte) string {
 // fetched unasked) narrows what is allowed.
 func (w *bodyWriter) route(destination string, embed bool) route {
 	if strings.HasPrefix(destination, "#") {
-		return route{routeTo, destination}
+		return route{kind: routeTo, url: destination}
 	}
 	if path, ok := link.Target(destination); ok {
 		if id, isNote := w.around.Notes[path]; isNote {
-			return route{routeNote, "/nb/" + urlPath(w.around.Book) + "/n/" + urlPath(id)}
+			return route{kind: routeNote, url: "/nb/" + urlPath(w.around.Book) + "/n/" + urlPath(id), id: id}
 		}
-		return route{routeTo, "/nb/" + urlPath(w.around.Book) + "/f/" + urlPath(path)}
+		return route{kind: routeTo, url: "/nb/" + urlPath(w.around.Book) + "/f/" + urlPath(path)}
 	}
 	scheme, ok := link.Scheme(destination)
 	if !ok || !serveable(scheme, embed) {
 		// No scheme means a path link.Target refused, e.g. one climbing out.
-		return route{routeNowhere, ""}
+		return route{kind: routeNowhere}
 	}
 	if strings.EqualFold(scheme, "http") || strings.EqualFold(scheme, "https") {
-		return route{routeAway, destination}
+		return route{kind: routeAway, url: destination}
 	}
-	return route{routeTo, destination}
+	return route{kind: routeTo, url: destination}
 }
 
 // serveable is an allow-list, so `data:` and any scheme invented later are

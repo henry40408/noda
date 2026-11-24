@@ -20,8 +20,11 @@ func initializeScenario(scenario *godog.ScenarioContext, server *harness.Server,
 	w := &world{server: server, scripts: scripts}
 	scenario.Before(w.start)
 	scenario.After(w.stop)
+	registerNotebookSteps(scenario, w)
 	registerNavigationSteps(scenario, w)
+	registerKeyboardSteps(scenario, w)
 	registerReadingSteps(scenario, w)
+	registerRunSteps(scenario, w)
 	registerLayoutSteps(scenario, w)
 }
 

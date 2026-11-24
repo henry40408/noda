@@ -155,9 +155,7 @@ func (s *Server) editNote(r *http.Request) (answer, error) {
 	}
 	if _, err := cmd.RewriteIn(at.opened, at.id, body, cmd.TouchStamp); err != nil {
 		problem := err.Error()
-		return pageOf(Editing(Edit{
-			Book: book, About: About{ID: at.id, Slug: at.slug}, Body: body, Was: now, Problem: &problem,
-		})), nil
+		return pageOf(Editing(Edit{Book: book, About: at.about(), Body: body, Was: now, Problem: &problem})), nil
 	}
 	return backToNote(book, at.id), nil
 }
@@ -231,7 +229,7 @@ func (s *Server) renameNote(r *http.Request) (answer, error) {
 	_, err = cmd.MvIn(at.opened, cmd.Rename{Key: at.id, NewTitle: title, UpdateLinks: false, Touch: cmd.TouchStamp})
 	if err != nil {
 		problem := err.Error()
-		return pageOf(Renaming(book, About{ID: at.id, Slug: at.slug, Title: title}, title, &problem)), nil
+		return pageOf(Renaming(book, at.about(), title, &problem)), nil
 	}
 	return backToNote(book, at.id), nil
 }

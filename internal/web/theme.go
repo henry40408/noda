@@ -1,90 +1,108 @@
 package web
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/henry40408/noda/internal/style"
 )
 
-// terminal holds only the slots noda's palette uses. A colour added to style
-// and forgotten here falls through fill to the default foreground.
+// terminal holds the slots the web palette needs. The three inks (text, dim,
+// red) are looked up through fill, so a style that changes there follows here;
+// the rest are surfaces, which a terminal never tells the program, so they are
+// this file's to choose.
 type terminal struct {
-	text      string
-	dim       string
-	yellow    string
-	yellowDim string
-	cyan      string
-	grey      string
-	red       string
-	magenta   string
-	// Not a slot: a terminal never tells the program its background.
-	background string
-	sunk       string
-	rule       string
-	press      string
-	mark       string
+	text string
+	dim  string
+	red  string
+	// Surfaces: the desk behind the page, the sheet the text sits on, the
+	// sunken wells, the pressed state and the rules between things.
+	desk  string
+	sheet string
+	sunk  string
+	press string
+	rule  string
+	// A search match, the focus ring, and what a filled button wears.
+	mark    string
+	focus   string
+	goInk   string
+	redWash string
+	// lightness is the L of every note colour: one list of hues serves both
+	// themes, and the theme only decides how bright they are.
+	lightness string
 }
 
 var lightTheme = terminal{
-	text: "#17191d", dim: "#6b7280",
-	// Unreadable on white, so round it to amber as light terminal themes do.
-	yellow: "#8a6100", yellowDim: "#a98741",
-	cyan: "#0e6f7a", grey: "#8b929c", red: "#b3261e", magenta: "#a626a4",
-	background: "#ffffff", sunk: "#f4f5f7", rule: "#e3e5e9", press: "#ebedf0", mark: "#f3d98a",
+	text: "#161a22", dim: "#5b6473", red: "#b42318",
+	desk: "#eef0f3", sheet: "#ffffff", sunk: "#f3f5f8", press: "#e3e7ed", rule: "#dde1e8",
+	mark: "#ffe08a", focus: "#2f5bea", goInk: "#ffffff", redWash: "#fdecea",
+	lightness: ".6",
 }
 
 var darkTheme = terminal{
-	text: "#d8dce2", dim: "#868e9a",
-	yellow: "#e0ac4d", yellowDim: "#9c7c3c",
-	cyan: "#56b6c2", grey: "#6b7280", red: "#e06c75", magenta: "#c678dd",
-	// Not black: under white text, pure black smears as the eye moves.
-	background: "#14161a", sunk: "#1b1e24", rule: "#272b32", press: "#242830", mark: "#5a4a1e",
+	text: "#e4e7ec", dim: "#9aa3b2", red: "#ff8a80",
+	desk: "#0d0f13", sheet: "#16191f", sunk: "#1e222a", press: "#272c36", rule: "#2b303a",
+	mark: "#6b5310", focus: "#8aa7ff", goInk: "#12151a", redWash: "#3a1917",
+	lightness: ".74",
 }
 
 // fill is a style as this theme draws it. Only foreground and dim cross over;
 // bold is left to the markup, so it is said in one place.
 func (t terminal) fill(s style.Style) string {
-	switch {
-	case s.Fg == style.Yellow && s.Dim:
-		return t.yellowDim
-	case s.Fg == style.Yellow:
-		return t.yellow
-	case s.Fg == style.Cyan:
-		return t.cyan
-	case s.Fg == style.BrightBlack:
-		return t.grey
-	case s.Fg == style.Red:
+	if s.Fg == style.Red {
 		return t.red
-	case s.Fg == style.Magenta:
-		return t.magenta
-	case s.Fg == style.NoColor && s.Dim:
+	}
+	if s.Fg == style.NoColor && s.Dim {
 		return t.dim
 	}
 	return t.text
 }
 
-// properties are named after style's variables (--tag, not --cyan), so a
-// property is not reused for anything that merely wants its colour.
+// properties are the page's variables, named for what they are on a page (ink,
+// sheet) rather than for a terminal colour.
 func (t terminal) properties() string {
 	var css strings.Builder
 	for _, property := range [][2]string{
-		{"--bg", t.background},
-		{"--bg-sunk", t.sunk},
+		{"--desk", t.desk},
+		{"--sheet", t.sheet},
+		{"--sunk", t.sunk},
 		{"--press", t.press},
-		{"--rule", t.rule},
+		{"--line", t.rule},
+		{"--ink", t.fill(style.Style{})},
+		{"--soft", t.fill(style.Muted)},
 		{"--mark", t.mark},
-		{"--text", t.fill(style.Style{})},
-		{"--muted", t.fill(style.Muted)},
-		{"--id", t.fill(style.ID)},
-		{"--id-dim", t.fill(style.Slug)},
-		{"--tag", t.fill(style.Tags)},
-		{"--punct", t.fill(style.TagsPunct)},
-		{"--alert", t.fill(style.Invalid)},
-		// Its own property though it is --alert's red: it marks meaning.
-		{"--overdue", t.fill(style.Overdue)},
-		{"--pin", t.fill(style.Pin)},
+		{"--focus", t.focus},
+		// A filled button is the text colour with the sheet's colour on it.
+		{"--go", t.fill(style.Style{})},
+		{"--go-ink", t.goInk},
+		// Red marks what failed or destroys, and nothing else.
+		{"--bad", t.fill(style.Invalid)},
+		{"--bad-wash", t.redWash},
+		{"--sl", t.lightness},
 	} {
 		css.WriteString(property[0] + ":" + property[1] + ";")
+	}
+	return css.String()
+}
+
+// hueAngles is each note colour's chroma and angle in OKLCH. style.Hue picks the
+// index. Fewer than style.Hues entries still compiles, so a colour added there
+// and forgotten here is caught by asset_test, not by the build.
+var hueAngles = [style.Hues][2]string{
+	{".15", "20"}, {".15", "50"}, {".14", "80"}, {".15", "125"},
+	{".14", "155"}, {".12", "185"}, {".12", "215"}, {".15", "245"},
+	{".17", "270"}, {".18", "300"}, {".18", "330"}, {".17", "355"},
+}
+
+// hueClass is the class a name wears for its colour.
+func hueClass(name string) string { return "h" + strconv.Itoa(style.Hue(name)) }
+
+// hueRules is one rule a colour. The lightness is a variable, so the same rules
+// serve both themes.
+func hueRules() string {
+	var css strings.Builder
+	for index, angle := range hueAngles {
+		css.WriteString(".h" + strconv.Itoa(index) + "{--s:oklch(var(--sl) " + angle[0] + " " + angle[1] + ")}")
 	}
 	return css.String()
 }
@@ -93,5 +111,6 @@ func (t terminal) properties() string {
 // and no stored preference: the reader already told their device.
 func themeStylesheet() string {
 	return ":root{color-scheme:light;" + lightTheme.properties() +
-		"}@media (prefers-color-scheme:dark){:root{color-scheme:dark;" + darkTheme.properties() + "}}"
+		"}@media (prefers-color-scheme:dark){:root{color-scheme:dark;" + darkTheme.properties() + "}}" +
+		hueRules()
 }

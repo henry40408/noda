@@ -6,8 +6,8 @@ Feature: Getting around the notebook
   The listing is on the bar because a rail missing the place you spend most
   time reads as an omission, and with two panes the listing is never left.
 
-  The network screen is about the notebook, not inside it: the corner chip
-  reaches it and the bar does not.
+  The network screen is about the notebook, not inside it: the sync line at the
+  foot of the rail reaches it and the places above it do not.
 
   Scenario: The bar reaches the notes
     Given I open "/nb/default/tags"
@@ -81,18 +81,17 @@ Feature: Getting around the notebook
     When I press "chase the marketing line"
     Then the note is headed "Budget review"
 
-  Scenario: Backlinks name what points at a note
+  # There is nothing to press: what points at a note comes with the note.
+  Scenario: A note names what points at it
     Given I open the notebook
     When I press "Meeting notes"
-    And I press "Links"
-    Then I see a row for "Reading list"
-    And I do not see a row for "Budget review"
+    Then the margin note lists "Reading list"
+    And the margin note does not list "Budget review"
 
   Scenario: A note that nothing points at says so
     Given I open the notebook
     When I press "Markup import"
-    And I press "Links"
-    Then the page says "Nothing links here"
+    Then the margin note says "No other note links here."
 
   Scenario: A file is asked what points at it from the count beside it
     Given I open "/nb/default/files"

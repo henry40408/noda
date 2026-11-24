@@ -28,8 +28,11 @@ var standingScript string
 //go:embed assets/panes.js
 var panesScript string
 
-//go:embed assets/beside.js
-var besideScript string
+//go:embed assets/keys.js
+var keysScript string
+
+//go:embed assets/sending.js
+var sendingScript string
 
 //go:embed assets/stamps.js
 var stampsScript string
@@ -52,19 +55,20 @@ const (
 	AssetListing               // the listing's filter
 	AssetStanding              // the network screen's poll
 	AssetPanes                 // the two panes
-	AssetBeside                // the margin note
+	AssetKeys                  // the keyboard
+	AssetSending               // a write, answered where it was made
 	AssetStamps                // every stamp, in the reader's own zone
 	AssetWatching              // the editor's ear on the note under it
 )
 
 var allAssets = []Asset{
 	AssetIcon, AssetStyle, AssetListing, AssetStanding,
-	AssetPanes, AssetBeside, AssetStamps, AssetWatching,
+	AssetPanes, AssetKeys, AssetSending, AssetStamps, AssetWatching,
 }
 
 var assetNames = map[Asset]string{
 	AssetIcon: "icon", AssetStyle: "style", AssetListing: "listing", AssetStanding: "standing",
-	AssetPanes: "panes", AssetBeside: "beside", AssetStamps: "stamps", AssetWatching: "watching",
+	AssetPanes: "panes", AssetKeys: "keys", AssetSending: "sending", AssetStamps: "stamps", AssetWatching: "watching",
 }
 
 func (a Asset) extension() string {
@@ -100,8 +104,10 @@ func (a Asset) body() string {
 		return standingScript
 	case AssetPanes:
 		return panesScript
-	case AssetBeside:
-		return besideScript
+	case AssetKeys:
+		return keysScript
+	case AssetSending:
+		return sendingScript
 	case AssetStamps:
 		return stampsScript
 	}

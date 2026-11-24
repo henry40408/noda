@@ -69,9 +69,26 @@ const (
 	fragmentRead   fragment = "read"
 	fragmentIndex  fragment = "index"
 	fragmentScreen fragment = "screen"
-	fragmentRows   fragment = "rows"
 	fragmentNews   fragment = "news"
+	// fragmentSent is a write that wants only the address it went to. See told.
+	fragmentSent fragment = "sent"
 )
+
+// told answers a script's write with where it went instead of a 303. A fetch
+// that follows the 303 makes the server render the page it lands on, and then
+// the script navigates there and the server renders it again; a note's page
+// carries a scan of the whole notebook for its backlinks.
+type told struct{ http.ResponseWriter }
+
+func (t told) WriteHeader(status int) {
+	if status == http.StatusSeeOther {
+		header := t.Header()
+		header.Set("X-Noda-Location", header.Get("Location"))
+		header.Del("Location")
+		status = http.StatusNoContent
+	}
+	t.ResponseWriter.WriteHeader(status)
+}
 
 // wanted is asked per part, since each route can send only its own. The whole
 // page is always a correct answer.

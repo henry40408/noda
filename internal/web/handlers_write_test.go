@@ -57,6 +57,40 @@ func TestANoteCanBeWrittenFromTheBrowser(t *testing.T) {
 	}
 }
 
+// postedByScript is a form as the script sends it: urlencoded, and asking to be
+// told where the write went rather than shown the page there.
+func (s *site) postedByScript(path string, pairs ...string) reply {
+	form := url.Values{}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		form.Add(pairs[i], pairs[i+1])
+	}
+	return s.send("POST", path, map[string]string{
+		"Content-Type":    "application/x-www-form-urlencoded",
+		"X-Noda-Fragment": "sent",
+	}, form.Encode())
+}
+
+func TestAScriptsSaveIsAnsweredWithWhereItWentNotThePageThere(t *testing.T) {
+	site := serving(t)
+	id := site.idOf("budget-review")
+	edit := "/nb/default/n/" + id + "/edit"
+	saved := site.postedByScript(edit, "fingerprint", site.fingerprintOn(edit), "body", "from the script")
+	if saved.status != 204 || saved.header.Get("X-Noda-Location") != "/nb/default/n/"+id || saved.header.Get("Location") != "" || saved.body != "" {
+		t.Fatalf("%d location %q, x-noda-location %q, body %q", saved.status, saved.header.Get("Location"), saved.header.Get("X-Noda-Location"), saved.body)
+	}
+	if written, err := os.ReadFile(site.notePath("budget-review")); err != nil || !strings.Contains(string(written), "from the script") {
+		t.Fatalf("%v %q", err, written)
+	}
+}
+
+func TestAScriptsRefusedWriteIsStillTheFormThatRefusedIt(t *testing.T) {
+	site := serving(t)
+	got := site.postedByScript("/nb/default/new", "title", "", "tags", "keep", "body", "")
+	if got.status != 200 || !got.says(`value="keep"`) || !got.says("<form") || got.header.Get("X-Noda-Location") != "" {
+		t.Fatalf("%d %q %s", got.status, got.header.Get("X-Noda-Location"), got.body)
+	}
+}
+
 func TestARefusedNewNoteComesBackWithWhatWasTyped(t *testing.T) {
 	site := serving(t)
 	got := site.post("/nb/default/new", "title", "", "tags", "keep", "body", "")
@@ -181,7 +215,7 @@ func TestSavingTagsFromAStalePageDoesNotRemoveATagAddedSince(t *testing.T) {
 	if saved := site.post("/nb/default/n/"+id+"/tags", "saw", "work", "keep", "work", "add", "ops"); saved.status != 303 {
 		t.Fatalf("%d", saved.status)
 	}
-	if note := site.get("/nb/default/n/" + id); !note.says(`<span class="tags">work, q3, ops</span>`) {
+	if note := site.get("/nb/default/n/" + id); !note.says(`<dd class="chips"><a class="tag" href="/nb/default?q=tag%3Awork">work</a><a class="tag" href="/nb/default?q=tag%3Aq3">q3</a><a class="tag" href="/nb/default?q=tag%3Aops">ops</a></dd>`) {
 		t.Fatal(note.body)
 	}
 }
@@ -192,7 +226,7 @@ func TestUntickingATagOnThePageThatOfferedItRemovesIt(t *testing.T) {
 	if saved := site.post("/nb/default/n/"+id+"/tags", "saw", "work"); saved.status != 303 {
 		t.Fatalf("%d", saved.status)
 	}
-	if note := site.get("/nb/default/n/" + id); note.says(`<span class="tags">work</span>`) {
+	if note := site.get("/nb/default/n/" + id); !note.says(`<span class="none">none</span>`) {
 		t.Fatal(note.body)
 	}
 }
@@ -221,7 +255,7 @@ func TestANoteCanBeRenamedAndKeepsItsAddress(t *testing.T) {
 		t.Fatalf("%d %v", saved.status, saved.header)
 	}
 	note := site.get("/nb/default/n/" + id)
-	if !note.says("Budget review 2026") || !note.says(">-budget-review-2026</span>") {
+	if !note.says("Budget review 2026") || !note.says("</span>-budget-review-2026.md</div>") {
 		t.Fatal(note.body)
 	}
 }
@@ -232,6 +266,40 @@ func TestARefusedChangeIsHandedBackWithTheReason(t *testing.T) {
 	refused := site.post("/nb/default/n/"+id+"/rename", "title", "  ")
 	if refused.status != 200 || !refused.says("a note needs a title") || !refused.says("<form") {
 		t.Fatalf("%d %s", refused.status, refused.body)
+	}
+	// The way back is labelled with the note's own title, which the refused
+	// form does not carry.
+	if !refused.says(`aria-label="Back to Budget review"`) {
+		t.Fatal(refused.body)
+	}
+}
+
+// A note whose frontmatter was broken by hand since the form was drawn can be
+// found by its address but not read. The refusal is still the answer, with the
+// id where the title would be: a 500 would hide why the write was refused.
+func TestARefusalForANoteThatCannotBeReadIsStillAForm(t *testing.T) {
+	for _, change := range []struct{ route, field, value string }{
+		{"/edit", "body", "new text"},
+		{"/rename", "title", "A new title"},
+	} {
+		t.Run(change.route, func(t *testing.T) {
+			site := serving(t)
+			id := site.idOf("budget-review")
+			path := site.notePath("budget-review")
+			if err := os.WriteFile(path, []byte("no frontmatter any more\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The form's own fingerprint, so an edit is not turned away as stale
+			// before it is refused.
+			fingerprint, err := blobID(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refused := site.post("/nb/default/n/"+id+change.route, change.field, change.value, "fingerprint", fingerprint)
+			if refused.status != 200 || !refused.says("<form") || !refused.says(`aria-label="Back to `+id+`"`) {
+				t.Fatalf("%d %s", refused.status, refused.body)
+			}
+		})
 	}
 }
 

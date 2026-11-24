@@ -126,6 +126,9 @@ func (s *Server) answering(handler func(*http.Request) (answer, error)) http.Han
 			writeHTML(w, http.StatusInternalServerError, Failure("Something went wrong", err.Error()))
 			return
 		}
+		if fragmentSent.wanted(r) {
+			w = told{w}
+		}
 		result(w)
 	})
 }

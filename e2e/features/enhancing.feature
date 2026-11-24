@@ -62,7 +62,7 @@ Feature: Answering without asking
     When I type "-budget" into the search field
     Then I see a row for "Budget review"
     And I see a row for "Reading list"
-    And the listing says it filtered by title and tag
+    And the listing says it has not filtered yet
 
   @scripted
   Scenario: Half a query is not a complaint and not a filter
@@ -105,3 +105,26 @@ Feature: Answering without asking
     When I submit "Sync"
     Then the page is not reloading itself
     And the page says "Synced"
+
+  # A pane is marked as waiting while its press is on the way. A press made
+  # meanwhile in the other pane overtakes it and its answer is dropped, so the
+  # mark has to come off without that answer.
+  @scripted
+  Scenario: A note overtaken by an order does not leave its pane waiting
+    Given the browser can hold back an answer
+    And I open the notebook on a desktop
+    And the next answer to a press is held back
+    When I press "Reading list"
+    And I press the order "title"
+    And the held answer arrives
+    Then no pane is waiting for an answer
+
+  @scripted
+  Scenario: An order overtaken by a note does not leave its pane waiting
+    Given the browser can hold back an answer
+    And I open the notebook on a desktop
+    And the next answer to a press is held back
+    When I press the order "title"
+    And I press "Reading list"
+    And the held answer arrives
+    Then no pane is waiting for an answer

@@ -350,8 +350,9 @@ noda is at http://127.0.0.1:8080
 ```
 
 The listing is searched and ordered from one bar, a note's links work as they do on disk, and
-times are shown in your own zone. The status screen says what `noda status` prints — `2 to
-push`, `in sync` — and ends with the version of the build answering.
+times are shown in your own zone. With JavaScript on, single keys press the buttons — `?` lists
+them. The status screen says what `noda status` prints — `2 to push`, `in sync` — and ends with
+the version of the build answering.
 
 **There is no password on it, and there is not going to be one** — reach it over a tailnet or
 behind something that authenticates. It listens on **this machine only** until `--listen` says
@@ -366,7 +367,9 @@ waits for a running `sync`. A second signal stops the waiting.
 
 Under the search field are four order chips — the default `slug` order and the three `--sort`
 accepts. Pressing the one in force reverses it, like `-r`. The order rides in the address
-(`?sort=updated`); the default writes nothing.
+(`?sort=updated`); the default writes nothing. Ordered by `created` or `updated`, the rows are
+cut into runs by month, with the pinned notes first. A reversed order reverses the runs too, as
+`-r` reverses pins, so the pinned notes come last.
 
 A relative link to another note opens that note, and a bare `https://` address is a link too. A
 link off the notebook opens in a new tab and is sent no referrer, since the address holds a note

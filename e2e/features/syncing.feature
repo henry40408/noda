@@ -24,6 +24,15 @@ Feature: Syncing from a phone
     And the page says "push:"
     And the page says "in sync"
 
+  # A refusal is an answer: the press is shown what the server said, not told
+  # that it was never heard.
+  Scenario: A press the server refuses says what it said
+    Given I open "/nb/default/status"
+    When the errand buttons lead to a notebook that is gone
+    And I submit "Sync"
+    Then the page says "No such notebook"
+    And the page does not say "did not answer"
+
   Scenario: What a sync did is still there on the way back
     Given I open "/nb/default/status"
     When I submit "Sync"

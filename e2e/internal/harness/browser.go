@@ -1,16 +1,22 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"net/url"
 	"os"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 )
 
 // ScenarioTimeout bounds one scenario, so a wedged Chrome cannot hang the run.
@@ -129,6 +135,15 @@ func (b *Browser) SetViewport(viewport Viewport) error {
 	})
 }
 
+// EmulateTouch makes the page's primary pointer a finger: `pointer:coarse`
+// matches and `hover` does not. A tablet is wide enough for the desktop layout
+// and still has no mouse.
+func (b *Browser) EmulateTouch() error {
+	return send(b, emulation.SetTouchEmulationEnabled, emulation.SetTouchEmulationEnabledParams{
+		Enabled: true, MaxTouchPoints: 5,
+	})
+}
+
 // PreferScheme emulates prefers-color-scheme, with no stored preference.
 func (b *Browser) PreferScheme(scheme string) error {
 	return send(b, emulation.SetEmulatedMedia, emulation.SetEmulatedMediaParams{
@@ -176,13 +191,77 @@ func (b *Browser) Do(actions ...chromedp.Action[chromedp.Void]) error {
 	return chromedp.Do(bounded, actions...)
 }
 
+// KeyPress sends one key as a reader's keyboard does: a single keyDown that
+// carries the character, then the keyUp. chromedp's own KeyEvent sends the
+// character as a separate char event, which Chrome delivers even when the page
+// cancelled the keydown, so a shortcut that rightly swallows its key would
+// appear to leak it into the field it just focused.
+func (b *Browser) KeyPress(key rune) error { return b.KeyPressWith(key, 0) }
+
+// KeyPressWith is KeyPress with modifier keys held. A chord carries no text:
+// Ctrl and Enter together type nothing.
+func (b *Browser) KeyPressWith(key rune, modifiers kb.Modifier) error {
+	events := kb.Encode(key)
+	if len(events) == 3 {
+		down, char, up := events[0], events[1], events[2]
+		down.Text, down.UnmodifiedText = char.Text, char.UnmodifiedText
+		events = []*input.DispatchKeyEventParams{down, up}
+	}
+	for _, event := range events {
+		event.Modifiers = int64(modifiers)
+		if modifiers != 0 {
+			event.Text, event.UnmodifiedText = "", ""
+		}
+		if err := send(b, input.DispatchKeyEvent, *event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// KeyDownDuringComposition is the keydown a browser reports for a key an input
+// method is handling: key code 229, with the key it was. Safari sends exactly
+// this for the key that ends a composition, and a script that reads only `key`
+// takes it for a shortcut.
+func (b *Browser) KeyDownDuringComposition(key, code string) error {
+	return send(b, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+		Type: input.DispatchKeyEventTypeKeyDown, Key: key, Code: code, WindowsVirtualKeyCode: 229,
+	})
+}
+
+// BeforeEveryPage runs a script in each page this browser opens from now on,
+// ahead of the page's own scripts.
+func (b *Browser) BeforeEveryPage(source string) error {
+	_, err := chromedp.Call(b.ctx, page.AddScriptToEvaluateOnNewDocument,
+		page.AddScriptToEvaluateOnNewDocumentParams{Source: source})
+	return err
+}
+
+// PointerTo moves the mouse, with no button down, so that what answers to
+// :hover does.
+func (b *Browser) PointerTo(x, y float64) error {
+	return send(b, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+		Type: input.DispatchMouseEventTypeMouseMoved, X: x, Y: y,
+	})
+}
+
 // Screenshot writes the viewport as a PNG.
 func (b *Browser) Screenshot(path string) error {
-	png, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot())
+	encoded, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot())
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, png, 0o644)
+	return os.WriteFile(path, encoded, 0o644)
+}
+
+// Pixels is the viewport as drawn, one pixel to a CSS pixel: the viewport's
+// device scale factor is 1.
+func (b *Browser) Pixels() (image.Image, error) {
+	encoded, err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot())
+	if err != nil {
+		return nil, err
+	}
+	return png.Decode(bytes.NewReader(encoded))
 }
 
 // Eval evaluates a JavaScript expression in the page and decodes the result.

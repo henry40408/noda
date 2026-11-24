@@ -32,6 +32,21 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	scenario.Step(`^the tag `+quoted+` is no taller than (\d+) pixels$`, func(name string, most int) error {
+		var last float64
+		err := harness.Eventually(fmt.Sprintf("the tag %q to be drawn", name), func() (bool, error) {
+			height, present, err := w.page().TagChipHeight(name)
+			last = height
+			return present, err
+		})
+		if err != nil {
+			return err
+		}
+		if last > float64(most) {
+			return fmt.Errorf("the tag %q is %gpx tall: a pointer needs no more than %dpx", name, last, most)
+		}
+		return nil
+	})
 	scenario.Step(`^the search field's text is at least (\d+) pixels$`, func(least int) error {
 		size, err := w.page().SearchFieldFontSize()
 		if err != nil {
@@ -64,17 +79,8 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		return nil
 	})
 
-	// As in the CLI, a row given room extends: tags and day move right of the title.
-	scenario.Step(`^the row's tags sit beside the title$`, func() error {
-		title, under, err := w.titleAndTags()
-		if err != nil {
-			return err
-		}
-		if under <= title {
-			return fmt.Errorf("the tags start at %g and the title at %g: they are still stacked", under, title)
-		}
-		return nil
-	})
+	// The row is two lines at every width: the day and the tags start where
+	// the title does.
 	scenario.Step(`^the row's tags sit under the title$`, func() error {
 		title, under, err := w.titleAndTags()
 		if err != nil {
@@ -110,33 +116,12 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
-	// A phone's one column belongs to the title.
-	scenario.Step(`^the row shows no id$`, func() error {
-		id, present, err := w.page().ShownID()
-		if err != nil {
-			return err
-		}
-		if present {
-			return fmt.Errorf("the id column is drawn on a screen with no room for it: %q", id)
-		}
-		return nil
-	})
 
-	scenario.Step(`^the content is narrower than the window$`, func() error {
-		box, err := w.page().BoxOf("main")
-		if err != nil {
-			return err
-		}
-		if box.Width >= box.Container {
-			return fmt.Errorf("the content is %g wide in a %g window: a line that long is not read, it is scanned",
-				box.Width, box.Container)
-		}
-		return nil
-	})
 	// The front page has no rail, but the rail's grid column once left 76px of
-	// nothing down the left, invisible in the markup.
+	// nothing down the left, invisible in the markup. The pane, not the list:
+	// the list is a column of its own width in the middle of it.
 	scenario.Step(`^the notebooks fill the window$`, func() error {
-		box, err := w.page().BoxOf("main.books")
+		box, err := w.page().BoxOf(".pane")
 		if err != nil {
 			return err
 		}
@@ -146,16 +131,9 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
-	scenario.Step(`^the content is centred$`, func() error {
-		box, err := w.page().BoxOf("main")
-		if err != nil {
-			return err
-		}
-		return requireCentred(box, "content")
-	})
 	// Against the pane, not the window, which also holds a rail and an index.
 	scenario.Step(`^the reading column is narrower than its pane$`, func() error {
-		box, err := w.page().BoxIn(".pane.read main.note", ".pane.read")
+		box, err := w.page().BoxIn(".pane.read article", ".pane.read")
 		if err != nil {
 			return err
 		}
@@ -166,7 +144,7 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		return nil
 	})
 	scenario.Step(`^the reading column is centred in its pane$`, func() error {
-		box, err := w.page().BoxIn(".pane.read main.note", ".pane.read")
+		box, err := w.page().BoxIn(".pane.read article", ".pane.read")
 		if err != nil {
 			return err
 		}
@@ -180,7 +158,7 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		if err != nil {
 			return err
 		}
-		buttons, err := w.page().BoxIn(".buttons button", "main")
+		buttons, err := w.page().BoxIn(".buttons > :first-child", "main")
 		if err != nil {
 			return err
 		}

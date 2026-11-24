@@ -1,4 +1,3 @@
-
 (() => {
   const app = document.querySelector(".app.split");
   if (!app) return;
@@ -8,6 +7,24 @@
     const form = app.querySelector(".index form.searchbar");
     return form ? form.getAttribute("action") : null;
   };
+
+  // A pane is aria-busy while its answer is on the way. The
+  // stylesheet draws that only after 150ms, so a fast answer shows nothing.
+  const busy = (selector, on) => {
+    const pane = app.querySelector(selector);
+    if (!pane) return;
+    if (on) pane.setAttribute("aria-busy", "true");
+    else pane.removeAttribute("aria-busy");
+  };
+
+  // An answer that a later press has overtaken is dropped. Without
+  // this, two quick presses could leave the first note under the second
+  // note's address.
+  let turn = 0;
+
+  // How the rows were last asked for, so they can be asked for
+  // again after a write made in place.
+  let listed = app.classList.contains("at-list") ? location.pathname + location.search : null;
 
   let asking = false;
   const bring = async () => {
@@ -45,6 +62,10 @@
     const box = app.querySelector(".index main.rows");
     const rows = sent.querySelector("main.rows");
     if (!box || !rows) return false;
+    // A pressed order chip is replaced with the rest of the form and
+    // the focus went with it. It goes back on the chip in the same place.
+    const chips = () => [...app.querySelectorAll(".index .sortbar a")];
+    const held = chips().indexOf(document.activeElement);
     box.replaceChildren(...rows.childNodes);
 
     const here = app.querySelector(".index .topbar .count");
@@ -62,6 +83,7 @@
       while (field.nextSibling) field.nextSibling.remove();
       form.append(...rest.slice(at + 1));
     }
+    if (held >= 0 && chips()[held]) chips()[held].focus();
 
     mark();
     // New elements; the filter holds the old ones.
@@ -69,11 +91,13 @@
     return true;
   };
 
-  // Off the address, so it is right after a swap and after a hard load.
+  // Off the address, so it is right after a swap and after a hard load. The
+  // row's `pathname`, not its `href` attribute: the attribute holds the
+  // notebook's name as written, and the address is percent-encoded.
   const mark = () => {
     const at = location.pathname;
     for (const row of app.querySelectorAll(".index main.rows a.row")) {
-      row.classList.toggle("here", row.getAttribute("href") === at);
+      row.classList.toggle("here", row.pathname === at);
     }
   };
 
@@ -82,6 +106,14 @@
   // the notebook. Failures therefore `replace`, the entry being there already.
   const swap = async (href, push = true) => {
     if (push) history.pushState(null, "", href);
+    // The row is marked on the press, not on the answer, and the
+    // note on screen stays until the next one has arrived whole.
+    const mine = ++turn;
+    mark();
+    // An order still on its way has just been overtaken and its answer will be
+    // dropped, so nothing else would take its mark off.
+    busy(".pane.index", false);
+    busy(".pane.read", true);
     let text;
     try {
       const answer = await fetch(href, {
@@ -92,6 +124,7 @@
     } catch {
       return location.replace(href);
     }
+    if (mine !== turn) return;
     const sent = new DOMParser().parseFromString(text, "text/html");
     const next = sent.querySelector(".pane.read");
     if (!next) return location.replace(href);
@@ -120,6 +153,7 @@
     const sent = new DOMParser().parseFromString(text, "text/html");
     const read = sent.querySelector(".pane.read");
     if (!read || !column(sent, true)) return location.reload();
+    listed = href;
     app.querySelector(".pane.read").replaceWith(read);
     document.title = sent.title;
     app.classList.remove("at-note");
@@ -132,6 +166,11 @@
   // first for `swap`'s reason; failures go where a scriptless press would.
   const relist = async (where) => {
     history.pushState(null, "", where);
+    listed = where;
+    const mine = ++turn;
+    // The same, for a note still on its way.
+    busy(".pane.read", false);
+    busy(".pane.index", true);
     let text;
     try {
       const answer = await fetch(where, {
@@ -143,9 +182,25 @@
       return location.replace(where);
     }
     const sent = new DOMParser().parseFromString(text, "text/html");
+    if (mine !== turn) return;
+    busy(".pane.index", false);
     // `false`: keep keystrokes typed in flight; an order press leaves the field.
     if (!column(sent, false)) return location.replace(where);
   };
+
+  // A write made in place (a pin) can reorder the rows. sending.js
+  // says so, and the column is asked for again the way it was last asked for.
+  // A failure leaves the rows as they are: stale, not wrong about the note.
+  app.addEventListener("noda:stale", async () => {
+    const where = listed || book();
+    if (!where || !app.classList.contains("indexed")) return;
+    try {
+      const answer = await fetch(where, {
+        headers: { accept: "text/html", "x-noda-fragment": "index" },
+      });
+      if (answer.ok) column(new DOMParser().parseFromString(await answer.text(), "text/html"), false);
+    } catch {}
+  });
 
   // Only on the listing screen: on a note page ⏎ in this form is the way *to*
   // the listing, and answering in place would keep the note on screen.

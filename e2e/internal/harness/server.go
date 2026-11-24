@@ -61,6 +61,15 @@ func (w Workspace) notebookDir() string {
 
 func (w Workspace) remoteDir() string { return filepath.Join(w.Root, "origin.git") }
 
+func (w Workspace) notebooksDir() string { return filepath.Dir(w.notebookDir()) }
+
+// CopyNotebook keeps a clone of the fixture notebook under another name, for a
+// scenario about a notebook that is not called "default". Reset removes it.
+func (w Workspace) CopyNotebook(name string) error {
+	_, err := git("", "clone", "-q", w.notebookDir(), filepath.Join(w.notebooksDir(), name))
+	return err
+}
+
 // WriteConfig writes the config every workspace starts with.
 func (w Workspace) WriteConfig() error {
 	dir := filepath.Join(w.Root, "config", "noda")
@@ -77,6 +86,30 @@ func (w Workspace) NoteFile(key string) (string, error) {
 		return "", err
 	}
 	return filepath.Base(strings.TrimSpace(path)), nil
+}
+
+// ChangeLine is what a pull from another machine leaves in a note: one line of
+// its text replaced, and committed. The open web page does not know.
+func (w Workspace) ChangeLine(key, from, to string) error {
+	path, err := w.Run("path", key)
+	if err != nil {
+		return err
+	}
+	path = strings.TrimSpace(path)
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(text), from) {
+		return fmt.Errorf("%s has no line %q to change", key, from)
+	}
+	changed := strings.Replace(string(text), from, to, 1)
+	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+		return err
+	}
+	_, err = git(w.notebookDir(), "-c", "user.name=elsewhere", "-c", "user.email=elsewhere@example.com",
+		"commit", "-aq", "-m", "changed elsewhere")
+	return err
 }
 
 // Server is a running `noda web` and its workspace.
@@ -188,6 +221,9 @@ func (s *Server) Reset() error {
 	if _, err := git(notebook, "clean", "-fd"); err != nil {
 		return err
 	}
+	if err := s.removeOtherNotebooks(); err != nil {
+		return err
+	}
 	// The remote is fixture too: a sync leaves commits on the bare repository
 	// and tracking refs, and "never synced" would then describe the last scenario.
 	refs, err := git(notebook, "for-each-ref", "--format=%(refname)", "refs/remotes")
@@ -203,6 +239,24 @@ func (s *Server) Reset() error {
 		return err
 	}
 	return s.restart()
+}
+
+// removeOtherNotebooks takes away what CopyNotebook made, so the front page of
+// the next scenario lists one notebook again.
+func (s *Server) removeOtherNotebooks() error {
+	entries, err := os.ReadDir(s.notebooksDir())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == Notebook {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(s.notebooksDir(), entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // BareRemote makes a fresh bare repository standing in for a git host.

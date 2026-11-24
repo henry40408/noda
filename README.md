@@ -32,7 +32,8 @@ Local-first, plain-text, and built to start fast. No account, no index file, no 
 - **Fast to reach** - Address a note by a short id *or* a readable slug
 - **Search** - Substring search over title, tags and body, with `tag:`, `OR` and `-` negation
 - **Terminal UI** - `noda tui` to list, filter, open and edit without leaving the terminal
-- **Web UI** - `noda web` serves the notebooks to a phone or browser; works with JavaScript off
+- **Web UI** - `noda web` serves the notebooks to a phone or browser, with a colour for each note
+  and keyboard shortcuts; every screen works with JavaScript off
 - **Attachments & backlinks** - Link notes and files; links survive a retitle
 - **Action items** - `- [ ]` boxes found across notes, read from the Markdown, never grepped
 - **Import** - Bring in a TiddlyWiki 5 export

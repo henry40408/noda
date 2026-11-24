@@ -1,4 +1,3 @@
-
 (() => {
   const app = document.querySelector(".app");
   const form = document.querySelector("form.searchbar");
@@ -13,6 +12,8 @@
   const look = () => {
     count = document.querySelector(".topbar .count");
     hint = form.querySelector(".hint");
+    // The sentence as sent, kept so `stand` can swap it out and back.
+    if (hint && !hint.dataset.said) hint.dataset.said = hint.innerHTML;
     parsed = form.querySelector(".parse");
     problem = form.querySelector(".problem");
     empty = list.querySelector(".empty");
@@ -25,7 +26,7 @@
         row,
         title,
         words: title.textContent,
-        tags: tags ? tags.textContent.split(", ") : [],
+        tags: tags ? [...tags.children].map((tag) => tag.textContent) : [],
         pinned: !!row.querySelector(".pin"),
         id: row.getAttribute("href").split("/").pop(),
       };
@@ -177,12 +178,23 @@
     if (hint) hint.hidden = full;
   };
 
+  // The hint has two sentences. "Filtered by title and tag" over
+  // rows that were not filtered read as wrong, so when the filter stands
+  // aside it says that instead (data-aside, written by the server). The
+  // sentence as sent is the server's own markup, put back as it came.
+  const says = (aside) => {
+    if (!hint || !hint.dataset.aside) return;
+    if (aside) hint.textContent = hint.dataset.aside;
+    else hint.innerHTML = hint.dataset.said;
+  };
+
   const stand = () => {
     for (const note of notes) {
       note.row.hidden = false;
       paint(note.title, note.words, []);
     }
     show(total, false);
+    says(true);
   };
 
   const apply = () => {
@@ -222,6 +234,7 @@
       paint(note.title, note.words, matched ? marks : []);
     }
     show(shown, full);
+    says(false);
   };
 
   field.addEventListener("input", apply);

@@ -13,6 +13,7 @@ import (
 
 	"github.com/henry40408/noda/internal/cmd"
 	"github.com/henry40408/noda/internal/config"
+	"github.com/henry40408/noda/internal/gitx"
 	"github.com/henry40408/noda/internal/gitx/gittest"
 	"github.com/henry40408/noda/internal/paths"
 )
@@ -535,5 +536,96 @@ func TestTheServerTimesOutSlowHeadersButNeverCutsAStream(t *testing.T) {
 	}
 	if server.WriteTimeout != 0 {
 		t.Fatalf("WriteTimeout is %v, which cuts a watch", server.WriteTimeout)
+	}
+}
+
+func TestTheNoteArrivesWithTheNotesThatLinkToIt(t *testing.T) {
+	site := serving(t)
+	id := site.idOf("budget-review")
+	if _, err := cmd.Add(site.env, cmd.AddOptions{Title: str("Pointing back"), Content: str("see [the budget](" + id + "-budget-review.md)")}); err != nil {
+		t.Fatal(err)
+	}
+	want := `<section class="beside"><h2>Linked from <span>1</span></h2>`
+	for name, got := range map[string]reply{
+		"the page": site.get("/nb/default/n/" + id),
+		"the swap": site.request("/nb/default/n/"+id, map[string]string{fragmentHeader: "read"}),
+	} {
+		if !got.says(want) || !got.says(">Pointing back</a>") {
+			t.Errorf("%s does not say what links here:\n%s", name, got.body)
+		}
+	}
+	if swap := site.request("/nb/default/n/"+id, map[string]string{fragmentHeader: "read"}); swap.says("<!doctype html>") {
+		t.Fatal("a swap is not a whole page")
+	}
+}
+
+// The backlinks screen stays for a file, which has no margin to put them in.
+func TestTheBacklinksScreenIsAlwaysAWholePage(t *testing.T) {
+	site := serving(t)
+	for _, fragment := range []string{"", "rows", "read"} {
+		got := site.request("/nb/default/f/rack.png/backlinks", map[string]string{fragmentHeader: fragment})
+		if got.status != 200 || !got.says("<!doctype html>") || !got.says(`<h1 class="place">Linked from</h1>`) {
+			t.Errorf("fragment %q: %d %s", fragment, got.status, got.body)
+		}
+	}
+}
+
+func inZone(t *testing.T, env cmd.Env, tz string) cmd.Env {
+	t.Helper()
+	isolated := gittest.Isolate(t)
+	isolated["TZ"] = tz
+	git, err := gitx.New(gitx.Options{Env: isolated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.Git = git
+	return env
+}
+
+// aNoteUpdatedAt writes the file itself, as no command lets the clock be set.
+func aNoteUpdatedAt(t *testing.T, env cmd.Env, stamp string) {
+	t.Helper()
+	text := "---\ntitle: Late night\ncreated: " + stamp + "\nupdated: " + stamp + "\n---\n\nbody\n"
+	path := filepath.Join(env.Paths.NotebookDir(config.DefaultNotebook), "04kmn123-late-night.md")
+	if err := os.WriteFile(path, []byte(text), 0o666); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A month heading is the one thing a listing says that a stamp's own day does
+// not, so the zone it is cut in is the server's, as `noda todo` judges today.
+func TestAMonthHeadingIsCutInTheServersZone(t *testing.T) {
+	for _, c := range []struct{ name, tz, heading string }{
+		{"UTC keeps it in March", "", "March 2024"},
+		{"eight hours east is already April", "CST-8", "April 2024"},
+		{"five hours west is still March", "EST5", "March 2024"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			env := aNotebook(t)
+			aNoteUpdatedAt(t, env, "2024-03-31T23:30:00Z")
+			site := servingOn(t, inZone(t, env, c.tz))
+			got := site.get("/nb/default?sort=updated")
+			if !got.says("<h2>" + c.heading + "</h2>") {
+				t.Fatal(got.body)
+			}
+			if got.says("<h2>Notes</h2>") {
+				t.Fatal("a date order has no run for the undated")
+			}
+		})
+	}
+}
+
+func TestOnlyTheDateOrdersAreCutByMonth(t *testing.T) {
+	env := aNotebook(t)
+	aNoteUpdatedAt(t, env, "2024-03-31T23:30:00Z")
+	site := servingOn(t, inZone(t, env, ""))
+	for _, order := range []string{"", "?sort=title", "?sort=slug"} {
+		got := site.get("/nb/default" + order)
+		if !got.says(`<section class="run"><h2>Notes</h2>`) || got.says("<h2>March 2024</h2>") {
+			t.Errorf("order %q:\n%s", order, got.body)
+		}
+	}
+	if got := site.get("/nb/default?sort=created"); !got.says("<h2>March 2024</h2>") {
+		t.Fatal(got.body)
 	}
 }
