@@ -68,8 +68,9 @@ func aNotebook(t *testing.T) cmd.Env {
 	}
 	scratch := t.TempDir()
 	for name, content := range map[string]string{
-		"rack.png": "\x89PNG\r\n\x1a\nnot really",
-		"plan.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+		"rack.png":   "\x89PNG\r\n\x1a\nnot really",
+		"plan.svg":   "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+		"report.pdf": "%PDF-1.4\n%%EOF\n",
 	} {
 		source := filepath.Join(scratch, name)
 		if err := os.WriteFile(source, []byte(content), 0o666); err != nil {
@@ -257,6 +258,19 @@ func TestOnlyTheSafeFilesAreShownInPlace(t *testing.T) {
 	if !strings.HasPrefix(svg.header.Get("Content-Disposition"), "attachment") ||
 		svg.header.Get("Content-Security-Policy") != "default-src 'none'; sandbox" {
 		t.Fatalf("%v", svg.header)
+	}
+}
+
+// A PDF is shown by the browser's own viewer, which an attachment would never
+// reach, and it is still served under the sandbox every file gets.
+func TestAPdfIsShownInPlaceUnderTheSameSandbox(t *testing.T) {
+	site := serving(t)
+	pdf := site.get("/nb/default/f/report.pdf")
+	if pdf.status != 200 || pdf.header.Get("Content-Type") != "application/pdf" ||
+		!strings.HasPrefix(pdf.header.Get("Content-Disposition"), "inline") ||
+		pdf.header.Get("X-Content-Type-Options") != "nosniff" ||
+		pdf.header.Get("Content-Security-Policy") != "default-src 'none'; sandbox" {
+		t.Fatalf("%d %v", pdf.status, pdf.header)
 	}
 }
 

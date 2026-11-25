@@ -164,7 +164,14 @@ dimmed, since it may be what you came to read.
 **Links go where they went on disk.** A relative link to another note —
 `[the plan](k3f9m2p1-the-plan.md)` — opens that note's page and is coloured like an id, so a link
 that stays in the notebook looks different from one that leaves. A link to any other file in the
-notebook is a download; an image is shown in place.
+notebook is a download; an image is shown in place. A PDF opens in the browser's own viewer, and
+written as an image — `![the spec](spec.pdf)` — one of the notebook's own is embedded in the note,
+a screen tall. A browser with no viewer (a phone's, often) shows the image's alt text, or its
+address when it has none, as a link to the file instead. Safari before 18.4 does not show a PDF
+served under the policy below.
+
+**A PDF on another site is only a link**, since the site, not the note, decides what an embedded
+address shows. Inside a link, an embedded PDF is its words alone, so the link around it stays whole.
 
 **A bare `http://` or `https://` address is a link too**, found on GFM's rules: trailing
 sentence punctuation is not part of it, and a `)` is only when the address opened one.
@@ -183,7 +190,8 @@ check refuses — every write from a browser would be turned away.
 since it may be the only copy of markup `noda import tiddlywiki` could not convert. A link whose
 scheme noda does not serve — `javascript:` first among them — keeps its words and loses its link.
 Files are served with `nosniff` and a content policy that loads nothing, and only formats that
-cannot carry a script are shown in place: SVG arrives as a download.
+cannot carry a script as this site are shown in place: SVG arrives as a download, while a PDF is
+drawn by the browser's viewer, which runs no script of this site's.
 
 ## The listing
 

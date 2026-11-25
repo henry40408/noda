@@ -116,11 +116,14 @@ func (a attachment) answer() answer {
 		// Not a bare filename=: a notebook's file may be réunion.pdf.
 		header.Set("Content-Disposition", disposition+"; filename*=UTF-8''"+encoded(a.name))
 		// Belt and braces for any format that turns out able to run a script,
-		// as SVG does.
+		// as SVG does. A PDF keeps it too: Chromium shows a sandboxed one, and
+		// Safari does from 18.4.
 		header.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		_, _ = w.Write(a.bytes)
 	}
 }
+
+const pdfKind = "application/pdf"
 
 // holding is a file's content type, and whether it may be shown inline.
 //
@@ -146,7 +149,7 @@ func holding(name string) (kind string, inline bool) {
 	case "txt", "md", "csv", "log":
 		return "text/plain; charset=utf-8", true
 	case "pdf":
-		return "application/pdf", false
+		return pdfKind, true
 	case "svg":
 		return "image/svg+xml", false
 	}

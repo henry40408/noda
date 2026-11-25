@@ -469,11 +469,52 @@ func (w *bodyWriter) image(image *ast.Image) {
 		w.out.WriteString(alt)
 		return
 	}
+	if namesPDF(target.url) {
+		w.pdf(image, target, destination)
+		return
+	}
 	w.out.WriteString("<img src=\"" + escapeHref(target.url) + "\" alt=\"" + alt + "\"")
 	if title := markdown.Unescape(image.Title); title != "" {
 		w.out.WriteString(" title=\"" + escapeAttribute(title) + "\"")
 	}
 	w.out.WriteString(" />")
+}
+
+// namesPDF is whether an address ends in `.pdf`, ignoring its query and fragment.
+func namesPDF(url string) bool {
+	path, _, _ := strings.Cut(url, "?")
+	path, _, _ = strings.Cut(path, "#")
+	kind, _ := holding(path)
+	return kind == pdfKind
+}
+
+// pdf shows an embedded PDF in the browser's own viewer, since an <img> cannot.
+// A browser with no viewer (a phone's) draws the object's content instead, so
+// the fallback is a link to the file, as `[x](file.pdf)` would be.
+//
+// Only the notebook's own files are embedded: what an <object> shows is
+// decided by the content type the server answers with, not by `type`, so a
+// remote address could put a scripted page in the note. It is a link instead.
+// Inside a link it is the words alone, as a viewer or an anchor there would
+// take the click from the outer link.
+func (w *bodyWriter) pdf(image *ast.Image, target route, destination string) {
+	label := w.altText(image)
+	if label == "" {
+		label = destination
+	}
+	label = escapeText(label)
+	switch {
+	case w.links > 0:
+		w.out.WriteString(label)
+	case target.kind == routeAway:
+		w.out.WriteString(leaving(target.url) + label + "</a>")
+	default:
+		w.out.WriteString("<object class=\"pdf\" data=\"" + escapeHref(target.url) + "\" type=\"application/pdf\"")
+		if title := markdown.Unescape(image.Title); title != "" {
+			w.out.WriteString(" title=\"" + escapeAttribute(title) + "\"")
+		}
+		w.out.WriteString("><a href=\"" + escapeHref(target.url) + "\">" + label + "</a></object>")
+	}
 }
 
 // altText is the plain text under an image, markup stripped.
