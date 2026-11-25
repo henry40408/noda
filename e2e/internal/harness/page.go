@@ -440,6 +440,42 @@ func (p Page) Remember() error {
 // Remembered reports whether the document marked by Remember is still loaded.
 func (p Page) Remembered() (bool, error) { return Eval[bool](p.Browser, "!!window.__noda_here") }
 
+// RememberNote marks the note's body element, to tell a note replaced by a
+// fetch from one that was only scrolled: Remember cannot, for the document is
+// the same either way.
+func (p Page) RememberNote() error {
+	_, err := Eval[int](p.Browser, "window.__noda_note = document.querySelector('.body'), 1")
+	return err
+}
+
+// NoteRemembered reports whether the body element marked by RememberNote is
+// still the one on screen.
+func (p Page) NoteRemembered() (bool, error) {
+	return Eval[bool](p.Browser, "!!window.__noda_note && window.__noda_note === document.querySelector('.body')")
+}
+
+// PressFootnote presses the number a footnote leaves in the text.
+func (p Page) PressFootnote(number string) error {
+	return p.clickCSS("the footnote "+quote(number), `a[href="#fn:`+number+`"]`)
+}
+
+// PressFootnoteBack presses the arrow that leads from a footnote to its
+// citation.
+func (p Page) PressFootnoteBack(number string) error {
+	return p.clickCSS("the way back from footnote "+quote(number), `a[href="#fnref:`+number+`"]`)
+}
+
+// FootnoteLit reports whether the footnote's text, or with cited the number it
+// leaves in the text, is what the address names.
+func (p Page) FootnoteLit(number string, cited bool) (bool, error) {
+	id := "fn:" + number
+	if cited {
+		id = "fnref:" + number
+	}
+	return Exec[bool](p.Browser, `const el = document.getElementById(arguments[0]);
+		return !!el && el.matches(':target');`, id)
+}
+
 // MarkedPlace is the rail's place marked aria-current, the attribute the colour
 // also hangs off. Empty and false when none, as on the network screen. The
 // textContent is read because the label is drawn only from 640px up.

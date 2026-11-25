@@ -64,6 +64,24 @@ func registerNavigationSteps(scenario *godog.ScenarioContext, w *world) {
 	scenario.Step(`^it is still the same page$`, func() error {
 		return harness.Eventually("the page to still be the one that was marked", w.page().Remembered)
 	})
+	scenario.Step(`^I remember the note on screen$`, func() error { return w.page().RememberNote() })
+	scenario.Step(`^it is still the note I remembered$`, func() error {
+		return harness.Eventually("the note on screen to still be the one that was marked", w.page().NoteRemembered)
+	})
+	scenario.Step(`^I press the footnote `+quoted+`$`, func(number string) error { return w.page().PressFootnote(number) })
+	scenario.Step(`^I press the way back from the footnote `+quoted+`$`, func(number string) error {
+		return w.page().PressFootnoteBack(number)
+	})
+	scenario.Step(`^the footnote `+quoted+` is the one lit$`, func(number string) error {
+		return harness.Eventually("the footnote "+number+" to be the target", func() (bool, error) {
+			return w.page().FootnoteLit(number, false)
+		})
+	})
+	scenario.Step(`^the citation of the footnote `+quoted+` is the one lit$`, func(number string) error {
+		return harness.Eventually("the citation of footnote "+number+" to be the target", func() (bool, error) {
+			return w.page().FootnoteLit(number, true)
+		})
+	})
 	scenario.Step(`^I search for `+quoted+`$`, func(query string) error { return w.page().Search(query) })
 	scenario.Step(`^I type `+quoted+` into the search field$`, func(query string) error {
 		return w.page().TypeSearch(query)

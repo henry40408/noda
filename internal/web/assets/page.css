@@ -133,6 +133,17 @@ main.note{padding:22px 20px 40px}
 .body th,.body td{padding:6px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 .body th{color:var(--soft);font-weight:600}
 .body img{max-width:100%}
+/* Footnotes: the number is small and unmarked, the notes sit under a short rule, and the one jumped to is lit. */
+.body sup{line-height:0;font-size:.72em}
+.body a.footnote-ref,.body a.footnote-backref{text-decoration:none;color:var(--soft);font-family:var(--ui)}
+.body a.footnote-ref{padding:0 1px}
+.body a.footnote-ref:hover,.body a.footnote-backref:hover{color:var(--ink)}
+.body .footnotes{margin-top:2.2em;font-size:.88em;color:var(--soft)}
+.body .footnotes hr{width:72px;margin:0 0 1em;border:0;border-top:1px solid var(--line)}
+.body .footnotes ol{margin-bottom:0}
+.body .footnotes p{margin-bottom:.4em}
+.body .footnotes li:target,.body sup:target{background:var(--mark);border-radius:3px}
+.body .footnotes li,.body sup[id]{scroll-margin-top:calc(var(--top) + 72px)}
 
 /* The margin: everything about a note that is not its text. On a phone it
    follows the text, and its actions are the dock. */

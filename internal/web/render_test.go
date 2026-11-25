@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -152,8 +153,38 @@ func TestBody(t *testing.T) {
 			"<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\"></a></p>\n"},
 		{"link with blank text", "[ ](01abc234-hello.md)",
 			"<p><a class=\"note h10\" href=\"/nb/notes%20%26%20more/n/01abc234\"> </a></p>\n"},
-		{"footnotes are not supported", "footnote[^1]\n\n[^1]: the note\n",
-			"<p>footnote[^1]</p>\n<p>[^1]: the note</p>\n"},
+		{"footnote", "footnote[^1]\n\n[^1]: the note\n",
+			"<p>footnote" + footnoteRef("fnref:", 1) + "</p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>the note"+footnoteBack("fnref:1", "")+"</p>\n</li>\n")},
+		{"footnotes are numbered by first citation", "b[^2] a[^1]\n\n[^1]: one\n[^2]: two\n",
+			"<p>b" + footnoteRef("fnref:", 1) + " a" + footnoteRef("fnref:", 2) + "</p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>two"+footnoteBack("fnref:1", "")+"</p>\n</li>\n"+
+					"<li id=\"fn:2\">\n<p>one"+footnoteBack("fnref:2", "")+"</p>\n</li>\n")},
+		{"a footnote cited twice returns to both", "a[^x] b[^x]\n\n[^x]: shared\n",
+			"<p>a" + footnoteRef("fnref:", 1) + " b" + footnoteRef("fnref1:", 1) + "</p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>shared"+footnoteBack("fnref:1", "")+footnoteBack("fnref1:1", "<sup>2</sup>")+"</p>\n</li>\n")},
+		{"a footnote of two paragraphs returns from the last", "a[^1]\n\n[^1]: first\n\n    second\n",
+			"<p>a" + footnoteRef("fnref:", 1) + "</p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>first</p>\n<p>second"+footnoteBack("fnref:1", "")+"</p>\n</li>\n")},
+		{"a footnote ending in code returns after it", "a[^1]\n\n[^1]: code\n\n        x\n",
+			"<p>a" + footnoteRef("fnref:", 1) + "</p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>code</p>\n<pre><code>x\n</code></pre>\n"+footnoteBack("fnref:1", "")+"</li>\n")},
+		{"a footnote is read as markdown", "a[^1]\n\n[^1]: *em* and <b>\n",
+			"<p>a" + footnoteRef("fnref:", 1) + "</p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p><em>em</em> and <code>&lt;b&gt;</code>"+footnoteBack("fnref:1", "")+"</p>\n</li>\n")},
+		{"a footnote cited in a table cell", "| h |\n|---|\n| c[^1] |\n\n[^1]: n\n",
+			"<table><thead><tr><th>h</th></tr></thead><tbody>\n<tr><td>c" + footnoteRef("fnref:", 1) + "</td></tr>\n</tbody></table>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>n"+footnoteBack("fnref:1", "")+"</p>\n</li>\n")},
+		// The id stays so the arrow under the footnote still has somewhere to return to.
+		{"a footnote cited inside a link is a bare number", "[a[^1]](https://example.com)\n\n[^1]: n\n",
+			"<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">a<sup id=\"fnref:1\">1</sup></a></p>\n" +
+				footnoteList("<li id=\"fn:1\">\n<p>n"+footnoteBack("fnref:1", "")+"</p>\n</li>\n")},
+		{"a citation with no definition is text", "orphan[^nope]\n",
+			"<p>orphan[^nope]</p>\n"},
+		{"a definition nothing cites is dropped", "[^unused]: nobody\n\ntext\n",
+			"<p>text</p>\n"},
+		{"a definition in a code fence is code", "```\n[^1]: x\n```\n",
+			"<pre><code>[^1]: x\n</code></pre>\n"},
 		{"backslash escapes", "a\\*b\\_c",
 			"<p>a*b_c</p>\n"},
 		{"nul byte survives", "\u0000null",
@@ -215,4 +246,20 @@ func TestNoScriptCanEndItsOwnElement(t *testing.T) {
 			t.Errorf("%s holds </script", asset.Href())
 		}
 	}
+}
+
+// footnoteRef is the number a footnote leaves in the text; id is where the citation is
+// named, "fnref:" for a note's first and "fnref1:" for its second.
+func footnoteRef(id string, note int) string {
+	n := strconv.Itoa(note)
+	return "<sup id=\"" + id + n + "\"><a href=\"#fn:" + n + "\" class=\"footnote-ref\" role=\"doc-noteref\">" + n + "</a></sup>"
+}
+
+// footnoteBack is the arrow that returns from a footnote to the citation id names.
+func footnoteBack(id, mark string) string {
+	return "&#160;<a href=\"#" + id + "\" class=\"footnote-backref\" role=\"doc-backlink\">&#x21a9;&#xfe0e;" + mark + "</a>"
+}
+
+func footnoteList(items string) string {
+	return "<div class=\"footnotes\" role=\"doc-endnotes\">\n<hr />\n<ol>\n" + items + "</ol>\n</div>\n"
 }

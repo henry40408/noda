@@ -21,10 +21,12 @@ type Document struct {
 	References []parser.Reference
 }
 
-// Plain is CommonMark with nothing added: what `link` reads, so a destination
-// means what any other CommonMark reader takes it to mean.
+// Plain is CommonMark and footnotes: what `link` reads, so a destination means
+// what any other CommonMark reader takes it to mean. Footnotes are the one
+// addition: the renderer draws `[^1]: Ibid.` as a footnote, and without them
+// `link` would read it as a link to a file named `Ibid.`.
 func Plain(body string) Document {
-	return parse(body, goldmark.New())
+	return parse(body, goldmark.New(goldmark.WithExtensions(extension.Footnote)))
 }
 
 // Tasks adds task lists only: what `todo` reads, so `~~x~~` stays literal text
@@ -33,11 +35,11 @@ func Tasks(body string) Document {
 	return parse(body, goldmark.New(goldmark.WithExtensions(taskList{})))
 }
 
-// Rich adds tables, strikethrough and task lists, the dialect the renderer
-// reads.
+// Rich adds tables, strikethrough, footnotes and task lists, the dialect the
+// renderer reads.
 func Rich(body string) Document {
 	return parse(body, goldmark.New(goldmark.WithExtensions(
-		extension.Table, extension.Strikethrough, taskList{},
+		extension.Table, extension.Strikethrough, extension.Footnote, taskList{},
 	)))
 }
 
