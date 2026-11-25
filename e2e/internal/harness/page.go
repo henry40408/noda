@@ -755,6 +755,27 @@ func (p Page) ListingOnScreen() (bool, error) {
 	})()`)
 }
 
+// BarOffsets is how far the note's bar sits below the listing's bar, measured
+// at the rule under each and at the middle of what each holds. Side by side
+// they read as one strip only when both are zero. It is not present until both
+// bars are drawn: a hidden pane keeps its markup but has no box.
+func (p Page) BarOffsets() (rule, middle float64, present bool, err error) {
+	offsets, err := Exec[*[2]float64](p.Browser, `
+		const list = document.querySelector('.pane.index .topbar');
+		const count = document.querySelector('.pane.index .topbar .count');
+		const note = document.querySelector('.pane.read .actionbar');
+		const action = document.querySelector('.pane.read .actionbar a');
+		if (!list || !count || !note || !action) return null;
+		if (![list, count, note, action].every((el) => el.getClientRects().length)) return null;
+		const middleOf = (el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+		return [note.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom,
+			middleOf(action) - middleOf(count)];`)
+	if err != nil || offsets == nil {
+		return 0, 0, false, err
+	}
+	return offsets[0], offsets[1], true, nil
+}
+
 // MarkedRow is the title of the listing row marked as being read.
 func (p Page) MarkedRow() (string, bool, error) {
 	return p.optionalText(`const row = document.querySelector('.pane.index main.rows a.row.here');

@@ -100,6 +100,17 @@ Feature: The same pages on a wider screen
     Then the note is headed "Budget review"
     And the listing is still on screen
 
+  # Side by side, the listing's title bar and the note's action bar are one
+  # strip: their rules meet and what they hold shares a middle. Each had its own
+  # height, so the two rules sat 3px apart.
+  @scripted
+  Scenario: The note's bar lines up with the listing's
+    Given I open the notebook on a desktop
+    When I press "Budget review"
+    Then the note is headed "Budget review"
+    And the listing is still on screen
+    And the note's bar lines up with the listing's
+
   # The name arrives as a `<title>` at the head of the fragment, so the tab gets
   # the server's string, not one the script composed.
   @scripted
