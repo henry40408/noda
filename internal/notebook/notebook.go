@@ -210,16 +210,18 @@ func List(p paths.Paths) ([]string, error) {
 	return names, nil
 }
 
-// Branch is the current branch, or `HEAD` when detached.
+// Branch is the current branch, or `HEAD` when detached. It asks for the full
+// name and trims it: `--short` answers `heads/main` when a snapshot is also
+// called `main`, and no ref is named that.
 func (n *Notebook) Branch() (string, error) {
-	result, err := n.run(gitx.Cmd{Args: []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ReadOnly: true, OKCodes: []int{0, 1}})
+	result, err := n.run(gitx.Cmd{Args: []string{"symbolic-ref", "--quiet", "HEAD"}, ReadOnly: true, OKCodes: []int{0, 1}})
 	if err != nil {
 		return "", err
 	}
 	if result.Code == 1 {
 		return "HEAD", nil
 	}
-	return strings.TrimSpace(string(result.Stdout)), nil
+	return strings.TrimPrefix(strings.TrimSpace(string(result.Stdout)), "refs/heads/"), nil
 }
 
 // SetRemote points the notebook at url, replacing any remote already
