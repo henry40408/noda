@@ -464,6 +464,58 @@ func TestPushWithALoginInTheURLSendsToOneRemoteOnly(t *testing.T) {
 	}
 }
 
+// git moves the tracking ref only for a push made under the remote's name, and a
+// login in the URL makes noda push to the bare URL instead.
+func TestPushWithALoginInTheURLMovesTheTrackingRef(t *testing.T) {
+	nb := fixture(t, "ahead")
+	url := httpRemote(t, nb, "u", "SECRETpw")
+	if err := nb.SetRemote(strings.Replace(url, "http://", "http://u:SECRETpw@", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nb.Push(); err != nil {
+		t.Fatal(err)
+	}
+	drift, err := nb.Drift("main")
+	if err != nil || drift == nil || drift.Ahead != 0 || drift.Behind != 0 {
+		t.Fatalf("drift after the push = %+v, %v", drift, err)
+	}
+	if got, want := gitOut(t, nb, "rev-parse", trackingRef("main")), gitOut(t, nb, "rev-parse", "main"); got != want {
+		t.Fatalf("tracking ref = %q, want %q", got, want)
+	}
+}
+
+func TestPushOfABranchWithNoCommitIsRefused(t *testing.T) {
+	nb := fixture(t, "ahead")
+	gitOut(t, nb, "update-ref", "-d", "refs/heads/main")
+	gitOut(t, nb, "update-ref", "-d", trackingRef("main"))
+	remoteDir := filepath.Join(rootOf(nb), "remote.git")
+	before := gitOut(t, nb, "-C", remoteDir, "rev-parse", "main")
+	if _, err := nb.Push(); err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if after := gitOut(t, nb, "-C", remoteDir, "rev-parse", "main"); after != before {
+		t.Fatalf("the remote's main moved from %q to %q", before, after)
+	}
+}
+
+func TestPushSaysSoWhenItCannotMoveTheTrackingRef(t *testing.T) {
+	nb := fixture(t, "ahead")
+	url := httpRemote(t, nb, "u", "SECRETpw")
+	if err := nb.SetRemote(strings.Replace(url, "http://", "http://u:SECRETpw@", 1)); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(nb.Path, ".git", trackingRef("main")+".lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nb.Push(); err == nil || !strings.Contains(err.Error(), "main.lock") {
+		t.Fatalf("err = %v, want the lock named", err)
+	}
+}
+
 func TestASnapshotNameTakenOnBothSidesDoesNotFailThePull(t *testing.T) {
 	nb := fixture(t, "tags")
 	before := gitOut(t, nb, "for-each-ref", "refs/tags")

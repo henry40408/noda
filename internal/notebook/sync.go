@@ -316,6 +316,12 @@ func (n *Notebook) Push() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Read before sending: a commit that lands meanwhile is sent but not recorded,
+	// so the drift can only say too much is left to push, never too little.
+	sent, err := n.read("rev-parse", "--verify", "refs/heads/"+branch)
+	if err != nil {
+		return "", err
+	}
 	refspecs := []string{"refs/heads/" + branch + ":refs/heads/" + branch}
 	tags, heldBack, err := n.tagsToSend(url)
 	if err != nil {
@@ -328,10 +334,25 @@ func (n *Notebook) Push() (string, error) {
 	if err := n.sendRefs(url, refspecs); err != nil {
 		return "", err
 	}
+	if err := n.recordPush(url, branch, sent); err != nil {
+		return "", err
+	}
 	return pushSummary(pushReport{
 		branch: branch, url: remote.Redact(url), drift: drift,
 		snapshots: len(tags), heldBack: heldBack,
 	}), nil
+}
+
+// recordPush moves the tracking ref to what a push sent. git does that itself
+// for a push made under the remote's name; a login in the URL makes remoteTarget
+// push to the bare URL, which git does not tie to the remote, so the drift would
+// keep counting commits the remote already has until the next fetch.
+func (n *Notebook) recordPush(url, branch, oid string) error {
+	if remoteTarget(url) == remoteName {
+		return nil
+	}
+	_, err := n.run(gitx.Cmd{Args: []string{"update-ref", trackingRef(branch), oid}})
+	return err
 }
 
 // sendRefs pushes with the settings that would change what is sent forced off,
