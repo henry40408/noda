@@ -10,7 +10,9 @@
       the thing itself (sheet, with its margin). A narrower screen drops bands
       from the left; it never rearranges one. */
 *{box-sizing:border-box}
-:root{--ui:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang TC","Noto Sans TC",sans-serif;--read:"Iowan Old Style",Charter,"Palatino Linotype",Palatino,"Songti TC","Noto Serif TC",Georgia,serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--tap:48px;--dock:62px;--s:transparent;--top:53px}
+/* --top is where a sticky thing sticks under the title bar: its foot, so it is --bar. A pixel more left a
+   row of the note showing between the two. */
+:root{--ui:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang TC","Noto Sans TC",sans-serif;--read:"Iowan Old Style",Charter,"Palatino Linotype",Palatino,"Songti TC","Noto Serif TC",Georgia,serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--tap:48px;--bar:52px;--dock:62px;--s:transparent;--top:var(--bar)}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--desk);color:var(--ink);font:15px/1.45 var(--ui)}
 a{color:inherit;text-decoration:none}
@@ -29,7 +31,7 @@ mark{background:var(--mark);color:inherit;border-radius:2px}
 .app{min-height:100dvh;display:flex;flex-direction:column;padding-bottom:calc(var(--dock) + env(safe-area-inset-bottom))}
 .app.solo{padding-bottom:0}
 .pane{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--sheet)}
-.topbar{position:sticky;top:0;z-index:2;flex:none;display:flex;align-items:center;gap:10px;min-height:52px;padding:0 16px;background:var(--sheet);border-bottom:1px solid var(--line)}
+.topbar{position:sticky;top:0;z-index:2;flex:none;display:flex;align-items:center;gap:10px;min-height:var(--bar);padding:0 16px;background:var(--sheet);border-bottom:1px solid var(--line)}
 main{scroll-margin-top:var(--top)}
 .place{flex:1;min-width:0;margin:0;font-size:17px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .place .sec{display:none}
@@ -133,6 +135,17 @@ main.note{padding:22px 20px 40px}
 .body th,.body td{padding:6px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 .body th{color:var(--soft);font-weight:600}
 .body img{max-width:100%}
+/* Footnotes: the number is small and unmarked, the notes sit under a short rule, and the one jumped to is lit. */
+.body sup{line-height:0;font-size:.72em}
+.body a.footnote-ref,.body a.footnote-backref{text-decoration:none;color:var(--soft);font-family:var(--ui)}
+.body a.footnote-ref{padding:0 1px}
+.body a.footnote-ref:hover,.body a.footnote-backref:hover{color:var(--ink)}
+.body .footnotes{margin-top:2.2em;font-size:.88em;color:var(--soft)}
+.body .footnotes hr{width:72px;margin:0 0 1em;border:0;border-top:1px solid var(--line)}
+.body .footnotes ol{margin-bottom:0}
+.body .footnotes p{margin-bottom:.4em}
+.body .footnotes li:target,.body sup:target{background:var(--mark);border-radius:3px}
+.body .footnotes li,.body sup[id]{scroll-margin-top:calc(var(--top) + 72px)}
 
 /* The margin: everything about a note that is not its text. On a phone it
    follows the text, and its actions are the dock. */
@@ -308,7 +321,7 @@ dialog.keys form p{flex:1 1 100%;margin:0;color:var(--soft);font-size:12.5px}
 main.note{display:grid;grid-template-columns:minmax(0,1fr);padding:0 28px 56px}
 .note article{width:100%;padding-top:28px}
 .note .margin{display:contents}
-.read .actionbar{position:sticky;top:var(--top);order:-1;height:auto;margin:0 -28px;padding:6px 18px;flex-wrap:wrap;gap:2px;border:0;border-bottom:1px solid var(--line)}
+.read .actionbar{position:sticky;top:var(--top);order:-1;height:auto;min-height:var(--bar);margin:0 -28px;padding:6px 18px;flex-wrap:wrap;align-items:center;gap:2px;border:0;border-bottom:1px solid var(--line)}
 .read .actionbar a,.read .actionbar button{flex:none;flex-direction:row;gap:7px;min-height:36px;padding:0 10px;border-radius:8px;font-size:13.5px}
 .read .actionbar svg{width:17px;height:17px}
 .read .actionbar .danger{margin-left:auto}
@@ -336,6 +349,10 @@ html.keyed .rail .fab::after{top:-6px;right:-14px}
 }
 
 /* ---------------------------------------- 1024: the list stays by the note */
+/* The list's bar and the sheet's bar share one height so their rules meet. Under a finger the sheet's
+   buttons are --tap tall, plus the bar's padding and its rule. From 1440px the actions leave the bar
+   for the margin, so there is no second bar to meet. */
+@media (min-width:1024px) and (max-width:1439px) and (pointer:coarse){.app.split.indexed{--bar:calc(var(--tap) + 13px)}}
 @media (min-width:1024px){
 .app.split.indexed{grid-template-columns:var(--rail) 330px minmax(0,1fr)}
 .app.split.indexed .read{grid-column:3}

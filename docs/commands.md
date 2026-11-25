@@ -309,7 +309,8 @@ rather than refusing to work with them. A note changed with `--no-touch` is repo
 does have a newer commit than the note claims.
 
 Links are read with a CommonMark parser, so reference-style links, `%20` in a destination and
-links inside code fences are all handled correctly. A destination in raw HTML (`<img src=…>`) is
+links inside code fences are all handled correctly. A footnote (`[^1]: Ibid.`) is not a link to a
+file called `Ibid.`, and a link inside one is followed. A destination in raw HTML (`<img src=…>`) is
 not followed, and only files at the notebook's root can be reported as unused, though a link
 into a subdirectory resolves normally.
 
@@ -350,7 +351,10 @@ noda is at http://127.0.0.1:8080
 ```
 
 The listing is searched and ordered from one bar, a note's links work as they do on disk, and
-times are shown in your own zone. With JavaScript on, single keys press the buttons — `?` lists
+times are shown in your own zone. A body is CommonMark plus tables, `~~strikethrough~~`, task
+lists and footnotes: `[^1]` in the text, `[^1]: the note` anywhere else. Footnotes are numbered
+in the order they are cited and gathered under the note, each with a way back; a citation
+nothing defines stays as typed. With JavaScript on, single keys press the buttons — `?` lists
 them. The status screen says what `noda status` prints — `2 to push`, `in sync` — and ends with
 the version of the build answering.
 

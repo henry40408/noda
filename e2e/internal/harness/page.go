@@ -440,6 +440,42 @@ func (p Page) Remember() error {
 // Remembered reports whether the document marked by Remember is still loaded.
 func (p Page) Remembered() (bool, error) { return Eval[bool](p.Browser, "!!window.__noda_here") }
 
+// RememberNote marks the note's body element, to tell a note replaced by a
+// fetch from one that was only scrolled: Remember cannot, for the document is
+// the same either way.
+func (p Page) RememberNote() error {
+	_, err := Eval[int](p.Browser, "window.__noda_note = document.querySelector('.body'), 1")
+	return err
+}
+
+// NoteRemembered reports whether the body element marked by RememberNote is
+// still the one on screen.
+func (p Page) NoteRemembered() (bool, error) {
+	return Eval[bool](p.Browser, "!!window.__noda_note && window.__noda_note === document.querySelector('.body')")
+}
+
+// PressFootnote presses the number a footnote leaves in the text.
+func (p Page) PressFootnote(number string) error {
+	return p.clickCSS("the footnote "+quote(number), `a[href="#fn:`+number+`"]`)
+}
+
+// PressFootnoteBack presses the arrow that leads from a footnote to its
+// citation.
+func (p Page) PressFootnoteBack(number string) error {
+	return p.clickCSS("the way back from footnote "+quote(number), `a[href="#fnref:`+number+`"]`)
+}
+
+// FootnoteLit reports whether the footnote's text, or with cited the number it
+// leaves in the text, is what the address names.
+func (p Page) FootnoteLit(number string, cited bool) (bool, error) {
+	id := "fn:" + number
+	if cited {
+		id = "fnref:" + number
+	}
+	return Exec[bool](p.Browser, `const el = document.getElementById(arguments[0]);
+		return !!el && el.matches(':target');`, id)
+}
+
 // MarkedPlace is the rail's place marked aria-current, the attribute the colour
 // also hangs off. Empty and false when none, as on the network screen. The
 // textContent is read because the label is drawn only from 640px up.
@@ -717,6 +753,41 @@ func (p Page) ListingOnScreen() (bool, error) {
 		if (!pane) return false;
 		return pane.getBoundingClientRect().width > 0 && !!pane.querySelector('main.rows a.row');
 	})()`)
+}
+
+// BarOffsets is how far the note's bar sits below the listing's bar, measured
+// at the rule under each and at the middle of what each holds. Side by side
+// they read as one strip only when both are zero. It is not present until both
+// bars are drawn: a hidden pane keeps its markup but has no box.
+func (p Page) BarOffsets() (rule, middle float64, present bool, err error) {
+	offsets, err := Exec[*[2]float64](p.Browser, `
+		const list = document.querySelector('.pane.index .topbar');
+		const count = document.querySelector('.pane.index .topbar .count');
+		const note = document.querySelector('.pane.read .actionbar');
+		const action = document.querySelector('.pane.read .actionbar a');
+		if (!list || !count || !note || !action) return null;
+		if (![list, count, note, action].every((el) => el.getClientRects().length)) return null;
+		const middleOf = (el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+		return [note.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom,
+			middleOf(action) - middleOf(count)];`)
+	if err != nil || offsets == nil {
+		return 0, 0, false, err
+	}
+	return offsets[0], offsets[1], true, nil
+}
+
+// GapUnderTitleBar is how far the note's action bar starts below the foot of
+// the title bar above it. It is not present until both are drawn.
+func (p Page) GapUnderTitleBar() (gap float64, present bool, err error) {
+	measured, err := Exec[*float64](p.Browser, `
+		const title = document.querySelector('.pane.read .topbar');
+		const actions = document.querySelector('.pane.read .actionbar');
+		if (!title || !actions || !title.getClientRects().length || !actions.getClientRects().length) return null;
+		return actions.getBoundingClientRect().top - title.getBoundingClientRect().bottom;`)
+	if err != nil || measured == nil {
+		return 0, false, err
+	}
+	return *measured, true, nil
 }
 
 // MarkedRow is the title of the listing row marked as being read.

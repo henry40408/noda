@@ -26,6 +26,15 @@
   // again after a write made in place.
   let listed = app.classList.contains("at-list") ? location.pathname + location.search : null;
 
+  // The address the screen answers to, fragment left out. A press on a footnote
+  // moves only the fragment and fires `popstate` all the same, by which time the
+  // browser has scrolled; asking again would replace the element it scrolled to.
+  let answered = location.pathname + location.search;
+  const push = (href) => {
+    history.pushState(null, "", href);
+    answered = location.pathname + location.search;
+  };
+
   let asking = false;
   const bring = async () => {
     if (!wide.matches || !app.classList.contains("at-note")) return;
@@ -104,8 +113,8 @@
   // The address is pushed on the press, before the fetch, as a navigation
   // would: otherwise back pressed mid-flight skips past this page and out of
   // the notebook. Failures therefore `replace`, the entry being there already.
-  const swap = async (href, push = true) => {
-    if (push) history.pushState(null, "", href);
+  const swap = async (href, pushing = true) => {
+    if (pushing) push(href);
     // The row is marked on the press, not on the answer, and the
     // note on screen stays until the next one has arrived whole.
     const mine = ++turn;
@@ -165,7 +174,7 @@
   // Sending the search and choosing an order: both change only the rows. Pushes
   // first for `swap`'s reason; failures go where a scriptless press would.
   const relist = async (where) => {
-    history.pushState(null, "", where);
+    push(where);
     listed = where;
     const mine = ++turn;
     // The same, for a note still on its way.
@@ -244,6 +253,9 @@
 
   // Back puts on screen what the address names, without a reload.
   addEventListener("popstate", () => {
+    const now = location.pathname + location.search;
+    if (now === answered) return;
+    answered = now;
     // Below the breakpoint nothing was pushed, so this history is not ours.
     if (!wide.matches) return location.reload();
     const at = location.pathname;

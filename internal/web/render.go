@@ -142,6 +142,13 @@ func (w *bodyWriter) block(node ast.Node) {
 		w.out.WriteString("<hr />\n")
 	case *extast.Table:
 		w.table(n)
+	case *extast.FootnoteList:
+		w.footnoteList(n)
+	case *extast.Footnote:
+		w.footnote(n)
+	case *extast.FootnoteBacklink:
+		// Directly under the footnote when its last block is not a paragraph.
+		w.footnoteBacklink(n)
 	default:
 		// A block kind noda does not enable: keep what it holds.
 		w.blocks(n)
@@ -234,6 +241,54 @@ func (w *bodyWriter) table(table *extast.Table) {
 	w.out.WriteString("</table>\n")
 }
 
+// footnoteList is the notes gathered at the end of the body, in the order they
+// were first cited; the parser drops a definition nothing cites.
+func (w *bodyWriter) footnoteList(list *extast.FootnoteList) {
+	w.startBlock()
+	w.out.WriteString("<div class=\"footnotes\" role=\"doc-endnotes\">\n<hr />\n<ol>\n")
+	w.blocks(list)
+	w.out.WriteString("</ol>\n</div>\n")
+}
+
+func (w *bodyWriter) footnote(note *extast.Footnote) {
+	w.out.WriteString("<li id=\"fn:" + strconv.Itoa(note.Index) + "\">\n")
+	w.blocks(note)
+	w.out.WriteString("</li>\n")
+}
+
+// footnoteLink is the number in the text. Inside a link it stays a bare number:
+// an anchor in an anchor would end the outer one early. The id stays either way,
+// for the arrow under the footnote to return to.
+func (w *bodyWriter) footnoteLink(reference *extast.FootnoteLink) {
+	number := strconv.Itoa(reference.Index)
+	opening := "<sup id=\"" + referenceID(reference.Index, reference.RefIndex) + "\">"
+	if w.links > 0 {
+		w.out.WriteString(opening + number + "</sup>")
+		return
+	}
+	w.out.WriteString(opening + "<a href=\"#fn:" + number + "\" class=\"footnote-ref\" role=\"doc-noteref\">" + number + "</a></sup>")
+}
+
+// footnoteBacklink returns to the reference it answers; a note cited twice gets
+// two, told apart by the citation's number.
+func (w *bodyWriter) footnoteBacklink(back *extast.FootnoteBacklink) {
+	w.out.WriteString("&#160;<a href=\"#" + referenceID(back.Index, back.RefIndex) +
+		"\" class=\"footnote-backref\" role=\"doc-backlink\">&#x21a9;&#xfe0e;")
+	if back.RefIndex > 0 {
+		w.out.WriteString("<sup>" + strconv.Itoa(back.RefIndex+1) + "</sup>")
+	}
+	w.out.WriteString("</a>")
+}
+
+// referenceID names where a note is cited: the first citation is fnref:1, a
+// second citation of the same note fnref1:1.
+func referenceID(note, citation int) string {
+	if citation == 0 {
+		return "fnref:" + strconv.Itoa(note)
+	}
+	return "fnref" + strconv.Itoa(citation) + ":" + strconv.Itoa(note)
+}
+
 func (w *bodyWriter) cells(row ast.Node, tag string) {
 	for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
 		alignment := ""
@@ -286,6 +341,10 @@ func (w *bodyWriter) inline(node ast.Node) {
 		w.out.WriteString("<code>" + escapeText(rawHTMLText(n, w.source)) + "</code>")
 	case *extast.TaskCheckBox:
 		w.checkbox(n)
+	case *extast.FootnoteLink:
+		w.footnoteLink(n)
+	case *extast.FootnoteBacklink:
+		w.footnoteBacklink(n)
 	case *ast.Link:
 		w.link(n)
 	case *ast.AutoLink:

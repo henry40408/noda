@@ -28,6 +28,26 @@ func TestALinkInsideACodeFenceIsNotALink(t *testing.T) {
 	}
 }
 
+// The renderer draws `[^1]: Ibid.` as a footnote. Read as a link reference
+// definition it would name a file called `Ibid.`, and doctor would report it
+// broken.
+func TestAFootnoteIsNotALinkToAFile(t *testing.T) {
+	if got := targetsOf("Said before.[^1]\n\n[^1]: Ibid.\n"); len(got) != 0 {
+		t.Fatal(got)
+	}
+}
+
+func TestALinkInsideAFootnoteIsALink(t *testing.T) {
+	body := "Source.[^1]\n\n[^1]: [Other](k3f9m2p1-other.md)\n"
+	if got := targetsOf(body); !slices.Equal(got, []string{"k3f9m2p1-other.md"}) {
+		t.Fatal(got)
+	}
+	want := "Source.[^1]\n\n[^1]: [Other](m4n5p6q7-renamed.md)\n"
+	if got := rewritten(t, body, "k3f9m2p1-other.md", "m4n5p6q7-renamed.md"); got != want {
+		t.Fatal(got)
+	}
+}
+
 func TestDestinationsThatNameNoFileInTheNotebookAreDropped(t *testing.T) {
 	body := "[a](https://example.com/x.png)\n[b](http://example.com)\n" +
 		"[c](mailto:me@example.com)\n[d](#section)\n[e](/etc/passwd)\n[f](../outside.png)\n"

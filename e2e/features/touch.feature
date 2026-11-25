@@ -69,6 +69,22 @@ Feature: Everything can be pressed with a thumb
       | 1440  |
       | 1800  |
 
+  # The note's bar is 48 tall under a finger, so the listing's bar grows to meet it. From
+  # 1440px the actions leave the bar for the margin, so only these two widths have a pair.
+  @scripted
+  Scenario Outline: Under a finger the note's bar still lines up with the listing's
+    Given my screen is a touch screen
+    And I open the notebook on a touch screen <width> pixels wide
+    When I press "Budget review"
+    Then the note is headed "Budget review"
+    And the listing is still on screen
+    And the note's bar lines up with the listing's
+
+    Examples:
+      | width |
+      | 1024  |
+      | 1366  |
+
   @scripted
   Scenario: The shortcut card's buttons are big enough for a thumb
     Given my screen is a touch screen
