@@ -100,6 +100,14 @@ Feature: The same pages on a wider screen
     Then the note is headed "Budget review"
     And the listing is still on screen
 
+  # The action bar sticks just under the title bar. It was set a pixel lower, so
+  # a row of the note showed between the two as it scrolled.
+  Scenario: The note's action bar sits directly under its title bar on a tablet
+    Given I open the notebook on a tablet
+    When I press "Budget review"
+    Then the note is headed "Budget review"
+    And the note's action bar sits directly under its title bar
+
   # Side by side, the listing's title bar and the note's action bar are one
   # strip: their rules meet and what they hold shares a middle. Each had its own
   # height, so the two rules sat 3px apart.

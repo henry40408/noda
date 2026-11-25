@@ -83,6 +83,22 @@ func registerLayoutSteps(scenario *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
+	scenario.Step(`^the note's action bar sits directly under its title bar$`, func() error {
+		var gap float64
+		err := harness.Eventually("both bars to be drawn", func() (bool, error) {
+			var present bool
+			var err error
+			gap, present, err = w.page().GapUnderTitleBar()
+			return present, err
+		})
+		if err != nil {
+			return err
+		}
+		if math.Abs(gap) > 0.5 {
+			return fmt.Errorf("the note's action bar starts %gpx below its title bar: the note shows through the gap as it scrolls", gap)
+		}
+		return nil
+	})
 	scenario.Step(`^the search field's text is at least (\d+) pixels$`, func(least int) error {
 		size, err := w.page().SearchFieldFontSize()
 		if err != nil {

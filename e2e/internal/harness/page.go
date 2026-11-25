@@ -776,6 +776,20 @@ func (p Page) BarOffsets() (rule, middle float64, present bool, err error) {
 	return offsets[0], offsets[1], true, nil
 }
 
+// GapUnderTitleBar is how far the note's action bar starts below the foot of
+// the title bar above it. It is not present until both are drawn.
+func (p Page) GapUnderTitleBar() (gap float64, present bool, err error) {
+	measured, err := Exec[*float64](p.Browser, `
+		const title = document.querySelector('.pane.read .topbar');
+		const actions = document.querySelector('.pane.read .actionbar');
+		if (!title || !actions || !title.getClientRects().length || !actions.getClientRects().length) return null;
+		return actions.getBoundingClientRect().top - title.getBoundingClientRect().bottom;`)
+	if err != nil || measured == nil {
+		return 0, false, err
+	}
+	return *measured, true, nil
+}
+
 // MarkedRow is the title of the listing row marked as being read.
 func (p Page) MarkedRow() (string, bool, error) {
 	return p.optionalText(`const row = document.querySelector('.pane.index main.rows a.row.here');

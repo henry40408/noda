@@ -10,7 +10,9 @@
       the thing itself (sheet, with its margin). A narrower screen drops bands
       from the left; it never rearranges one. */
 *{box-sizing:border-box}
-:root{--ui:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang TC","Noto Sans TC",sans-serif;--read:"Iowan Old Style",Charter,"Palatino Linotype",Palatino,"Songti TC","Noto Serif TC",Georgia,serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--tap:48px;--bar:52px;--dock:62px;--s:transparent;--top:53px}
+/* --top is where a sticky thing sticks under the title bar: its foot, so it is --bar. A pixel more left a
+   row of the note showing between the two. */
+:root{--ui:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang TC","Noto Sans TC",sans-serif;--read:"Iowan Old Style",Charter,"Palatino Linotype",Palatino,"Songti TC","Noto Serif TC",Georgia,serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--tap:48px;--bar:52px;--dock:62px;--s:transparent;--top:var(--bar)}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--desk);color:var(--ink);font:15px/1.45 var(--ui)}
 a{color:inherit;text-decoration:none}
