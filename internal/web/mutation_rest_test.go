@@ -20,6 +20,24 @@ func TestAFileNamedOnlyByItsExtensionIsStillTyped(t *testing.T) {
 	}
 }
 
+func TestOnlyAPdfAddressIsEmbeddedAsOne(t *testing.T) {
+	for url, want := range map[string]bool{
+		"/nb/b/f/a.pdf":                    true,
+		"/nb/b/f/a.PDF":                    true,
+		"https://example.com/a.pdf?x=1":    true,
+		"https://example.com/a.pdf#p=2":    true,
+		"/nb/b/f/a.pdf.png":                false,
+		"/nb/b/f/pdf":                      false,
+		"https://example.com/a.png?x=.pdf": false,
+		"https://example.com/a.png#.pdf":   false,
+		"":                                 false,
+	} {
+		if got := namesPDF(url); got != want {
+			t.Errorf("namesPDF(%q) = %v, want %v", url, got, want)
+		}
+	}
+}
+
 func TestTheFirstCharacterOfEachSafeSetIsSafe(t *testing.T) {
 	if !isHrefSafe('!') {
 		t.Error("'!' is href safe")

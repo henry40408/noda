@@ -135,6 +135,8 @@ main.note{padding:22px 20px 40px}
 .body th,.body td{padding:6px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 .body th{color:var(--soft);font-weight:600}
 .body img{max-width:100%}
+/* Sized only while a viewer fills it: with none, the object is the inline link inside it, which a height would stretch into an empty box. */
+.body object.pdf{width:100%;height:80vh;min-height:420px;vertical-align:top}
 /* Footnotes: the number is small and unmarked, the notes sit under a short rule, and the one jumped to is lit. */
 .body sup{line-height:0;font-size:.72em}
 .body a.footnote-ref,.body a.footnote-backref{text-decoration:none;color:var(--soft);font-family:var(--ui)}
