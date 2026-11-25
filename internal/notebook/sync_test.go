@@ -464,6 +464,26 @@ func TestPushWithALoginInTheURLSendsToOneRemoteOnly(t *testing.T) {
 	}
 }
 
+// git moves the tracking ref only for a push made under the remote's name, and a
+// login in the URL makes noda push to the bare URL instead.
+func TestPushWithALoginInTheURLMovesTheTrackingRef(t *testing.T) {
+	nb := fixture(t, "ahead")
+	url := httpRemote(t, nb, "u", "SECRETpw")
+	if err := nb.SetRemote(strings.Replace(url, "http://", "http://u:SECRETpw@", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nb.Push(); err != nil {
+		t.Fatal(err)
+	}
+	drift, err := nb.Drift("main")
+	if err != nil || drift == nil || drift.Ahead != 0 || drift.Behind != 0 {
+		t.Fatalf("drift after the push = %+v, %v", drift, err)
+	}
+	if got, want := gitOut(t, nb, "rev-parse", trackingRef("main")), gitOut(t, nb, "rev-parse", "main"); got != want {
+		t.Fatalf("tracking ref = %q, want %q", got, want)
+	}
+}
+
 func TestASnapshotNameTakenOnBothSidesDoesNotFailThePull(t *testing.T) {
 	nb := fixture(t, "tags")
 	before := gitOut(t, nb, "for-each-ref", "refs/tags")
