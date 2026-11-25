@@ -484,6 +484,38 @@ func TestPushWithALoginInTheURLMovesTheTrackingRef(t *testing.T) {
 	}
 }
 
+func TestPushOfABranchWithNoCommitIsRefused(t *testing.T) {
+	nb := fixture(t, "ahead")
+	gitOut(t, nb, "update-ref", "-d", "refs/heads/main")
+	gitOut(t, nb, "update-ref", "-d", trackingRef("main"))
+	remoteDir := filepath.Join(rootOf(nb), "remote.git")
+	before := gitOut(t, nb, "-C", remoteDir, "rev-parse", "main")
+	if _, err := nb.Push(); err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if after := gitOut(t, nb, "-C", remoteDir, "rev-parse", "main"); after != before {
+		t.Fatalf("the remote's main moved from %q to %q", before, after)
+	}
+}
+
+func TestPushSaysSoWhenItCannotMoveTheTrackingRef(t *testing.T) {
+	nb := fixture(t, "ahead")
+	url := httpRemote(t, nb, "u", "SECRETpw")
+	if err := nb.SetRemote(strings.Replace(url, "http://", "http://u:SECRETpw@", 1)); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(nb.Path, ".git", trackingRef("main")+".lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nb.Push(); err == nil || !strings.Contains(err.Error(), "main.lock") {
+		t.Fatalf("err = %v, want the lock named", err)
+	}
+}
+
 func TestASnapshotNameTakenOnBothSidesDoesNotFailThePull(t *testing.T) {
 	nb := fixture(t, "tags")
 	before := gitOut(t, nb, "for-each-ref", "refs/tags")
