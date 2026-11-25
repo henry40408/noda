@@ -66,6 +66,20 @@ func TestCreateMakesAnInitialCommitOnTheConfiguredBranch(t *testing.T) {
 	}
 }
 
+// A snapshot is a tag, and `noda snapshot main` names one after the branch: git's
+// short form of the branch is then `heads/main`, which no ref carries.
+func TestBranchIsItsNameWhenATagHasTheSameOne(t *testing.T) {
+	nb := fixture(t, "ahead")
+	gitOut(t, nb, "tag", "main")
+	if branch, err := nb.Branch(); err != nil || branch != "main" {
+		t.Fatalf("branch = %q, %v", branch, err)
+	}
+	drift, err := nb.Drift("main")
+	if err != nil || drift == nil || drift.Ahead != 2 {
+		t.Fatalf("drift = %+v, %v", drift, err)
+	}
+}
+
 func TestCommitIsByteEqualToGitCommitTree(t *testing.T) {
 	nb := newTestNotebook(t)
 	write(t, nb, "abc10001-one.md", "hello")
