@@ -82,6 +82,10 @@ func registerNavigationSteps(scenario *godog.ScenarioContext, w *world) {
 			return w.page().FootnoteLit(number, true)
 		})
 	})
+	scenario.Step(`^I press the summary of the section$`, func() error { return w.page().PressSummary() })
+	scenario.Step(`^the section is unfolded$`, func() error {
+		return harness.Eventually("the section to be open", w.page().SectionUnfolded)
+	})
 	scenario.Step(`^I search for `+quoted+`$`, func(query string) error { return w.page().Search(query) })
 	scenario.Step(`^I type `+quoted+` into the search field$`, func(query string) error {
 		return w.page().TypeSearch(query)

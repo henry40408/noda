@@ -161,6 +161,28 @@ an unticked one is not struck. A line through an item runs through everything in
 nested list is drawn as a box the line does not enter. A link in a ticked item is struck but not
 dimmed, since it may be what you came to read.
 
+**A section folds with `<details>`**, the one piece of raw HTML that is not shown as code. noda
+reads the tags and writes its own, so only these spellings count, in any case:
+
+```markdown
+<details>
+<summary>Title</summary>
+
+The text, in Markdown.
+
+</details>
+```
+
+`<details open>` starts unfolded, `<details><summary>Title</summary>` may share a line, and a
+section with no summary, or an empty one, is headed `Details`. Sections nest.
+
+A blank line follows every opening tag (with its summary) and every closing tag, before the text
+or the next `<details>` or `</details>`; `<summary>` has none between it and its `<details>`. A
+summary is plain text: Markdown in it shows as typed, and a `<` is written `&lt;`. A section is
+shown as code when its summary holds a bare `<`, when `<details>` has another attribute, when
+either tag has no partner, or when the partner is outside its quote or list item. Folding works
+without JavaScript, and pinning a note leaves its sections as they are.
+
 **Links go where they went on disk.** A relative link to another note —
 `[the plan](k3f9m2p1-the-plan.md)` — opens that note's page and is coloured like an id, so a link
 that stays in the notebook looks different from one that leaves. A link to any other file in the
@@ -186,12 +208,12 @@ the new tab reaching back through `window.opener`. The policy is `same-origin` a
 `no-referrer` because `no-referrer` also makes forms post `Origin: null`, which the `Origin`
 check refuses — every write from a browser would be turned away.
 
-**Two things a note's body cannot do.** Raw HTML is shown as a code block rather than rendered,
-since it may be the only copy of markup `noda import tiddlywiki` could not convert. A link whose
-scheme noda does not serve — `javascript:` first among them — keeps its words and loses its link.
-Files are served with `nosniff` and a content policy that loads nothing, and only formats that
-cannot carry a script as this site are shown in place: SVG arrives as a download, while a PDF is
-drawn by the browser's viewer, which runs no script of this site's.
+**Two things a note's body cannot do.** Raw HTML, `<details>` aside, is shown as a code block
+rather than rendered, since it may be the only copy of markup `noda import tiddlywiki` could not
+convert. A link whose scheme noda does not serve — `javascript:` first among them — keeps its
+words and loses its link. Files are served with `nosniff` and a content policy that loads
+nothing, and only formats that cannot carry a script as this site are shown in place: SVG arrives
+as a download, while a PDF is drawn by the browser's viewer, which runs no script of this site's.
 
 ## The listing
 

@@ -476,6 +476,16 @@ func (p Page) FootnoteLit(number string, cited bool) (bool, error) {
 		return !!el && el.matches(':target');`, id)
 }
 
+// PressSummary presses the summary of the note's collapsible section.
+func (p Page) PressSummary() error {
+	return p.clickCSS("the section's summary", `.body summary`)
+}
+
+// SectionUnfolded reports whether the note's collapsible section is open.
+func (p Page) SectionUnfolded() (bool, error) {
+	return Eval[bool](p.Browser, "!!document.querySelector('.body details[open]')")
+}
+
 // MarkedPlace is the rail's place marked aria-current, the attribute the colour
 // also hangs off. Empty and false when none, as on the network screen. The
 // textContent is read because the label is drawn only from 640px up.

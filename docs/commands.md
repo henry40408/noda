@@ -354,9 +354,10 @@ The listing is searched and ordered from one bar, a note's links work as they do
 times are shown in your own zone. A body is CommonMark plus tables, `~~strikethrough~~`, task
 lists and footnotes: `[^1]` in the text, `[^1]: the note` anywhere else. Footnotes are numbered
 in the order they are cited and gathered under the note, each with a way back; a citation
-nothing defines stays as typed. With JavaScript on, single keys press the buttons — `?` lists
-them. The status screen says what `noda status` prints — `2 to push`, `in sync` — and ends with
-the version of the build answering.
+nothing defines stays as typed. `<details>` folds a section, in the spellings
+[In a browser](web.md) lists; every other piece of raw HTML is shown as code. With JavaScript on,
+single keys press the buttons — `?` lists them. The status screen says what `noda status` prints
+— `2 to push`, `in sync` — and ends with the version of the build answering.
 
 **There is no password on it, and there is not going to be one** — reach it over a tailnet or
 behind something that authenticates. It listens on **this machine only** until `--listen` says

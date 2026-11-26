@@ -11,7 +11,9 @@
 // What raw HTML turns into: a code block, shown and not run. Not dropped,
 // because `noda import tiddlywiki` leaves unconverted HTML in the body as the
 // only copy of what it said. A destination with a scheme noda does not allow
-// keeps its text and loses its link.
+// keeps its text and loses its link. The one exception is a collapsible section,
+// since CommonMark has no syntax for one: `<details>` and `</details>`, each in
+// an HTML block of its own, are read and noda writes its own tags for them.
 //
 // Bare URLs: CommonMark has none, but notes written elsewhere rely on them.
 // GFM's rules, narrowed to http:// and https://.
@@ -23,12 +25,14 @@ package web
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 
 	"github.com/henry40408/noda/internal/link"
 	"github.com/henry40408/noda/internal/markdown"
@@ -96,7 +100,13 @@ type bodyWriter struct {
 }
 
 func (w *bodyWriter) blocks(parent ast.Node) {
+	sections := sectionTags(parent, w.source)
 	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+		if tag, ok := sections[child]; ok {
+			w.startBlock()
+			w.out.WriteString(tag)
+			continue
+		}
 		w.block(child)
 	}
 }
@@ -203,16 +213,110 @@ func (w *bodyWriter) codeBlock(language string, lines *text.Segments) {
 func (w *bodyWriter) htmlBlock(block *ast.HTMLBlock) {
 	w.startBlock()
 	w.out.WriteString("<pre><code class=\"language-html\">")
+	w.out.WriteString(escapeText(htmlText(block, w.source)))
+	w.out.WriteString("</code></pre>\n")
+}
+
+func htmlText(block *ast.HTMLBlock, source []byte) string {
+	var out strings.Builder
 	lines := block.Lines()
 	for i := 0; i < lines.Len(); i++ {
 		segment := lines.At(i)
-		w.out.WriteString(escapeText(string(segment.Value(w.source))))
+		out.Write(segment.Value(source))
 	}
 	if block.HasClosure() {
 		closure := block.ClosureLine
-		w.out.WriteString(escapeText(string(closure.Value(w.source))))
+		out.Write(closure.Value(source))
 	}
-	w.out.WriteString("</code></pre>\n")
+	return out.String()
+}
+
+// The only spellings read as a collapsible section. A summary is text alone.
+var (
+	detailsOpening = regexp.MustCompile(`(?i)^\s*<details(\s+open)?\s*>\s*(<summary\s*>([^<]*)</summary\s*>)?\s*$`)
+	detailsClosing = regexp.MustCompile(`(?i)^\s*</details\s*>\s*$`)
+	// detailsTag finds either tag in a block that is not spelled as above.
+	detailsTag = regexp.MustCompile(`(?i)</?details(?:[\s/>]|$)`)
+)
+
+// opening is a section still waiting for its closing tag. It has no tag when
+// noda does not read how it was spelled.
+type opening struct {
+	block ast.Node
+	tag   string
+}
+
+// sectionTags is what to write for each HTML block among parent's children that
+// opens or closes a section. Both ends must be children of parent, so a section
+// never crosses a quote or a list item; a block with no partner is left out, as
+// an unclosed element would fold away the rest of the page.
+func sectionTags(parent ast.Node, source []byte) map[ast.Node]string {
+	var unclosed []opening
+	tags := map[ast.Node]string{}
+	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+		// The earlier kinds are comments, `<pre>` and the like: a tag in one is text.
+		block, ok := child.(*ast.HTMLBlock)
+		if !ok || block.HTMLBlockType < ast.HTMLBlockType6 {
+			continue
+		}
+		raw := htmlText(block, source)
+		if tag, ok := openingTag(raw); ok {
+			unclosed = append(unclosed, opening{block, tag})
+			continue
+		}
+		if !detailsClosing.MatchString(raw) {
+			unclosed = pairUnread(unclosed, raw)
+			continue
+		}
+		if len(unclosed) == 0 {
+			continue
+		}
+		last := unclosed[len(unclosed)-1]
+		unclosed = unclosed[:len(unclosed)-1]
+		if last.tag != "" {
+			tags[last.block] = last.tag
+			tags[block] = "</details>\n"
+		}
+	}
+	return tags
+}
+
+// pairUnread counts the tags in a block shown as code. Each still takes its
+// partner, so that a section never ends at a closing tag meant for another.
+func pairUnread(unclosed []opening, raw string) []opening {
+	for _, tag := range detailsTag.FindAllString(raw, -1) {
+		switch {
+		case !strings.HasPrefix(tag, "</"):
+			unclosed = append(unclosed, opening{})
+		case len(unclosed) > 0:
+			unclosed = unclosed[:len(unclosed)-1]
+		}
+	}
+	return unclosed
+}
+
+// openingTag rewrites a block that opens a section into noda's own tags. A
+// summary is always written: the browser's own cannot be styled to --tap.
+func openingTag(raw string) (string, bool) {
+	match := detailsOpening.FindStringSubmatch(raw)
+	if match == nil {
+		return "", false
+	}
+	tag := "<details>\n"
+	if match[1] != "" {
+		tag = "<details open>\n"
+	}
+	summary := summaryText(match[3])
+	if summary == "" {
+		summary = "Details"
+	}
+	return tag + "<summary>" + escapeText(summary) + "</summary>\n", true
+}
+
+func summaryText(raw string) string {
+	text := util.ResolveEntityNames(util.ResolveNumericReferences([]byte(raw)))
+	// After resolving, so a summary of nothing but `&#32;` counts as empty.
+	return strings.TrimSpace(string(text))
 }
 
 func (w *bodyWriter) table(table *extast.Table) {
