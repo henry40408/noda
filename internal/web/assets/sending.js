@@ -60,6 +60,16 @@
     return said ? said + " (" + answer.status + ")" : "status " + answer.status;
   };
 
+  // The server only knows how the note writes its sections, not how the reader
+  // left them. A body changed elsewhere meanwhile may not match one for one,
+  // and then it is shown as written.
+  const keepFolds = (from, to) => {
+    const old = from.querySelectorAll(".body details");
+    const fresh = to.querySelectorAll(".body details");
+    if (old.length !== fresh.length) return;
+    fresh.forEach((section, i) => (section.open = old[i].open));
+  };
+
   const pin = async (form, button) => {
     const pane = button.closest(".pane.read");
     const label = button.querySelector("span");
@@ -85,7 +95,9 @@
     const next = parse(text).querySelector(".pane.read");
     if (!next) return location.reload();
     // The server's page replaces the guess. The reader stays where they
-    // were: same scroll, and the focus back on the button if it was there.
+    // were: same sections folded, same scroll, and the focus back on the
+    // button if it was there.
+    keepFolds(pane, next);
     const held = pane.contains(document.activeElement) && document.activeElement.dataset.key;
     const tops = [pane.scrollTop, document.scrollingElement.scrollTop];
     pane.replaceWith(next);

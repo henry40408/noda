@@ -57,8 +57,8 @@ func TestBody(t *testing.T) {
 			"<pre><code class=\"language-html\">&lt;!-- comment --&gt;\n</code></pre>\n<p>text</p>\n"},
 		{"inline html in a table cell is escaped", "| a |\n|---|\n| <b>x</b> |\n",
 			"<table><thead><tr><th>a</th></tr></thead><tbody>\n<tr><td><code>&lt;b&gt;</code>x<code>&lt;/b&gt;</code></td></tr>\n</tbody></table>\n"},
-		{"html block split by blank lines", "<details><summary>s</summary>\n\nbody\n\n</details>",
-			"<pre><code class=\"language-html\">&lt;details&gt;&lt;summary&gt;s&lt;/summary&gt;\n</code></pre>\n<p>body</p>\n<pre><code class=\"language-html\">&lt;/details&gt;</code></pre>\n"},
+		{"details with its summary on one line", "<details><summary>s</summary>\n\nbody\n\n</details>",
+			"<details>\n<summary>s</summary>\n<p>body</p>\n</details>\n"},
 		{"javascript link keeps only its text", "[x](javascript:alert(1))",
 			"<p>x</p>\n"},
 		{"javascript scheme is case insensitive", "[x](JaVaScRiPt:alert(1))",
@@ -246,6 +246,77 @@ func TestBodyNeverEmitsRawHTMLOrAScriptLink(t *testing.T) {
 				t.Errorf("%q rendered %q, which holds %q", source, out, bad)
 			}
 		}
+	}
+}
+
+func TestBodyCollapsibleSections(t *testing.T) {
+	code := func(html string) string { return "<pre><code class=\"language-html\">" + html + "</code></pre>\n" }
+	for _, c := range []struct{ name, markdown, want string }{
+		{"markdown inside is rendered", "<details>\n<summary>More</summary>\n\n**bold**\n\n</details>\n",
+			"<details>\n<summary>More</summary>\n<p><strong>bold</strong></p>\n</details>\n"},
+		{"open starts unfolded", "<details open>\n<summary>s</summary>\n\nbody\n\n</details>",
+			"<details open>\n<summary>s</summary>\n<p>body</p>\n</details>\n"},
+		{"a summary left out is written", "<details>\n\nbody\n\n</details>",
+			"<details>\n<summary>Details</summary>\n<p>body</p>\n</details>\n"},
+		{"an empty summary counts as none", "<details><summary> </summary>\n\n</details>",
+			"<details>\n<summary>Details</summary>\n</details>\n"},
+		{"a summary of referenced space counts as none", "<details><summary>&#32;&nbsp;</summary>\n\n</details>",
+			"<details>\n<summary>Details</summary>\n</details>\n"},
+		{"a longer tag name is not counted",
+			"<details><summary>a</summary>\n\n<details-x>\n\n</details>",
+			"<details>\n<summary>a</summary>\n" + code("&lt;details-x&gt;\n") + "</details>\n"},
+		{"tags in any case and with space inside", "<DETAILS >\n<Summary > s </Summary >\n\n</Details >",
+			"<details>\n<summary>s</summary>\n</details>\n"},
+		{"adjacent tags are shown and no section takes another's end",
+			"<details><summary>a</summary>\n\nA\n\n</details>\n<details><summary>b</summary>\n\nB\n\n</details>",
+			code("&lt;details&gt;&lt;summary&gt;a&lt;/summary&gt;\n") + "<p>A</p>\n" +
+				code("&lt;/details&gt;\n&lt;details&gt;&lt;summary&gt;b&lt;/summary&gt;\n") + "<p>B</p>\n" + code("&lt;/details&gt;")},
+		{"an unread section keeps its own end",
+			"<details><summary>a</summary>\n\n<details ontoggle=x()>\n\n</details>\n\ntail\n\n</details>",
+			"<details>\n<summary>a</summary>\n" + code("&lt;details ontoggle=x()&gt;\n") + code("&lt;/details&gt;\n") +
+				"<p>tail</p>\n</details>\n"},
+		{"two ends in one block take both sections",
+			"<details>\n\n<details>\n\n<details><summary>c</summary>\n\n</details>\n\n</details>\n</details>",
+			code("&lt;details&gt;\n") + code("&lt;details&gt;\n") +
+				"<details>\n<summary>c</summary>\n</details>\n" + code("&lt;/details&gt;\n&lt;/details&gt;")},
+		{"a section whole in one block takes no other's end",
+			"<details><summary>a</summary>\n\n<details>x</details>\n\n</details>",
+			"<details>\n<summary>a</summary>\n" + code("&lt;details&gt;x&lt;/details&gt;\n") + "</details>\n"},
+		{"a tag in a comment is not counted",
+			"<details><summary>a</summary>\n\n<!-- <details> -->\n\n</details>",
+			"<details>\n<summary>a</summary>\n" + code("&lt;!-- &lt;details&gt; --&gt;\n") + "</details>\n"},
+		{"a summary is text with its references resolved", "<details><summary>a &lt; b & **c** &#62; d</summary>\n\n</details>",
+			"<details>\n<summary>a &lt; b &amp; **c** &gt; d</summary>\n</details>\n"},
+		{"sections nest", "<details><summary>a</summary>\n\n<details><summary>b</summary>\n\nin\n\n</details>\n\n</details>",
+			"<details>\n<summary>a</summary>\n<details>\n<summary>b</summary>\n<p>in</p>\n</details>\n</details>\n"},
+		{"a closing tag ends a list above it", "<details><summary>s</summary>\n\n- a\n</details>",
+			"<details>\n<summary>s</summary>\n<ul>\n<li>a</li>\n</ul>\n</details>\n"},
+		{"inside a quote", "> <details><summary>s</summary>\n>\n> body\n>\n> </details>",
+			"<blockquote>\n<details>\n<summary>s</summary>\n<p>body</p>\n</details>\n</blockquote>\n"},
+		{"inside a list item", "- <details><summary>s</summary>\n\n  body\n\n  </details>\n",
+			"<ul>\n<li>\n<details>\n<summary>s</summary>\n<p>body</p>\n</details>\n</li>\n</ul>\n"},
+		{"an unclosed section is shown", "<details>\n\nbody",
+			code("&lt;details&gt;\n") + "<p>body</p>\n"},
+		{"a closing tag alone is shown", "body\n\n</details>",
+			"<p>body</p>\n" + code("&lt;/details&gt;")},
+		{"only the paired tags are written", "<details>\n\n<details><summary>s</summary>\n\n</details>",
+			code("&lt;details&gt;\n") + "<details>\n<summary>s</summary>\n</details>\n"},
+		{"a section does not leave its quote", "> <details>\n\n</details>",
+			"<blockquote>\n" + code("&lt;details&gt;\n") + "</blockquote>\n" + code("&lt;/details&gt;")},
+		{"another attribute is not recognised", "<details ontoggle=x()>\n\n</details>",
+			code("&lt;details ontoggle=x()&gt;\n") + code("&lt;/details&gt;")},
+		{"markup in a summary is not recognised", "<details><summary><b>s</b></summary>\n\n</details>",
+			code("&lt;details&gt;&lt;summary&gt;&lt;b&gt;s&lt;/b&gt;&lt;/summary&gt;\n") + code("&lt;/details&gt;")},
+		{"text sharing the tags' block is shown", "<details>\n<summary>s</summary>\nbody\n</details>",
+			code("&lt;details&gt;\n&lt;summary&gt;s&lt;/summary&gt;\nbody\n&lt;/details&gt;")},
+		{"a fence keeps the tags as code", "```\n<details>\n```",
+			"<pre><code>&lt;details&gt;\n</code></pre>\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Body(c.markdown, AroundOf("work", nil)); got != c.want {
+				t.Errorf("Body(%q)\n got %q\nwant %q", c.markdown, got, c.want)
+			}
+		})
 	}
 }
 
