@@ -31,7 +31,34 @@ func (i Item) Overdue(today string) bool {
 // of the item's first paragraph and inline markup is flattened, so
 // `[the spec](spec.md)` reads as `the spec`.
 func Items(body string) []Item {
+	return unticked(markdown.Tasks(body))
+}
+
+// Hidden is the items Items misses because raw HTML sits above them with no
+// blank line between, which makes them part of the HTML.
+func Hidden(body string) []Item {
+	// No raw HTML starts without one.
+	if !strings.Contains(body, "<") {
+		return nil
+	}
 	doc := markdown.Tasks(body)
+	var hidden []Item
+	doc.Walk(func(node ast.Node) {
+		block, ok := node.(*ast.HTMLBlock)
+		// The earlier kinds are comments, `<pre>` and the like: a box in one is
+		// meant as text.
+		if !ok || block.HTMLBlockType < ast.HTMLBlockType6 {
+			return
+		}
+		// Each block alone, so that a fence left open in one changes nothing
+		// outside it.
+		inside := string(block.Lines().Value(doc.Source))
+		hidden = append(hidden, unticked(markdown.TasksPastHTML(inside))...)
+	})
+	return hidden
+}
+
+func unticked(doc markdown.Document) []Item {
 	var found []Item
 	doc.Walk(func(node ast.Node) {
 		box, ok := node.(*extast.TaskCheckBox)

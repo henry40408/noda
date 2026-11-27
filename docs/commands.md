@@ -47,8 +47,9 @@ problems  2 problems
 
 `noda doctor` lists everything `status` elides. It makes one repair: a file with frontmatter
 that only lacks an id is given one, as a revertible commit (`--dry-run` shows it without
-changing anything). Everything else it only reports, including git hooks that will never run
-because noda never runs a command that triggers them.
+changing anything). Everything else it only reports, including [action items](#action-items) that
+raw HTML hides from `noda todo`, and git hooks that will never run because noda never runs a
+command that triggers them.
 
 ```
 $ noda doctor --dry-run
@@ -58,7 +59,7 @@ would adopt 1 note — nothing was changed
 ```
 
 <details>
-<summary>What counts as a note, the two problems that are yours to settle, which hooks are reported, and what works on a note that will not parse</summary>
+<summary>What counts as a note, the two problems that are yours to settle, hidden action items, which hooks are reported, and what works on a note that will not parse</summary>
 
 A `*.md` file with a **frontmatter block** and an **id in its filename** is a note; with neither
 it is an ordinary file, counted on `files`. The other two combinations are `problems`, counted
@@ -67,6 +68,14 @@ by kind so a directory copied in at once still fits on one screen.
 **One id on two notes** (two machines can produce it): rename one of the files. **A name that
 claims an id over a file with no frontmatter**: add the `---` block back, or rename it so it no
 longer starts with an id. Only you know which.
+
+An unticked box that raw HTML hides is named with its note, and needs no flag:
+
+```
+1 action item is hidden from `noda todo` by raw HTML
+  k3f9m2p1-imported.md: check the quotes against the book
+raw HTML runs to the next blank line: leave one between the tag and the item
+```
 
 Hooks are reported the way git would find them — `core.hooksPath` when set, the executable bit,
 never `*.sample` — and only by `doctor`, not `status`.
@@ -426,7 +435,9 @@ from git — the same one on every commit and every time noda prints. A containe
 unless you pass `-e TZ=Asia/Taipei` (or a POSIX string such as `CST-8`), as you would for `git`. `--json` has no "overdue" field; a program has its own clock.
 
 Boxes are read with a CommonMark parser, so `- [ ]` inside a code fence is not an item and a
-nested list still is.
+nested list still is. A line that opens raw HTML (`<details>`, `<div>`) starts a block that runs to
+the next blank line, so a box directly under it is HTML, not an item: leave a blank line between
+them. `noda doctor` names the boxes caught this way; one in a comment or a `<pre>` stays hidden.
 
 **There is no `noda done`**: an item inside a note has no address, and giving each one an id
 would make the file a noda-only format. `noda edit <note>`, type one `x`, and it auto-commits.

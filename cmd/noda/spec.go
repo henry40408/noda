@@ -51,7 +51,7 @@ func buildSpec() *commandSpec {
 			{name: "unpin", about: "Let a pinned note back down among the rest. Auto-commits.", args: []argSpec{noteArg()}, flags: []flagSpec{noTouch()}},
 			{name: "rm", about: "Delete a note. The removal is a commit, so `git revert` undoes it.", args: []argSpec{noteArg()}},
 			{name: "status", about: "Where the active notebook stands: notes, changes, drift from the remote."},
-			{name: "doctor", about: "Diagnose the notebook, and adopt the notes that only lack an id. Names any git hooks noda will never run, which needs no flag.",
+			{name: "doctor", about: "Diagnose the notebook, and adopt the notes that only lack an id. Names the `- [ ]` items raw HTML hides from `todo` and any git hooks noda will never run, neither of which needs a flag.",
 				flags: []flagSpec{
 					{long: "dry-run", help: "Report what would change without writing or committing anything."},
 					{long: "links", help: "Also follow every link in every note: report the files no note links to, the links whose note was retitled, and the links that name nothing. Reads the whole notebook, so it is asked for rather than assumed."},
