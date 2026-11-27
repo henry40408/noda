@@ -135,3 +135,44 @@ func TestADueDateTakesDigitsOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestHiddenIsWhatABlankLineWouldHaveListed(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"directly under a summary", "<details>\n<summary>s</summary>\n- [ ] a\n- [ ] b\n</details>\n", []string{"a", "b"}},
+		{"a blank line only before the closing tag", "<details>\n<summary>s</summary>\n- [ ] a\n\n</details>\n", []string{"a"}},
+		{"directly after a closing tag", "<details>\n<summary>s</summary>\n\n- [ ] seen\n\n</details>\n- [ ] after\n", []string{"after"}},
+		{"under a tag CommonMark does not know", "<custom-tag>\n- [ ] a\n", []string{"a"}},
+		{"under a line of text in the block", "<div>\ntext\n- [ ] a\n", []string{"a"}},
+		{"an ordered list not starting at one", "<div>\n3. [ ] a\n", []string{"a"}},
+		{"inside a list item", "- parent\n  <div>\n  - [ ] a\n", []string{"a"}},
+		{"inside a quote", "> <div>\n> - [ ] a\n", []string{"a"}},
+		{"the same words as a listed item", "- [ ] a\n\n<div>\n- [ ] a\n", []string{"a"}},
+		{"properly spaced", "<details>\n<summary>s</summary>\n\n- [ ] a\n\n</details>\n", nil},
+		{"no HTML", "- [ ] a\n", nil},
+		{"inline HTML", "- [ ] a <b>b</b>\n", nil},
+		{"ticked", "<div>\n- [x] a\n", nil},
+		{"a comment", "<!--\n- [ ] a\n-->\n", nil},
+		{"a comment inside a section", "<details>\n<!--\n- [ ] a\n-->\n</details>\n", nil},
+		{"preformatted", "<pre>\n- [ ] a\n</pre>\n", nil},
+		{"a fence under a tag", "<div>\n```\n- [ ] a\n```\n", nil},
+		{"a fence around the tag", "```\n<div>\n- [ ] a\n```\n", nil},
+		{"a fence opened in HTML and closed later", "<div>\n```\n</div>\n\ntext\n\n```\n- [ ] a\n```\n", nil},
+		{"a comment after an unclosed pre in HTML", "<div>\n<pre>\n</div>\n\n<!--\n</pre>\n- [ ] a\n-->\n", nil},
+		{"indented code after a list in HTML", "<div>\n- parent\n\n    - [ ] a\n", nil},
+		{"after a fence left open in an earlier block", "<div>\n```\n</div>\n\n<div>\n- [ ] a\n</div>\n", []string{"a"}},
+		{"after a pre left open in an earlier block", "<div>\n<pre>\n</div>\n\n<div>\n- [ ] a\n</div>\n", []string{"a"}},
+	}
+	for _, c := range cases {
+		var got []string
+		for _, item := range Hidden(c.body) {
+			got = append(got, item.Text)
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: %q: got %q, want %q", c.name, c.body, got, c.want)
+		}
+	}
+}

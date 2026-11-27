@@ -43,6 +43,30 @@ func Rich(body string) Document {
 	)))
 }
 
+// TasksPastHTML is Tasks as if a blank line followed each line that opens raw
+// HTML: how the body would read had its author left one under `<details>`.
+// Comments, `<pre>` and the like still hold their text.
+func TasksPastHTML(body string) Document {
+	md := goldmark.New(goldmark.WithExtensions(taskList{}))
+	// Ahead of goldmark's own HTML block parser, which is at 900.
+	md.Parser().AddOptions(parser.WithBlockParsers(
+		util.Prioritized(oneLineHTML{parser.NewHTMLBlockParser()}, 899),
+	))
+	return parse(body, md)
+}
+
+// oneLineHTML ends a block of raw HTML at its first line, where CommonMark runs
+// it to the next blank one.
+type oneLineHTML struct{ parser.BlockParser }
+
+func (p oneLineHTML) Continue(node ast.Node, reader text.Reader, context parser.Context) parser.State {
+	// The earlier kinds end at a marker of their own and hold text on purpose.
+	if block, ok := node.(*ast.HTMLBlock); ok && block.HTMLBlockType >= ast.HTMLBlockType6 {
+		return parser.Close
+	}
+	return p.BlockParser.Continue(node, reader, context)
+}
+
 func parse(body string, md goldmark.Markdown) Document {
 	source := []byte(body)
 	context := parser.NewContext()

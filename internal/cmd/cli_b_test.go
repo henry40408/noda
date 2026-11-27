@@ -1388,3 +1388,25 @@ func TestDoctorFollowsCoreHooksPath(t *testing.T) {
 		t.Fatalf("git would not run it either: %s", out)
 	}
 }
+
+// `todo` leaves these out without a word, so `doctor` says it without a flag.
+func TestDoctorNamesTheActionItemsRawHTMLHides(t *testing.T) {
+	e := bInit(t)
+	bAdd(t, e, "Alpha", "<details>\n<summary>s</summary>\n- [ ] call the bank\n</details>\n")
+
+	out := plain(Doctor(e, DoctorOptions{}))
+	bContains(t, out, "1 action item is hidden from `noda todo`", "-alpha.md: call the bank", "next blank line")
+
+	bAdd(t, e, "Beta", "<div>\n- [ ] file the form\n")
+	out = plain(Doctor(e, DoctorOptions{}))
+	bContains(t, out, "2 action items are hidden", "-alpha.md: call the bank", "-beta.md: file the form")
+}
+
+func TestDoctorSaysNothingAboutASpacedSection(t *testing.T) {
+	e := bInit(t)
+	bAdd(t, e, "Alpha", "<details>\n<summary>s</summary>\n\n- [ ] a\n\n</details>\n")
+
+	out := plain(Doctor(e, DoctorOptions{}))
+	bContains(t, out, "in order")
+	bLacks(t, out, "hidden")
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/henry40408/noda/internal/note"
 	"github.com/henry40408/noda/internal/notebook"
 	"github.com/henry40408/noda/internal/style"
+	"github.com/henry40408/noda/internal/todo"
 )
 
 // UnconvertedField is the frontmatter key an importer leaves on a note it could
@@ -105,6 +106,8 @@ func extraFindings(active *notebook.Notebook, options DoctorOptions) (string, er
 	}
 	// Always on: it parses no links and walks no history.
 	sections = append(sections, describeUnconverted(notes))
+	// Always on: `todo` omits these silently, so nobody would know to ask.
+	sections = append(sections, describeHidden(notes))
 	hooks, err := active.Hooks()
 	if err != nil {
 		return "", err
@@ -299,6 +302,33 @@ func countKinds(found []unconverted) []kindCount {
 		return cmp.Or(cmp.Compare(b.count, a.count), cmp.Compare(a.name, b.name))
 	})
 	return kinds
+}
+
+// describeHidden names the action items `todo` cannot list because raw HTML
+// sits above them. Nothing is repaired: that edits notes this command was not
+// pointed at.
+func describeHidden(notes []notebook.NoteFile) string {
+	var found []string
+	for _, file := range notes {
+		for _, item := range todo.Hidden(file.Note.Body) {
+			found = append(found, note.FileName(file.ID, file.Slug)+": "+item.Text)
+		}
+	}
+	if len(found) == 0 {
+		return ""
+	}
+
+	var out strings.Builder
+	verb := "are"
+	if len(found) == 1 {
+		verb = "is"
+	}
+	fmt.Fprintf(&out, "%d action %s %s hidden from `noda todo` by raw HTML\n", len(found), plural(len(found), "item", "items"), verb)
+	for _, line := range found {
+		out.WriteString("  " + line + "\n")
+	}
+	out.WriteString(style.Muted.Paint("raw HTML runs to the next blank line: leave one between the tag and the item"))
+	return out.String()
 }
 
 // describeHooks names the hooks that will never fire. It is not behind a flag,
